@@ -1039,7 +1039,8 @@
           <div class="form-group">
             <label class="form-label">Modell</label>
             <select class="form-select" id="setting-model">
-              <option value="deepseek-chat" selected>deepseek-chat (Empfohlen)</option>
+              <option value="deepseek-v4-pro" selected>deepseek-v4-pro (Empfohlen)</option>
+              <option value="deepseek-chat">deepseek-chat (V3)</option>
               <option value="deepseek-reasoner">deepseek-reasoner (R1)</option>
             </select>
           </div>
@@ -1110,7 +1111,7 @@
   const config = {
     apiKey: 'sk-804784c78bd74b8189ff9c0c7fae33a1',
     endpoint: 'https://api.deepseek.com/v1/chat/completions',
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-pro',
     temperature: 0.3,
     maxTokens: 4096,
     jurisdiction: 'german',
