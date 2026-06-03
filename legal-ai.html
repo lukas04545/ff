@@ -579,6 +579,66 @@
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #b0aaa0; }
 
+    /* GUTACHTENSTIL TOGGLE */
+    .input-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .gs-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      padding: 5px 12px;
+      border-radius: 20px;
+      border: 1.5px solid var(--border);
+      background: var(--bg);
+      transition: all 0.2s;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .gs-toggle:hover { border-color: var(--primary); color: var(--primary); }
+    .gs-toggle.active {
+      background: linear-gradient(135deg, var(--primary), var(--primary-light));
+      border-color: var(--primary);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(26,58,92,0.25);
+    }
+    .gs-toggle .toggle-track {
+      width: 30px; height: 16px;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.15);
+      position: relative;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    .gs-toggle.active .toggle-track { background: rgba(255,255,255,0.35); }
+    .gs-toggle .toggle-thumb {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: #fff;
+      position: absolute;
+      top: 2px; left: 2px;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .gs-toggle.active .toggle-thumb { transform: translateX(14px); }
+    .gs-badge {
+      display: inline-block;
+      padding: 2px 7px;
+      background: var(--accent);
+      color: var(--primary);
+      border-radius: 10px;
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      vertical-align: middle;
+    }
+
     /* COPY BTN */
     .copy-btn {
       float: right;
@@ -725,6 +785,12 @@
         </div>
       </div>
       <div class="input-area">
+        <div class="input-toolbar">
+          <button class="gs-toggle" id="gs-research" onclick="toggleGutachtenstil('research')">
+            <div class="toggle-track"><div class="toggle-thumb"></div></div>
+            <span>Gutachtenstil</span>
+          </button>
+        </div>
         <div class="input-row">
           <div class="input-wrapper">
             <textarea id="input-research" placeholder="Rechtsfrage stellen, Urteile suchen, Gesetze erklären lassen…" rows="1"
@@ -804,6 +870,12 @@
             </div>
           </div>
           <div class="input-area">
+            <div class="input-toolbar">
+              <button class="gs-toggle" id="gs-analysis" onclick="toggleGutachtenstil('analysis')">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                <span>Gutachtenstil</span>
+              </button>
+            </div>
             <div class="input-row">
               <div class="input-wrapper">
                 <textarea id="input-analysis" placeholder="Weitere Fragen zum Dokument stellen…" rows="1"
@@ -842,6 +914,12 @@
         </div>
       </div>
       <div class="input-area">
+        <div class="input-toolbar">
+          <button class="gs-toggle" id="gs-chat" onclick="toggleGutachtenstil('chat')">
+            <div class="toggle-track"><div class="toggle-thumb"></div></div>
+            <span>Gutachtenstil</span>
+          </button>
+        </div>
         <div class="input-row">
           <div class="input-wrapper">
             <textarea id="input-chat" placeholder="Sachverhalt schildern oder Rechtsfrage stellen…" rows="1"
@@ -1106,6 +1184,23 @@
 
 <script>
   // ==========================================================================
+  // GUTACHTENSTIL STATE
+  // ==========================================================================
+  const gutachtenstil = { research: false, analysis: false, chat: false };
+
+  function toggleGutachtenstil(panel) {
+    gutachtenstil[panel] = !gutachtenstil[panel];
+    const btn = document.getElementById('gs-' + panel);
+    if (gutachtenstil[panel]) {
+      btn.classList.add('active');
+      showToast('Gutachtenstil aktiviert', 'info');
+    } else {
+      btn.classList.remove('active');
+      showToast('Gutachtenstil deaktiviert', 'info');
+    }
+  }
+
+  // ==========================================================================
   // CONFIGURATION
   // ==========================================================================
   const config = {
@@ -1142,10 +1237,23 @@ Formatiere Antworten mit Überschriften (## / ###), Listen und Hervorhebungen f�
 Zitiere relevante Paragraphen, Normen und Urteile, wenn bekannt.
 Weise darauf hin, dass deine Antworten keine anwaltliche Beratung ersetzen und für konkrete Rechtsfragen ein Rechtsanwalt konsultiert werden sollte.`;
 
+    const gutachtenstilPrompt = `
+
+## GUTACHTENSTIL – PFLICHTFORMAT
+Beantworte JEDE Rechtsfrage strikt im klassischen juristischen Gutachtenstil:
+
+**1. Obersatz:** Formuliere die zu prüfende Rechtsfrage als Hypothese (z.B. „A könnte gegen B einen Anspruch auf … haben.").
+**2. Definition:** Nenne die einschlägige Norm (§ X YYY) und definiere die Tatbestandsmerkmale abstrakt.
+**3. Voraussetzungen / Tatbestandsprüfung:** Prüfe jede Voraussetzung einzeln (Obersatz → Definition → Subsumtion → Zwischenergebnis).
+**4. Subsumtion:** Wende die abstrakten Merkmale auf den konkreten Sachverhalt an.
+**5. Ergebnis:** Schließe mit einem klaren Ergebnis ab (z.B. „Im Ergebnis hat A gegen B einen Anspruch auf …").
+
+Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Normen fett.`;
+
     const prompts = {
-      research: base + `\n\nSpezialisierung: Juristische Recherche. Erkläre Rechtsbegriffe, Gesetze und Rechtsprechung detailliert und verständlich. Strukturiere Antworten mit: Rechtsgrundlage, Anwendungsbereich, aktuelle Rechtsprechung, praktische Bedeutung.`,
-      analysis: base + `\n\nSpezialisierung: Dokumentenanalyse. Analysiere juristische Dokumente präzise. Identifiziere problematische Klauseln, rechtliche Risiken und Optimierungspotenzial. Strukturiere Berichte klar.`,
-      chat: base + `\n\nSpezialisierung: Rechtsberatung und Gutachten. Verwende den klassischen Gutachtenstil: Definition, Obersatz, Voraussetzungen, Subsumtion, Ergebnis. Bei Sachverhaltsanfragen: Fakten prüfen, Normen anwenden, Empfehlungen geben.`
+      research: base + `\n\nSpezialisierung: Juristische Recherche. Erkläre Rechtsbegriffe, Gesetze und Rechtsprechung detailliert und verständlich. Strukturiere Antworten mit: Rechtsgrundlage, Anwendungsbereich, aktuelle Rechtsprechung, praktische Bedeutung.` + (gutachtenstil[panel] ? gutachtenstilPrompt : ''),
+      analysis: base + `\n\nSpezialisierung: Dokumentenanalyse. Analysiere juristische Dokumente präzise. Identifiziere problematische Klauseln, rechtliche Risiken und Optimierungspotenzial. Strukturiere Berichte klar.` + (gutachtenstil[panel] ? gutachtenstilPrompt : ''),
+      chat: base + `\n\nSpezialisierung: Rechtsberatung und Gutachten. Bei Sachverhaltsanfragen: Fakten prüfen, Normen anwenden, Empfehlungen geben.` + (gutachtenstil[panel] ? gutachtenstilPrompt : ' Verwende strukturierte Antworten mit klarer Gliederung.')
     };
     return prompts[panel] || base;
   }
