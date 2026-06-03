@@ -1,0 +1,1551 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Juristische KI-Assistenz</title>
+  <style>
+    :root {
+      --primary: #1a3a5c;
+      --primary-light: #2a5080;
+      --accent: #c8a84b;
+      --accent-light: #e8c86b;
+      --bg: #f4f1eb;
+      --bg-card: #ffffff;
+      --text: #1a1a2e;
+      --text-muted: #5a5a7a;
+      --border: #d0ccc0;
+      --danger: #c0392b;
+      --success: #1e7e34;
+      --shadow: 0 2px 12px rgba(26,58,92,0.10);
+      --radius: 10px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', 'Arial', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* HEADER */
+    header {
+      background: var(--primary);
+      color: #fff;
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .header-brand svg { color: var(--accent); }
+    .header-info {
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.6);
+    }
+    .api-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.8);
+    }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #6c757d;
+      transition: background 0.3s;
+    }
+    .status-dot.connected { background: #28a745; }
+    .status-dot.error { background: #dc3545; }
+
+    /* LAYOUT */
+    .app-layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      height: calc(100vh - 64px);
+    }
+
+    /* SIDEBAR */
+    .sidebar {
+      width: 220px;
+      min-width: 220px;
+      background: var(--primary);
+      display: flex;
+      flex-direction: column;
+      padding: 20px 0 16px 0;
+    }
+    .sidebar-section-label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.4);
+      padding: 16px 20px 6px 20px;
+    }
+    .nav-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: rgba(255,255,255,0.75);
+      font-size: 0.92rem;
+      text-align: left;
+      width: 100%;
+      border-left: 3px solid transparent;
+      transition: all 0.15s;
+    }
+    .nav-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+    .nav-btn.active {
+      background: rgba(200,168,75,0.15);
+      color: var(--accent);
+      border-left-color: var(--accent);
+    }
+    .nav-btn svg { opacity: 0.85; flex-shrink: 0; }
+    .sidebar-bottom {
+      margin-top: auto;
+      padding: 12px 20px;
+    }
+    .clear-btn {
+      width: 100%;
+      padding: 8px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 6px;
+      color: rgba(255,255,255,0.6);
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .clear-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+    /* MAIN CONTENT */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* TOOL PANELS */
+    .tool-panel {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      overflow: hidden;
+    }
+    .tool-panel.active { display: flex; }
+
+    .panel-header {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 28px 12px 28px;
+    }
+    .panel-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+    .panel-desc {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* CHAT AREA */
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .message {
+      display: flex;
+      gap: 12px;
+      max-width: 880px;
+    }
+    .message.user { flex-direction: row-reverse; align-self: flex-end; }
+    .message.assistant { align-self: flex-start; }
+
+    .msg-avatar {
+      width: 34px; height: 34px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      font-size: 0.85rem;
+      font-weight: 700;
+    }
+    .msg-avatar.user-av { background: var(--primary); color: #fff; }
+    .msg-avatar.ai-av { background: var(--accent); color: var(--primary); }
+
+    .msg-bubble {
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      font-size: 0.9rem;
+      line-height: 1.65;
+      max-width: 760px;
+    }
+    .message.user .msg-bubble {
+      background: var(--primary);
+      color: #fff;
+      border-bottom-right-radius: 3px;
+    }
+    .message.assistant .msg-bubble {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 3px;
+      box-shadow: var(--shadow);
+    }
+    .msg-bubble strong { color: var(--accent); }
+    .msg-bubble ul, .msg-bubble ol { margin: 8px 0 8px 20px; }
+    .msg-bubble li { margin: 4px 0; }
+    .msg-bubble code {
+      background: rgba(0,0,0,0.07);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 0.85em;
+      font-family: 'Courier New', monospace;
+    }
+    .message.user .msg-bubble code { background: rgba(255,255,255,0.2); }
+    .msg-bubble pre {
+      background: #1e2a3a;
+      color: #e8e8e8;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 10px 0;
+      font-size: 0.82rem;
+    }
+    .msg-bubble blockquote {
+      border-left: 3px solid var(--accent);
+      padding-left: 12px;
+      margin: 8px 0;
+      color: var(--text-muted);
+    }
+    .msg-time {
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.5);
+      margin-top: 4px;
+      text-align: right;
+    }
+    .message.assistant .msg-time { color: var(--text-muted); }
+
+    .welcome-message {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+      color: #fff;
+      padding: 24px;
+      border-radius: var(--radius);
+      margin-bottom: 8px;
+    }
+    .welcome-message h3 { font-size: 1.1rem; margin-bottom: 8px; color: var(--accent); }
+    .welcome-message p { font-size: 0.88rem; line-height: 1.6; opacity: 0.9; }
+    .quick-prompts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .quick-prompt-btn {
+      padding: 6px 12px;
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 20px;
+      color: #fff;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .quick-prompt-btn:hover { background: rgba(200,168,75,0.3); border-color: var(--accent); }
+
+    /* INPUT AREA */
+    .input-area {
+      background: var(--bg-card);
+      border-top: 1px solid var(--border);
+      padding: 16px 28px;
+    }
+    .input-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+    .input-wrapper {
+      flex: 1;
+      position: relative;
+    }
+    textarea {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.92rem;
+      font-family: inherit;
+      resize: none;
+      min-height: 50px;
+      max-height: 180px;
+      line-height: 1.5;
+      background: var(--bg);
+      color: var(--text);
+      transition: border-color 0.15s;
+      overflow-y: auto;
+    }
+    textarea:focus { outline: none; border-color: var(--primary); }
+    .send-btn {
+      padding: 12px 20px;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 0.92rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      transition: all 0.15s;
+      white-space: nowrap;
+      height: 50px;
+    }
+    .send-btn:hover { background: var(--primary-light); }
+    .send-btn:disabled { background: var(--border); cursor: not-allowed; }
+    .send-btn.loading { background: var(--primary-light); }
+
+    /* SPINNER */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* TYPING INDICATOR */
+    .typing-indicator {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      padding: 14px 16px;
+    }
+    .typing-indicator span {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      animation: bounce 1.2s infinite;
+    }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-6px); }
+    }
+
+    /* DOCUMENT ANALYSIS PANEL */
+    .doc-analysis-layout {
+      display: flex;
+      flex: 1;
+      gap: 0;
+      overflow: hidden;
+    }
+    .doc-input-panel {
+      width: 42%;
+      min-width: 300px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      background: var(--bg-card);
+    }
+    .doc-output-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .doc-panel-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .doc-text-area {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .doc-text-area textarea {
+      width: 100%;
+      height: 100%;
+      min-height: 300px;
+      max-height: none;
+      background: #fff;
+      font-size: 0.88rem;
+    }
+    .doc-actions {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .action-btn {
+      padding: 8px 14px;
+      border: 1.5px solid var(--primary);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--primary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .action-btn:hover { background: var(--primary); color: #fff; }
+    .action-btn.primary { background: var(--primary); color: #fff; }
+    .action-btn.primary:hover { background: var(--primary-light); }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* TEMPLATES PANEL */
+    .templates-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+      padding: 24px 28px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .template-card {
+      background: var(--bg-card);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: var(--shadow);
+    }
+    .template-card:hover {
+      border-color: var(--primary);
+      box-shadow: 0 4px 20px rgba(26,58,92,0.15);
+      transform: translateY(-2px);
+    }
+    .template-icon {
+      width: 40px; height: 40px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-light));
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+    .template-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--primary);
+      margin-bottom: 6px;
+    }
+    .template-desc {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .template-tag {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 3px 8px;
+      background: rgba(26,58,92,0.08);
+      border-radius: 12px;
+      font-size: 0.72rem;
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    /* SETTINGS PANEL */
+    .settings-content {
+      padding: 24px 28px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .settings-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+    .settings-section h3 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--primary);
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .form-group { margin-bottom: 14px; }
+    .form-label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .form-input, .form-select {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1.5px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.88rem;
+      font-family: inherit;
+      background: var(--bg);
+      color: var(--text);
+      transition: border-color 0.15s;
+    }
+    .form-input:focus, .form-select:focus { outline: none; border-color: var(--primary); }
+    .form-input[type="range"] { padding: 4px 0; border: none; background: transparent; }
+    .range-value {
+      font-size: 0.82rem;
+      color: var(--primary);
+      font-weight: 600;
+      margin-left: 8px;
+    }
+    .save-btn {
+      padding: 10px 24px;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .save-btn:hover { background: var(--primary-light); }
+
+    /* TOAST */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .toast {
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+      animation: slide-in 0.3s ease;
+      max-width: 320px;
+    }
+    .toast.success { background: var(--success); }
+    .toast.error { background: var(--danger); }
+    .toast.info { background: var(--primary); }
+    @keyframes slide-in {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* SCROLLBAR */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #b0aaa0; }
+
+    /* COPY BTN */
+    .copy-btn {
+      float: right;
+      padding: 4px 10px;
+      background: rgba(26,58,92,0.08);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: all 0.15s;
+      margin-bottom: 4px;
+    }
+    .copy-btn:hover { background: var(--primary); color: #fff; }
+
+    /* RESPONSE STREAMING */
+    .cursor-blink::after {
+      content: '▊';
+      animation: blink 0.8s step-end infinite;
+      color: var(--accent);
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* HISTORY BADGE */
+    .history-count {
+      margin-left: auto;
+      background: var(--accent);
+      color: var(--primary);
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 10px;
+      min-width: 20px;
+      text-align: center;
+    }
+
+    @media (max-width: 768px) {
+      .sidebar { width: 56px; min-width: 56px; }
+      .nav-btn span, .sidebar-section-label, .sidebar-bottom { display: none; }
+      .nav-btn { justify-content: center; padding: 12px; }
+      .panel-header, .input-area { padding: 12px 16px; }
+      .chat-area { padding: 16px; }
+      .doc-analysis-layout { flex-direction: column; }
+      .doc-input-panel { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="header-brand">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5L12 1z"/>
+      <path d="M9 12l2 2 4-4"/>
+    </svg>
+    <span>Juristische KI-Assistenz</span>
+  </div>
+  <div class="api-status" id="apiStatus">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">Bereit</span>
+  </div>
+</header>
+
+<!-- APP LAYOUT -->
+<div class="app-layout">
+
+  <!-- SIDEBAR -->
+  <nav class="sidebar">
+    <div class="sidebar-section-label">Werkzeuge</div>
+
+    <button class="nav-btn active" onclick="switchPanel('research')" id="nav-research">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+      </svg>
+      <span>Recherche</span>
+    </button>
+
+    <button class="nav-btn" onclick="switchPanel('analysis')" id="nav-analysis">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+      </svg>
+      <span>Dokumentenanalyse</span>
+    </button>
+
+    <button class="nav-btn" onclick="switchPanel('chat')" id="nav-chat">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      <span>Rechtsberatung</span>
+      <span class="history-count" id="chatCount" style="display:none">0</span>
+    </button>
+
+    <button class="nav-btn" onclick="switchPanel('templates')" id="nav-templates">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+      </svg>
+      <span>Vorlagen</span>
+    </button>
+
+    <div class="sidebar-section-label">Einstellungen</div>
+
+    <button class="nav-btn" onclick="switchPanel('settings')" id="nav-settings">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.07 4.93l-1.41 1.41M5.34 18.66l-1.41 1.41M20 12h2M2 12h2M19.07 19.07l-1.41-1.41M5.34 5.34l-1.41-1.41M12 20v2M12 2v2"/>
+      </svg>
+      <span>Einstellungen</span>
+    </button>
+
+    <div class="sidebar-bottom">
+      <button class="clear-btn" onclick="clearCurrentChat()">
+        ✕ Verlauf leeren
+      </button>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content">
+
+    <!-- ============================================================ -->
+    <!-- PANEL: RECHERCHE -->
+    <!-- ============================================================ -->
+    <div class="tool-panel active" id="panel-research">
+      <div class="panel-header">
+        <div class="panel-title">Juristische Recherche</div>
+        <div class="panel-desc">Gesetze, Rechtsprechung, EU-Recht, Kommentare und Gutachten</div>
+      </div>
+      <div class="chat-area" id="chat-research">
+        <div class="welcome-message">
+          <h3>Juristische Recherche mit KI</h3>
+          <p>Stellen Sie Fragen zu Gesetzen, Urteilen, Rechtsbegriffen oder lassen Sie komplexe Rechtsfragen analysieren. Die KI unterstützt bei Recherchen im deutschen, europäischen und internationalen Recht.</p>
+          <div class="quick-prompts">
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Erkläre die Grundlagen des deutschen Mietrechts und aktuelle BGH-Rechtsprechung.')">Mietrecht Grundlagen</button>
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Was sind die Voraussetzungen für eine Kündigung im Arbeitsrecht?')">Kündigung Arbeitsrecht</button>
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Erläutere die DSGVO-Anforderungen für Unternehmen.')">DSGVO Compliance</button>
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Welche Fristen gelten im deutschen Zivilprozessrecht?')">ZPO Fristen</button>
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Was sind die Voraussetzungen für einen Schadensersatzanspruch nach § 823 BGB?')">§ 823 BGB</button>
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Erkläre das Insolvenzverfahren in Deutschland.')">Insolvenzrecht</button>
+          </div>
+        </div>
+      </div>
+      <div class="input-area">
+        <div class="input-row">
+          <div class="input-wrapper">
+            <textarea id="input-research" placeholder="Rechtsfrage stellen, Urteile suchen, Gesetze erklären lassen…" rows="1"
+              onkeydown="handleKeydown(event, 'research')" oninput="autoResize(this)"></textarea>
+          </div>
+          <button class="send-btn" id="send-research" onclick="sendMessage('research')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+            Senden
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PANEL: DOKUMENTENANALYSE -->
+    <!-- ============================================================ -->
+    <div class="tool-panel" id="panel-analysis">
+      <div class="panel-header">
+        <div class="panel-title">Dokumentenanalyse</div>
+        <div class="panel-desc">Verträge, Urteile, Schriftsätze und juristische Dokumente analysieren</div>
+      </div>
+      <div class="doc-analysis-layout">
+        <div class="doc-input-panel">
+          <div class="doc-panel-header">Dokument einfügen</div>
+          <div class="doc-text-area">
+            <textarea id="doc-input" placeholder="Fügen Sie hier den Text des zu analysierenden Dokuments ein:
+
+• Vertrag
+• Urteil / Beschluss
+• Schriftsatz
+• AGB
+• Gesetzestext
+• Gutachten
+• Sonstiges juristisches Dokument"></textarea>
+          </div>
+          <div class="doc-actions">
+            <button class="action-btn primary" onclick="analyzeDocument('summary')" id="btn-summary">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+                <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
+                <line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+              Zusammenfassung
+            </button>
+            <button class="action-btn" onclick="analyzeDocument('risks')" id="btn-risks">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              Risiken prüfen
+            </button>
+            <button class="action-btn" onclick="analyzeDocument('clauses')" id="btn-clauses">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+              </svg>
+              Klauseln prüfen
+            </button>
+            <button class="action-btn" onclick="analyzeDocument('optimize')" id="btn-optimize">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="14 2 18 6 7 17 3 17 3 13 14 2"/><line x1="3" y1="22" x2="21" y2="22"/>
+              </svg>
+              Optimieren
+            </button>
+          </div>
+        </div>
+        <div class="doc-output-panel">
+          <div class="doc-panel-header">Analyse-Ergebnis</div>
+          <div class="chat-area" id="chat-analysis">
+            <div style="text-align:center; color:var(--text-muted); padding:40px 20px;">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.3; margin-bottom:12px; display:block; margin-left:auto; margin-right:auto;">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              <p style="font-size:0.88rem;">Fügen Sie ein Dokument ein und wählen Sie eine Analysefunktion.</p>
+            </div>
+          </div>
+          <div class="input-area">
+            <div class="input-row">
+              <div class="input-wrapper">
+                <textarea id="input-analysis" placeholder="Weitere Fragen zum Dokument stellen…" rows="1"
+                  onkeydown="handleKeydown(event, 'analysis')" oninput="autoResize(this)"></textarea>
+              </div>
+              <button class="send-btn" id="send-analysis" onclick="sendMessage('analysis')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+                Senden
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PANEL: RECHTSBERATUNG CHAT -->
+    <!-- ============================================================ -->
+    <div class="tool-panel" id="panel-chat">
+      <div class="panel-header">
+        <div class="panel-title">Rechtsberatung</div>
+        <div class="panel-desc">Juristische Einschätzungen, Gutachten und allgemeine Rechtsberatung</div>
+      </div>
+      <div class="chat-area" id="chat-chat">
+        <div class="welcome-message">
+          <h3>Juristische Beratung &amp; Gutachten</h3>
+          <p>Beschreiben Sie Ihren Sachverhalt ausführlich. Die KI erstellt eine juristische Einschätzung, listet relevante Normen auf und gibt Empfehlungen für das weitere Vorgehen.</p>
+          <div class="quick-prompts">
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('chat', 'Erstelle eine juristische Prüfung nach dem Gutachtenstil: Liegt eine wirksame Kündigung vor, wenn der Arbeitgeber ohne Angabe von Gründen kündigt?')">Gutachtenstil Kündigung</button>
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('chat', 'Welche rechtlichen Schritte kann ich einleiten, wenn mein Vermieter die Kaution nicht zurückzahlt?')">Kaution Rückforderung</button>
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('chat', 'Wie gehe ich rechtlich vor bei einem Verkehrsunfall mit Personenschaden?')">Verkehrsunfall</button>
+            <button class="quick-prompt-btn" onclick="sendQuickPrompt('chat', 'Was sind meine Rechte als Käufer bei Mängeln nach dem Kauf?')">Kaufrecht Mängel</button>
+          </div>
+        </div>
+      </div>
+      <div class="input-area">
+        <div class="input-row">
+          <div class="input-wrapper">
+            <textarea id="input-chat" placeholder="Sachverhalt schildern oder Rechtsfrage stellen…" rows="1"
+              onkeydown="handleKeydown(event, 'chat')" oninput="autoResize(this)"></textarea>
+          </div>
+          <button class="send-btn" id="send-chat" onclick="sendMessage('chat')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+            Senden
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PANEL: VORLAGEN -->
+    <!-- ============================================================ -->
+    <div class="tool-panel" id="panel-templates">
+      <div class="panel-header">
+        <div class="panel-title">Dokumentvorlagen</div>
+        <div class="panel-desc">KI-generierte juristische Dokumente und Vorlagen</div>
+      </div>
+      <div class="templates-grid">
+
+        <div class="template-card" onclick="useTemplate('Erstelle einen deutschen Mietvertrag für eine Wohnung. Bitte erstelle einen vollständigen, rechtlich korrekten Mietvertrag nach deutschem Recht mit allen wichtigen Klauseln.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+              <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+          </div>
+          <div class="template-title">Mietvertrag</div>
+          <div class="template-desc">Vollständiger Wohnraummietvertrag nach deutschem Recht</div>
+          <span class="template-tag">Mietrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle einen Arbeitsvertrag für einen Vollzeitangestellten in Deutschland. Alle wichtigen arbeitsrechtlichen Klauseln sollen enthalten sein.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+            </svg>
+          </div>
+          <div class="template-title">Arbeitsvertrag</div>
+          <div class="template-desc">Unbefristeter Vollzeit-Arbeitsvertrag mit aktuellen Klauseln</div>
+          <span class="template-tag">Arbeitsrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle einen deutschen Kaufvertrag für bewegliche Sachen (z.B. ein Fahrzeug oder Möbel). Vollständig mit Gewährleistungsausschluss.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+              <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+            </svg>
+          </div>
+          <div class="template-title">Kaufvertrag</div>
+          <div class="template-desc">Kaufvertrag für bewegliche Sachen mit Gewährleistung</div>
+          <span class="template-tag">Kaufrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle eine anwaltliche Abmahnung wegen Urheberrechtsverletzung im Internet. Professionelles juristisches Schreiben mit Unterlassungserklärung.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <div class="template-title">Abmahnung</div>
+          <div class="template-desc">Anwaltliche Abmahnung mit Unterlassungserklärung</div>
+          <span class="template-tag">Urheberrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle einen vollständigen GmbH-Gesellschaftsvertrag nach deutschem Recht für eine Standard-GmbH mit 2 Gesellschaftern.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <div class="template-title">GmbH-Gesellschaftsvertrag</div>
+          <div class="template-desc">Satzung für eine Zwei-Gesellschafter-GmbH</div>
+          <span class="template-tag">Gesellschaftsrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle eine DSGVO-konforme Datenschutzerklärung für eine Website eines kleinen Unternehmens in Deutschland.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          <div class="template-title">Datenschutzerklärung</div>
+          <div class="template-desc">DSGVO-konforme Datenschutzerklärung für Websites</div>
+          <span class="template-tag">DSGVO</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle einen Widerspruch gegen einen Verwaltungsakt (z.B. Bußgeldbescheid) nach deutschem Verwaltungsrecht. Mit Begründung und korrekter Form.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
+            </svg>
+          </div>
+          <div class="template-title">Widerspruch</div>
+          <div class="template-desc">Widerspruch gegen Verwaltungsakte nach VwGO</div>
+          <span class="template-tag">Verwaltungsrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle ein Testament nach deutschem Erbrecht. Ein handschriftliches Testament mit Erbeinsetzung, Vermächtnissen und Pflichtteilsklausel.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <div class="template-title">Testament</div>
+          <div class="template-desc">Handschriftliches Testament nach deutschem Erbrecht</div>
+          <span class="template-tag">Erbrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle eine Klageschrift für eine Zahlungsklage beim Amtsgericht. Vollständige Klageschrift mit Sachverhalt, rechtlicher Begründung und Beweisangeboten.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+          </div>
+          <div class="template-title">Klageschrift</div>
+          <div class="template-desc">Zahlungsklage beim Amtsgericht nach ZPO</div>
+          <span class="template-tag">Zivilprozessrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle einen NDA (Non-Disclosure Agreement / Geheimhaltungsvereinbarung) auf Deutsch für zwei Unternehmen, die eine Zusammenarbeit prüfen.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+            </svg>
+          </div>
+          <div class="template-title">NDA / Geheimhaltung</div>
+          <div class="template-desc">Gegenseitige Geheimhaltungsvereinbarung (NDA)</div>
+          <span class="template-tag">Vertragsrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle ein Abmahnungsschreiben an einen Schuldner wegen Zahlungsverzugs. Letztes Mahnschreiben vor Klage mit Fristsetzung.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+          </div>
+          <div class="template-title">Mahnung / Fristsetzung</div>
+          <div class="template-desc">Letzte Mahnung mit anwaltlicher Fristsetzung</div>
+          <span class="template-tag">Schuldrecht</span>
+        </div>
+
+        <div class="template-card" onclick="useTemplate('Erstelle einen Software-Lizenzvertrag für eine SaaS-Anwendung nach deutschem Recht. Mit Nutzungsrechten, Haftungsbeschränkungen und SLA.')">
+          <div class="template-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </div>
+          <div class="template-title">Software-Lizenzvertrag</div>
+          <div class="template-desc">SaaS-Lizenzvertrag mit IT-rechtlichen Klauseln</div>
+          <span class="template-tag">IT-Recht</span>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PANEL: EINSTELLUNGEN -->
+    <!-- ============================================================ -->
+    <div class="tool-panel" id="panel-settings">
+      <div class="panel-header">
+        <div class="panel-title">Einstellungen</div>
+        <div class="panel-desc">API-Konfiguration und Modellparameter anpassen</div>
+      </div>
+      <div class="settings-content">
+
+        <div class="settings-section">
+          <h3>API-Konfiguration</h3>
+          <div class="form-group">
+            <label class="form-label">API-Schlüssel</label>
+            <input type="password" class="form-input" id="setting-apikey" value="sk-804784c78bd74b8189ff9c0c7fae33a1" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">API-Endpunkt</label>
+            <input type="text" class="form-input" id="setting-endpoint" value="https://api.deepseek.com/v1/chat/completions" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Modell</label>
+            <select class="form-select" id="setting-model">
+              <option value="deepseek-v4-pro" selected>deepseek-v4-pro (Empfohlen)</option>
+              <option value="deepseek-chat">deepseek-chat (V3)</option>
+              <option value="deepseek-reasoner">deepseek-reasoner (R1)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Modellparameter</h3>
+          <div class="form-group">
+            <label class="form-label">
+              Temperature: <span class="range-value" id="temp-value">0.3</span>
+              <small style="color:var(--text-muted); margin-left:8px;">(niedriger = präziser, höher = kreativer)</small>
+            </label>
+            <input type="range" class="form-input" id="setting-temp" min="0" max="1" step="0.05" value="0.3"
+              oninput="document.getElementById('temp-value').textContent = this.value" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">
+              Max. Tokens: <span class="range-value" id="tokens-value">4096</span>
+            </label>
+            <input type="range" class="form-input" id="setting-tokens" min="512" max="8192" step="256" value="4096"
+              oninput="document.getElementById('tokens-value').textContent = this.value" />
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Juristischer Kontext</h3>
+          <div class="form-group">
+            <label class="form-label">Rechtssystem</label>
+            <select class="form-select" id="setting-jurisdiction">
+              <option value="german" selected>Deutsches Recht</option>
+              <option value="austrian">Österreichisches Recht</option>
+              <option value="swiss">Schweizer Recht</option>
+              <option value="eu">EU-Recht</option>
+              <option value="international">Internationales Recht</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Spezialisierung</label>
+            <select class="form-select" id="setting-specialty">
+              <option value="general" selected>Allgemein</option>
+              <option value="civil">Zivilrecht</option>
+              <option value="criminal">Strafrecht</option>
+              <option value="administrative">Verwaltungsrecht</option>
+              <option value="labor">Arbeitsrecht</option>
+              <option value="corporate">Gesellschaftsrecht</option>
+              <option value="ip">Gewerblicher Rechtsschutz / IP</option>
+              <option value="tax">Steuerrecht</option>
+              <option value="it">IT-Recht / Datenschutz</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="save-btn" onclick="saveSettings()">Einstellungen speichern</button>
+
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+  // ==========================================================================
+  // CONFIGURATION
+  // ==========================================================================
+  const config = {
+    apiKey: 'sk-804784c78bd74b8189ff9c0c7fae33a1',
+    endpoint: 'https://api.deepseek.com/v1/chat/completions',
+    model: 'deepseek-v4-pro',
+    temperature: 0.3,
+    maxTokens: 4096,
+    jurisdiction: 'german',
+    specialty: 'general'
+  };
+
+  // ==========================================================================
+  // CHAT HISTORIES
+  // ==========================================================================
+  const histories = {
+    research: [],
+    analysis: [],
+    chat: []
+  };
+
+  // ==========================================================================
+  // SYSTEM PROMPTS
+  // ==========================================================================
+  function getSystemPrompt(panel) {
+    const j = config.jurisdiction === 'german' ? 'deutschen' :
+               config.jurisdiction === 'austrian' ? 'österreichischen' :
+               config.jurisdiction === 'swiss' ? 'schweizer' :
+               config.jurisdiction === 'eu' ? 'europäischen' : 'internationalen';
+
+    const base = `Du bist ein hochqualifizierter KI-Assistent für juristische Recherche und Rechtsberatung, spezialisiert auf das ${j} Recht.
+Du antwortest immer auf Deutsch, präzise, strukturiert und rechtlich korrekt.
+Formatiere Antworten mit Überschriften (## / ###), Listen und Hervorhebungen für bessere Lesbarkeit.
+Zitiere relevante Paragraphen, Normen und Urteile, wenn bekannt.
+Weise darauf hin, dass deine Antworten keine anwaltliche Beratung ersetzen und für konkrete Rechtsfragen ein Rechtsanwalt konsultiert werden sollte.`;
+
+    const prompts = {
+      research: base + `\n\nSpezialisierung: Juristische Recherche. Erkläre Rechtsbegriffe, Gesetze und Rechtsprechung detailliert und verständlich. Strukturiere Antworten mit: Rechtsgrundlage, Anwendungsbereich, aktuelle Rechtsprechung, praktische Bedeutung.`,
+      analysis: base + `\n\nSpezialisierung: Dokumentenanalyse. Analysiere juristische Dokumente präzise. Identifiziere problematische Klauseln, rechtliche Risiken und Optimierungspotenzial. Strukturiere Berichte klar.`,
+      chat: base + `\n\nSpezialisierung: Rechtsberatung und Gutachten. Verwende den klassischen Gutachtenstil: Definition, Obersatz, Voraussetzungen, Subsumtion, Ergebnis. Bei Sachverhaltsanfragen: Fakten prüfen, Normen anwenden, Empfehlungen geben.`
+    };
+    return prompts[panel] || base;
+  }
+
+  // ==========================================================================
+  // PANEL SWITCHING
+  // ==========================================================================
+  function switchPanel(name) {
+    document.querySelectorAll('.tool-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    document.getElementById('nav-' + name).classList.add('active');
+  }
+
+  // ==========================================================================
+  // SEND MESSAGE
+  // ==========================================================================
+  async function sendMessage(panel) {
+    const input = document.getElementById('input-' + panel);
+    const text = input.value.trim();
+    if (!text) return;
+
+    input.value = '';
+    autoResize(input);
+    appendMessage(panel, 'user', text);
+    histories[panel].push({ role: 'user', content: text });
+
+    if (panel === 'chat') updateChatCount();
+
+    await callAPI(panel);
+  }
+
+  async function sendQuickPrompt(panel, prompt) {
+    switchPanel(panel);
+    const input = document.getElementById('input-' + panel);
+    input.value = prompt;
+    await sendMessage(panel);
+  }
+
+  async function analyzeDocument(type) {
+    const docText = document.getElementById('doc-input').value.trim();
+    if (!docText) { showToast('Bitte fügen Sie zuerst ein Dokument ein.', 'error'); return; }
+
+    const prompts = {
+      summary: `Erstelle eine strukturierte juristische Zusammenfassung des folgenden Dokuments. Gehe auf: Art des Dokuments, beteiligte Parteien, Kerninhalt, wichtigste Regelungen und rechtliche Einordnung ein:\n\n${docText}`,
+      risks: `Analysiere das folgende Dokument auf juristische Risiken, problematische Klauseln und rechtliche Schwachstellen. Priorisiere die Risiken (hoch/mittel/niedrig) und erkläre die rechtlichen Konsequenzen:\n\n${docText}`,
+      clauses: `Prüfe alle Klauseln des folgenden Dokuments auf ihre AGB-rechtliche Wirksamkeit (§§ 305 ff. BGB), Transparenzgebot und mögliche Unwirksamkeit. Führe jede Klausel mit Bewertung auf:\n\n${docText}`,
+      optimize: `Analysiere das folgende Dokument und gib konkrete Optimierungsvorschläge für eine klarere, rechtssicherere und ausgewogenere Formulierung. Markiere verbesserungswürdige Passagen:\n\n${docText}`
+    };
+
+    const chatArea = document.getElementById('chat-analysis');
+    chatArea.innerHTML = '';
+    histories.analysis = [];
+    histories.analysis.push({ role: 'user', content: prompts[type] });
+
+    appendMessage('analysis', 'user', {
+      summary: '🔍 Zusammenfassung erstellen',
+      risks: '⚠️ Risiken analysieren',
+      clauses: '✅ Klauseln prüfen',
+      optimize: '✏️ Optimierungsvorschläge'
+    }[type]);
+
+    await callAPI('analysis');
+  }
+
+  async function useTemplate(prompt) {
+    switchPanel('chat');
+    const input = document.getElementById('input-chat');
+    input.value = prompt;
+    await sendMessage('chat');
+  }
+
+  // ==========================================================================
+  // API CALL
+  // ==========================================================================
+  async function callAPI(panel) {
+    const sendBtn = document.getElementById('send-' + panel);
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.innerHTML = '<div class="spinner"></div> Lädt…'; }
+
+    setStatus('connecting');
+
+    // Show typing indicator
+    const typingId = 'typing-' + Date.now();
+    const chatArea = document.getElementById('chat-' + panel);
+    const typingEl = document.createElement('div');
+    typingEl.id = typingId;
+    typingEl.className = 'message assistant';
+    typingEl.innerHTML = `
+      <div class="msg-avatar ai-av">KI</div>
+      <div class="msg-bubble">
+        <div class="typing-indicator">
+          <span></span><span></span><span></span>
+        </div>
+      </div>`;
+    chatArea.appendChild(typingEl);
+    chatArea.scrollTop = chatArea.scrollHeight;
+
+    try {
+      const messages = [
+        { role: 'system', content: getSystemPrompt(panel) },
+        ...histories[panel]
+      ];
+
+      const response = await fetch(config.endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: messages,
+          temperature: config.temperature,
+          max_tokens: config.maxTokens,
+          stream: true
+        })
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error?.message || `HTTP ${response.status}`);
+      }
+
+      // Remove typing indicator, create response bubble
+      typingEl.remove();
+      const msgEl = createAssistantBubble(panel);
+      let fullText = '';
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === 'data: [DONE]') continue;
+          if (!trimmed.startsWith('data: ')) continue;
+
+          try {
+            const data = JSON.parse(trimmed.slice(6));
+            const delta = data.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              fullText += delta;
+              const bubble = msgEl.querySelector('.msg-bubble-content');
+              bubble.innerHTML = renderMarkdown(fullText) + '<span class="cursor-blink"></span>';
+              chatArea.scrollTop = chatArea.scrollHeight;
+            }
+          } catch (e) { /* skip malformed */ }
+        }
+      }
+
+      // Finalize
+      const bubble = msgEl.querySelector('.msg-bubble-content');
+      bubble.innerHTML = renderMarkdown(fullText);
+      addCopyButton(msgEl, fullText);
+      addTimestamp(msgEl);
+
+      histories[panel].push({ role: 'assistant', content: fullText });
+      setStatus('connected');
+
+    } catch (err) {
+      typingEl.remove();
+      appendMessage(panel, 'error', `Fehler: ${err.message}`);
+      setStatus('error');
+      showToast('API-Fehler: ' + err.message, 'error');
+    } finally {
+      if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Senden`;
+      }
+    }
+  }
+
+  // ==========================================================================
+  // MESSAGE RENDERING
+  // ==========================================================================
+  function appendMessage(panel, role, content) {
+    const chatArea = document.getElementById('chat-' + panel);
+    const msg = document.createElement('div');
+    msg.className = `message ${role === 'user' ? 'user' : role === 'error' ? 'assistant' : 'assistant'}`;
+
+    if (role === 'user') {
+      msg.innerHTML = `
+        <div class="msg-avatar user-av">Sie</div>
+        <div class="msg-bubble">${escapeHtml(content)}</div>`;
+    } else if (role === 'error') {
+      msg.innerHTML = `
+        <div class="msg-avatar ai-av" style="background:var(--danger)">!</div>
+        <div class="msg-bubble" style="border-color:var(--danger); color:var(--danger)">${escapeHtml(content)}</div>`;
+    }
+
+    chatArea.appendChild(msg);
+    chatArea.scrollTop = chatArea.scrollHeight;
+    return msg;
+  }
+
+  function createAssistantBubble(panel) {
+    const chatArea = document.getElementById('chat-' + panel);
+    const msg = document.createElement('div');
+    msg.className = 'message assistant';
+    msg.innerHTML = `
+      <div class="msg-avatar ai-av">KI</div>
+      <div class="msg-bubble">
+        <div class="msg-bubble-content"></div>
+        <div class="msg-meta" style="margin-top:6px;"></div>
+      </div>`;
+    chatArea.appendChild(msg);
+    chatArea.scrollTop = chatArea.scrollHeight;
+    return msg;
+  }
+
+  function addCopyButton(msgEl, text) {
+    const meta = msgEl.querySelector('.msg-meta');
+    if (!meta) return;
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = '📋 Kopieren';
+    btn.onclick = () => {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = '✅ Kopiert!';
+        setTimeout(() => { btn.textContent = '📋 Kopieren'; }, 2000);
+      });
+    };
+    meta.appendChild(btn);
+  }
+
+  function addTimestamp(msgEl) {
+    const meta = msgEl.querySelector('.msg-meta');
+    if (!meta) return;
+    const time = document.createElement('div');
+    time.className = 'msg-time';
+    time.textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    meta.appendChild(time);
+  }
+
+  // ==========================================================================
+  // MARKDOWN RENDERER (lightweight)
+  // ==========================================================================
+  function renderMarkdown(text) {
+    let html = escapeHtml(text);
+
+    // Code blocks
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+      `<pre><code>${code.trim()}</code></pre>`);
+
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Bold
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+
+    // Italic
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+
+    // Headings
+    html = html.replace(/^### (.+)$/gm, '<h4 style="color:var(--primary);margin:12px 0 6px;font-size:0.95rem;">$1</h4>');
+    html = html.replace(/^## (.+)$/gm, '<h3 style="color:var(--primary);margin:14px 0 8px;font-size:1rem;border-bottom:1px solid var(--border);padding-bottom:4px;">$1</h3>');
+    html = html.replace(/^# (.+)$/gm, '<h2 style="color:var(--primary);margin:16px 0 10px;font-size:1.1rem;">$1</h2>');
+
+    // Blockquote
+    html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+
+    // Unordered list
+    html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>(\n|$))+/g, m => `<ul>${m}</ul>`);
+
+    // Ordered list
+    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+    // Horizontal rule
+    html = html.replace(/^---$/gm, '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0;">');
+
+    // Paragraphs (double newline)
+    html = html.replace(/\n\n/g, '</p><p style="margin:8px 0;">');
+    html = '<p style="margin:0;">' + html + '</p>';
+
+    // Single newlines
+    html = html.replace(/(?<!>)\n(?!<)/g, '<br>');
+
+    return html;
+  }
+
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // ==========================================================================
+  // UI HELPERS
+  // ==========================================================================
+  function handleKeydown(e, panel) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(panel);
+    }
+  }
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 180) + 'px';
+  }
+
+  function clearCurrentChat() {
+    const active = document.querySelector('.nav-btn.active');
+    const panel = active?.id?.replace('nav-', '');
+    if (!panel || !histories[panel]) return;
+    histories[panel] = [];
+    const chatArea = document.getElementById('chat-' + panel);
+    if (chatArea) chatArea.innerHTML = '';
+    if (panel === 'chat') updateChatCount();
+    showToast('Verlauf geleert.', 'info');
+  }
+
+  function updateChatCount() {
+    const count = Math.floor(histories.chat.length / 2);
+    const badge = document.getElementById('chatCount');
+    if (count > 0) { badge.style.display = 'inline-block'; badge.textContent = count; }
+    else { badge.style.display = 'none'; }
+  }
+
+  function setStatus(state) {
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    dot.className = 'status-dot';
+    if (state === 'connected') { dot.classList.add('connected'); text.textContent = 'Verbunden'; }
+    else if (state === 'connecting') { text.textContent = 'Verbindet…'; }
+    else if (state === 'error') { dot.classList.add('error'); text.textContent = 'Fehler'; }
+    else { text.textContent = 'Bereit'; }
+  }
+
+  function showToast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateX(100%)'; toast.style.transition = 'all 0.3s'; setTimeout(() => toast.remove(), 300); }, 3500);
+  }
+
+  // ==========================================================================
+  // SETTINGS
+  // ==========================================================================
+  function saveSettings() {
+    config.apiKey = document.getElementById('setting-apikey').value;
+    config.endpoint = document.getElementById('setting-endpoint').value;
+    config.model = document.getElementById('setting-model').value;
+    config.temperature = parseFloat(document.getElementById('setting-temp').value);
+    config.maxTokens = parseInt(document.getElementById('setting-tokens').value);
+    config.jurisdiction = document.getElementById('setting-jurisdiction').value;
+    config.specialty = document.getElementById('setting-specialty').value;
+    showToast('Einstellungen gespeichert.', 'success');
+    setStatus('');
+  }
+
+  // ==========================================================================
+  // INIT
+  // ==========================================================================
+  document.addEventListener('DOMContentLoaded', () => {
+    // Set initial status
+    setStatus('');
+
+    // Load saved settings from sessionStorage if any
+    const saved = sessionStorage.getItem('legal-ai-config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        Object.assign(config, parsed);
+        document.getElementById('setting-apikey').value = config.apiKey;
+        document.getElementById('setting-endpoint').value = config.endpoint;
+        document.getElementById('setting-model').value = config.model;
+        document.getElementById('setting-temp').value = config.temperature;
+        document.getElementById('temp-value').textContent = config.temperature;
+        document.getElementById('setting-tokens').value = config.maxTokens;
+        document.getElementById('tokens-value').textContent = config.maxTokens;
+        document.getElementById('setting-jurisdiction').value = config.jurisdiction;
+        document.getElementById('setting-specialty').value = config.specialty;
+      } catch(e) {}
+    }
+
+    // Auto-save settings on change
+    const settingsInputs = ['setting-apikey','setting-endpoint','setting-model','setting-temp','setting-tokens','setting-jurisdiction','setting-specialty'];
+    settingsInputs.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', () => {
+        sessionStorage.setItem('legal-ai-config', JSON.stringify(config));
+      });
+    });
+  });
+</script>
+</body>
+</html>
