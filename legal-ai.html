@@ -675,14 +675,131 @@
       text-align: center;
     }
 
+    /* MEMORY PANEL */
+    .memory-layout {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      overflow: hidden;
+    }
+    .memory-toolbar {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 28px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .mem-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 7px;
+      border: 1.5px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .mem-btn:hover { border-color: var(--primary); color: var(--primary); background: rgba(26,58,92,0.05); }
+    .mem-btn.danger:hover { border-color: var(--danger); color: var(--danger); background: rgba(192,57,43,0.05); }
+    .mem-btn.upload { border-color: var(--primary); color: var(--primary); }
+    .mem-btn.download { border-color: var(--success); color: var(--success); }
+    .mem-btn.download:hover { background: rgba(30,126,52,0.06); }
+    .mem-active-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      border-radius: 7px;
+      border: 1.5px solid var(--border);
+      background: var(--bg);
+      cursor: pointer;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      transition: all 0.2s;
+      margin-left: auto;
+    }
+    .mem-active-toggle:hover { border-color: var(--primary); }
+    .mem-active-toggle.active {
+      background: linear-gradient(135deg, #1a6b1a, #2d9e2d);
+      border-color: #1a6b1a;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(26,107,26,0.25);
+    }
+    .mem-active-toggle .toggle-track { background: rgba(0,0,0,0.15); }
+    .mem-active-toggle.active .toggle-track { background: rgba(255,255,255,0.35); }
+    .memory-editor-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 20px 28px;
+      gap: 12px;
+    }
+    .memory-editor {
+      flex: 1;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      background: #fff;
+      font-family: 'Courier New', 'Consolas', monospace;
+      font-size: 0.86rem;
+      line-height: 1.7;
+      padding: 16px;
+      resize: none;
+      color: var(--text);
+      transition: border-color 0.15s;
+      min-height: 0;
+    }
+    .memory-editor:focus { outline: none; border-color: var(--primary); }
+    .memory-editor.drag-over {
+      border-color: var(--accent);
+      background: rgba(200,168,75,0.05);
+    }
+    .memory-stats {
+      display: flex;
+      gap: 20px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      align-items: center;
+    }
+    .memory-stats span strong { color: var(--primary); }
+    .memory-hint {
+      background: linear-gradient(135deg, rgba(26,58,92,0.06), rgba(26,58,92,0.02));
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+    .memory-hint strong { color: var(--primary); }
+    .memory-active-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      background: rgba(30,126,52,0.12);
+      border-radius: 12px;
+      font-size: 0.75rem;
+      color: var(--success);
+      font-weight: 700;
+    }
+    .memory-active-badge::before {
+      content: '';
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
     @media (max-width: 768px) {
-      .sidebar { width: 56px; min-width: 56px; }
-      .nav-btn span, .sidebar-section-label, .sidebar-bottom { display: none; }
-      .nav-btn { justify-content: center; padding: 12px; }
-      .panel-header, .input-area { padding: 12px 16px; }
-      .chat-area { padding: 16px; }
-      .doc-analysis-layout { flex-direction: column; }
-      .doc-input-panel { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+      .memory-toolbar { padding: 10px 14px; }
+      .memory-editor-wrap { padding: 14px; }
     }
   </style>
 </head>
@@ -740,6 +857,15 @@
         <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
       </svg>
       <span>Vorlagen</span>
+    </button>
+
+    <button class="nav-btn" onclick="switchPanel('memory')" id="nav-memory">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+      </svg>
+      <span>Gedächtnis</span>
     </button>
 
     <div class="sidebar-section-label">Einstellungen</div>
@@ -1095,6 +1221,82 @@
     </div>
 
     <!-- ============================================================ -->
+    <!-- PANEL: GEDÄCHTNIS -->
+    <!-- ============================================================ -->
+    <div class="tool-panel" id="panel-memory">
+      <div class="panel-header">
+        <div class="panel-title">
+          Persistentes Gedächtnis
+          <span id="mem-active-badge" style="display:none; margin-left:10px;">
+            <span class="memory-active-badge">Aktiv — wird in alle Anfragen eingebunden</span>
+          </span>
+        </div>
+        <div class="panel-desc">Notizen, Fallinfos, Mandantendaten und Kontext als Markdown speichern und laden</div>
+      </div>
+      <div class="memory-layout">
+        <div class="memory-toolbar">
+          <!-- Upload -->
+          <label class="mem-btn upload" title="MD-Datei laden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            MD-Datei laden
+            <input type="file" id="mem-upload-input" accept=".md,.txt" style="display:none"
+              onchange="uploadMemory(this)">
+          </label>
+
+          <!-- Download -->
+          <button class="mem-btn download" onclick="downloadMemory()" title="Als MD-Datei speichern">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Als MD speichern
+          </button>
+
+          <!-- Clear -->
+          <button class="mem-btn danger" onclick="clearMemory()" title="Gedächtnis leeren">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M10 11v6"/><path d="M14 11v6"/>
+            </svg>
+            Leeren
+          </button>
+
+          <!-- Active Toggle -->
+          <button class="mem-active-toggle" id="mem-active-toggle" onclick="toggleMemoryActive()">
+            <div class="toggle-track"><div class="toggle-thumb"></div></div>
+            <span id="mem-toggle-label">In Anfragen einbinden</span>
+          </button>
+        </div>
+
+        <div class="memory-editor-wrap">
+          <div class="memory-hint">
+            <strong>Tipp:</strong> Notieren Sie hier Fallinfos, Mandantendaten, häufig genutzte Definitionen oder
+            persönliche Präferenzen als Markdown. Wenn das Gedächtnis aktiv ist, wird der Inhalt automatisch in
+            jeden System-Prompt eingebunden. <strong>Drag &amp; Drop</strong> einer .md-Datei in den Editor wird ebenfalls unterstützt.
+          </div>
+          <textarea
+            id="memory-editor"
+            class="memory-editor"
+            placeholder="# Gedächtnis / Kontext&#10;&#10;## Aktueller Fall&#10;- Mandant: ...&#10;- Sachverhalt: ...&#10;&#10;## Wichtige Definitionen&#10;&#10;## Bevorzugte Quellen&#10;&#10;## Notizen"
+            oninput="updateMemoryStats()"
+            ondragover="handleMemoryDragOver(event)"
+            ondragleave="handleMemoryDragLeave(event)"
+            ondrop="handleMemoryDrop(event)"
+          ></textarea>
+          <div class="memory-stats">
+            <span>Zeichen: <strong id="stat-chars">0</strong></span>
+            <span>Wörter: <strong id="stat-words">0</strong></span>
+            <span>Zeilen: <strong id="stat-lines">0</strong></span>
+            <span id="stat-status" style="margin-left:auto; font-size:0.75rem; color:var(--text-muted);">Nicht gespeichert</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
     <!-- PANEL: EINSTELLUNGEN -->
     <!-- ============================================================ -->
     <div class="tool-panel" id="panel-settings">
@@ -1184,6 +1386,110 @@
 
 <script>
   // ==========================================================================
+  // PERSISTENT MEMORY
+  // ==========================================================================
+  const memory = { content: '', active: false };
+
+  function toggleMemoryActive() {
+    memory.active = !memory.active;
+    const btn = document.getElementById('mem-active-toggle');
+    const badge = document.getElementById('mem-active-badge');
+    const label = document.getElementById('mem-toggle-label');
+    if (memory.active) {
+      btn.classList.add('active');
+      label.textContent = 'Aktiv – wird eingebunden';
+      badge.style.display = 'inline';
+      showToast('Gedächtnis aktiviert – wird in alle Anfragen eingebunden', 'success');
+    } else {
+      btn.classList.remove('active');
+      label.textContent = 'In Anfragen einbinden';
+      badge.style.display = 'none';
+      showToast('Gedächtnis deaktiviert', 'info');
+    }
+  }
+
+  function updateMemoryStats() {
+    const text = document.getElementById('memory-editor').value;
+    memory.content = text;
+    document.getElementById('stat-chars').textContent = text.length;
+    document.getElementById('stat-words').textContent = text.trim() ? text.trim().split(/\s+/).length : 0;
+    document.getElementById('stat-lines').textContent = text ? text.split('\n').length : 0;
+    document.getElementById('stat-status').textContent = 'Ungespeichert – ↓ Als MD speichern';
+    saveMemoryToSession();
+  }
+
+  function downloadMemory() {
+    const content = document.getElementById('memory-editor').value;
+    if (!content.trim()) { showToast('Gedächtnis ist leer.', 'error'); return; }
+    const date = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([content], { type: 'text/markdown; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `juristische-memory-${date}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    document.getElementById('stat-status').textContent = `Gespeichert ${new Date().toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'})}`;
+    showToast('Gedächtnis gespeichert.', 'success');
+  }
+
+  function uploadMemory(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('memory-editor').value = e.target.result;
+      memory.content = e.target.result;
+      updateMemoryStats();
+      document.getElementById('stat-status').textContent = `Geladen: ${file.name}`;
+      showToast(`"${file.name}" geladen.`, 'success');
+    };
+    reader.readAsText(file, 'UTF-8');
+    input.value = '';
+  }
+
+  function clearMemory() {
+    if (!document.getElementById('memory-editor').value.trim()) return;
+    if (!confirm('Gedächtnis wirklich leeren?')) return;
+    document.getElementById('memory-editor').value = '';
+    memory.content = '';
+    memory.active = false;
+    document.getElementById('mem-active-toggle').classList.remove('active');
+    document.getElementById('mem-toggle-label').textContent = 'In Anfragen einbinden';
+    document.getElementById('mem-active-badge').style.display = 'none';
+    updateMemoryStats();
+    document.getElementById('stat-status').textContent = 'Geleert';
+    showToast('Gedächtnis geleert.', 'info');
+  }
+
+  function handleMemoryDragOver(e) {
+    e.preventDefault();
+    document.getElementById('memory-editor').classList.add('drag-over');
+  }
+  function handleMemoryDragLeave(e) {
+    document.getElementById('memory-editor').classList.remove('drag-over');
+  }
+  function handleMemoryDrop(e) {
+    e.preventDefault();
+    document.getElementById('memory-editor').classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      document.getElementById('memory-editor').value = ev.target.result;
+      memory.content = ev.target.result;
+      updateMemoryStats();
+      document.getElementById('stat-status').textContent = `Geladen: ${file.name}`;
+      showToast(`"${file.name}" per Drag & Drop geladen.`, 'success');
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  function saveMemoryToSession() {
+    try { sessionStorage.setItem('legal-ai-memory', memory.content); } catch(e) {}
+  }
+
+  // ==========================================================================
   // GUTACHTENSTIL STATE
   // ==========================================================================
   const gutachtenstil = { research: false, analysis: false, chat: false };
@@ -1250,12 +1556,16 @@ Beantworte JEDE Rechtsfrage strikt im klassischen juristischen Gutachtenstil:
 
 Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Normen fett.`;
 
+    const memorySection = (memory.active && memory.content.trim())
+      ? `\n\n---\n## PERSISTENTES GEDÄCHTNIS / KONTEXT\nDer Nutzer hat folgende dauerhafte Notizen und Kontextinformationen hinterlegt. Berücksichtige sie in deinen Antworten:\n\n${memory.content.trim()}\n---`
+      : '';
+
     const prompts = {
-      research: base + `\n\nSpezialisierung: Juristische Recherche. Erkläre Rechtsbegriffe, Gesetze und Rechtsprechung detailliert und verständlich. Strukturiere Antworten mit: Rechtsgrundlage, Anwendungsbereich, aktuelle Rechtsprechung, praktische Bedeutung.` + (gutachtenstil[panel] ? gutachtenstilPrompt : ''),
-      analysis: base + `\n\nSpezialisierung: Dokumentenanalyse. Analysiere juristische Dokumente präzise. Identifiziere problematische Klauseln, rechtliche Risiken und Optimierungspotenzial. Strukturiere Berichte klar.` + (gutachtenstil[panel] ? gutachtenstilPrompt : ''),
-      chat: base + `\n\nSpezialisierung: Rechtsberatung und Gutachten. Bei Sachverhaltsanfragen: Fakten prüfen, Normen anwenden, Empfehlungen geben.` + (gutachtenstil[panel] ? gutachtenstilPrompt : ' Verwende strukturierte Antworten mit klarer Gliederung.')
+      research: base + `\n\nSpezialisierung: Juristische Recherche. Erkläre Rechtsbegriffe, Gesetze und Rechtsprechung detailliert und verständlich. Strukturiere Antworten mit: Rechtsgrundlage, Anwendungsbereich, aktuelle Rechtsprechung, praktische Bedeutung.` + (gutachtenstil[panel] ? gutachtenstilPrompt : '') + memorySection,
+      analysis: base + `\n\nSpezialisierung: Dokumentenanalyse. Analysiere juristische Dokumente präzise. Identifiziere problematische Klauseln, rechtliche Risiken und Optimierungspotenzial. Strukturiere Berichte klar.` + (gutachtenstil[panel] ? gutachtenstilPrompt : '') + memorySection,
+      chat: base + `\n\nSpezialisierung: Rechtsberatung und Gutachten. Bei Sachverhaltsanfragen: Fakten prüfen, Normen anwenden, Empfehlungen geben.` + (gutachtenstil[panel] ? gutachtenstilPrompt : ' Verwende strukturierte Antworten mit klarer Gliederung.') + memorySection
     };
-    return prompts[panel] || base;
+    return prompts[panel] || base + memorySection;
   }
 
   // ==========================================================================
@@ -1643,6 +1953,15 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
         document.getElementById('setting-jurisdiction').value = config.jurisdiction;
         document.getElementById('setting-specialty').value = config.specialty;
       } catch(e) {}
+    }
+
+    // Restore memory from sessionStorage
+    const savedMemory = sessionStorage.getItem('legal-ai-memory');
+    if (savedMemory) {
+      document.getElementById('memory-editor').value = savedMemory;
+      memory.content = savedMemory;
+      updateMemoryStats();
+      document.getElementById('stat-status').textContent = 'Aus Session wiederhergestellt';
     }
 
     // Auto-save settings on change
