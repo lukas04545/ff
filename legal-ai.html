@@ -3,13 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Juristische KI-Assistenz</title>
+  <title>Juristische Seminararbeit – KI-Assistent</title>
   <style>
     :root {
       --primary: #1a3a5c;
       --primary-light: #2a5080;
       --accent: #c8a84b;
-      --accent-light: #e8c86b;
       --bg: #f4f1eb;
       --bg-card: #ffffff;
       --text: #1a1a2e;
@@ -21,785 +20,198 @@
       --radius: 10px;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Segoe UI', 'Arial', sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
 
     /* HEADER */
     header {
-      background: var(--primary);
-      color: #fff;
-      padding: 0 32px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: 64px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      position: sticky;
-      top: 0;
-      z-index: 100;
+      background: var(--primary); color: #fff; padding: 0 32px;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 64px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      position: sticky; top: 0; z-index: 100;
     }
-    .header-brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-size: 1.25rem;
-      font-weight: 700;
-      letter-spacing: 0.01em;
-    }
+    .header-brand { display: flex; align-items: center; gap: 12px; font-size: 1.2rem; font-weight: 700; }
     .header-brand svg { color: var(--accent); }
-    .header-info {
-      font-size: 0.8rem;
-      color: rgba(255,255,255,0.6);
-    }
-    .api-status {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.8rem;
-      color: rgba(255,255,255,0.8);
-    }
-    .status-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: #6c757d;
-      transition: background 0.3s;
-    }
+    .header-sub { font-size: 0.72rem; color: rgba(255,255,255,0.5); font-weight: 400; margin-left: 4px; }
+    .api-status { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: rgba(255,255,255,0.8); }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #6c757d; transition: background 0.3s; }
     .status-dot.connected { background: #28a745; }
     .status-dot.error { background: #dc3545; }
 
     /* LAYOUT */
-    .app-layout {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-      height: calc(100vh - 64px);
-    }
+    .app-layout { display: flex; flex: 1; overflow: hidden; height: calc(100vh - 64px); }
 
     /* SIDEBAR */
-    .sidebar {
-      width: 220px;
-      min-width: 220px;
-      background: var(--primary);
-      display: flex;
-      flex-direction: column;
-      padding: 20px 0 16px 0;
-    }
-    .sidebar-section-label {
-      font-size: 0.68rem;
-      font-weight: 700;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: rgba(255,255,255,0.4);
-      padding: 16px 20px 6px 20px;
-    }
-    .nav-btn {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 20px;
-      cursor: pointer;
-      border: none;
-      background: transparent;
-      color: rgba(255,255,255,0.75);
-      font-size: 0.92rem;
-      text-align: left;
-      width: 100%;
-      border-left: 3px solid transparent;
-      transition: all 0.15s;
-    }
+    .sidebar { width: 228px; min-width: 228px; background: var(--primary); display: flex; flex-direction: column; padding: 20px 0 16px 0; }
+    .sidebar-section-label { font-size: 0.67rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.38); padding: 16px 20px 6px 20px; }
+    .nav-btn { display: flex; align-items: center; gap: 10px; padding: 10px 20px; cursor: pointer; border: none; background: transparent; color: rgba(255,255,255,0.75); font-size: 0.91rem; text-align: left; width: 100%; border-left: 3px solid transparent; transition: all 0.15s; }
     .nav-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
-    .nav-btn.active {
-      background: rgba(200,168,75,0.15);
-      color: var(--accent);
-      border-left-color: var(--accent);
-    }
+    .nav-btn.active { background: rgba(200,168,75,0.15); color: var(--accent); border-left-color: var(--accent); }
     .nav-btn svg { opacity: 0.85; flex-shrink: 0; }
-    .sidebar-bottom {
-      margin-top: auto;
-      padding: 12px 20px;
-    }
-    .clear-btn {
-      width: 100%;
-      padding: 8px;
-      background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 6px;
-      color: rgba(255,255,255,0.6);
-      font-size: 0.82rem;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
+    .nav-step { margin-left: auto; font-size: 0.68rem; background: rgba(255,255,255,0.12); border-radius: 10px; padding: 2px 7px; color: rgba(255,255,255,0.6); }
+    .nav-btn.active .nav-step { background: rgba(200,168,75,0.25); color: var(--accent); }
+    .sidebar-bottom { margin-top: auto; padding: 12px 20px; }
+    .clear-btn { width: 100%; padding: 8px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: rgba(255,255,255,0.6); font-size: 0.82rem; cursor: pointer; transition: all 0.15s; }
     .clear-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
 
-    /* MAIN CONTENT */
-    .main-content {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
+    /* MAIN */
+    .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
-    /* TOOL PANELS */
-    .tool-panel {
-      display: none;
-      flex-direction: column;
-      flex: 1;
-      overflow: hidden;
-    }
+    /* PANELS */
+    .tool-panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
     .tool-panel.active { display: flex; }
-
-    .panel-header {
-      background: var(--bg-card);
-      border-bottom: 1px solid var(--border);
-      padding: 16px 28px 12px 28px;
-    }
-    .panel-title {
-      font-size: 1.1rem;
-      font-weight: 700;
-      color: var(--primary);
-    }
-    .panel-desc {
-      font-size: 0.82rem;
-      color: var(--text-muted);
-      margin-top: 2px;
-    }
+    .panel-header { background: var(--bg-card); border-bottom: 1px solid var(--border); padding: 14px 28px 12px; }
+    .panel-title { font-size: 1.08rem; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 10px; }
+    .panel-desc { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
 
     /* CHAT AREA */
-    .chat-area {
-      flex: 1;
-      overflow-y: auto;
-      padding: 20px 28px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-
-    .message {
-      display: flex;
-      gap: 12px;
-      max-width: 880px;
-    }
+    .chat-area { flex: 1; overflow-y: auto; padding: 20px 28px; display: flex; flex-direction: column; gap: 16px; }
+    .message { display: flex; gap: 12px; max-width: 920px; }
     .message.user { flex-direction: row-reverse; align-self: flex-end; }
     .message.assistant { align-self: flex-start; }
-
-    .msg-avatar {
-      width: 34px; height: 34px;
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
-      font-size: 0.85rem;
-      font-weight: 700;
-    }
+    .msg-avatar { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.8rem; font-weight: 700; }
     .msg-avatar.user-av { background: var(--primary); color: #fff; }
     .msg-avatar.ai-av { background: var(--accent); color: var(--primary); }
-
-    .msg-bubble {
-      padding: 12px 16px;
-      border-radius: var(--radius);
-      font-size: 0.9rem;
-      line-height: 1.65;
-      max-width: 760px;
-    }
-    .message.user .msg-bubble {
-      background: var(--primary);
-      color: #fff;
-      border-bottom-right-radius: 3px;
-    }
-    .message.assistant .msg-bubble {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-bottom-left-radius: 3px;
-      box-shadow: var(--shadow);
-    }
+    .msg-bubble { padding: 12px 16px; border-radius: var(--radius); font-size: 0.9rem; line-height: 1.65; max-width: 800px; }
+    .message.user .msg-bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 3px; }
+    .message.assistant .msg-bubble { background: var(--bg-card); border: 1px solid var(--border); border-bottom-left-radius: 3px; box-shadow: var(--shadow); }
+    .msg-bubble h2 { font-size: 1.05rem; color: var(--primary); margin: 14px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+    .msg-bubble h3 { font-size: 0.97rem; color: var(--primary); margin: 12px 0 6px; }
+    .msg-bubble h4 { font-size: 0.92rem; color: var(--primary); margin: 10px 0 5px; }
     .msg-bubble strong { color: var(--accent); }
+    .message.user .msg-bubble strong { color: #fff; font-weight: 700; }
     .msg-bubble ul, .msg-bubble ol { margin: 8px 0 8px 20px; }
     .msg-bubble li { margin: 4px 0; }
-    .msg-bubble code {
-      background: rgba(0,0,0,0.07);
-      padding: 1px 5px;
-      border-radius: 3px;
-      font-size: 0.85em;
-      font-family: 'Courier New', monospace;
-    }
+    .msg-bubble code { background: rgba(0,0,0,0.07); padding: 1px 5px; border-radius: 3px; font-size: 0.84em; font-family: 'Courier New', monospace; }
     .message.user .msg-bubble code { background: rgba(255,255,255,0.2); }
-    .msg-bubble pre {
-      background: #1e2a3a;
-      color: #e8e8e8;
-      padding: 12px;
-      border-radius: 6px;
-      overflow-x: auto;
-      margin: 10px 0;
-      font-size: 0.82rem;
-    }
-    .msg-bubble blockquote {
-      border-left: 3px solid var(--accent);
-      padding-left: 12px;
-      margin: 8px 0;
-      color: var(--text-muted);
-    }
-    .msg-time {
-      font-size: 0.7rem;
-      color: rgba(255,255,255,0.5);
-      margin-top: 4px;
-      text-align: right;
-    }
-    .message.assistant .msg-time { color: var(--text-muted); }
+    .msg-bubble pre { background: #1e2a3a; color: #e8e8e8; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 10px 0; font-size: 0.82rem; white-space: pre-wrap; }
+    .msg-bubble blockquote { border-left: 3px solid var(--accent); padding-left: 12px; margin: 8px 0; color: var(--text-muted); font-style: italic; }
+    .msg-bubble hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+    .msg-time { font-size: 0.7rem; color: var(--text-muted); margin-top: 6px; }
+    .copy-btn { float: right; padding: 3px 9px; background: rgba(26,58,92,0.07); border: 1px solid var(--border); border-radius: 5px; font-size: 0.73rem; cursor: pointer; color: var(--text-muted); transition: all 0.15s; margin-bottom: 4px; }
+    .copy-btn:hover { background: var(--primary); color: #fff; }
 
-    .welcome-message {
-      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-      color: #fff;
-      padding: 24px;
-      border-radius: var(--radius);
-      margin-bottom: 8px;
-    }
-    .welcome-message h3 { font-size: 1.1rem; margin-bottom: 8px; color: var(--accent); }
-    .welcome-message p { font-size: 0.88rem; line-height: 1.6; opacity: 0.9; }
-    .quick-prompts {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 14px;
-    }
-    .quick-prompt-btn {
-      padding: 6px 12px;
-      background: rgba(255,255,255,0.12);
-      border: 1px solid rgba(255,255,255,0.25);
-      border-radius: 20px;
-      color: #fff;
-      font-size: 0.78rem;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .quick-prompt-btn:hover { background: rgba(200,168,75,0.3); border-color: var(--accent); }
+    /* WELCOME */
+    .welcome-card { background: linear-gradient(135deg, var(--primary), var(--primary-light)); color: #fff; padding: 22px 24px; border-radius: var(--radius); margin-bottom: 4px; }
+    .welcome-card h3 { font-size: 1.05rem; margin-bottom: 7px; color: var(--accent); }
+    .welcome-card p { font-size: 0.86rem; line-height: 1.65; opacity: 0.9; }
+    .quick-prompts { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+    .qp-btn { padding: 5px 12px; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.22); border-radius: 20px; color: #fff; font-size: 0.77rem; cursor: pointer; transition: all 0.15s; }
+    .qp-btn:hover { background: rgba(200,168,75,0.3); border-color: var(--accent); }
 
     /* INPUT AREA */
-    .input-area {
-      background: var(--bg-card);
-      border-top: 1px solid var(--border);
-      padding: 16px 28px;
-    }
-    .input-row {
-      display: flex;
-      gap: 10px;
-      align-items: flex-end;
-    }
-    .input-wrapper {
-      flex: 1;
-      position: relative;
-    }
-    textarea {
-      width: 100%;
-      padding: 12px 16px;
-      border: 1.5px solid var(--border);
-      border-radius: var(--radius);
-      font-size: 0.92rem;
-      font-family: inherit;
-      resize: none;
-      min-height: 50px;
-      max-height: 180px;
-      line-height: 1.5;
-      background: var(--bg);
-      color: var(--text);
-      transition: border-color 0.15s;
-      overflow-y: auto;
-    }
+    .input-area { background: var(--bg-card); border-top: 1px solid var(--border); padding: 14px 28px; }
+    .input-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .input-row { display: flex; gap: 10px; align-items: flex-end; }
+    .input-wrapper { flex: 1; }
+    textarea { width: 100%; padding: 11px 15px; border: 1.5px solid var(--border); border-radius: var(--radius); font-size: 0.91rem; font-family: inherit; resize: none; min-height: 50px; max-height: 180px; line-height: 1.5; background: var(--bg); color: var(--text); transition: border-color 0.15s; overflow-y: auto; }
     textarea:focus { outline: none; border-color: var(--primary); }
-    .send-btn {
-      padding: 12px 20px;
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      border-radius: var(--radius);
-      cursor: pointer;
-      font-size: 0.92rem;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      transition: all 0.15s;
-      white-space: nowrap;
-      height: 50px;
-    }
+    .send-btn { padding: 11px 20px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; font-size: 0.91rem; font-weight: 600; display: flex; align-items: center; gap: 7px; transition: all 0.15s; white-space: nowrap; height: 50px; }
     .send-btn:hover { background: var(--primary-light); }
     .send-btn:disabled { background: var(--border); cursor: not-allowed; }
-    .send-btn.loading { background: var(--primary-light); }
 
-    /* SPINNER */
-    .spinner {
-      display: inline-block;
-      width: 14px; height: 14px;
-      border: 2px solid rgba(255,255,255,0.4);
-      border-top-color: #fff;
-      border-radius: 50%;
-      animation: spin 0.6s linear infinite;
-    }
+    /* GUTACHTENSTIL TOGGLE */
+    .gs-toggle { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; padding: 5px 12px; border-radius: 20px; border: 1.5px solid var(--border); background: var(--bg); transition: all 0.2s; font-size: 0.79rem; color: var(--text-muted); font-weight: 600; }
+    .gs-toggle:hover { border-color: var(--primary); color: var(--primary); }
+    .gs-toggle.active { background: linear-gradient(135deg, var(--primary), var(--primary-light)); border-color: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(26,58,92,0.22); }
+    .toggle-track { width: 28px; height: 15px; border-radius: 8px; background: rgba(0,0,0,0.15); position: relative; flex-shrink: 0; }
+    .gs-toggle.active .toggle-track { background: rgba(255,255,255,0.35); }
+    .toggle-thumb { width: 11px; height: 11px; border-radius: 50%; background: #fff; position: absolute; top: 2px; left: 2px; transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+    .gs-toggle.active .toggle-thumb { transform: translateX(13px); }
+
+    /* SPINNER / TYPING */
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* TYPING INDICATOR */
-    .typing-indicator {
-      display: flex;
-      gap: 4px;
-      align-items: center;
-      padding: 14px 16px;
-    }
-    .typing-indicator span {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: var(--text-muted);
-      animation: bounce 1.2s infinite;
-    }
+    .typing-indicator { display: flex; gap: 4px; align-items: center; padding: 14px 16px; }
+    .typing-indicator span { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); animation: bounce 1.2s infinite; }
     .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
     .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes bounce {
-      0%, 60%, 100% { transform: translateY(0); }
-      30% { transform: translateY(-6px); }
-    }
+    @keyframes bounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+    .cursor-blink::after { content: '▊'; animation: blink 0.8s step-end infinite; color: var(--accent); }
+    @keyframes blink { 50% { opacity: 0; } }
 
-    /* DOCUMENT ANALYSIS PANEL */
-    .doc-analysis-layout {
-      display: flex;
-      flex: 1;
-      gap: 0;
-      overflow: hidden;
-    }
-    .doc-input-panel {
-      width: 42%;
-      min-width: 300px;
-      display: flex;
-      flex-direction: column;
-      border-right: 1px solid var(--border);
-      background: var(--bg-card);
-    }
-    .doc-output-panel {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-    .doc-panel-header {
-      padding: 14px 20px;
-      border-bottom: 1px solid var(--border);
-      font-size: 0.82rem;
-      font-weight: 700;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-    .doc-text-area {
-      flex: 1;
-      padding: 16px;
-      overflow-y: auto;
-    }
-    .doc-text-area textarea {
-      width: 100%;
-      height: 100%;
-      min-height: 300px;
-      max-height: none;
-      background: #fff;
-      font-size: 0.88rem;
-    }
-    .doc-actions {
-      padding: 12px 16px;
-      border-top: 1px solid var(--border);
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .action-btn {
-      padding: 8px 14px;
-      border: 1.5px solid var(--primary);
-      border-radius: 6px;
-      background: transparent;
-      color: var(--primary);
-      font-size: 0.82rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
+    /* DOC SPLIT PANEL (Ausarbeitung) */
+    .split-layout { display: flex; flex: 1; overflow: hidden; }
+    .split-left { width: 40%; min-width: 280px; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--bg-card); }
+    .split-right { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .split-header { padding: 12px 18px; border-bottom: 1px solid var(--border); font-size: 0.78rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; display: flex; align-items: center; justify-content: space-between; }
+    .split-body { flex: 1; padding: 14px; overflow-y: auto; }
+    .split-body textarea { height: 100%; min-height: 200px; max-height: none; background: #fff; font-size: 0.86rem; }
+    .split-actions { padding: 10px 14px; border-top: 1px solid var(--border); display: flex; gap: 7px; flex-wrap: wrap; }
+    .action-btn { padding: 7px 13px; border: 1.5px solid var(--primary); border-radius: 6px; background: transparent; color: var(--primary); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 5px; }
     .action-btn:hover { background: var(--primary); color: #fff; }
     .action-btn.primary { background: var(--primary); color: #fff; }
     .action-btn.primary:hover { background: var(--primary-light); }
-    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-    /* TEMPLATES PANEL */
-    .templates-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 16px;
-      padding: 24px 28px;
-      overflow-y: auto;
-      flex: 1;
-    }
-    .template-card {
-      background: var(--bg-card);
-      border: 1.5px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-      cursor: pointer;
-      transition: all 0.2s;
-      box-shadow: var(--shadow);
-    }
-    .template-card:hover {
-      border-color: var(--primary);
-      box-shadow: 0 4px 20px rgba(26,58,92,0.15);
-      transform: translateY(-2px);
-    }
-    .template-icon {
-      width: 40px; height: 40px;
-      background: linear-gradient(135deg, var(--primary), var(--primary-light));
-      border-radius: 8px;
-      display: flex; align-items: center; justify-content: center;
-      color: var(--accent);
-      margin-bottom: 12px;
-    }
-    .template-title {
-      font-size: 0.95rem;
-      font-weight: 700;
-      color: var(--primary);
-      margin-bottom: 6px;
-    }
-    .template-desc {
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      line-height: 1.5;
-    }
-    .template-tag {
-      display: inline-block;
-      margin-top: 10px;
-      padding: 3px 8px;
-      background: rgba(26,58,92,0.08);
-      border-radius: 12px;
-      font-size: 0.72rem;
-      color: var(--primary);
-      font-weight: 600;
-    }
-
-    /* SETTINGS PANEL */
-    .settings-content {
-      padding: 24px 28px;
-      overflow-y: auto;
-      flex: 1;
-    }
-    .settings-section {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-      margin-bottom: 20px;
-      box-shadow: var(--shadow);
-    }
-    .settings-section h3 {
-      font-size: 0.95rem;
-      font-weight: 700;
-      color: var(--primary);
-      margin-bottom: 16px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid var(--border);
-    }
-    .form-group { margin-bottom: 14px; }
-    .form-label {
-      display: block;
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      margin-bottom: 6px;
-    }
-    .form-input, .form-select {
-      width: 100%;
-      padding: 9px 12px;
-      border: 1.5px solid var(--border);
-      border-radius: 6px;
-      font-size: 0.88rem;
-      font-family: inherit;
-      background: var(--bg);
-      color: var(--text);
-      transition: border-color 0.15s;
-    }
-    .form-input:focus, .form-select:focus { outline: none; border-color: var(--primary); }
-    .form-input[type="range"] { padding: 4px 0; border: none; background: transparent; }
-    .range-value {
-      font-size: 0.82rem;
-      color: var(--primary);
-      font-weight: 600;
-      margin-left: 8px;
-    }
-    .save-btn {
-      padding: 10px 24px;
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .save-btn:hover { background: var(--primary-light); }
-
-    /* TOAST */
-    .toast-container {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      z-index: 9999;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .toast {
-      padding: 12px 20px;
-      border-radius: 8px;
-      font-size: 0.85rem;
-      font-weight: 500;
-      color: #fff;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-      animation: slide-in 0.3s ease;
-      max-width: 320px;
-    }
-    .toast.success { background: var(--success); }
-    .toast.error { background: var(--danger); }
-    .toast.info { background: var(--primary); }
-    @keyframes slide-in {
-      from { transform: translateX(100%); opacity: 0; }
-      to { transform: translateX(0); opacity: 1; }
-    }
-
-    /* SCROLLBAR */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #b0aaa0; }
-
-    /* GUTACHTENSTIL TOGGLE */
-    .input-toolbar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 8px;
-    }
-    .gs-toggle {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      user-select: none;
-      padding: 5px 12px;
-      border-radius: 20px;
-      border: 1.5px solid var(--border);
-      background: var(--bg);
-      transition: all 0.2s;
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      font-weight: 600;
-    }
-    .gs-toggle:hover { border-color: var(--primary); color: var(--primary); }
-    .gs-toggle.active {
-      background: linear-gradient(135deg, var(--primary), var(--primary-light));
-      border-color: var(--primary);
-      color: #fff;
-      box-shadow: 0 2px 8px rgba(26,58,92,0.25);
-    }
-    .gs-toggle .toggle-track {
-      width: 30px; height: 16px;
-      border-radius: 8px;
-      background: rgba(0,0,0,0.15);
-      position: relative;
-      transition: background 0.2s;
-      flex-shrink: 0;
-    }
-    .gs-toggle.active .toggle-track { background: rgba(255,255,255,0.35); }
-    .gs-toggle .toggle-thumb {
-      width: 12px; height: 12px;
-      border-radius: 50%;
-      background: #fff;
-      position: absolute;
-      top: 2px; left: 2px;
-      transition: transform 0.2s;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-    }
-    .gs-toggle.active .toggle-thumb { transform: translateX(14px); }
-    .gs-badge {
-      display: inline-block;
-      padding: 2px 7px;
-      background: var(--accent);
-      color: var(--primary);
-      border-radius: 10px;
-      font-size: 0.68rem;
-      font-weight: 800;
-      letter-spacing: 0.04em;
-      vertical-align: middle;
-    }
-
-    /* COPY BTN */
-    .copy-btn {
-      float: right;
-      padding: 4px 10px;
-      background: rgba(26,58,92,0.08);
-      border: 1px solid var(--border);
-      border-radius: 5px;
-      font-size: 0.75rem;
-      cursor: pointer;
-      color: var(--text-muted);
-      transition: all 0.15s;
-      margin-bottom: 4px;
-    }
-    .copy-btn:hover { background: var(--primary); color: #fff; }
-
-    /* RESPONSE STREAMING */
-    .cursor-blink::after {
-      content: '▊';
-      animation: blink 0.8s step-end infinite;
-      color: var(--accent);
-    }
-    @keyframes blink { 50% { opacity: 0; } }
-
-    /* HISTORY BADGE */
-    .history-count {
-      margin-left: auto;
-      background: var(--accent);
-      color: var(--primary);
-      font-size: 0.7rem;
-      font-weight: 700;
-      padding: 2px 7px;
-      border-radius: 10px;
-      min-width: 20px;
-      text-align: center;
-    }
+    /* TEMPLATES GRID */
+    .templates-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; padding: 22px 28px; overflow-y: auto; flex: 1; }
+    .tpl-card { background: var(--bg-card); border: 1.5px solid var(--border); border-radius: var(--radius); padding: 18px; cursor: pointer; transition: all 0.2s; box-shadow: var(--shadow); }
+    .tpl-card:hover { border-color: var(--primary); box-shadow: 0 4px 20px rgba(26,58,92,0.14); transform: translateY(-2px); }
+    .tpl-icon { width: 38px; height: 38px; background: linear-gradient(135deg, var(--primary), var(--primary-light)); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--accent); margin-bottom: 11px; }
+    .tpl-title { font-size: 0.93rem; font-weight: 700; color: var(--primary); margin-bottom: 5px; }
+    .tpl-desc { font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; }
+    .tpl-tag { display: inline-block; margin-top: 9px; padding: 2px 8px; background: rgba(26,58,92,0.08); border-radius: 12px; font-size: 0.7rem; color: var(--primary); font-weight: 600; }
 
     /* MEMORY PANEL */
-    .memory-layout {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      overflow: hidden;
-    }
-    .memory-toolbar {
-      background: var(--bg-card);
-      border-bottom: 1px solid var(--border);
-      padding: 12px 28px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .mem-btn {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 7px 14px;
-      border-radius: 7px;
-      border: 1.5px solid var(--border);
-      background: var(--bg);
-      color: var(--text);
-      font-size: 0.82rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
+    .memory-layout { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+    .memory-toolbar { background: var(--bg-card); border-bottom: 1px solid var(--border); padding: 11px 28px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+    .mem-btn { display: flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 7px; border: 1.5px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
     .mem-btn:hover { border-color: var(--primary); color: var(--primary); background: rgba(26,58,92,0.05); }
-    .mem-btn.danger:hover { border-color: var(--danger); color: var(--danger); background: rgba(192,57,43,0.05); }
     .mem-btn.upload { border-color: var(--primary); color: var(--primary); }
     .mem-btn.download { border-color: var(--success); color: var(--success); }
     .mem-btn.download:hover { background: rgba(30,126,52,0.06); }
-    .mem-active-toggle {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 7px 14px;
-      border-radius: 7px;
-      border: 1.5px solid var(--border);
-      background: var(--bg);
-      cursor: pointer;
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      transition: all 0.2s;
-      margin-left: auto;
-    }
-    .mem-active-toggle:hover { border-color: var(--primary); }
-    .mem-active-toggle.active {
-      background: linear-gradient(135deg, #1a6b1a, #2d9e2d);
-      border-color: #1a6b1a;
-      color: #fff;
-      box-shadow: 0 2px 8px rgba(26,107,26,0.25);
-    }
+    .mem-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+    .mem-active-toggle { display: flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 7px; border: 1.5px solid var(--border); background: var(--bg); cursor: pointer; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); transition: all 0.2s; margin-left: auto; }
+    .mem-active-toggle.active { background: linear-gradient(135deg, #1a6b1a, #2d9e2d); border-color: #1a6b1a; color: #fff; box-shadow: 0 2px 8px rgba(26,107,26,0.22); }
     .mem-active-toggle .toggle-track { background: rgba(0,0,0,0.15); }
     .mem-active-toggle.active .toggle-track { background: rgba(255,255,255,0.35); }
-    .memory-editor-wrap {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      padding: 20px 28px;
-      gap: 12px;
-    }
-    .memory-editor {
-      flex: 1;
-      border: 1.5px solid var(--border);
-      border-radius: var(--radius);
-      background: #fff;
-      font-family: 'Courier New', 'Consolas', monospace;
-      font-size: 0.86rem;
-      line-height: 1.7;
-      padding: 16px;
-      resize: none;
-      color: var(--text);
-      transition: border-color 0.15s;
-      min-height: 0;
-    }
+    .memory-editor-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 18px 28px; gap: 11px; }
+    .memory-editor { flex: 1; border: 1.5px solid var(--border); border-radius: var(--radius); background: #fff; font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.7; padding: 14px; resize: none; color: var(--text); transition: border-color 0.15s; min-height: 0; }
     .memory-editor:focus { outline: none; border-color: var(--primary); }
-    .memory-editor.drag-over {
-      border-color: var(--accent);
-      background: rgba(200,168,75,0.05);
-    }
-    .memory-stats {
-      display: flex;
-      gap: 20px;
-      font-size: 0.78rem;
-      color: var(--text-muted);
-      align-items: center;
-    }
+    .memory-editor.drag-over { border-color: var(--accent); background: rgba(200,168,75,0.05); }
+    .memory-stats { display: flex; gap: 18px; font-size: 0.77rem; color: var(--text-muted); align-items: center; }
     .memory-stats span strong { color: var(--primary); }
-    .memory-hint {
-      background: linear-gradient(135deg, rgba(26,58,92,0.06), rgba(26,58,92,0.02));
-      border: 1px dashed var(--border);
-      border-radius: 8px;
-      padding: 12px 16px;
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      line-height: 1.6;
-    }
+    .memory-hint { background: rgba(26,58,92,0.04); border: 1px dashed var(--border); border-radius: 8px; padding: 11px 15px; font-size: 0.79rem; color: var(--text-muted); line-height: 1.6; }
     .memory-hint strong { color: var(--primary); }
-    .memory-active-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 3px 10px;
-      background: rgba(30,126,52,0.12);
-      border-radius: 12px;
-      font-size: 0.75rem;
-      color: var(--success);
-      font-weight: 700;
-    }
-    .memory-active-badge::before {
-      content: '';
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: var(--success);
-    }
+    .memory-active-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; background: rgba(30,126,52,0.12); border-radius: 12px; font-size: 0.73rem; color: var(--success); font-weight: 700; }
+    .memory-active-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+
+    /* SETTINGS */
+    .settings-content { padding: 22px 28px; overflow-y: auto; flex: 1; }
+    .settings-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; box-shadow: var(--shadow); }
+    .settings-section h3 { font-size: 0.93rem; font-weight: 700; color: var(--primary); margin-bottom: 14px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
+    .form-group { margin-bottom: 13px; }
+    .form-label { display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-bottom: 5px; }
+    .form-input, .form-select { width: 100%; padding: 8px 12px; border: 1.5px solid var(--border); border-radius: 6px; font-size: 0.87rem; font-family: inherit; background: var(--bg); color: var(--text); transition: border-color 0.15s; }
+    .form-input:focus, .form-select:focus { outline: none; border-color: var(--primary); }
+    .form-input[type="range"] { padding: 4px 0; border: none; background: transparent; }
+    .range-value { font-size: 0.8rem; color: var(--primary); font-weight: 600; margin-left: 7px; }
+    .save-btn { padding: 9px 22px; background: var(--primary); color: #fff; border: none; border-radius: 6px; font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .save-btn:hover { background: var(--primary-light); }
+
+    /* TOAST */
+    .toast-container { position: fixed; bottom: 22px; right: 22px; z-index: 9999; display: flex; flex-direction: column; gap: 7px; }
+    .toast { padding: 11px 18px; border-radius: 8px; font-size: 0.83rem; font-weight: 500; color: #fff; box-shadow: 0 4px 14px rgba(0,0,0,0.18); animation: slide-in 0.3s ease; max-width: 310px; }
+    .toast.success { background: var(--success); }
+    .toast.error { background: var(--danger); }
+    .toast.info { background: var(--primary); }
+    @keyframes slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    /* SCROLLBAR */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
     @media (max-width: 768px) {
-      .memory-toolbar { padding: 10px 14px; }
-      .memory-editor-wrap { padding: 14px; }
+      .sidebar { width: 54px; min-width: 54px; }
+      .nav-btn span, .nav-step, .sidebar-section-label, .sidebar-bottom { display: none; }
+      .nav-btn { justify-content: center; padding: 12px; }
+      .panel-header, .input-area { padding: 11px 14px; }
+      .chat-area { padding: 14px; }
+      .split-layout { flex-direction: column; }
+      .split-left { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+      .memory-toolbar { padding: 9px 12px; }
+      .memory-editor-wrap { padding: 12px; }
     }
   </style>
 </head>
@@ -808,11 +220,12 @@
 <!-- HEADER -->
 <header>
   <div class="header-brand">
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5L12 1z"/>
-      <path d="M9 12l2 2 4-4"/>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
     </svg>
-    <span>Juristische KI-Assistenz</span>
+    Juristische Seminararbeit
+    <span class="header-sub">KI-Assistent</span>
   </div>
   <div class="api-status" id="apiStatus">
     <div class="status-dot" id="statusDot"></div>
@@ -820,43 +233,70 @@
   </div>
 </header>
 
-<!-- APP LAYOUT -->
 <div class="app-layout">
 
   <!-- SIDEBAR -->
   <nav class="sidebar">
+    <div class="sidebar-section-label">Arbeitsphasen</div>
+
+    <button class="nav-btn active" onclick="switchPanel('thema')" id="nav-thema">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      <span>Thema &amp; Frage</span>
+      <span class="nav-step">1</span>
+    </button>
+
+    <button class="nav-btn" onclick="switchPanel('gliederung')" id="nav-gliederung">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+        <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+      </svg>
+      <span>Gliederung</span>
+      <span class="nav-step">2</span>
+    </button>
+
+    <button class="nav-btn" onclick="switchPanel('literatur')" id="nav-literatur">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+      </svg>
+      <span>Literaturrecherche</span>
+      <span class="nav-step">3</span>
+    </button>
+
+    <button class="nav-btn" onclick="switchPanel('ausarbeitung')" id="nav-ausarbeitung">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+      </svg>
+      <span>Ausarbeitung</span>
+      <span class="nav-step">4</span>
+    </button>
+
+    <button class="nav-btn" onclick="switchPanel('zitation')" id="nav-zitation">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/>
+        <path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/>
+      </svg>
+      <span>Zitation &amp; Fußnoten</span>
+      <span class="nav-step">5</span>
+    </button>
+
+    <button class="nav-btn" onclick="switchPanel('revision')" id="nav-revision">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+      </svg>
+      <span>Revision &amp; Schliff</span>
+      <span class="nav-step">6</span>
+    </button>
+
     <div class="sidebar-section-label">Werkzeuge</div>
 
-    <button class="nav-btn active" onclick="switchPanel('research')" id="nav-research">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-      </svg>
-      <span>Recherche</span>
-    </button>
-
-    <button class="nav-btn" onclick="switchPanel('analysis')" id="nav-analysis">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/>
-        <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
-      </svg>
-      <span>Dokumentenanalyse</span>
-    </button>
-
-    <button class="nav-btn" onclick="switchPanel('chat')" id="nav-chat">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-      </svg>
-      <span>Rechtsberatung</span>
-      <span class="history-count" id="chatCount" style="display:none">0</span>
-    </button>
-
-    <button class="nav-btn" onclick="switchPanel('templates')" id="nav-templates">
+    <button class="nav-btn" onclick="switchPanel('vorlagen')" id="nav-vorlagen">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
         <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
       </svg>
-      <span>Vorlagen</span>
+      <span>Gliederungsvorlagen</span>
     </button>
 
     <button class="nav-btn" onclick="switchPanel('memory')" id="nav-memory">
@@ -868,7 +308,7 @@
       <span>Gedächtnis</span>
     </button>
 
-    <div class="sidebar-section-label">Einstellungen</div>
+    <div class="sidebar-section-label">Konfiguration</div>
 
     <button class="nav-btn" onclick="switchPanel('settings')" id="nav-settings">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -879,138 +319,203 @@
     </button>
 
     <div class="sidebar-bottom">
-      <button class="clear-btn" onclick="clearCurrentChat()">
-        ✕ Verlauf leeren
-      </button>
+      <button class="clear-btn" onclick="clearCurrentChat()">✕ Chat leeren</button>
     </div>
   </nav>
 
-  <!-- MAIN CONTENT -->
   <main class="main-content">
 
-    <!-- ============================================================ -->
-    <!-- PANEL: RECHERCHE -->
-    <!-- ============================================================ -->
-    <div class="tool-panel active" id="panel-research">
+    <!-- ================================================================ -->
+    <!-- 1. THEMA & FORSCHUNGSFRAGE -->
+    <!-- ================================================================ -->
+    <div class="tool-panel active" id="panel-thema">
       <div class="panel-header">
-        <div class="panel-title">Juristische Recherche</div>
-        <div class="panel-desc">Gesetze, Rechtsprechung, EU-Recht, Kommentare und Gutachten</div>
+        <div class="panel-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          Thema &amp; Forschungsfrage
+        </div>
+        <div class="panel-desc">Themenentwicklung, Problemaufriss, Forschungsfrage und wissenschaftliche Fragestellung</div>
       </div>
-      <div class="chat-area" id="chat-research">
-        <div class="welcome-message">
-          <h3>Juristische Recherche mit KI</h3>
-          <p>Stellen Sie Fragen zu Gesetzen, Urteilen, Rechtsbegriffen oder lassen Sie komplexe Rechtsfragen analysieren. Die KI unterstützt bei Recherchen im deutschen, europäischen und internationalen Recht.</p>
+      <div class="chat-area" id="chat-thema">
+        <div class="welcome-card">
+          <h3>Schritt 1: Thema entwickeln und eingrenzen</h3>
+          <p>Der erste Schritt jeder Seminararbeit ist die präzise Eingrenzung des Themas und die Formulierung einer klaren Forschungsfrage. Die KI hilft Ihnen dabei, das Thema wissenschaftlich zu schärfen, den Problemaufriss zu strukturieren und die Relevanz herauszuarbeiten.</p>
           <div class="quick-prompts">
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Erkläre die Grundlagen des deutschen Mietrechts und aktuelle BGH-Rechtsprechung.')">Mietrecht Grundlagen</button>
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Was sind die Voraussetzungen für eine Kündigung im Arbeitsrecht?')">Kündigung Arbeitsrecht</button>
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Erläutere die DSGVO-Anforderungen für Unternehmen.')">DSGVO Compliance</button>
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Welche Fristen gelten im deutschen Zivilprozessrecht?')">ZPO Fristen</button>
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Was sind die Voraussetzungen für einen Schadensersatzanspruch nach § 823 BGB?')">§ 823 BGB</button>
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('research', 'Erkläre das Insolvenzverfahren in Deutschland.')">Insolvenzrecht</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('thema', 'Mein Seminararbeitsthema lautet: „Die Haftung von KI-Systemen im deutschen Deliktsrecht". Hilf mir, das Thema einzugrenzen und eine präzise Forschungsfrage zu formulieren.')">Thema eingrenzen</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('thema', 'Entwickle einen Problemaufriss für eine Seminararbeit zum Thema Datenschutz in sozialen Netzwerken nach der DSGVO.')">Problemaufriss entwickeln</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('thema', 'Welche aktuellen und relevanten Themen gibt es im deutschen Strafrecht, die sich für eine Seminararbeit eignen? Bitte mit kurzer Begründung der wissenschaftlichen Relevanz.')">Themenideen generieren</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('thema', 'Formuliere eine wissenschaftliche Forschungsfrage und Hypothese für eine Arbeit über die Verhältnismäßigkeit von Freiheitsentziehungen im Polizeirecht.')">Forschungsfrage formulieren</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('thema', 'Erkläre, wie man einen juristischen Problemaufriss für eine Seminararbeit aufbaut: Ausgangslage, Problembeschreibung, Ziel der Arbeit, Gang der Untersuchung.')">Aufbau Problemaufriss</button>
           </div>
         </div>
       </div>
       <div class="input-area">
         <div class="input-toolbar">
-          <button class="gs-toggle" id="gs-research" onclick="toggleGutachtenstil('research')">
+          <button class="gs-toggle" id="gs-thema" onclick="toggleGutachtenstil('thema')">
             <div class="toggle-track"><div class="toggle-thumb"></div></div>
             <span>Gutachtenstil</span>
           </button>
         </div>
         <div class="input-row">
           <div class="input-wrapper">
-            <textarea id="input-research" placeholder="Rechtsfrage stellen, Urteile suchen, Gesetze erklären lassen…" rows="1"
-              onkeydown="handleKeydown(event, 'research')" oninput="autoResize(this)"></textarea>
+            <textarea id="input-thema" placeholder="Thema beschreiben, Forschungsfrage formulieren lassen, Problemaufriss entwickeln…" rows="1" onkeydown="handleKeydown(event,'thema')" oninput="autoResize(this)"></textarea>
           </div>
-          <button class="send-btn" id="send-research" onclick="sendMessage('research')">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
+          <button class="send-btn" id="send-thema" onclick="sendMessage('thema')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             Senden
           </button>
         </div>
       </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- PANEL: DOKUMENTENANALYSE -->
-    <!-- ============================================================ -->
-    <div class="tool-panel" id="panel-analysis">
+    <!-- ================================================================ -->
+    <!-- 2. GLIEDERUNG -->
+    <!-- ================================================================ -->
+    <div class="tool-panel" id="panel-gliederung">
       <div class="panel-header">
-        <div class="panel-title">Dokumentenanalyse</div>
-        <div class="panel-desc">Verträge, Urteile, Schriftsätze und juristische Dokumente analysieren</div>
+        <div class="panel-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Gliederung entwickeln
+        </div>
+        <div class="panel-desc">Wissenschaftliche Gliederung, roter Faden, Kapitelstruktur und Argumentationsaufbau</div>
       </div>
-      <div class="doc-analysis-layout">
-        <div class="doc-input-panel">
-          <div class="doc-panel-header">Dokument einfügen</div>
-          <div class="doc-text-area">
-            <textarea id="doc-input" placeholder="Fügen Sie hier den Text des zu analysierenden Dokuments ein:
-
-• Vertrag
-• Urteil / Beschluss
-• Schriftsatz
-• AGB
-• Gesetzestext
-• Gutachten
-• Sonstiges juristisches Dokument"></textarea>
-          </div>
-          <div class="doc-actions">
-            <button class="action-btn primary" onclick="analyzeDocument('summary')" id="btn-summary">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
-                <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
-                <line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
-              </svg>
-              Zusammenfassung
-            </button>
-            <button class="action-btn" onclick="analyzeDocument('risks')" id="btn-risks">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-              </svg>
-              Risiken prüfen
-            </button>
-            <button class="action-btn" onclick="analyzeDocument('clauses')" id="btn-clauses">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-              </svg>
-              Klauseln prüfen
-            </button>
-            <button class="action-btn" onclick="analyzeDocument('optimize')" id="btn-optimize">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="14 2 18 6 7 17 3 17 3 13 14 2"/><line x1="3" y1="22" x2="21" y2="22"/>
-              </svg>
-              Optimieren
-            </button>
+      <div class="chat-area" id="chat-gliederung">
+        <div class="welcome-card">
+          <h3>Schritt 2: Gliederung und Argumentationsstruktur</h3>
+          <p>Eine durchdachte Gliederung ist das Rückgrat jeder Seminararbeit. Sie soll den roten Faden sicherstellen, die Argumentation logisch aufbauen und die Forschungsfrage systematisch beantworten. Geben Sie Ihr Thema und Ihre Forschungsfrage an — die KI erstellt eine fundierte Gliederung.</p>
+          <div class="quick-prompts">
+            <button class="qp-btn" onclick="sendQuickPrompt('gliederung', 'Erstelle eine detaillierte Gliederung für eine 20-seitige Seminararbeit zum Thema „Die Störerhaftung im deutschen Internetrecht nach dem Wegfall des Telemediengesetzes".')">Gliederung erstellen</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('gliederung', 'Überprüfe meine Gliederung auf logischen Aufbau, roten Faden und vollständige Abdeckung des Themas. Hier ist meine Gliederung: [Gliederung einfügen]')">Gliederung prüfen</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('gliederung', 'Wie sollte die Gliederung einer juristischen Seminararbeit aufgebaut sein? Erkläre die typische Struktur mit Deckblatt, Inhaltsverzeichnis, Einleitung, Hauptteil, Schluss und Literaturverzeichnis.')">Standardstruktur erklären</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('gliederung', 'Meine Seminararbeit hat folgende Gliederung: [einfügen]. Schlage Umstrukturierungen vor, um den Argumentationsfluss zu verbessern.')">Gliederung optimieren</button>
           </div>
         </div>
-        <div class="doc-output-panel">
-          <div class="doc-panel-header">Analyse-Ergebnis</div>
-          <div class="chat-area" id="chat-analysis">
+      </div>
+      <div class="input-area">
+        <div class="input-toolbar">
+          <button class="gs-toggle" id="gs-gliederung" onclick="toggleGutachtenstil('gliederung')">
+            <div class="toggle-track"><div class="toggle-thumb"></div></div>
+            <span>Gutachtenstil</span>
+          </button>
+        </div>
+        <div class="input-row">
+          <div class="input-wrapper">
+            <textarea id="input-gliederung" placeholder="Thema nennen → Gliederung erstellen lassen, bestehende Gliederung zur Überprüfung einfügen…" rows="1" onkeydown="handleKeydown(event,'gliederung')" oninput="autoResize(this)"></textarea>
+          </div>
+          <button class="send-btn" id="send-gliederung" onclick="sendMessage('gliederung')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Senden
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- 3. LITERATURRECHERCHE -->
+    <!-- ================================================================ -->
+    <div class="tool-panel" id="panel-literatur">
+      <div class="panel-header">
+        <div class="panel-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          Literaturrecherche
+        </div>
+        <div class="panel-desc">Relevante Quellen, Kommentare, Urteile und Aufsätze für das Thema identifizieren</div>
+      </div>
+      <div class="chat-area" id="chat-literatur">
+        <div class="welcome-card">
+          <h3>Schritt 3: Literatur und Quellen recherchieren</h3>
+          <p>Juristische Seminararbeiten müssen auf einschlägiger Literatur fußen. Die KI zeigt Ihnen, welche Kommentare, Monografien, Aufsätze und Rechtsprechung zu Ihrem Thema relevant sind, und erklärt Vorgehensweisen für die Datenbankrecherche in Juris, Beck-Online, LexisNexis etc.</p>
+          <div class="quick-prompts">
+            <button class="qp-btn" onclick="sendQuickPrompt('literatur', 'Welche Kommentare, Lehrbücher und Standardwerke sind für eine Seminararbeit zum Thema Schadensersatzrecht im BGB unverzichtbar?')">Standardliteratur BGB</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('literatur', 'Nenne die wichtigsten Aufsätze und Rechtsprechung zum Thema „Vertragsschluss im Internet" – insbesondere BGH-Entscheidungen und Literatur in NJW, JZ, ZZP.')">Aufsätze & BGH-Urteile</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('literatur', 'Erkläre, wie ich effizient in juristischen Datenbanken (Juris, Beck-Online, JURA Studium & Examen) recherchiere. Welche Suchstrategien und Filter sind sinnvoll?')">Datenbankrecherche</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('literatur', 'Erstelle eine kommentierte Literaturliste (Annotated Bibliography) für das Thema Arbeitnehmerüberlassung und Scheinselbstständigkeit.')">Annotated Bibliography</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('literatur', 'Welche juristischen Fachzeitschriften sind für Strafrecht besonders relevant? Erkläre NStZ, StV, JR, ZStW und ihre Schwerpunkte.')">Fachzeitschriften Strafrecht</button>
+          </div>
+        </div>
+      </div>
+      <div class="input-area">
+        <div class="input-toolbar">
+          <button class="gs-toggle" id="gs-literatur" onclick="toggleGutachtenstil('literatur')">
+            <div class="toggle-track"><div class="toggle-thumb"></div></div>
+            <span>Gutachtenstil</span>
+          </button>
+        </div>
+        <div class="input-row">
+          <div class="input-wrapper">
+            <textarea id="input-literatur" placeholder="Thema oder Rechtsfrage eingeben → relevante Literatur, Urteile und Kommentare nennen lassen…" rows="1" onkeydown="handleKeydown(event,'literatur')" oninput="autoResize(this)"></textarea>
+          </div>
+          <button class="send-btn" id="send-literatur" onclick="sendMessage('literatur')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Senden
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- 4. AUSARBEITUNG (Split Panel) -->
+    <!-- ================================================================ -->
+    <div class="tool-panel" id="panel-ausarbeitung">
+      <div class="panel-header">
+        <div class="panel-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          Ausarbeitung
+        </div>
+        <div class="panel-desc">Abschnitte verfassen, ausbauen und im wissenschaftlichen Stil ausarbeiten</div>
+      </div>
+      <div class="split-layout">
+        <!-- Linke Seite: Texteingabe -->
+        <div class="split-left">
+          <div class="split-header">
+            Eigener Text / Abschnitt
+            <span style="font-size:0.72rem; color:var(--text-muted); font-weight:400;">Entwurf oder Stichpunkte</span>
+          </div>
+          <div class="split-body">
+            <textarea id="ausarbeitung-input" placeholder="Geben Sie hier einen Rohtext, Stichpunkte oder eine Abschnittsüberschrift ein, die ausgearbeitet werden soll:
+
+Beispiel:
+• Abschnitt: II. 2. b) – Haftungsvoraussetzungen
+• Stichpunkte: Tatbestandsmerkmal der Rechtswidrigkeit, subjektiver Tatbestand, Kausalität
+• oder vorhandenen Rohtext einfügen"></textarea>
+          </div>
+          <div class="split-actions">
+            <button class="action-btn primary" onclick="ausarbeitungAction('write')">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              Ausarbeiten
+            </button>
+            <button class="action-btn" onclick="ausarbeitungAction('expand')">Erweitern</button>
+            <button class="action-btn" onclick="ausarbeitungAction('intro')">Einleitung</button>
+            <button class="action-btn" onclick="ausarbeitungAction('conclusion')">Schluss</button>
+            <button class="action-btn" onclick="ausarbeitungAction('transition')">Überleitung</button>
+          </div>
+        </div>
+        <!-- Rechte Seite: Ergebnis-Chat -->
+        <div class="split-right">
+          <div class="split-header">
+            KI-Ausarbeitung
+          </div>
+          <div class="chat-area" id="chat-ausarbeitung">
             <div style="text-align:center; color:var(--text-muted); padding:40px 20px;">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.3; margin-bottom:12px; display:block; margin-left:auto; margin-right:auto;">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
+              <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.25; display:block; margin:0 auto 12px;">
+                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
               </svg>
-              <p style="font-size:0.88rem;">Fügen Sie ein Dokument ein und wählen Sie eine Analysefunktion.</p>
+              <p style="font-size:0.86rem;">Text oder Stichpunkte eingeben und eine Funktion wählen.</p>
             </div>
           </div>
           <div class="input-area">
             <div class="input-toolbar">
-              <button class="gs-toggle" id="gs-analysis" onclick="toggleGutachtenstil('analysis')">
+              <button class="gs-toggle" id="gs-ausarbeitung" onclick="toggleGutachtenstil('ausarbeitung')">
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 <span>Gutachtenstil</span>
               </button>
             </div>
             <div class="input-row">
               <div class="input-wrapper">
-                <textarea id="input-analysis" placeholder="Weitere Fragen zum Dokument stellen…" rows="1"
-                  onkeydown="handleKeydown(event, 'analysis')" oninput="autoResize(this)"></textarea>
+                <textarea id="input-ausarbeitung" placeholder="Weitere Anweisungen oder Fragen zum ausgearbeiteten Text…" rows="1" onkeydown="handleKeydown(event,'ausarbeitung')" oninput="autoResize(this)"></textarea>
               </div>
-              <button class="send-btn" id="send-analysis" onclick="sendMessage('analysis')">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                  <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                </svg>
+              <button class="send-btn" id="send-ausarbeitung" onclick="sendMessage('ausarbeitung')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                 Senden
               </button>
             </div>
@@ -1019,293 +524,252 @@
       </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- PANEL: RECHTSBERATUNG CHAT -->
-    <!-- ============================================================ -->
-    <div class="tool-panel" id="panel-chat">
+    <!-- ================================================================ -->
+    <!-- 5. ZITATION & FUßNOTEN -->
+    <!-- ================================================================ -->
+    <div class="tool-panel" id="panel-zitation">
       <div class="panel-header">
-        <div class="panel-title">Rechtsberatung</div>
-        <div class="panel-desc">Juristische Einschätzungen, Gutachten und allgemeine Rechtsberatung</div>
+        <div class="panel-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></svg>
+          Zitation &amp; Fußnoten
+        </div>
+        <div class="panel-desc">Korrekte Zitierweise für Kommentare, Urteile, Aufsätze und Monografien nach juristischen Standards</div>
       </div>
-      <div class="chat-area" id="chat-chat">
-        <div class="welcome-message">
-          <h3>Juristische Beratung &amp; Gutachten</h3>
-          <p>Beschreiben Sie Ihren Sachverhalt ausführlich. Die KI erstellt eine juristische Einschätzung, listet relevante Normen auf und gibt Empfehlungen für das weitere Vorgehen.</p>
+      <div class="chat-area" id="chat-zitation">
+        <div class="welcome-card">
+          <h3>Schritt 5: Korrekt zitieren und Fußnoten setzen</h3>
+          <p>Die juristische Zitierweise unterscheidet sich deutlich von anderen Wissenschaften. Kommentare, Urteile, Aufsätze und Monografien folgen eigenen Konventionen. Die KI hilft Ihnen, Quellen korrekt zu zitieren und das Literaturverzeichnis regelkonform zu erstellen.</p>
           <div class="quick-prompts">
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('chat', 'Erstelle eine juristische Prüfung nach dem Gutachtenstil: Liegt eine wirksame Kündigung vor, wenn der Arbeitgeber ohne Angabe von Gründen kündigt?')">Gutachtenstil Kündigung</button>
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('chat', 'Welche rechtlichen Schritte kann ich einleiten, wenn mein Vermieter die Kaution nicht zurückzahlt?')">Kaution Rückforderung</button>
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('chat', 'Wie gehe ich rechtlich vor bei einem Verkehrsunfall mit Personenschaden?')">Verkehrsunfall</button>
-            <button class="quick-prompt-btn" onclick="sendQuickPrompt('chat', 'Was sind meine Rechte als Käufer bei Mängeln nach dem Kauf?')">Kaufrecht Mängel</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('zitation', 'Wie zitiere ich einen Kommentar (z.B. Münchener Kommentar zum BGB) korrekt in einer Fußnote und im Literaturverzeichnis?')">Kommentar zitieren</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('zitation', 'Wie zitiere ich ein BGH-Urteil korrekt? Erkläre Kurz- und Langzitat, BGHZ-Zitation, NJW-Fundstelle und juris-Fundstelle.')">BGH-Urteil zitieren</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('zitation', 'Wie zitiere ich einen Zeitschriftenaufsatz in NJW, JZ, AcP oder ZZP korrekt in der Fußnote und im Literaturverzeichnis?')">Aufsatz zitieren</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('zitation', 'Erstelle ein vollständiges Literaturverzeichnis im juristischen Stil für: MüKo BGB § 823, BGH NJW 2020, 1234, Palandt BGB 82. Aufl., Larenz Methodenlehre.')">Literaturverzeichnis erstellen</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('zitation', 'Erkläre den Unterschied zwischen Erst- und Folgezitat (Kurzzitat) im juristischen Fußnotenapparat. Gib Beispiele für Monografie, Kommentar und Aufsatz.')">Erst- vs. Folgezitat</button>
+            <button class="qp-btn" onclick="sendQuickPrompt('zitation', 'Was ist die korrekte Schreibweise von „a.A.", „m.w.N.", „str.", „h.M.", „vgl." in juristischen Fußnoten? Erkläre alle gängigen Abkürzungen.')">Juristische Abkürzungen</button>
           </div>
         </div>
       </div>
       <div class="input-area">
         <div class="input-toolbar">
-          <button class="gs-toggle" id="gs-chat" onclick="toggleGutachtenstil('chat')">
+          <button class="gs-toggle" id="gs-zitation" onclick="toggleGutachtenstil('zitation')">
             <div class="toggle-track"><div class="toggle-thumb"></div></div>
             <span>Gutachtenstil</span>
           </button>
         </div>
         <div class="input-row">
           <div class="input-wrapper">
-            <textarea id="input-chat" placeholder="Sachverhalt schildern oder Rechtsfrage stellen…" rows="1"
-              onkeydown="handleKeydown(event, 'chat')" oninput="autoResize(this)"></textarea>
+            <textarea id="input-zitation" placeholder="Quelle angeben zum Formatieren, Zitierweise-Fragen stellen, Literaturverzeichnis erstellen lassen…" rows="1" onkeydown="handleKeydown(event,'zitation')" oninput="autoResize(this)"></textarea>
           </div>
-          <button class="send-btn" id="send-chat" onclick="sendMessage('chat')">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
+          <button class="send-btn" id="send-zitation" onclick="sendMessage('zitation')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             Senden
           </button>
         </div>
       </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- PANEL: VORLAGEN -->
-    <!-- ============================================================ -->
-    <div class="tool-panel" id="panel-templates">
+    <!-- ================================================================ -->
+    <!-- 6. REVISION & SCHLIFF (Split Panel) -->
+    <!-- ================================================================ -->
+    <div class="tool-panel" id="panel-revision">
       <div class="panel-header">
-        <div class="panel-title">Dokumentvorlagen</div>
-        <div class="panel-desc">KI-generierte juristische Dokumente und Vorlagen</div>
+        <div class="panel-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Revision &amp; letzter Schliff
+        </div>
+        <div class="panel-desc">Texte korrigieren, stilistisch verbessern, Wissenschaftlichkeit prüfen und Feedback einholen</div>
+      </div>
+      <div class="split-layout">
+        <div class="split-left">
+          <div class="split-header">
+            Zu prüfender Text
+            <span style="font-size:0.72rem; color:var(--text-muted); font-weight:400;">Abschnitt einfügen</span>
+          </div>
+          <div class="split-body">
+            <textarea id="revision-input" placeholder="Fügen Sie hier den zu überarbeitenden Abschnitt Ihrer Seminararbeit ein.
+
+Die KI prüft auf:
+• Wissenschaftlichkeit & Stil
+• Argumentationslogik
+• Fachterminologie
+• Satzkonstruktion
+• Übergänge
+• Roter Faden"></textarea>
+          </div>
+          <div class="split-actions">
+            <button class="action-btn primary" onclick="revisionAction('full')">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 11 12 14 22 4"/></svg>
+              Vollständig prüfen
+            </button>
+            <button class="action-btn" onclick="revisionAction('style')">Stil verbessern</button>
+            <button class="action-btn" onclick="revisionAction('logic')">Argumentation</button>
+            <button class="action-btn" onclick="revisionAction('academic')">Wissenschaftlichkeit</button>
+            <button class="action-btn" onclick="revisionAction('shorten')">Kürzen</button>
+          </div>
+        </div>
+        <div class="split-right">
+          <div class="split-header">Feedback &amp; überarbeiteter Text</div>
+          <div class="chat-area" id="chat-revision">
+            <div style="text-align:center; color:var(--text-muted); padding:40px 20px;">
+              <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.25; display:block; margin:0 auto 12px;">
+                <polyline points="9 11 12 14 22 4"/>
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+              </svg>
+              <p style="font-size:0.86rem;">Text einfügen und Prüfung starten.</p>
+            </div>
+          </div>
+          <div class="input-area">
+            <div class="input-toolbar">
+              <button class="gs-toggle" id="gs-revision" onclick="toggleGutachtenstil('revision')">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                <span>Gutachtenstil</span>
+              </button>
+            </div>
+            <div class="input-row">
+              <div class="input-wrapper">
+                <textarea id="input-revision" placeholder="Weitere Anweisungen zur Überarbeitung…" rows="1" onkeydown="handleKeydown(event,'revision')" oninput="autoResize(this)"></textarea>
+              </div>
+              <button class="send-btn" id="send-revision" onclick="sendMessage('revision')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                Senden
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- GLIEDERUNGSVORLAGEN -->
+    <!-- ================================================================ -->
+    <div class="tool-panel" id="panel-vorlagen">
+      <div class="panel-header">
+        <div class="panel-title">Gliederungsvorlagen</div>
+        <div class="panel-desc">Bewährte Strukturvorlagen für juristische Seminararbeiten nach Rechtsgebiet</div>
       </div>
       <div class="templates-grid">
 
-        <div class="template-card" onclick="useTemplate('Erstelle einen deutschen Mietvertrag für eine Wohnung. Bitte erstelle einen vollständigen, rechtlich korrekten Mietvertrag nach deutschem Recht mit allen wichtigen Klauseln.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-              <polyline points="9 22 9 12 15 12 15 22"/>
-            </svg>
-          </div>
-          <div class="template-title">Mietvertrag</div>
-          <div class="template-desc">Vollständiger Wohnraummietvertrag nach deutschem Recht</div>
-          <span class="template-tag">Mietrecht</span>
+        <div class="tpl-card" onclick="useTemplate('gliederung', 'Erstelle eine vollständige Muster-Gliederung für eine 20-seitige Seminararbeit im Zivilrecht zum Thema „Schadensersatz im deutschen Deliktsrecht (§§ 823 ff. BGB)". Mit Einleitung, Hauptteil (dogmatische Systematik, Tatbestandsvoraussetzungen, Rechtsprechungsanalyse, Streitfragen), Schluss und Literaturverzeichnis.')">
+          <div class="tpl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+          <div class="tpl-title">Zivilrechtliche Seminararbeit</div>
+          <div class="tpl-desc">Muster-Gliederung für BGB-Themen: Dogmatik, Tatbestand, Rechtsprechung, Streitfragen</div>
+          <span class="tpl-tag">Zivilrecht</span>
         </div>
 
-        <div class="template-card" onclick="useTemplate('Erstelle einen Arbeitsvertrag für einen Vollzeitangestellten in Deutschland. Alle wichtigen arbeitsrechtlichen Klauseln sollen enthalten sein.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
-              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
-            </svg>
-          </div>
-          <div class="template-title">Arbeitsvertrag</div>
-          <div class="template-desc">Unbefristeter Vollzeit-Arbeitsvertrag mit aktuellen Klauseln</div>
-          <span class="template-tag">Arbeitsrecht</span>
+        <div class="tpl-card" onclick="useTemplate('gliederung', 'Erstelle eine Muster-Gliederung für eine strafrechtliche Seminararbeit (ca. 20 Seiten) zum Thema „Täterschaft und Teilnahme im deutschen Strafrecht". Mit Problemaufriss, dogmatischer Einordnung, Gutachtenstil-Prüfung eines Fallbeispiels und rechtspolitischem Ausblick.')">
+          <div class="tpl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5L12 1z"/></svg></div>
+          <div class="tpl-title">Strafrechtliche Seminararbeit</div>
+          <div class="tpl-desc">Struktur für StGB-Themen mit Fallanalyse im Gutachtenstil</div>
+          <span class="tpl-tag">Strafrecht</span>
         </div>
 
-        <div class="template-card" onclick="useTemplate('Erstelle einen deutschen Kaufvertrag für bewegliche Sachen (z.B. ein Fahrzeug oder Möbel). Vollständig mit Gewährleistungsausschluss.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
-              <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-            </svg>
-          </div>
-          <div class="template-title">Kaufvertrag</div>
-          <div class="template-desc">Kaufvertrag für bewegliche Sachen mit Gewährleistung</div>
-          <span class="template-tag">Kaufrecht</span>
+        <div class="tpl-card" onclick="useTemplate('gliederung', 'Erstelle eine Gliederung für eine öffentlich-rechtliche Seminararbeit (20 Seiten) zum Thema „Verhältnismäßigkeitsgrundsatz als Schranken-Schranke im deutschen Verfassungsrecht". Mit verfassungsrechtlicher Einordnung, Dreischritt (Geeignetheit, Erforderlichkeit, Angemessenheit) und Fallbeispielen aus der BVerfG-Rechtsprechung.')">
+          <div class="tpl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+          <div class="tpl-title">Öffentlich-rechtliche Seminararbeit</div>
+          <div class="tpl-desc">Verfassungsrecht, Verwaltungsrecht – mit BVerfG-Rechtsprechungsanalyse</div>
+          <span class="tpl-tag">Öffentliches Recht</span>
         </div>
 
-        <div class="template-card" onclick="useTemplate('Erstelle eine anwaltliche Abmahnung wegen Urheberrechtsverletzung im Internet. Professionelles juristisches Schreiben mit Unterlassungserklärung.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-            </svg>
-          </div>
-          <div class="template-title">Abmahnung</div>
-          <div class="template-desc">Anwaltliche Abmahnung mit Unterlassungserklärung</div>
-          <span class="template-tag">Urheberrecht</span>
+        <div class="tpl-card" onclick="useTemplate('gliederung', 'Erstelle eine Gliederung für eine europarechtliche Seminararbeit (20 Seiten) zum Thema „Vorrang des Unionsrechts und seine Grenzen – Solange-Rechtsprechung und Ultra-vires-Kontrolle". Mit EuGH- und BVerfG-Rechtsprechung.')">
+          <div class="tpl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg></div>
+          <div class="tpl-title">Europarechtliche Seminararbeit</div>
+          <div class="tpl-desc">EU-Recht mit EuGH- und BVerfG-Rechtsprechungsanalyse</div>
+          <span class="tpl-tag">Europarecht</span>
         </div>
 
-        <div class="template-card" onclick="useTemplate('Erstelle einen vollständigen GmbH-Gesellschaftsvertrag nach deutschem Recht für eine Standard-GmbH mit 2 Gesellschaftern.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-              <circle cx="9" cy="7" r="4"/>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-            </svg>
-          </div>
-          <div class="template-title">GmbH-Gesellschaftsvertrag</div>
-          <div class="template-desc">Satzung für eine Zwei-Gesellschafter-GmbH</div>
-          <span class="template-tag">Gesellschaftsrecht</span>
+        <div class="tpl-card" onclick="useTemplate('gliederung', 'Erstelle eine Gliederung für eine arbeitsrechtliche Seminararbeit (20 Seiten) zum Thema „Kündigung und Kündigungsschutz nach dem KSchG". Mit individualarbeitsrechtlicher Systematik, Rechtsprechung des BAG und Vergleich mit europäischen Regelungen.')">
+          <div class="tpl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg></div>
+          <div class="tpl-title">Arbeitsrechtliche Seminararbeit</div>
+          <div class="tpl-desc">KSchG, BAG-Rechtsprechung, Vergleich europäischer Regelungen</div>
+          <span class="tpl-tag">Arbeitsrecht</span>
         </div>
 
-        <div class="template-card" onclick="useTemplate('Erstelle eine DSGVO-konforme Datenschutzerklärung für eine Website eines kleinen Unternehmens in Deutschland.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-          </div>
-          <div class="template-title">Datenschutzerklärung</div>
-          <div class="template-desc">DSGVO-konforme Datenschutzerklärung für Websites</div>
-          <span class="template-tag">DSGVO</span>
+        <div class="tpl-card" onclick="useTemplate('gliederung', 'Erstelle eine Gliederung für eine Seminararbeit im IT-Recht / Datenschutzrecht (20 Seiten) zum Thema „Datenschutz durch Technikgestaltung (Privacy by Design) nach Art. 25 DSGVO". Mit normativem Rahmen, technischer Umsetzung und Durchsetzungspraxis.')">
+          <div class="tpl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+          <div class="tpl-title">IT-Recht / DSGVO Seminararbeit</div>
+          <div class="tpl-desc">Privacy by Design, Art. 25 DSGVO, technische und rechtliche Analyse</div>
+          <span class="tpl-tag">IT-Recht</span>
         </div>
 
-        <div class="template-card" onclick="useTemplate('Erstelle einen Widerspruch gegen einen Verwaltungsakt (z.B. Bußgeldbescheid) nach deutschem Verwaltungsrecht. Mit Begründung und korrekter Form.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
-            </svg>
-          </div>
-          <div class="template-title">Widerspruch</div>
-          <div class="template-desc">Widerspruch gegen Verwaltungsakte nach VwGO</div>
-          <span class="template-tag">Verwaltungsrecht</span>
+        <div class="tpl-card" onclick="useTemplate('gliederung', 'Erstelle eine Gliederung für eine gesellschaftsrechtliche Seminararbeit (20 Seiten) zum Thema „Haftung des GmbH-Geschäftsführers nach § 43 GmbHG". Mit Pflichtenkreis, Haftungsmaßstab, Business Judgment Rule und Praxisrelevanz.')">
+          <div class="tpl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+          <div class="tpl-title">Gesellschaftsrechtliche Seminararbeit</div>
+          <div class="tpl-desc">GmbH-Geschäftsführerhaftung, § 43 GmbHG, Business Judgment Rule</div>
+          <span class="tpl-tag">Gesellschaftsrecht</span>
         </div>
 
-        <div class="template-card" onclick="useTemplate('Erstelle ein Testament nach deutschem Erbrecht. Ein handschriftliches Testament mit Erbeinsetzung, Vermächtnissen und Pflichtteilsklausel.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-            </svg>
-          </div>
-          <div class="template-title">Testament</div>
-          <div class="template-desc">Handschriftliches Testament nach deutschem Erbrecht</div>
-          <span class="template-tag">Erbrecht</span>
-        </div>
-
-        <div class="template-card" onclick="useTemplate('Erstelle eine Klageschrift für eine Zahlungsklage beim Amtsgericht. Vollständige Klageschrift mit Sachverhalt, rechtlicher Begründung und Beweisangeboten.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="16" y1="13" x2="8" y2="13"/>
-              <line x1="16" y1="17" x2="8" y2="17"/>
-            </svg>
-          </div>
-          <div class="template-title">Klageschrift</div>
-          <div class="template-desc">Zahlungsklage beim Amtsgericht nach ZPO</div>
-          <span class="template-tag">Zivilprozessrecht</span>
-        </div>
-
-        <div class="template-card" onclick="useTemplate('Erstelle einen NDA (Non-Disclosure Agreement / Geheimhaltungsvereinbarung) auf Deutsch für zwei Unternehmen, die eine Zusammenarbeit prüfen.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
-            </svg>
-          </div>
-          <div class="template-title">NDA / Geheimhaltung</div>
-          <div class="template-desc">Gegenseitige Geheimhaltungsvereinbarung (NDA)</div>
-          <span class="template-tag">Vertragsrecht</span>
-        </div>
-
-        <div class="template-card" onclick="useTemplate('Erstelle ein Abmahnungsschreiben an einen Schuldner wegen Zahlungsverzugs. Letztes Mahnschreiben vor Klage mit Fristsetzung.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
-              <polyline points="22,6 12,13 2,6"/>
-            </svg>
-          </div>
-          <div class="template-title">Mahnung / Fristsetzung</div>
-          <div class="template-desc">Letzte Mahnung mit anwaltlicher Fristsetzung</div>
-          <span class="template-tag">Schuldrecht</span>
-        </div>
-
-        <div class="template-card" onclick="useTemplate('Erstelle einen Software-Lizenzvertrag für eine SaaS-Anwendung nach deutschem Recht. Mit Nutzungsrechten, Haftungsbeschränkungen und SLA.')">
-          <div class="template-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-              <line x1="8" y1="21" x2="16" y2="21"/>
-              <line x1="12" y1="17" x2="12" y2="21"/>
-            </svg>
-          </div>
-          <div class="template-title">Software-Lizenzvertrag</div>
-          <div class="template-desc">SaaS-Lizenzvertrag mit IT-rechtlichen Klauseln</div>
-          <span class="template-tag">IT-Recht</span>
+        <div class="tpl-card" onclick="useTemplate('gliederung', 'Erstelle eine Gliederung für eine rechtsvergleichende Seminararbeit (25 Seiten): „Vertragsschluss im deutschen und englischen Recht – ein Rechtsvergleich". Mit tertium comparationis, Methode des Rechtsvergleichs, nationaler Analyse DE und UK, Vergleich und Ergebnis.')">
+          <div class="tpl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg></div>
+          <div class="tpl-title">Rechtsvergleichende Arbeit</div>
+          <div class="tpl-desc">DE/UK-Vergleich, tertium comparationis, Methodik des Rechtsvergleichs</div>
+          <span class="tpl-tag">Rechtsvergleich</span>
         </div>
 
       </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- PANEL: GEDÄCHTNIS -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- GEDÄCHTNIS -->
+    <!-- ================================================================ -->
     <div class="tool-panel" id="panel-memory">
       <div class="panel-header">
         <div class="panel-title">
           Persistentes Gedächtnis
           <span id="mem-active-badge" style="display:none; margin-left:10px;">
-            <span class="memory-active-badge">Aktiv — wird in alle Anfragen eingebunden</span>
+            <span class="memory-active-badge">Aktiv – in alle Anfragen eingebunden</span>
           </span>
         </div>
-        <div class="panel-desc">Notizen, Fallinfos, Mandantendaten und Kontext als Markdown speichern und laden</div>
+        <div class="panel-desc">Thema, Gliederung, Quellen und Notizen als Markdown speichern und laden</div>
       </div>
       <div class="memory-layout">
         <div class="memory-toolbar">
-          <!-- Upload -->
-          <label class="mem-btn upload" title="MD-Datei laden">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
+          <label class="mem-btn upload">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             MD-Datei laden
-            <input type="file" id="mem-upload-input" accept=".md,.txt" style="display:none"
-              onchange="uploadMemory(this)">
+            <input type="file" id="mem-upload-input" accept=".md,.txt" style="display:none" onchange="uploadMemory(this)">
           </label>
-
-          <!-- Download -->
-          <button class="mem-btn download" onclick="downloadMemory()" title="Als MD-Datei speichern">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
+          <button class="mem-btn download" onclick="downloadMemory()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Als MD speichern
           </button>
-
-          <!-- Clear -->
-          <button class="mem-btn danger" onclick="clearMemory()" title="Gedächtnis leeren">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              <path d="M10 11v6"/><path d="M14 11v6"/>
-            </svg>
+          <button class="mem-btn danger" onclick="clearMemory()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
             Leeren
           </button>
-
-          <!-- Active Toggle -->
           <button class="mem-active-toggle" id="mem-active-toggle" onclick="toggleMemoryActive()">
             <div class="toggle-track"><div class="toggle-thumb"></div></div>
             <span id="mem-toggle-label">In Anfragen einbinden</span>
           </button>
         </div>
-
         <div class="memory-editor-wrap">
           <div class="memory-hint">
-            <strong>Tipp:</strong> Notieren Sie hier Fallinfos, Mandantendaten, häufig genutzte Definitionen oder
-            persönliche Präferenzen als Markdown. Wenn das Gedächtnis aktiv ist, wird der Inhalt automatisch in
-            jeden System-Prompt eingebunden. <strong>Drag &amp; Drop</strong> einer .md-Datei in den Editor wird ebenfalls unterstützt.
+            <strong>Tipp:</strong> Hinterlegen Sie hier Ihr Thema, Ihre Forschungsfrage, die Gliederung, Schlüsselquellen und sonstige Notizen als Markdown. Wenn das Gedächtnis aktiv ist, kennt die KI diesen Kontext in allen Panels. <strong>Drag &amp; Drop</strong> einer .md-Datei wird unterstützt.
           </div>
-          <textarea
-            id="memory-editor"
-            class="memory-editor"
-            placeholder="# Gedächtnis / Kontext&#10;&#10;## Aktueller Fall&#10;- Mandant: ...&#10;- Sachverhalt: ...&#10;&#10;## Wichtige Definitionen&#10;&#10;## Bevorzugte Quellen&#10;&#10;## Notizen"
+          <textarea id="memory-editor" class="memory-editor"
+            placeholder="# Seminararbeit: [Titel]&#10;&#10;## Thema &amp; Forschungsfrage&#10;- Thema: ...&#10;- Forschungsfrage: ...&#10;&#10;## Gliederung&#10;&#10;## Schlüsselliteratur&#10;&#10;## Notizen"
             oninput="updateMemoryStats()"
             ondragover="handleMemoryDragOver(event)"
             ondragleave="handleMemoryDragLeave(event)"
-            ondrop="handleMemoryDrop(event)"
-          ></textarea>
+            ondrop="handleMemoryDrop(event)"></textarea>
           <div class="memory-stats">
             <span>Zeichen: <strong id="stat-chars">0</strong></span>
             <span>Wörter: <strong id="stat-words">0</strong></span>
             <span>Zeilen: <strong id="stat-lines">0</strong></span>
-            <span id="stat-status" style="margin-left:auto; font-size:0.75rem; color:var(--text-muted);">Nicht gespeichert</span>
+            <span id="stat-status" style="margin-left:auto; font-size:0.74rem;">Nicht gespeichert</span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- PANEL: EINSTELLUNGEN -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- EINSTELLUNGEN -->
+    <!-- ================================================================ -->
     <div class="tool-panel" id="panel-settings">
       <div class="panel-header">
         <div class="panel-title">Einstellungen</div>
-        <div class="panel-desc">API-Konfiguration und Modellparameter anpassen</div>
+        <div class="panel-desc">API-Konfiguration, Modell und Schreibparameter</div>
       </div>
       <div class="settings-content">
-
         <div class="settings-section">
           <h3>API-Konfiguration</h3>
           <div class="form-group">
@@ -1325,28 +789,21 @@
             </select>
           </div>
         </div>
-
         <div class="settings-section">
           <h3>Modellparameter</h3>
           <div class="form-group">
-            <label class="form-label">
-              Temperature: <span class="range-value" id="temp-value">0.3</span>
-              <small style="color:var(--text-muted); margin-left:8px;">(niedriger = präziser, höher = kreativer)</small>
+            <label class="form-label">Temperature: <span class="range-value" id="temp-value">0.3</span>
+              <small style="color:var(--text-muted); margin-left:6px;">(niedriger = präziser)</small>
             </label>
-            <input type="range" class="form-input" id="setting-temp" min="0" max="1" step="0.05" value="0.3"
-              oninput="document.getElementById('temp-value').textContent = this.value" />
+            <input type="range" class="form-input" id="setting-temp" min="0" max="1" step="0.05" value="0.3" oninput="document.getElementById('temp-value').textContent=this.value" />
           </div>
           <div class="form-group">
-            <label class="form-label">
-              Max. Tokens: <span class="range-value" id="tokens-value">4096</span>
-            </label>
-            <input type="range" class="form-input" id="setting-tokens" min="512" max="8192" step="256" value="4096"
-              oninput="document.getElementById('tokens-value').textContent = this.value" />
+            <label class="form-label">Max. Tokens: <span class="range-value" id="tokens-value">4096</span></label>
+            <input type="range" class="form-input" id="setting-tokens" min="512" max="8192" step="256" value="4096" oninput="document.getElementById('tokens-value').textContent=this.value" />
           </div>
         </div>
-
         <div class="settings-section">
-          <h3>Juristischer Kontext</h3>
+          <h3>Kontext der Seminararbeit</h3>
           <div class="form-group">
             <label class="form-label">Rechtssystem</label>
             <select class="form-select" id="setting-jurisdiction">
@@ -1354,34 +811,43 @@
               <option value="austrian">Österreichisches Recht</option>
               <option value="swiss">Schweizer Recht</option>
               <option value="eu">EU-Recht</option>
-              <option value="international">Internationales Recht</option>
+              <option value="international">Internationales / Rechtsvergleich</option>
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Spezialisierung</label>
+            <label class="form-label">Rechtsgebiet</label>
             <select class="form-select" id="setting-specialty">
-              <option value="general" selected>Allgemein</option>
-              <option value="civil">Zivilrecht</option>
+              <option value="general" selected>Allgemein / übergreifend</option>
+              <option value="civil">Zivilrecht (BGB, HGB)</option>
               <option value="criminal">Strafrecht</option>
-              <option value="administrative">Verwaltungsrecht</option>
+              <option value="administrative">Öffentliches Recht / Verwaltungsrecht</option>
+              <option value="constitutional">Verfassungsrecht</option>
               <option value="labor">Arbeitsrecht</option>
               <option value="corporate">Gesellschaftsrecht</option>
-              <option value="ip">Gewerblicher Rechtsschutz / IP</option>
+              <option value="ip">IP / Gewerblicher Rechtsschutz</option>
               <option value="tax">Steuerrecht</option>
               <option value="it">IT-Recht / Datenschutz</option>
+              <option value="eu">Europarecht</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Seitenumfang der Arbeit</label>
+            <select class="form-select" id="setting-pages">
+              <option value="15">ca. 15 Seiten</option>
+              <option value="20" selected>ca. 20 Seiten</option>
+              <option value="25">ca. 25 Seiten</option>
+              <option value="30">ca. 30 Seiten</option>
+              <option value="50">ca. 50 Seiten (Hausarbeit)</option>
             </select>
           </div>
         </div>
-
         <button class="save-btn" onclick="saveSettings()">Einstellungen speichern</button>
-
       </div>
     </div>
 
   </main>
 </div>
 
-<!-- TOAST CONTAINER -->
 <div class="toast-container" id="toastContainer"></div>
 
 <script>
@@ -1399,7 +865,7 @@
       btn.classList.add('active');
       label.textContent = 'Aktiv – wird eingebunden';
       badge.style.display = 'inline';
-      showToast('Gedächtnis aktiviert – wird in alle Anfragen eingebunden', 'success');
+      showToast('Gedächtnis aktiviert', 'success');
     } else {
       btn.classList.remove('active');
       label.textContent = 'In Anfragen einbinden';
@@ -1414,8 +880,8 @@
     document.getElementById('stat-chars').textContent = text.length;
     document.getElementById('stat-words').textContent = text.trim() ? text.trim().split(/\s+/).length : 0;
     document.getElementById('stat-lines').textContent = text ? text.split('\n').length : 0;
-    document.getElementById('stat-status').textContent = 'Ungespeichert – ↓ Als MD speichern';
-    saveMemoryToSession();
+    document.getElementById('stat-status').textContent = 'Ungespeichert';
+    try { sessionStorage.setItem('legal-ai-memory', text); } catch(e) {}
   }
 
   function downloadMemory() {
@@ -1425,35 +891,30 @@
     const blob = new Blob([content], { type: 'text/markdown; charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `juristische-memory-${date}.md`;
-    a.click();
+    a.href = url; a.download = `seminararbeit-memory-${date}.md`; a.click();
     URL.revokeObjectURL(url);
-    document.getElementById('stat-status').textContent = `Gespeichert ${new Date().toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'})}`;
+    document.getElementById('stat-status').textContent = `Gespeichert ${new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}`;
     showToast('Gedächtnis gespeichert.', 'success');
   }
 
   function uploadMemory(input) {
-    const file = input.files[0];
-    if (!file) return;
+    const file = input.files[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = e => {
       document.getElementById('memory-editor').value = e.target.result;
       memory.content = e.target.result;
       updateMemoryStats();
       document.getElementById('stat-status').textContent = `Geladen: ${file.name}`;
-      showToast(`"${file.name}" geladen.`, 'success');
+      showToast(`„${file.name}" geladen.`, 'success');
     };
-    reader.readAsText(file, 'UTF-8');
-    input.value = '';
+    reader.readAsText(file, 'UTF-8'); input.value = '';
   }
 
   function clearMemory() {
     if (!document.getElementById('memory-editor').value.trim()) return;
     if (!confirm('Gedächtnis wirklich leeren?')) return;
     document.getElementById('memory-editor').value = '';
-    memory.content = '';
-    memory.active = false;
+    memory.content = ''; memory.active = false;
     document.getElementById('mem-active-toggle').classList.remove('active');
     document.getElementById('mem-toggle-label').textContent = 'In Anfragen einbinden';
     document.getElementById('mem-active-badge').style.display = 'none';
@@ -1462,37 +923,26 @@
     showToast('Gedächtnis geleert.', 'info');
   }
 
-  function handleMemoryDragOver(e) {
-    e.preventDefault();
-    document.getElementById('memory-editor').classList.add('drag-over');
-  }
-  function handleMemoryDragLeave(e) {
-    document.getElementById('memory-editor').classList.remove('drag-over');
-  }
+  function handleMemoryDragOver(e) { e.preventDefault(); document.getElementById('memory-editor').classList.add('drag-over'); }
+  function handleMemoryDragLeave() { document.getElementById('memory-editor').classList.remove('drag-over'); }
   function handleMemoryDrop(e) {
-    e.preventDefault();
-    document.getElementById('memory-editor').classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
+    e.preventDefault(); document.getElementById('memory-editor').classList.remove('drag-over');
+    const file = e.dataTransfer.files[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
       document.getElementById('memory-editor').value = ev.target.result;
       memory.content = ev.target.result;
       updateMemoryStats();
       document.getElementById('stat-status').textContent = `Geladen: ${file.name}`;
-      showToast(`"${file.name}" per Drag & Drop geladen.`, 'success');
+      showToast(`„${file.name}" per Drag & Drop geladen.`, 'success');
     };
     reader.readAsText(file, 'UTF-8');
   }
 
-  function saveMemoryToSession() {
-    try { sessionStorage.setItem('legal-ai-memory', memory.content); } catch(e) {}
-  }
-
   // ==========================================================================
-  // GUTACHTENSTIL STATE
+  // GUTACHTENSTIL
   // ==========================================================================
-  const gutachtenstil = { research: false, analysis: false, chat: false };
+  const gutachtenstil = { thema: false, gliederung: false, literatur: false, ausarbeitung: false, zitation: false, revision: false };
 
   function toggleGutachtenstil(panel) {
     gutachtenstil[panel] = !gutachtenstil[panel];
@@ -1507,7 +957,7 @@
   }
 
   // ==========================================================================
-  // CONFIGURATION
+  // CONFIG
   // ==========================================================================
   const config = {
     apiKey: 'sk-804784c78bd74b8189ff9c0c7fae33a1',
@@ -1516,56 +966,55 @@
     temperature: 0.3,
     maxTokens: 4096,
     jurisdiction: 'german',
-    specialty: 'general'
+    specialty: 'general',
+    pages: '20'
   };
 
   // ==========================================================================
-  // CHAT HISTORIES
+  // HISTORIES
   // ==========================================================================
-  const histories = {
-    research: [],
-    analysis: [],
-    chat: []
-  };
+  const histories = { thema: [], gliederung: [], literatur: [], ausarbeitung: [], zitation: [], revision: [] };
 
   // ==========================================================================
   // SYSTEM PROMPTS
   // ==========================================================================
   function getSystemPrompt(panel) {
-    const j = config.jurisdiction === 'german' ? 'deutschen' :
-               config.jurisdiction === 'austrian' ? 'österreichischen' :
-               config.jurisdiction === 'swiss' ? 'schweizer' :
-               config.jurisdiction === 'eu' ? 'europäischen' : 'internationalen';
+    const j = { german:'deutschem', austrian:'österreichischem', swiss:'schweizer', eu:'europäischem', international:'internationalem' }[config.jurisdiction] || 'deutschem';
+    const sp = { general:'', civil:' mit Schwerpunkt Zivilrecht', criminal:' mit Schwerpunkt Strafrecht', administrative:' mit Schwerpunkt Öffentliches Recht/Verwaltungsrecht', constitutional:' mit Schwerpunkt Verfassungsrecht', labor:' mit Schwerpunkt Arbeitsrecht', corporate:' mit Schwerpunkt Gesellschaftsrecht', ip:' mit Schwerpunkt IP/Gewerblicher Rechtsschutz', tax:' mit Schwerpunkt Steuerrecht', it:' mit Schwerpunkt IT-Recht/Datenschutz', eu:' mit Schwerpunkt Europarecht' }[config.specialty] || '';
 
-    const base = `Du bist ein hochqualifizierter KI-Assistent für juristische Recherche und Rechtsberatung, spezialisiert auf das ${j} Recht.
-Du antwortest immer auf Deutsch, präzise, strukturiert und rechtlich korrekt.
-Formatiere Antworten mit Überschriften (## / ###), Listen und Hervorhebungen für bessere Lesbarkeit.
-Zitiere relevante Paragraphen, Normen und Urteile, wenn bekannt.
-Weise darauf hin, dass deine Antworten keine anwaltliche Beratung ersetzen und für konkrete Rechtsfragen ein Rechtsanwalt konsultiert werden sollte.`;
+    const base = `Du bist ein hochspezialisierter KI-Assistent für die Erstellung juristischer Seminararbeiten in ${j} Recht${sp}.
+Deine Antworten richten sich an Jurastudierende (ca. 4.–8. Semester) und Doktoranden.
+Du antwortest stets auf Deutsch, wissenschaftlich präzise und im akademischen Stil.
+Formatiere strukturiert mit Überschriften (## / ###), nummerierten Listen und fett markierten Schlüsselbegriffen.
+Zitiere Normen (§ X YYY), Urteile (BGHZ, NJW, BVerfGE etc.) und Literatur präzise.
+Empfohlener Umfang der Arbeit: ca. ${config.pages} Seiten.
+Achte auf wissenschaftliche Sprache: kein umgangssprachlicher Stil, keine Ich-Form (außer wenn explizit gewünscht), präzise Fachterminologie.`;
 
-    const gutachtenstilPrompt = `
+    const gsPrompt = `
 
 ## GUTACHTENSTIL – PFLICHTFORMAT
-Beantworte JEDE Rechtsfrage strikt im klassischen juristischen Gutachtenstil:
+Strukturiere JEDE juristische Prüfung im klassischen Gutachtenstil:
+**1. Obersatz:** Hypothetische Formulierung der Rechtsfrage (z.B. „A könnte gegen B einen Anspruch auf … aus § X haben.").
+**2. Definition:** Einschlägige Norm(en) nennen, Tatbestandsmerkmale abstrakt definieren.
+**3. Voraussetzungen/Subsumtion:** Jedes Tatbestandsmerkmal einzeln prüfen: Obersatz → Definition → Subsumtion → Zwischenergebnis.
+**4. Ergebnis:** Klares Gesamtergebnis.
+Nummerierten Prüfungsaufbau einhalten. Normen fett hervorheben.`;
 
-**1. Obersatz:** Formuliere die zu prüfende Rechtsfrage als Hypothese (z.B. „A könnte gegen B einen Anspruch auf … haben.").
-**2. Definition:** Nenne die einschlägige Norm (§ X YYY) und definiere die Tatbestandsmerkmale abstrakt.
-**3. Voraussetzungen / Tatbestandsprüfung:** Prüfe jede Voraussetzung einzeln (Obersatz → Definition → Subsumtion → Zwischenergebnis).
-**4. Subsumtion:** Wende die abstrakten Merkmale auf den konkreten Sachverhalt an.
-**5. Ergebnis:** Schließe mit einem klaren Ergebnis ab (z.B. „Im Ergebnis hat A gegen B einen Anspruch auf …").
-
-Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Normen fett.`;
-
-    const memorySection = (memory.active && memory.content.trim())
-      ? `\n\n---\n## PERSISTENTES GEDÄCHTNIS / KONTEXT\nDer Nutzer hat folgende dauerhafte Notizen und Kontextinformationen hinterlegt. Berücksichtige sie in deinen Antworten:\n\n${memory.content.trim()}\n---`
+    const memPart = (memory.active && memory.content.trim())
+      ? `\n\n---\n## KONTEXT DER SEMINARARBEIT (Gedächtnis)\n${memory.content.trim()}\n---`
       : '';
 
+    const gs = gutachtenstil[panel] ? gsPrompt : '';
+
     const prompts = {
-      research: base + `\n\nSpezialisierung: Juristische Recherche. Erkläre Rechtsbegriffe, Gesetze und Rechtsprechung detailliert und verständlich. Strukturiere Antworten mit: Rechtsgrundlage, Anwendungsbereich, aktuelle Rechtsprechung, praktische Bedeutung.` + (gutachtenstil[panel] ? gutachtenstilPrompt : '') + memorySection,
-      analysis: base + `\n\nSpezialisierung: Dokumentenanalyse. Analysiere juristische Dokumente präzise. Identifiziere problematische Klauseln, rechtliche Risiken und Optimierungspotenzial. Strukturiere Berichte klar.` + (gutachtenstil[panel] ? gutachtenstilPrompt : '') + memorySection,
-      chat: base + `\n\nSpezialisierung: Rechtsberatung und Gutachten. Bei Sachverhaltsanfragen: Fakten prüfen, Normen anwenden, Empfehlungen geben.` + (gutachtenstil[panel] ? gutachtenstilPrompt : ' Verwende strukturierte Antworten mit klarer Gliederung.') + memorySection
+      thema: base + `\n\nDeine Aufgabe: Hilf dem Studierenden, das Thema seiner Seminararbeit wissenschaftlich zu schärfen und einzugrenzen. Entwickle präzise Forschungsfragen, formuliere Hypothesen, entwerfe einen Problemaufriss (Ausgangslage → Problemstellung → Ziel der Arbeit → Gang der Untersuchung) und zeige die wissenschaftliche Relevanz auf.` + gs + memPart,
+      gliederung: base + `\n\nDeine Aufgabe: Erstelle und optimiere Gliederungen für juristische Seminararbeiten. Achte auf: logischen Argumentationsaufbau, roten Faden, vollständige Themenabdeckung, ausgewogene Kapitelanteile, sinnvolle Nummerierung (I./1./a) etc.) und die korrekte Struktur (Einleitung → Hauptteil → Schluss → Literaturverzeichnis).` + gs + memPart,
+      literatur: base + `\n\nDeine Aufgabe: Unterstütze bei der Literaturrecherche für juristische Seminararbeiten. Nenne relevante Kommentare (MüKo, Palandt/Grüneberg, Staudinger, BeckOK), Monografien, Zeitschriftenaufsätze (NJW, JZ, AcP, ZZP, NStZ etc.) und Leitentscheidungen. Erkläre Recherchestrategien für Juris, Beck-Online und andere Datenbanken.` + gs + memPart,
+      ausarbeitung: base + `\n\nDeine Aufgabe: Hilf beim Verfassen und Ausarbeiten von Abschnitten einer juristischen Seminararbeit. Schreibe im wissenschaftlichen Stil, setze Fußnoten (als [Fn. X]), verwende korrekte juristische Fachterminologie, baue Argumente logisch auf und stelle Meinungsstreitigkeiten mit h.M./a.A. korrekt dar.` + gs + memPart,
+      zitation: base + `\n\nDeine Aufgabe: Formatiere Quellen korrekt nach juristischer Zitierweise. Unterscheide Erstnachweis und Kurzzitat, Kommentarzitat (Autor in: Werk, § X Rn. Y), Monografie, Zeitschriftenaufsatz (Autor, NJW 2023, 1234 (1236)), Urteil (BGH NJW 2023, 1234; BGHZ 220, 1) und Literaturverzeichnis. Verwende gängige Abkürzungen korrekt (m.w.N., str., h.M., a.A., vgl., st. Rspr.).` + gs + memPart,
+      revision: base + `\n\nDeine Aufgabe: Überarbeite und verbessere Texte aus juristischen Seminararbeiten. Gib strukturiertes Feedback zu: Wissenschaftlichkeit des Stils, Argumentationslogik, Fachterminologie, Satzkonstruktion, Übergängen zwischen Abschnitten und rotem Faden. Biete danach eine überarbeitete Version an.` + gs + memPart,
     };
-    return prompts[panel] || base + memorySection;
+    return prompts[panel] || base + memPart;
   }
 
   // ==========================================================================
@@ -1579,20 +1028,15 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
   }
 
   // ==========================================================================
-  // SEND MESSAGE
+  // SEND / QUICK PROMPT / TEMPLATES
   // ==========================================================================
   async function sendMessage(panel) {
     const input = document.getElementById('input-' + panel);
     const text = input.value.trim();
     if (!text) return;
-
-    input.value = '';
-    autoResize(input);
-    appendMessage(panel, 'user', text);
+    input.value = ''; autoResize(input);
+    appendUserMessage(panel, text);
     histories[panel].push({ role: 'user', content: text });
-
-    if (panel === 'chat') updateChatCount();
-
     await callAPI(panel);
   }
 
@@ -1603,95 +1047,72 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
     await sendMessage(panel);
   }
 
-  async function analyzeDocument(type) {
-    const docText = document.getElementById('doc-input').value.trim();
-    if (!docText) { showToast('Bitte fügen Sie zuerst ein Dokument ein.', 'error'); return; }
-
-    const prompts = {
-      summary: `Erstelle eine strukturierte juristische Zusammenfassung des folgenden Dokuments. Gehe auf: Art des Dokuments, beteiligte Parteien, Kerninhalt, wichtigste Regelungen und rechtliche Einordnung ein:\n\n${docText}`,
-      risks: `Analysiere das folgende Dokument auf juristische Risiken, problematische Klauseln und rechtliche Schwachstellen. Priorisiere die Risiken (hoch/mittel/niedrig) und erkläre die rechtlichen Konsequenzen:\n\n${docText}`,
-      clauses: `Prüfe alle Klauseln des folgenden Dokuments auf ihre AGB-rechtliche Wirksamkeit (§§ 305 ff. BGB), Transparenzgebot und mögliche Unwirksamkeit. Führe jede Klausel mit Bewertung auf:\n\n${docText}`,
-      optimize: `Analysiere das folgende Dokument und gib konkrete Optimierungsvorschläge für eine klarere, rechtssicherere und ausgewogenere Formulierung. Markiere verbesserungswürdige Passagen:\n\n${docText}`
-    };
-
-    const chatArea = document.getElementById('chat-analysis');
-    chatArea.innerHTML = '';
-    histories.analysis = [];
-    histories.analysis.push({ role: 'user', content: prompts[type] });
-
-    appendMessage('analysis', 'user', {
-      summary: '🔍 Zusammenfassung erstellen',
-      risks: '⚠️ Risiken analysieren',
-      clauses: '✅ Klauseln prüfen',
-      optimize: '✏️ Optimierungsvorschläge'
-    }[type]);
-
-    await callAPI('analysis');
+  function useTemplate(panel, prompt) {
+    switchPanel(panel);
+    const input = document.getElementById('input-' + panel);
+    input.value = prompt;
+    sendMessage(panel);
   }
 
-  async function useTemplate(prompt) {
-    switchPanel('chat');
-    const input = document.getElementById('input-chat');
-    input.value = prompt;
-    await sendMessage('chat');
+  // Ausarbeitung-Actions
+  async function ausarbeitungAction(type) {
+    const text = document.getElementById('ausarbeitung-input').value.trim();
+    if (!text) { showToast('Bitte Text oder Stichpunkte eingeben.', 'error'); return; }
+    const prompts = {
+      write:       `Arbeite die folgenden Stichpunkte/diesen Rohtext zu einem wissenschaftlichen, druckreifen Abschnitt einer juristischen Seminararbeit aus. Verwende korrekten wissenschaftlichen Stil mit Fußnotenhinweisen [Fn. X]:\n\n${text}`,
+      expand:      `Erweitere und vertiefe den folgenden Abschnitt einer juristischen Seminararbeit. Füge weitere Argumente, Meinungsstreitigkeiten (h.M./a.A.) und Nachweise hinzu:\n\n${text}`,
+      intro:       `Verfasse eine wissenschaftliche Einleitung für eine juristische Seminararbeit basierend auf dem folgenden Thema/Kontext. Strukturiere: Ausgangslage → Problemaufriss → Forschungsfrage → Gang der Untersuchung:\n\n${text}`,
+      conclusion:  `Verfasse einen wissenschaftlichen Schluss (Fazit und Ausblick) für eine juristische Seminararbeit basierend auf dem folgenden Kontext. Fasse Kernthesen zusammen, beantworte die Forschungsfrage und gib einen Ausblick:\n\n${text}`,
+      transition:  `Verfasse eine juristisch-wissenschaftliche Überleitung zwischen den folgenden Abschnitten. Die Überleitung soll den roten Faden sichern:\n\n${text}`,
+    };
+    histories.ausarbeitung.push({ role: 'user', content: prompts[type] });
+    appendUserMessage('ausarbeitung', { write:'✏️ Ausarbeiten', expand:'➕ Erweitern', intro:'📄 Einleitung', conclusion:'🔚 Schluss', transition:'↔️ Überleitung' }[type]);
+    await callAPI('ausarbeitung');
+  }
+
+  // Revision-Actions
+  async function revisionAction(type) {
+    const text = document.getElementById('revision-input').value.trim();
+    if (!text) { showToast('Bitte einen Text einfügen.', 'error'); return; }
+    const prompts = {
+      full:      `Prüfe den folgenden Abschnitt einer juristischen Seminararbeit vollständig: Wissenschaftlichkeit, Stil, Argumentation, Terminologie, Übergänge und roter Faden. Gib strukturiertes Feedback und biete eine überarbeitete Version an:\n\n${text}`,
+      style:     `Verbessere den wissenschaftlichen Schreibstil des folgenden Abschnitts einer juristischen Seminararbeit. Achte auf Objektivität, Fachterminologie und akademische Ausdrucksweise:\n\n${text}`,
+      logic:     `Analysiere die Argumentationslogik und -struktur des folgenden Abschnitts. Zeige logische Brüche, fehlende Begründungen und Verbesserungsmöglichkeiten auf:\n\n${text}`,
+      academic:  `Prüfe die Wissenschaftlichkeit des folgenden Abschnitts: Ist er frei von Umgangssprache? Werden Thesen belegt? Werden Meinungsstreitigkeiten sachgerecht dargestellt?\n\n${text}`,
+      shorten:   `Kürze den folgenden Abschnitt auf das Wesentliche, ohne inhaltliche Substanz zu verlieren. Bewahre den wissenschaftlichen Stil:\n\n${text}`,
+    };
+    histories.revision.push({ role: 'user', content: prompts[type] });
+    appendUserMessage('revision', { full:'🔍 Vollständig prüfen', style:'✨ Stil verbessern', logic:'🧠 Argumentation', academic:'🎓 Wissenschaftlichkeit', shorten:'✂️ Kürzen' }[type]);
+    await callAPI('revision');
   }
 
   // ==========================================================================
-  // API CALL
+  // API
   // ==========================================================================
   async function callAPI(panel) {
     const sendBtn = document.getElementById('send-' + panel);
     if (sendBtn) { sendBtn.disabled = true; sendBtn.innerHTML = '<div class="spinner"></div> Lädt…'; }
-
     setStatus('connecting');
 
-    // Show typing indicator
-    const typingId = 'typing-' + Date.now();
     const chatArea = document.getElementById('chat-' + panel);
     const typingEl = document.createElement('div');
-    typingEl.id = typingId;
     typingEl.className = 'message assistant';
-    typingEl.innerHTML = `
-      <div class="msg-avatar ai-av">KI</div>
-      <div class="msg-bubble">
-        <div class="typing-indicator">
-          <span></span><span></span><span></span>
-        </div>
-      </div>`;
+    typingEl.innerHTML = `<div class="msg-avatar ai-av">KI</div><div class="msg-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div>`;
     chatArea.appendChild(typingEl);
     chatArea.scrollTop = chatArea.scrollHeight;
 
     try {
-      const messages = [
-        { role: 'system', content: getSystemPrompt(panel) },
-        ...histories[panel]
-      ];
-
+      const messages = [{ role: 'system', content: getSystemPrompt(panel) }, ...histories[panel]];
       const response = await fetch(config.endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`
-        },
-        body: JSON.stringify({
-          model: config.model,
-          messages: messages,
-          temperature: config.temperature,
-          max_tokens: config.maxTokens,
-          stream: true
-        })
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` },
+        body: JSON.stringify({ model: config.model, messages, temperature: config.temperature, max_tokens: config.maxTokens, stream: true })
       });
+      if (!response.ok) { const e = await response.json().catch(() => ({})); throw new Error(e.error?.message || `HTTP ${response.status}`); }
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error?.message || `HTTP ${response.status}`);
-      }
-
-      // Remove typing indicator, create response bubble
       typingEl.remove();
       const msgEl = createAssistantBubble(panel);
       let fullText = '';
-
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -1699,41 +1120,31 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop();
-
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed === 'data: [DONE]') continue;
-          if (!trimmed.startsWith('data: ')) continue;
-
+          const t = line.trim();
+          if (!t || t === 'data: [DONE]' || !t.startsWith('data: ')) continue;
           try {
-            const data = JSON.parse(trimmed.slice(6));
-            const delta = data.choices?.[0]?.delta?.content || '';
+            const delta = JSON.parse(t.slice(6)).choices?.[0]?.delta?.content || '';
             if (delta) {
               fullText += delta;
-              const bubble = msgEl.querySelector('.msg-bubble-content');
-              bubble.innerHTML = renderMarkdown(fullText) + '<span class="cursor-blink"></span>';
+              msgEl.querySelector('.msg-bubble-content').innerHTML = renderMarkdown(fullText) + '<span class="cursor-blink"></span>';
               chatArea.scrollTop = chatArea.scrollHeight;
             }
-          } catch (e) { /* skip malformed */ }
+          } catch(e) {}
         }
       }
 
-      // Finalize
-      const bubble = msgEl.querySelector('.msg-bubble-content');
-      bubble.innerHTML = renderMarkdown(fullText);
-      addCopyButton(msgEl, fullText);
-      addTimestamp(msgEl);
-
+      msgEl.querySelector('.msg-bubble-content').innerHTML = renderMarkdown(fullText);
+      addMeta(msgEl, fullText);
       histories[panel].push({ role: 'assistant', content: fullText });
       setStatus('connected');
 
-    } catch (err) {
+    } catch(err) {
       typingEl.remove();
-      appendMessage(panel, 'error', `Fehler: ${err.message}`);
+      appendErrorMessage(panel, err.message);
       setStatus('error');
       showToast('API-Fehler: ' + err.message, 'error');
     } finally {
@@ -1745,132 +1156,88 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
   }
 
   // ==========================================================================
-  // MESSAGE RENDERING
+  // MESSAGE HELPERS
   // ==========================================================================
-  function appendMessage(panel, role, content) {
+  function appendUserMessage(panel, text) {
     const chatArea = document.getElementById('chat-' + panel);
-    const msg = document.createElement('div');
-    msg.className = `message ${role === 'user' ? 'user' : role === 'error' ? 'assistant' : 'assistant'}`;
-
-    if (role === 'user') {
-      msg.innerHTML = `
-        <div class="msg-avatar user-av">Sie</div>
-        <div class="msg-bubble">${escapeHtml(content)}</div>`;
-    } else if (role === 'error') {
-      msg.innerHTML = `
-        <div class="msg-avatar ai-av" style="background:var(--danger)">!</div>
-        <div class="msg-bubble" style="border-color:var(--danger); color:var(--danger)">${escapeHtml(content)}</div>`;
-    }
-
-    chatArea.appendChild(msg);
+    const el = document.createElement('div');
+    el.className = 'message user';
+    el.innerHTML = `<div class="msg-avatar user-av">Sie</div><div class="msg-bubble">${escapeHtml(text)}</div>`;
+    chatArea.appendChild(el);
     chatArea.scrollTop = chatArea.scrollHeight;
-    return msg;
+  }
+
+  function appendErrorMessage(panel, msg) {
+    const chatArea = document.getElementById('chat-' + panel);
+    const el = document.createElement('div');
+    el.className = 'message assistant';
+    el.innerHTML = `<div class="msg-avatar ai-av" style="background:var(--danger)">!</div><div class="msg-bubble" style="border-color:var(--danger);color:var(--danger)">${escapeHtml(msg)}</div>`;
+    chatArea.appendChild(el);
+    chatArea.scrollTop = chatArea.scrollHeight;
   }
 
   function createAssistantBubble(panel) {
     const chatArea = document.getElementById('chat-' + panel);
-    const msg = document.createElement('div');
-    msg.className = 'message assistant';
-    msg.innerHTML = `
-      <div class="msg-avatar ai-av">KI</div>
-      <div class="msg-bubble">
-        <div class="msg-bubble-content"></div>
-        <div class="msg-meta" style="margin-top:6px;"></div>
-      </div>`;
-    chatArea.appendChild(msg);
+    const el = document.createElement('div');
+    el.className = 'message assistant';
+    el.innerHTML = `<div class="msg-avatar ai-av">KI</div><div class="msg-bubble"><div class="msg-bubble-content"></div><div class="msg-meta" style="margin-top:6px;"></div></div>`;
+    chatArea.appendChild(el);
     chatArea.scrollTop = chatArea.scrollHeight;
-    return msg;
+    return el;
   }
 
-  function addCopyButton(msgEl, text) {
+  function addMeta(msgEl, text) {
     const meta = msgEl.querySelector('.msg-meta');
-    if (!meta) return;
-    const btn = document.createElement('button');
-    btn.className = 'copy-btn';
-    btn.textContent = '📋 Kopieren';
-    btn.onclick = () => {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'copy-btn';
+    copyBtn.textContent = '📋 Kopieren';
+    copyBtn.onclick = () => {
       navigator.clipboard.writeText(text).then(() => {
-        btn.textContent = '✅ Kopiert!';
-        setTimeout(() => { btn.textContent = '📋 Kopieren'; }, 2000);
+        copyBtn.textContent = '✅ Kopiert!';
+        setTimeout(() => { copyBtn.textContent = '📋 Kopieren'; }, 2000);
       });
     };
-    meta.appendChild(btn);
-  }
-
-  function addTimestamp(msgEl) {
-    const meta = msgEl.querySelector('.msg-meta');
-    if (!meta) return;
     const time = document.createElement('div');
     time.className = 'msg-time';
     time.textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    meta.appendChild(copyBtn);
     meta.appendChild(time);
   }
 
   // ==========================================================================
-  // MARKDOWN RENDERER (lightweight)
+  // MARKDOWN RENDERER
   // ==========================================================================
   function renderMarkdown(text) {
-    let html = escapeHtml(text);
-
-    // Code blocks
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
-      `<pre><code>${code.trim()}</code></pre>`);
-
-    // Inline code
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-    // Bold
-    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-
-    // Italic
-    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
-
-    // Headings
-    html = html.replace(/^### (.+)$/gm, '<h4 style="color:var(--primary);margin:12px 0 6px;font-size:0.95rem;">$1</h4>');
-    html = html.replace(/^## (.+)$/gm, '<h3 style="color:var(--primary);margin:14px 0 8px;font-size:1rem;border-bottom:1px solid var(--border);padding-bottom:4px;">$1</h3>');
-    html = html.replace(/^# (.+)$/gm, '<h2 style="color:var(--primary);margin:16px 0 10px;font-size:1.1rem;">$1</h2>');
-
-    // Blockquote
-    html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-
-    // Unordered list
-    html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
-    html = html.replace(/(<li>.*<\/li>(\n|$))+/g, m => `<ul>${m}</ul>`);
-
-    // Ordered list
-    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
-
-    // Horizontal rule
-    html = html.replace(/^---$/gm, '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0;">');
-
-    // Paragraphs (double newline)
-    html = html.replace(/\n\n/g, '</p><p style="margin:8px 0;">');
-    html = '<p style="margin:0;">' + html + '</p>';
-
-    // Single newlines
-    html = html.replace(/(?<!>)\n(?!<)/g, '<br>');
-
-    return html;
+    let h = escapeHtml(text);
+    h = h.replace(/```[\w]*\n([\s\S]*?)```/g, (_, c) => `<pre><code>${c.trim()}</code></pre>`);
+    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+    h = h.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
+    h = h.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+    h = h.replace(/^#### (.+)$/gm, '<h4 style="color:var(--primary);margin:10px 0 5px;font-size:0.9rem;">$1</h4>');
+    h = h.replace(/^### (.+)$/gm, '<h3 style="color:var(--primary);margin:12px 0 6px;font-size:0.95rem;">$1</h3>');
+    h = h.replace(/^## (.+)$/gm, '<h2 style="color:var(--primary);margin:14px 0 7px;font-size:1rem;border-bottom:1px solid var(--border);padding-bottom:4px;">$1</h2>');
+    h = h.replace(/^# (.+)$/gm, '<h2 style="color:var(--primary);margin:16px 0 9px;font-size:1.05rem;">$1</h2>');
+    h = h.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+    h = h.replace(/^---$/gm, '<hr>');
+    h = h.replace(/^[\-\*] (.+)$/gm, '<li style="margin:3px 0;">$1</li>');
+    h = h.replace(/(<li[^>]*>.*<\/li>\n?)+/g, m => `<ul style="margin:6px 0 6px 18px;">${m}</ul>`);
+    h = h.replace(/^\d+\. (.+)$/gm, '<li style="margin:3px 0;">$1</li>');
+    h = h.replace(/\n\n/g, '</p><p style="margin:7px 0;">');
+    h = '<p style="margin:0">' + h + '</p>';
+    h = h.replace(/(?<!>)\n(?!<)/g, '<br>');
+    return h;
   }
 
-  function escapeHtml(text) {
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+  function escapeHtml(t) {
+    return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
   // ==========================================================================
   // UI HELPERS
   // ==========================================================================
   function handleKeydown(e, panel) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(panel);
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(panel); }
   }
 
   function autoResize(el) {
@@ -1885,15 +1252,7 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
     histories[panel] = [];
     const chatArea = document.getElementById('chat-' + panel);
     if (chatArea) chatArea.innerHTML = '';
-    if (panel === 'chat') updateChatCount();
-    showToast('Verlauf geleert.', 'info');
-  }
-
-  function updateChatCount() {
-    const count = Math.floor(histories.chat.length / 2);
-    const badge = document.getElementById('chatCount');
-    if (count > 0) { badge.style.display = 'inline-block'; badge.textContent = count; }
-    else { badge.style.display = 'none'; }
+    showToast('Chatverlauf geleert.', 'info');
   }
 
   function setStatus(state) {
@@ -1907,17 +1266,12 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
   }
 
   function showToast(message, type = 'info') {
-    const container = document.getElementById('toastContainer');
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateX(100%)'; toast.style.transition = 'all 0.3s'; setTimeout(() => toast.remove(), 300); }, 3500);
+    const c = document.getElementById('toastContainer');
+    const t = document.createElement('div');
+    t.className = `toast ${type}`; t.textContent = message; c.appendChild(t);
+    setTimeout(() => { t.style.opacity='0'; t.style.transform='translateX(100%)'; t.style.transition='all 0.3s'; setTimeout(() => t.remove(), 300); }, 3200);
   }
 
-  // ==========================================================================
-  // SETTINGS
-  // ==========================================================================
   function saveSettings() {
     config.apiKey = document.getElementById('setting-apikey').value;
     config.endpoint = document.getElementById('setting-endpoint').value;
@@ -1926,6 +1280,8 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
     config.maxTokens = parseInt(document.getElementById('setting-tokens').value);
     config.jurisdiction = document.getElementById('setting-jurisdiction').value;
     config.specialty = document.getElementById('setting-specialty').value;
+    config.pages = document.getElementById('setting-pages').value;
+    try { sessionStorage.setItem('legal-ai-config', JSON.stringify(config)); } catch(e) {}
     showToast('Einstellungen gespeichert.', 'success');
     setStatus('');
   }
@@ -1934,15 +1290,13 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
   // INIT
   // ==========================================================================
   document.addEventListener('DOMContentLoaded', () => {
-    // Set initial status
     setStatus('');
 
-    // Load saved settings from sessionStorage if any
-    const saved = sessionStorage.getItem('legal-ai-config');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        Object.assign(config, parsed);
+    try {
+      const saved = sessionStorage.getItem('legal-ai-config');
+      if (saved) {
+        const p = JSON.parse(saved);
+        Object.assign(config, p);
         document.getElementById('setting-apikey').value = config.apiKey;
         document.getElementById('setting-endpoint').value = config.endpoint;
         document.getElementById('setting-model').value = config.model;
@@ -1952,26 +1306,19 @@ Halte diese Struktur konsequent ein. Nummeriere Prüfungspunkte. Kennzeichne Nor
         document.getElementById('tokens-value').textContent = config.maxTokens;
         document.getElementById('setting-jurisdiction').value = config.jurisdiction;
         document.getElementById('setting-specialty').value = config.specialty;
-      } catch(e) {}
-    }
+        if (config.pages) document.getElementById('setting-pages').value = config.pages;
+      }
+    } catch(e) {}
 
-    // Restore memory from sessionStorage
-    const savedMemory = sessionStorage.getItem('legal-ai-memory');
-    if (savedMemory) {
-      document.getElementById('memory-editor').value = savedMemory;
-      memory.content = savedMemory;
-      updateMemoryStats();
-      document.getElementById('stat-status').textContent = 'Aus Session wiederhergestellt';
-    }
-
-    // Auto-save settings on change
-    const settingsInputs = ['setting-apikey','setting-endpoint','setting-model','setting-temp','setting-tokens','setting-jurisdiction','setting-specialty'];
-    settingsInputs.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('change', () => {
-        sessionStorage.setItem('legal-ai-config', JSON.stringify(config));
-      });
-    });
+    try {
+      const savedMem = sessionStorage.getItem('legal-ai-memory');
+      if (savedMem) {
+        document.getElementById('memory-editor').value = savedMem;
+        memory.content = savedMem;
+        updateMemoryStats();
+        document.getElementById('stat-status').textContent = 'Aus Session wiederhergestellt';
+      }
+    } catch(e) {}
   });
 </script>
 </body>
