@@ -20,7 +20,7 @@ from utils import ChannelBuffer, NotAdmin
 
 log = logging.getLogger("rce.bot")
 
-COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits")
+COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits")
 
 # Ereignisklasse -> Discord-Eventname (Listener heißen dann on_<name>)
 EVENT_NAMES: dict[type, str] = {

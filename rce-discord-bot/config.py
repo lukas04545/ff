@@ -98,6 +98,7 @@ class Config:
     kit_give_all_template: str
     kit_add_template: str
     kit_remove_template: str
+    item_give_template: str
     autokit_delay: int
     kit_claim_announce: bool
 
@@ -142,6 +143,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         kit_add_template=_get(
             "KIT_ADD_TEMPLATE", 'kit add "{kit}" "{item}" "{amount}" "{condition}" "{container}"'),
         kit_remove_template=_get("KIT_REMOVE_TEMPLATE", 'kit remove "{kit}" "{id}"'),
+        item_give_template=_get("ITEM_GIVE_TEMPLATE", 'inventory.giveto "{name}" "{item}" {amount}'),
         autokit_delay=max(0, _int("AUTOKIT_DELAY", 3)),
         kit_claim_announce=_bool("KIT_CLAIM_ANNOUNCE", True),
         database_path=Path(_get("DATABASE_PATH", "data/bot.db")),
@@ -168,6 +170,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         ("KIT_GIVE_ALL_TEMPLATE", cfg.kit_give_all_template, ("{kit}",)),
         ("KIT_ADD_TEMPLATE", cfg.kit_add_template, ("{kit}", "{item}")),
         ("KIT_REMOVE_TEMPLATE", cfg.kit_remove_template, ("{kit}", "{id}")),
+        ("ITEM_GIVE_TEMPLATE", cfg.item_give_template, ("{name}", "{item}", "{amount}")),
     ):
         missing = [p for p in required if p not in value]
         if missing:

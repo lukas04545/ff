@@ -85,6 +85,11 @@ async def handler(request: web.Request) -> web.WebSocketResponse:
                 await send("", ident)
                 kit, player = cmd.split('"')[1], cmd.split('"')[3]
                 await send(f"[ServerVar] SERVER giving {player} kit {kit}")
+            elif cmd.startswith("inventory.giveto"):
+                await send("", ident)
+                player, item = cmd.split('"')[1], cmd.split('"')[3]
+                amount = cmd.split('"')[4].strip()
+                await send(f"giving {player} {amount} x {item}")
             elif cmd.startswith("say "):
                 await send("", ident)
                 await send(f"[CHAT SERVER] SERVER : {cmd[4:]}")

@@ -61,7 +61,8 @@ und das [öffentliche Helios-Listing](https://top.gg/bot/1327703273410658324).
 | **Admin-Befehle** | `/kick`, `/ban`, `/unban`, `/say`, `/rcon` | Nur für `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Autovervollständigung der Spielernamen. Lange `/rcon`-Ausgaben kommen als Datei. |
 | **Leaderboard & Stats** | eigene SQLite-Datenbank | `/leaderboard` (Kills, Tode, K/D, Spielzeit), `/stats <spieler>` inkl. Plattform (Xbox/PlayStation aus der Respawn-Zeile) |
 | **Kitmanager** | eingebaute Kit-Befehle der Console Edition | Kits anzeigen, an Spieler, Auth-Gruppen oder alle vergeben (mit Bestätigung), Items hinzufügen/entfernen, Verlauf. Details siehe [Kitmanager](#kitmanager). |
-| **Autokits** | Respawn-Logzeile bzw. Quick-Chat-Phrase → `kit givetoplayer` | Pro Regel Cooldown und Limit pro Spieler, Wipe-Reset. Quick-Chat-Kits melden sich ingame per `say`. |
+| **Custom Kits** | Bot-Datenbank → `inventory.giveto` pro Item | Kits, die **nur im Bot** existieren und im Ingame-Kitmanager unsichtbar sind. Details siehe [Custom Kits](#custom-kits). |
+| **Autokits** | Respawn-Logzeile bzw. Quick-Chat-Phrase → `kit givetoplayer` bzw. Custom Kit | Pro Regel Cooldown und Limit pro Spieler, Wipe-Reset. Quick-Chat-Kits melden sich ingame per `say`. |
 | **Auto-Reconnect** | exponentielles Backoff 5 s → 120 s | Eine tote Verbindung wird nach 3 unbeantworteten Befehlen erkannt. Laufende Befehle bekommen eine verständliche Fehlermeldung. |
 
 ### 🔜 Technisch machbar, aber nicht in diesem Prototyp
@@ -123,9 +124,13 @@ Alle Annahmen lassen sich ohne Eingriff in den restlichen Code anpassen:
    deshalb als `KIT_*_TEMPLATE` in der `.env` anpassbar. Ob die Item-ID für `kit remove` in der
    Ausgabe von `kit info` steht, ist unklar; der Bot zeigt sie an, wenn er sie findet, sonst die
    Rohausgabe.
-6. Manche Befehle (`say`, `kick`, …) geben auf RCE keine Antwort zurück. Der Bot wertet das
+6. **Item-Vergabe für Custom Kits:** `inventory.giveto` steht in der RCE-Community-Doku. Die
+   Argumentreihenfolge `"Spieler" "shortname" Menge` ist nur von Rust PC übernommen und **nicht
+   verifiziert**. Anpassbar über `ITEM_GIVE_TEMPLATE`. Die Logzeile `giving Spieler 1 x item`
+   (durch rce.js belegt) erscheint im Admin-Log und bestätigt jede Vergabe.
+7. Manche Befehle (`say`, `kick`, …) geben auf RCE keine Antwort zurück. Der Bot wertet das
    nicht als Fehler.
-7. Quick-Chat-Bezeichner und deutsche Übersetzungen stehen in `rce/quickchat.py`, die Namen von
+8. Quick-Chat-Bezeichner und deutsche Übersetzungen stehen in `rce/quickchat.py`, die Namen von
    Todesursachen in `rce/kill_sources.py`. Beides lässt sich beliebig erweitern.
 
 ---
@@ -143,13 +148,15 @@ rce-discord-bot/
 │   ├── log_parser.py      # Regex für Konsolenzeilen  ← hier Log-Format anpassen
 │   ├── kill_sources.py    # Todesursachen (Natur/NPC/Falle)
 │   ├── kits.py            # Auswertung von kit list / kit info / getauthlevels
+│   ├── items.py           # Häufige Item-Shortnames (Autovervollständigung)
 │   └── quickchat.py       # Quick-Chat-Übersetzung
 ├── cogs/
 │   ├── status.py          # Status-Embed, Aktivität, /status, /spieler, Join/Leave
 │   ├── feeds.py           # Chat-Bridge, Killfeed, Events, Admin-/Konsolen-Log
 │   ├── admin.py           # /kick /ban /unban /say /rcon
 │   ├── stats.py           # /leaderboard /stats
-│   └── kits.py            # Kitmanager: /kit … und Autokits
+│   ├── kits.py            # Kitmanager: /kit … und Autokits
+│   └── custom_kits.py     # Custom Kits: /customkit … (nur im Bot)
 ├── tools/mock_rcon_server.py  # Simulierter RCE-Server zum Testen
 ├── tests/                 # pytest: Parser + RCON-Client inkl. Reconnect
 ├── requirements.txt
@@ -258,7 +265,10 @@ Die automatischen Tests startest du mit `pip install pytest && pytest`.
 | `/kit liste`, `/kit info <kit>`, `/kit autokits` | alle | Kits und Autokits anzeigen |
 | `/kit geben`, `/kit gruppe`, `/kit alle` | Admins | Kit an Spieler, Auth-Gruppe oder alle vergeben |
 | `/kit item-hinzufuegen`, `/kit item-entfernen` | Admins | Kits bearbeiten |
-| `/kit autokit-neu`, `/kit autokit-status`, `/kit autokit-loeschen`, `/kit wipe-reset`, `/kit verlauf` | Admins | Autokits verwalten |
+| `/kit autokit-neu`, `/kit autokit-status`, `/kit autokit-loeschen`, `/kit wipe-reset`, `/kit verlauf` | Admins | Autokits verwalten (auch mit Custom Kits) |
+| `/customkit erstellen`, `item-hinzufuegen`, `item-entfernen`, `loeschen` | Admins | Custom Kits anlegen und bearbeiten |
+| `/customkit liste`, `/customkit info` | Admins | Custom Kits anzeigen (nur für Admins sichtbar) |
+| `/customkit geben`, `/customkit alle` | Admins | Custom Kit an einen Spieler bzw. alle Online-Spieler |
 
 Admin-Rechte bekommen nur die Rollen bzw. User aus `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Discords
 eigene Rechte wie „Administrator“ zählen bewusst **nicht** automatisch. Jede Admin-Aktion wird mit
@@ -314,6 +324,50 @@ Beispiele:
 
 ---
 
+## Custom Kits
+
+Custom Kits sind Kits, die **nur in der Datenbank des Bots** liegen. Sie werden nicht im
+Kit-System des Servers angelegt, sondern Item für Item per `inventory.giveto` verteilt.
+Deshalb gilt:
+
+- Im **Ingame-Kitmanager tauchen sie nicht auf**. Spieler und Ingame-Admins können sie dort
+  weder sehen noch beanspruchen oder bearbeiten.
+- `kit list` auf dem Server kennt sie nicht. Auch `/kit liste` im Discord zeigt sie nicht.
+  Übersicht und Inhalt gibt es nur über `/customkit liste` und `/customkit info`, und beides ist
+  auf Admins beschränkt und nur für dich sichtbar (ephemeral).
+- Es gibt kein serverseitiges Limit von 128 Kits, denn diese Kits belegen keinen Platz im
+  Ingame-Kitmanager.
+
+**Anlegen und vergeben**
+
+```
+/customkit erstellen name:Eventkit beschreibung:"Turnier-Loadout"
+/customkit item-hinzufuegen kit:Eventkit item:rifle.ak menge:1
+/customkit item-hinzufuegen kit:Eventkit item:ammo.rifle menge:128
+/customkit geben kit:Eventkit spieler:DeinName      ← erst an dich selbst testen
+/customkit alle kit:Eventkit                       ← mit Bestätigungs-Button
+```
+
+**Als Autokit:** `/kit autokit-neu kit:Eventkit ausloeser:Respawn art:"Custom Kit"`. Die
+Autovervollständigung zeigt Custom Kits mit 🔒. Wählst du keine `art` und das Kit existiert nur
+als Custom Kit, wird das automatisch erkannt. Cooldown, Limit, Quick-Chat-Auslöser und
+`/kit wipe-reset` funktionieren genauso wie bei Ingame-Kits.
+
+**Unterschiede zu Ingame-Kits (Einschränkungen von `inventory.giveto`)**
+
+| | Ingame-Kit | Custom Kit |
+|---|---|---|
+| Sichtbar im Ingame-Kitmanager | ja | **nein** |
+| Platz (Hotbar/Kleidung) und Zustand festlegbar | ja | nein: alles landet im Inventar, Zustand 100 % |
+| Volles Inventar | Server-Verhalten | Überzählige Items fallen ggf. auf den Boden |
+| Vergabe | 1 Befehl | 1 Befehl pro Item (max. 30 Items pro Kit) |
+
+Der Bot kann nicht prüfen, ob ein Item-Shortname existiert, weil RCON keine Itemliste liefert.
+Die Autovervollständigung schlägt bekannte Shortnames vor. Teste neue Kits einmal an dir selbst.
+Im Admin-Log siehst du pro Item die Bestätigungszeile des Servers (`🎁 Name erhält 1 × rifle.ak`).
+
+---
+
 ## Fehlersuche
 
 | Meldung / Problem | Lösung |
@@ -325,6 +379,7 @@ Beispiele:
 | Killfeed oder Chat bleiben leer | `CONSOLE_LOG_CHANNEL_ID` setzen und die echten Logzeilen mit `rce/log_parser.py` vergleichen |
 | Kick/Ban wirkt nicht | Befehlssyntax per `/rcon` testen und die `*_COMMAND_TEMPLATE` in der `.env` anpassen |
 | Kit kommt nicht an | `/rcon kit givetoplayer "Kit" "Spieler"` testen und die Antwort im Konsolen-Log prüfen. Bei abweichender Syntax `KIT_GIVE_TEMPLATE` anpassen. |
+| Custom Kit kommt nicht an | `/rcon inventory.giveto "DeinName" "wood" 100` testen. Bei abweichender Syntax `ITEM_GIVE_TEMPLATE` anpassen. Fehlt die `giving …`-Zeile im Admin-Log, stimmt meist der Shortname nicht. |
 | `/kit info` zeigt nur Rohdaten | Das Ausgabeformat weicht ab. Die Regex in `rce/kits.py` anpassen. |
 
 ---

@@ -147,8 +147,10 @@ class RconClient:
                 raise RconNotConnected(f"Senden fehlgeschlagen: {exc}") from exc
 
             log.debug("-> [%s] %s", ident, cmd)
+            # Ohne erwartete Antwort nur kurz warten – sonst dauert z. B. jede Item-Vergabe Sekunden
+            wait = timeout or (self.command_timeout if expect_response else 1.5)
             try:
-                result = await asyncio.wait_for(future, timeout or self.command_timeout)
+                result = await asyncio.wait_for(future, wait)
             except asyncio.TimeoutError:
                 if not expect_response:
                     return ""

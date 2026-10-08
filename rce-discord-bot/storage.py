@@ -57,8 +57,27 @@ class Storage:
                 claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_kit_claims_rule_player ON kit_claims (rule_id, player);
+
+            -- Custom Kits: nur im Bot gespeichert, im Ingame-Kitmanager unsichtbar
+            CREATE TABLE IF NOT EXISTS custom_kits (
+                name TEXT PRIMARY KEY COLLATE NOCASE,
+                description TEXT,
+                created_by TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS custom_kit_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
+                shortname TEXT NOT NULL,
+                amount INTEGER NOT NULL
+            );
             """
         )
+        # Migration: ältere Datenbanken kennen die Spalte kit_type noch nicht
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_rules)")}
+        if "kit_type" not in columns:
+            self._db.execute("ALTER TABLE kit_rules ADD COLUMN kit_type TEXT NOT NULL DEFAULT 'ingame'")
+        self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 
     def _ensure(self, name: str) -> None:
@@ -120,11 +139,11 @@ class Storage:
     # ------------------------------------------------------------ Kitmanager
 
     def add_kit_rule(self, kit: str, trigger: str, phrase: str | None, cooldown_minutes: int,
-                     max_claims: int, created_by: str) -> int:
+                     max_claims: int, created_by: str, kit_type: str = "ingame") -> int:
         cur = self._db.execute(
-            "INSERT INTO kit_rules (kit, trigger, phrase, cooldown_minutes, max_claims, created_by) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (kit, trigger, phrase, cooldown_minutes, max_claims, created_by),
+            "INSERT INTO kit_rules (kit, kit_type, trigger, phrase, cooldown_minutes, max_claims, created_by) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (kit, kit_type, trigger, phrase, cooldown_minutes, max_claims, created_by),
         )
         self._db.commit()
         return int(cur.lastrowid)
@@ -187,6 +206,52 @@ class Storage:
                 "SELECT * FROM kit_claims WHERE player = ? ORDER BY id DESC LIMIT ?", (player, limit)
             ).fetchall()
         return self._db.execute("SELECT * FROM kit_claims ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+    # ------------------------------------------------------------ Custom Kits
+
+    def create_custom_kit(self, name: str, description: str | None, created_by: str) -> bool:
+        cur = self._db.execute(
+            "INSERT OR IGNORE INTO custom_kits (name, description, created_by) VALUES (?, ?, ?)",
+            (name, description, created_by),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def custom_kit(self, name: str) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM custom_kits WHERE name = ?", (name,)).fetchone()
+
+    def custom_kits(self) -> list[sqlite3.Row]:
+        return self._db.execute(
+            "SELECT k.*, COUNT(i.id) AS item_count FROM custom_kits k "
+            "LEFT JOIN custom_kit_items i ON i.kit = k.name GROUP BY k.name ORDER BY k.name"
+        ).fetchall()
+
+    def delete_custom_kit(self, name: str) -> int:
+        """Löscht Kit, Items und zugehörige Autokit-Regeln. Gibt die Zahl gelöschter Regeln zurück."""
+        rules = self._db.execute(
+            "DELETE FROM kit_rules WHERE kit_type = 'custom' AND kit = ? COLLATE NOCASE", (name,)
+        ).rowcount
+        self._db.execute("DELETE FROM custom_kit_items WHERE kit = ?", (name,))
+        self._db.execute("DELETE FROM custom_kits WHERE name = ?", (name,))
+        self._db.commit()
+        return rules
+
+    def add_custom_kit_item(self, kit: str, shortname: str, amount: int) -> int:
+        cur = self._db.execute(
+            "INSERT INTO custom_kit_items (kit, shortname, amount) VALUES (?, ?, ?)", (kit, shortname, amount)
+        )
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def remove_custom_kit_item(self, kit: str, item_id: int) -> bool:
+        cur = self._db.execute("DELETE FROM custom_kit_items WHERE id = ? AND kit = ?", (item_id, kit))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def custom_kit_items(self, kit: str) -> list[sqlite3.Row]:
+        return self._db.execute(
+            "SELECT * FROM custom_kit_items WHERE kit = ? ORDER BY id", (kit,)
+        ).fetchall()
 
     def close(self) -> None:
         self._db.close()

@@ -51,3 +51,38 @@ def test_kit_rules_and_claims(tmp_path):
     assert db.kit_rules(enabled_only=True) == []
     assert db.delete_kit_rule(rid) and db.kit_rule(rid) is None
     db.close()
+
+
+def test_custom_kits_storage(tmp_path):
+    db = Storage(tmp_path / "bot.db")
+    assert db.create_custom_kit("Geheim", "nur für Events", "admin")
+    assert not db.create_custom_kit("geheim", None, "admin")  # Name ohne Groß-/Kleinschreibung eindeutig
+    a = db.add_custom_kit_item("geheim", "rifle.ak", 1)
+    db.add_custom_kit_item("Geheim", "ammo.rifle", 128)
+    assert [r["shortname"] for r in db.custom_kit_items("GEHEIM")] == ["rifle.ak", "ammo.rifle"]
+    assert db.custom_kits()[0]["item_count"] == 2
+    assert not db.remove_custom_kit_item("andereskit", a)
+    assert db.remove_custom_kit_item("Geheim", a)
+
+    db.add_kit_rule("Geheim", "respawn", None, 0, 1, "admin", kit_type="custom")
+    db.add_kit_rule("Geheim", "respawn", None, 0, 1, "admin")  # gleichnamiges Ingame-Kit bleibt
+    assert db.delete_custom_kit("Geheim") == 1
+    assert db.custom_kit("Geheim") is None and db.custom_kit_items("Geheim") == []
+    assert [r["kit_type"] for r in db.kit_rules()] == ["ingame"]
+    db.close()
+
+
+def test_migration_adds_kit_type(tmp_path):
+    import sqlite3
+    path = tmp_path / "alt.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE kit_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, kit TEXT NOT NULL, "
+                "trigger TEXT NOT NULL, phrase TEXT, cooldown_minutes INTEGER NOT NULL DEFAULT 0, "
+                "max_claims INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, created_by TEXT, "
+                "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+    con.execute("INSERT INTO kit_rules (kit, trigger) VALUES ('starter', 'respawn')")
+    con.commit()
+    con.close()
+    db = Storage(path)
+    assert db.kit_rules()[0]["kit_type"] == "ingame"
+    db.close()
