@@ -92,6 +92,15 @@ class Config:
     ban_template: str
     unban_template: str
 
+    # Kitmanager (Annahme über die RCE-Syntax, siehe README)
+    kit_give_template: str
+    kit_give_group_template: str
+    kit_give_all_template: str
+    kit_add_template: str
+    kit_remove_template: str
+    autokit_delay: int
+    kit_claim_announce: bool
+
     database_path: Path
 
 
@@ -127,6 +136,14 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         kick_template=_get("KICK_COMMAND_TEMPLATE", 'kick "{name}"'),
         ban_template=_get("BAN_COMMAND_TEMPLATE", 'banid "{name}"'),
         unban_template=_get("UNBAN_COMMAND_TEMPLATE", 'unbanid "{name}"'),
+        kit_give_template=_get("KIT_GIVE_TEMPLATE", 'kit givetoplayer "{kit}" "{name}"'),
+        kit_give_group_template=_get("KIT_GIVE_GROUP_TEMPLATE", 'kit givetogroup "{kit}" "{group}"'),
+        kit_give_all_template=_get("KIT_GIVE_ALL_TEMPLATE", 'kit giveall "{kit}"'),
+        kit_add_template=_get(
+            "KIT_ADD_TEMPLATE", 'kit add "{kit}" "{item}" "{amount}" "{condition}" "{container}"'),
+        kit_remove_template=_get("KIT_REMOVE_TEMPLATE", 'kit remove "{kit}" "{id}"'),
+        autokit_delay=max(0, _int("AUTOKIT_DELAY", 3)),
+        kit_claim_announce=_bool("KIT_CLAIM_ANNOUNCE", True),
         database_path=Path(_get("DATABASE_PATH", "data/bot.db")),
     )
 
@@ -142,4 +159,21 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
     ):
         if "{name}" not in value:
             raise ConfigError(f"Die Vorlage {env_name} muss den Platzhalter {{name}} enthalten.")
+    # Kit-Vorlagen: Pflicht-Platzhalter vorhanden, keine unbekannten Platzhalter
+    dummy = {"kit": "k", "name": "n", "group": "g", "item": "i", "amount": 1,
+             "condition": 100, "container": "Main", "id": 1}
+    for env_name, value, required in (
+        ("KIT_GIVE_TEMPLATE", cfg.kit_give_template, ("{kit}", "{name}")),
+        ("KIT_GIVE_GROUP_TEMPLATE", cfg.kit_give_group_template, ("{kit}", "{group}")),
+        ("KIT_GIVE_ALL_TEMPLATE", cfg.kit_give_all_template, ("{kit}",)),
+        ("KIT_ADD_TEMPLATE", cfg.kit_add_template, ("{kit}", "{item}")),
+        ("KIT_REMOVE_TEMPLATE", cfg.kit_remove_template, ("{kit}", "{id}")),
+    ):
+        missing = [p for p in required if p not in value]
+        if missing:
+            raise ConfigError(f"Die Vorlage {env_name} braucht die Platzhalter {', '.join(missing)}.")
+        try:
+            value.format(**dummy)
+        except (KeyError, IndexError, ValueError) as exc:
+            raise ConfigError(f"Die Vorlage {env_name} enthält einen unbekannten Platzhalter: {exc}") from None
     return cfg

@@ -44,6 +44,16 @@ def admin_only():
     return app_commands.check(predicate)
 
 
+def player_choices(bot: "RceBot", current: str) -> list[app_commands.Choice[str]]:
+    """Autovervollständigung: Online-Spieler zuerst, dann bekannte Spieler aus der DB."""
+    current_l = current.lower()
+    names = [n for n in bot.online_players if current_l in n.lower()]
+    for n in bot.db.search_names(current):
+        if n not in names:
+            names.append(n)
+    return [app_commands.Choice(name=n[:100], value=n[:100]) for n in names[:25]]
+
+
 # --------------------------------------------------------------------------
 # Text-Bereinigung
 # --------------------------------------------------------------------------

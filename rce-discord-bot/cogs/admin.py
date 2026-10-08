@@ -12,7 +12,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utils import admin_only, safe_md, sanitize_ingame_text, sanitize_player_name
+from utils import admin_only, player_choices, safe_md, sanitize_ingame_text, sanitize_player_name
 
 if TYPE_CHECKING:
     from bot import RceBot
@@ -31,13 +31,7 @@ class Admin(commands.Cog):
 
     async def _player_autocomplete(self, interaction: discord.Interaction, current: str
                                    ) -> list[app_commands.Choice[str]]:
-        current_l = current.lower()
-        names = [n for n in self.bot.online_players if current_l in n.lower()]
-        # Ergänzend bekannte Spieler aus der Datenbank (z. B. für Unban)
-        for n in self.bot.db.search_names(current):
-            if n not in names:
-                names.append(n)
-        return [app_commands.Choice(name=n[:100], value=n[:100]) for n in names[:25]]
+        return player_choices(self.bot, current)
 
     @staticmethod
     def _format_response(response: str) -> str:

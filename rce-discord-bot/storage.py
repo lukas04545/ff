@@ -35,6 +35,28 @@ class Storage:
                 last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+
+            -- Kitmanager: Autokit-Regeln und Vergabe-Verlauf
+            CREATE TABLE IF NOT EXISTS kit_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kit TEXT NOT NULL,
+                trigger TEXT NOT NULL,              -- 'respawn' oder 'quickchat'
+                phrase TEXT,                        -- Quick-Chat-Bezeichner (nur bei 'quickchat')
+                cooldown_minutes INTEGER NOT NULL DEFAULT 0,
+                max_claims INTEGER NOT NULL DEFAULT 0,  -- 0 = unbegrenzt (pro Spieler)
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS kit_claims (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER,                    -- NULL = manuell per Discord vergeben
+                kit TEXT NOT NULL,
+                player TEXT NOT NULL COLLATE NOCASE,
+                source TEXT NOT NULL,
+                claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_kit_claims_rule_player ON kit_claims (rule_id, player);
             """
         )
         self._db.commit()
@@ -94,6 +116,77 @@ class Storage:
     def set_value(self, key: str, value: str) -> None:
         self._db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", (key, value))
         self._db.commit()
+
+    # ------------------------------------------------------------ Kitmanager
+
+    def add_kit_rule(self, kit: str, trigger: str, phrase: str | None, cooldown_minutes: int,
+                     max_claims: int, created_by: str) -> int:
+        cur = self._db.execute(
+            "INSERT INTO kit_rules (kit, trigger, phrase, cooldown_minutes, max_claims, created_by) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (kit, trigger, phrase, cooldown_minutes, max_claims, created_by),
+        )
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def kit_rules(self, *, enabled_only: bool = False, trigger: str | None = None) -> list[sqlite3.Row]:
+        sql, args = "SELECT * FROM kit_rules WHERE 1=1", []
+        if enabled_only:
+            sql += " AND enabled = 1"
+        if trigger:
+            sql += " AND trigger = ?"
+            args.append(trigger)
+        return self._db.execute(sql + " ORDER BY id", args).fetchall()
+
+    def kit_rule(self, rule_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM kit_rules WHERE id = ?", (rule_id,)).fetchone()
+
+    def set_kit_rule_enabled(self, rule_id: int, enabled: bool) -> bool:
+        cur = self._db.execute("UPDATE kit_rules SET enabled = ? WHERE id = ?", (int(enabled), rule_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def delete_kit_rule(self, rule_id: int) -> bool:
+        cur = self._db.execute("DELETE FROM kit_rules WHERE id = ?", (rule_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def kit_claim_state(self, rule_id: int, player: str) -> tuple[int, float | None]:
+        """(Anzahl Vergaben, Minuten seit der letzten Vergabe oder None)."""
+        row = self._db.execute(
+            "SELECT COUNT(*) AS n, (julianday('now') - julianday(MAX(claimed_at))) * 1440 AS minutes "
+            "FROM kit_claims WHERE rule_id = ? AND player = ?",
+            (rule_id, player),
+        ).fetchone()
+        return int(row["n"]), row["minutes"]
+
+    def record_kit_claim(self, rule_id: int | None, kit: str, player: str, source: str) -> int:
+        cur = self._db.execute(
+            "INSERT INTO kit_claims (rule_id, kit, player, source) VALUES (?, ?, ?, ?)",
+            (rule_id, kit, player, source),
+        )
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def delete_kit_claim(self, claim_id: int) -> None:
+        self._db.execute("DELETE FROM kit_claims WHERE id = ?", (claim_id,))
+        self._db.commit()
+
+    def reset_kit_claims(self, rule_id: int | None = None) -> int:
+        """Löscht den Autokit-Verlauf (z. B. nach einem Wipe); manuelle Vergaben bleiben."""
+        if rule_id is None:
+            cur = self._db.execute("DELETE FROM kit_claims WHERE rule_id IS NOT NULL")
+        else:
+            cur = self._db.execute("DELETE FROM kit_claims WHERE rule_id = ?", (rule_id,))
+        self._db.commit()
+        return cur.rowcount
+
+    def kit_claim_history(self, player: str | None = None, limit: int = 15) -> list[sqlite3.Row]:
+        if player:
+            return self._db.execute(
+                "SELECT * FROM kit_claims WHERE player = ? ORDER BY id DESC LIMIT ?", (player, limit)
+            ).fetchall()
+        return self._db.execute("SELECT * FROM kit_claims ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
 
     def close(self) -> None:
         self._db.close()

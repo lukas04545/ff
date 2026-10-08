@@ -22,6 +22,7 @@ SAMPLE_LINES = [
     "GamerTag42 was killed by autoturret_deployed (entity)",
     "Bob The Builder was killed by 1923847",
     "PSN_Lena was suicide by Suicide",
+    "[CHAT LOCAL] GamerTag42 : d11_quick_chat_orders_slot_6",
     "[CHAT LOCAL] PSN_Lena : d11_quick_chat_responses_slot_5",
     "[CHAT TEAM] GamerTag42 : d11_quick_chat_i_need_phrase_format d11_Scrap",
     "Bob The Builder [SCARLETT] has entered the game",
@@ -71,6 +72,19 @@ async def handler(request: web.Request) -> web.WebSocketResponse:
                     "GameTime": "10/08/2026 13:37:00", "Uptime": 7265, "Map": "Procedural Map",
                     "Framerate": 30, "Memory": 4096, "Restarting": False,
                 }, indent=2), ident)
+            elif cmd == "kit list":
+                await send("[KITMANAGER] Active kits:\nstarter\nvip\nraid", ident)
+            elif cmd.startswith("kit info"):
+                await send("[KITMANAGER] Kit info:\n"
+                           "Shortname: stone.pickaxe Amount: [1] Condition: [100] Container: [Belt]\n"
+                           "Shortname: bandage Amount: [5] Condition: [100] Container: [Main]\n"
+                           "Shortname: hoodie Amount: [1] Condition: [80] Container: [Wear]", ident)
+            elif cmd == "getauthlevels":
+                await send("Admin\nGamerTag42\nVIP\nPSN_Lena", ident)
+            elif cmd.startswith("kit givetoplayer"):
+                await send("", ident)
+                kit, player = cmd.split('"')[1], cmd.split('"')[3]
+                await send(f"[ServerVar] SERVER giving {player} kit {kit}")
             elif cmd.startswith("say "):
                 await send("", ident)
                 await send(f"[CHAT SERVER] SERVER : {cmd[4:]}")

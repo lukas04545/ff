@@ -60,6 +60,8 @@ und das [öffentliche Helios-Listing](https://top.gg/bot/1327703273410658324).
 | **Konsolen-Log** | alle Live-Zeilen | Gebündelt als Codeblock. Die Abfragen des Bots selbst werden herausgefiltert. |
 | **Admin-Befehle** | `/kick`, `/ban`, `/unban`, `/say`, `/rcon` | Nur für `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Autovervollständigung der Spielernamen. Lange `/rcon`-Ausgaben kommen als Datei. |
 | **Leaderboard & Stats** | eigene SQLite-Datenbank | `/leaderboard` (Kills, Tode, K/D, Spielzeit), `/stats <spieler>` inkl. Plattform (Xbox/PlayStation aus der Respawn-Zeile) |
+| **Kitmanager** | eingebaute Kit-Befehle der Console Edition | Kits anzeigen, an Spieler, Auth-Gruppen oder alle vergeben (mit Bestätigung), Items hinzufügen/entfernen, Verlauf. Details siehe [Kitmanager](#kitmanager). |
+| **Autokits** | Respawn-Logzeile bzw. Quick-Chat-Phrase → `kit givetoplayer` | Pro Regel Cooldown und Limit pro Spieler, Wipe-Reset. Quick-Chat-Kits melden sich ingame per `say`. |
 | **Auto-Reconnect** | exponentielles Backoff 5 s → 120 s | Eine tote Verbindung wird nach 3 unbeantworteten Befehlen erkannt. Laufende Befehle bekommen eine verständliche Fehlermeldung. |
 
 ### 🔜 Technisch machbar, aber nicht in diesem Prototyp
@@ -68,10 +70,10 @@ Helios und Kaosbot bieten diese Funktionen laut ihren Listings. Sie laufen ebenf
 RCE-Konsolenbefehle und Logzeilen. Die genaue Befehlssyntax ließ sich für diesen Prototyp aber
 nicht verlässlich prüfen, deshalb ist sie nicht eingebaut:
 
-- **Ingame-„Befehle“ per Quick-Chat/Emote** (z. B. TP-Home, Kit anfordern): Der Bot erkennt
-  Quick-Chat-Phrasen bereits (`on_rce_chat`). Eine bestimmte Phrase kann also eine Aktion auslösen.
-- **Autokits, Shop/Economy, Teleports, Zonen**: über Befehle wie `kit …`, `teleport…` oder
-  `zones.…`. Mit `/rcon` ausprobieren und dann als eigenen Slash-Command ergänzen.
+- **Weitere Ingame-„Befehle“ per Quick-Chat** (z. B. TP-Home): Das Prinzip ist mit den
+  Quick-Chat-Autokits bereits umgesetzt und lässt sich auf andere Befehle übertragen.
+- **Shop/Economy, Teleports, Zonen**: über Befehle wie `teleport…` oder `zones.…`. Mit `/rcon`
+  ausprobieren und dann als eigenen Slash-Command ergänzen.
 - **Geplante Nachrichten/Events**: einfacher `tasks.loop` mit `say` bzw. Event-Befehlen.
 - **Spielerzahl im Channel-Namen**: Discord erlaubt nur 2 Umbenennungen pro 10 Minuten, daher
   ist das Status-Embed hier die bessere Lösung.
@@ -113,9 +115,17 @@ Alle Annahmen lassen sich ohne Eingriff in den restlichen Code anpassen:
    `banid "{name}"` und `unbanid "{name}"`. Prüfe die Befehle einmal per `/rcon` oder in der
    G-Portal-Konsole und passe bei Bedarf `KICK_/BAN_/UNBAN_COMMAND_TEMPLATE` in der `.env` an.
    Ob ein Ban gegriffen hat, zeigt die Logzeile `Added [Name] to [Banned]` im Admin-Log.
-5. Manche Befehle (`say`, `kick`, …) geben auf RCE keine Antwort zurück. Der Bot wertet das
+5. **Kit-Befehle:** `kit list` und `kit info` samt Ausgabeformat stammen aus rce.js.
+   `kit givetogroup`, `kit giveall` und `kit remove "Kit" "ID"` stehen in der offiziellen
+   [RCE-Community-Server-Doku](https://rust-console-edition.gitbook.io/community-servers/feature-guides/kit-management).
+   `kit givetoplayer "Kit" "Spieler"` und die genaue Argumentreihenfolge von `kit add` kommen aus
+   einem Drittanbieter-Guide und sind **nicht verifiziert**. Alle verändernden Kit-Befehle sind
+   deshalb als `KIT_*_TEMPLATE` in der `.env` anpassbar. Ob die Item-ID für `kit remove` in der
+   Ausgabe von `kit info` steht, ist unklar; der Bot zeigt sie an, wenn er sie findet, sonst die
+   Rohausgabe.
+6. Manche Befehle (`say`, `kick`, …) geben auf RCE keine Antwort zurück. Der Bot wertet das
    nicht als Fehler.
-6. Quick-Chat-Bezeichner und deutsche Übersetzungen stehen in `rce/quickchat.py`, die Namen von
+7. Quick-Chat-Bezeichner und deutsche Übersetzungen stehen in `rce/quickchat.py`, die Namen von
    Todesursachen in `rce/kill_sources.py`. Beides lässt sich beliebig erweitern.
 
 ---
@@ -132,12 +142,14 @@ rce-discord-bot/
 │   ├── rcon_client.py     # WebRCON-Client mit Auto-Reconnect
 │   ├── log_parser.py      # Regex für Konsolenzeilen  ← hier Log-Format anpassen
 │   ├── kill_sources.py    # Todesursachen (Natur/NPC/Falle)
+│   ├── kits.py            # Auswertung von kit list / kit info / getauthlevels
 │   └── quickchat.py       # Quick-Chat-Übersetzung
 ├── cogs/
 │   ├── status.py          # Status-Embed, Aktivität, /status, /spieler, Join/Leave
 │   ├── feeds.py           # Chat-Bridge, Killfeed, Events, Admin-/Konsolen-Log
 │   ├── admin.py           # /kick /ban /unban /say /rcon
-│   └── stats.py           # /leaderboard /stats
+│   ├── stats.py           # /leaderboard /stats
+│   └── kits.py            # Kitmanager: /kit … und Autokits
 ├── tools/mock_rcon_server.py  # Simulierter RCE-Server zum Testen
 ├── tests/                 # pytest: Parser + RCON-Client inkl. Reconnect
 ├── requirements.txt
@@ -243,10 +255,62 @@ Die automatischen Tests startest du mit `pip install pytest && pytest`.
 | `/unban <spieler>` | Admins | Bann aufheben |
 | `/say <nachricht>` | Admins | Servernachricht ingame. Rich-Text erlaubt, z. B. `<color=red>Wipe heute!</color>` |
 | `/rcon <befehl>` | Admins | Beliebiger Konsolenbefehl. Mit `ALLOW_RAW_RCON=false` abschaltbar. |
+| `/kit liste`, `/kit info <kit>`, `/kit autokits` | alle | Kits und Autokits anzeigen |
+| `/kit geben`, `/kit gruppe`, `/kit alle` | Admins | Kit an Spieler, Auth-Gruppe oder alle vergeben |
+| `/kit item-hinzufuegen`, `/kit item-entfernen` | Admins | Kits bearbeiten |
+| `/kit autokit-neu`, `/kit autokit-status`, `/kit autokit-loeschen`, `/kit wipe-reset`, `/kit verlauf` | Admins | Autokits verwalten |
 
 Admin-Rechte bekommen nur die Rollen bzw. User aus `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Discords
 eigene Rechte wie „Administrator“ zählen bewusst **nicht** automatisch. Jede Admin-Aktion wird mit
 dem ausführenden Discord-Nutzer im Admin-Log protokolliert.
+
+---
+
+## Kitmanager
+
+Der Kitmanager nutzt das **eingebaute Kit-System** der Console Edition. Plugins sind dafür nicht
+nötig. Kits, die du in der Kit-Oberfläche im Spiel oder per Konsole angelegt hast, erscheinen
+direkt im Bot.
+
+**Kits verwalten**
+
+- `/kit liste` und `/kit info <kit>` zeigen Kits und Inhalt, getrennt nach Hotbar, Inventar und
+  Kleidung.
+- `/kit geben <kit> <spieler>` vergibt ein Kit an einen Spieler, `/kit gruppe <kit> <gruppe>` an
+  eine Auth-Gruppe (Gruppen kommen aus `getauthlevels`). `/kit alle <kit>` fragt vorher per Button
+  nach.
+- `/kit item-hinzufuegen <kit> <item> [menge] [zustand] [platz]` fügt ein Item hinzu. Ein neuer
+  Kit-Name legt dabei ein neues Kit an. `/kit item-entfernen <kit> <item_id>` entfernt ein Item.
+- Kits zu löschen ist auf der Console Edition per Befehl nicht dokumentiert. Dafür die
+  Kit-Oberfläche im Spiel nutzen.
+
+**Autokits**
+
+Autokits vergibt der Bot selbst. Die Regeln liegen in der Bot-Datenbank:
+
+| Auslöser | Erkennung | Typischer Einsatz |
+|---|---|---|
+| 🔄 Respawn | Logzeile `Name [..] has entered the game` | Starter-Kit nach jedem Tod, z. B. mit 30 min Cooldown |
+| 💬 Quick-Chat | Der Spieler sendet die gewählte Phrase, z. B. „Hier, nimm das!“ | Kit auf Anfrage, z. B. 1× pro Wipe (`max_pro_spieler=1`) |
+
+Beispiele:
+
+```
+/kit autokit-neu kit:starter ausloeser:Respawn cooldown_minuten:30
+/kit autokit-neu kit:raid ausloeser:Quick-Chat phrase:"Hier, nimm das!" max_pro_spieler:1
+/kit wipe-reset          ← nach dem Wipe: Cooldowns und Limits zurücksetzen
+```
+
+- Weil die Console Edition keinen freien Chat hat, ist Quick-Chat die einzige Möglichkeit, dass
+  ein Spieler ingame etwas anfordert. Der Spielername kommt dabei aus dem Server-Log, ist also
+  nicht fälschbar.
+- Bei Quick-Chat-Kits meldet der Bot ingame per `say`, ob das Kit vergeben wurde oder wie lange
+  der Cooldown noch läuft (höchstens alle 30 s pro Spieler). Abschalten mit
+  `KIT_CLAIM_ANNOUNCE=false`.
+- Kits, die per Befehl vergeben werden, sind auf RCE **einmalig** und gehen beim Tod verloren.
+  Für dauerhafte Kits pro Gruppe gibt es die Kit-Gruppen im Spiel.
+- Jede Vergabe landet im Admin-Log und in `/kit verlauf`. Schlägt sie fehl (z. B. weil die
+  Verbindung weg ist), wird sie nicht als Vergabe gezählt.
 
 ---
 
@@ -260,6 +324,8 @@ dem ausführenden Discord-Nutzer im Admin-Log protokolliert.
 | Slash-Commands fehlen | `GUILD_ID` setzen und Bot mit Scope `applications.commands` einladen |
 | Killfeed oder Chat bleiben leer | `CONSOLE_LOG_CHANNEL_ID` setzen und die echten Logzeilen mit `rce/log_parser.py` vergleichen |
 | Kick/Ban wirkt nicht | Befehlssyntax per `/rcon` testen und die `*_COMMAND_TEMPLATE` in der `.env` anpassen |
+| Kit kommt nicht an | `/rcon kit givetoplayer "Kit" "Spieler"` testen und die Antwort im Konsolen-Log prüfen. Bei abweichender Syntax `KIT_GIVE_TEMPLATE` anpassen. |
+| `/kit info` zeigt nur Rohdaten | Das Ausgabeformat weicht ab. Die Regex in `rce/kits.py` anpassen. |
 
 ---
 
