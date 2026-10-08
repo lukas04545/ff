@@ -1,0 +1,145 @@
+"""Lädt und prüft die Konfiguration aus der .env-Datei.
+
+Alle Zugangsdaten (Discord-Token, RCON-IP/Port/Passwort) kommen ausschließlich
+aus Umgebungsvariablen bzw. der .env-Datei – niemals aus dem Code.
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+class ConfigError(Exception):
+    """Fehlende oder ungültige Konfiguration."""
+
+
+def _get(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip()
+
+
+def _required(name: str) -> str:
+    value = _get(name)
+    if not value:
+        raise ConfigError(f"Pflichtwert '{name}' fehlt in der .env-Datei.")
+    return value
+
+
+def _int(name: str, default: int | None = None) -> int | None:
+    raw = _get(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise ConfigError(f"'{name}' muss eine Zahl sein, ist aber '{raw}'.") from None
+
+
+def _bool(name: str, default: bool) -> bool:
+    raw = _get(name).lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "ja", "on")
+
+
+def _id_set(name: str) -> frozenset[int]:
+    raw = _get(name)
+    if not raw:
+        return frozenset()
+    try:
+        return frozenset(int(part) for part in raw.replace(" ", "").split(",") if part)
+    except ValueError:
+        raise ConfigError(f"'{name}' muss eine kommagetrennte Liste von IDs sein.") from None
+
+
+@dataclass(frozen=True)
+class Config:
+    # Discord
+    discord_token: str
+    guild_id: int | None
+
+    # RCON (G-Portal)
+    rcon_host: str
+    rcon_port: int
+    rcon_password: str
+
+    # Berechtigungen
+    admin_role_ids: frozenset[int]
+    admin_user_ids: frozenset[int]
+    allow_raw_rcon: bool
+
+    # Channels (None = Feature deaktiviert)
+    status_channel_id: int | None
+    chat_channel_id: int | None
+    killfeed_channel_id: int | None
+    events_channel_id: int | None
+    admin_log_channel_id: int | None
+    console_log_channel_id: int | None
+
+    # Verhalten
+    status_interval: int
+    playerlist_interval: int
+    chat_bridge_to_game: bool
+    chat_show_server_messages: bool
+    show_respawns: bool
+    say_prefix: str
+    server_display_name: str
+
+    # Befehls-Vorlagen (Annahme über die RCE-Syntax, siehe README)
+    kick_template: str
+    ban_template: str
+    unban_template: str
+
+    database_path: Path
+
+
+def load_config(env_file: str | os.PathLike = ".env") -> Config:
+    load_dotenv(env_file)
+
+    port = _int("RCON_PORT")
+    if port is None:
+        raise ConfigError("Pflichtwert 'RCON_PORT' fehlt in der .env-Datei.")
+
+    cfg = Config(
+        discord_token=_required("DISCORD_TOKEN"),
+        guild_id=_int("GUILD_ID"),
+        rcon_host=_required("RCON_HOST"),
+        rcon_port=port,
+        rcon_password=_required("RCON_PASSWORD"),
+        admin_role_ids=_id_set("ADMIN_ROLE_IDS"),
+        admin_user_ids=_id_set("ADMIN_USER_IDS"),
+        allow_raw_rcon=_bool("ALLOW_RAW_RCON", True),
+        status_channel_id=_int("STATUS_CHANNEL_ID"),
+        chat_channel_id=_int("CHAT_CHANNEL_ID"),
+        killfeed_channel_id=_int("KILLFEED_CHANNEL_ID"),
+        events_channel_id=_int("EVENTS_CHANNEL_ID"),
+        admin_log_channel_id=_int("ADMIN_LOG_CHANNEL_ID"),
+        console_log_channel_id=_int("CONSOLE_LOG_CHANNEL_ID"),
+        status_interval=max(30, _int("STATUS_INTERVAL", 60)),
+        playerlist_interval=max(10, _int("PLAYERLIST_INTERVAL", 30)),
+        chat_bridge_to_game=_bool("CHAT_BRIDGE_TO_GAME", True),
+        chat_show_server_messages=_bool("CHAT_SHOW_SERVER_MESSAGES", False),
+        show_respawns=_bool("SHOW_RESPAWNS", False),
+        say_prefix=_get("SAY_PREFIX", "<color=#5865F2>[Discord]</color>"),
+        server_display_name=_get("SERVER_DISPLAY_NAME"),
+        kick_template=_get("KICK_COMMAND_TEMPLATE", 'kick "{name}"'),
+        ban_template=_get("BAN_COMMAND_TEMPLATE", 'banid "{name}"'),
+        unban_template=_get("UNBAN_COMMAND_TEMPLATE", 'unbanid "{name}"'),
+        database_path=Path(_get("DATABASE_PATH", "data/bot.db")),
+    )
+
+    if not cfg.admin_role_ids and not cfg.admin_user_ids:
+        raise ConfigError(
+            "Weder ADMIN_ROLE_IDS noch ADMIN_USER_IDS gesetzt – ohne diese Angabe "
+            "könnte niemand (oder jeder) Admin-Befehle nutzen. Bitte mindestens eins eintragen."
+        )
+    for env_name, value in (
+        ("KICK_COMMAND_TEMPLATE", cfg.kick_template),
+        ("BAN_COMMAND_TEMPLATE", cfg.ban_template),
+        ("UNBAN_COMMAND_TEMPLATE", cfg.unban_template),
+    ):
+        if "{name}" not in value:
+            raise ConfigError(f"Die Vorlage {env_name} muss den Platzhalter {{name}} enthalten.")
+    return cfg
