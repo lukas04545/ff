@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RCE Bot Panel</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛢️</text></svg>">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="login-form" class="card login-card">
+      <h1>🛢️ RCE Bot Panel</h1>
+      <p class="muted">Passwort aus <code>WEB_PASSWORD</code> in der <code>.env</code></p>
+      <input id="login-password" type="password" placeholder="Passwort" autocomplete="current-password" required>
+      <button type="submit" class="primary">Anmelden</button>
+      <p id="login-error" class="error"></p>
+    </form>
+  </div>
+
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand">🛢️ <span>RCE Bot</span></div>
+      <nav id="nav">
+        <a href="#overview" data-view="overview">📊 <span>Übersicht</span></a>
+        <a href="#console" data-view="console">⌨️ <span>Konsole</span></a>
+        <a href="#kits" data-view="kits">🎒 <span>Kits</span></a>
+        <a href="#tickets" data-view="tickets">🎫 <span>Tickets</span></a>
+        <a href="#stats" data-view="stats">🏆 <span>Statistiken</span></a>
+        <a href="#community" data-view="community">🎉 <span>Community</span></a>
+        <a href="#knowledge" data-view="knowledge">📚 <span>Wissensbasis</span></a>
+        <a href="#botlog" data-view="botlog">🧾 <span>Bot-Log</span></a>
+      </nav>
+      <div class="sidebar-footer">
+        <div id="conn-rcon" class="pill">RCON …</div>
+        <div id="conn-discord" class="pill">Discord …</div>
+        <button id="logout" class="ghost">Abmelden</button>
+      </div>
+    </aside>
+    <main id="main"></main>
+  </div>
+
+  <div id="toasts" class="toasts"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -58,3 +58,34 @@ def translate(raw: str) -> str:
         if phrases and slot.isdigit() and int(slot) < len(phrases):
             return phrases[int(slot)]
     return text
+
+
+# Gültige Kombinationen der Format-Phrasen (Original-Schreibweise wie im Log)
+_FORMAT_ITEMS = {
+    "d11_quick_chat_activities_phrase_format": [
+        "d11_Stone", "d11_Wood", "d11_Metal", "d11_Food", "d11_Water", "d11_Scrap",
+        "d11_Metal_Fragments", "d11_Medicine",
+    ],
+    "d11_quick_chat_i_need_phrase_format": [
+        "d11_Scrap", "lowgradefuel", "d11_Food", "d11_Water", "d11_Wood", "stones",
+        "d11_Metal_Fragments", "metal.refined",
+    ],
+    "d11_quick_chat_i_have_phrase_format": [
+        "d11_Scrap", "lowgradefuel", "d11_Food", "d11_Water", "bow.hunting", "pickaxe",
+        "hatchet", "metal.refined",
+    ],
+}
+
+
+def all_phrases() -> dict[str, str]:
+    """Alle bekannten Quick-Chat-Bezeichner -> deutscher Text (z. B. für Autokit-Auslöser)."""
+    phrases: dict[str, str] = {}
+    for category, texts in _SLOTS.items():
+        for slot in range(len(texts)):
+            raw = f"d11_quick_chat_{category}_slot_{slot}"
+            phrases[raw] = translate(raw)
+    for fmt, items in _FORMAT_ITEMS.items():
+        for item in items:
+            raw = f"{fmt} {item}"
+            phrases[raw] = translate(raw)
+    return phrases
