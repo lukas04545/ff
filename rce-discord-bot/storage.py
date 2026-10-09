@@ -82,6 +82,25 @@ class Storage:
                 closed_by TEXT,
                 close_reason TEXT
             );
+            -- Giveaways (überleben Neustarts)
+            CREATE TABLE IF NOT EXISTS giveaways (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER UNIQUE,
+                prize TEXT NOT NULL,
+                winners INTEGER NOT NULL DEFAULT 1,
+                host_id INTEGER NOT NULL,
+                ends_at INTEGER NOT NULL,              -- Unix-Zeit
+                ended INTEGER NOT NULL DEFAULT 0,
+                winner_ids TEXT NOT NULL DEFAULT '',   -- kommagetrennt
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS giveaway_entries (
+                giveaway_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                PRIMARY KEY (giveaway_id, user_id)
+            );
             CREATE TABLE IF NOT EXISTS custom_kit_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
@@ -328,6 +347,69 @@ class Storage:
 
     def delete_ticket(self, ticket_id: int) -> None:
         self._db.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        self._db.commit()
+
+    # ------------------------------------------------------------ Giveaways
+
+    def create_giveaway(self, guild_id: int, channel_id: int, prize: str, winners: int, host_id: int,
+                        ends_at: int) -> int:
+        cur = self._db.execute(
+            "INSERT INTO giveaways (guild_id, channel_id, prize, winners, host_id, ends_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (guild_id, channel_id, prize, winners, host_id, ends_at),
+        )
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def set_giveaway_message(self, giveaway_id: int, message_id: int) -> None:
+        self._db.execute("UPDATE giveaways SET message_id = ? WHERE id = ?", (message_id, giveaway_id))
+        self._db.commit()
+
+    def delete_giveaway(self, giveaway_id: int) -> None:
+        self._db.execute("DELETE FROM giveaway_entries WHERE giveaway_id = ?", (giveaway_id,))
+        self._db.execute("DELETE FROM giveaways WHERE id = ?", (giveaway_id,))
+        self._db.commit()
+
+    def giveaway(self, giveaway_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM giveaways WHERE id = ?", (giveaway_id,)).fetchone()
+
+    def giveaway_by_message(self, message_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM giveaways WHERE message_id = ?", (message_id,)).fetchone()
+
+    def giveaways(self, *, active_only: bool = False, limit: int = 50) -> list[sqlite3.Row]:
+        sql = ("SELECT g.*, (SELECT COUNT(*) FROM giveaway_entries e WHERE e.giveaway_id = g.id) AS entries "
+               "FROM giveaways g WHERE message_id IS NOT NULL")
+        if active_only:
+            sql += " AND ended = 0"
+        return self._db.execute(sql + " ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+    def due_giveaways(self, now: int) -> list[sqlite3.Row]:
+        return self._db.execute(
+            "SELECT * FROM giveaways WHERE ended = 0 AND message_id IS NOT NULL AND ends_at <= ?", (now,)
+        ).fetchall()
+
+    def add_giveaway_entry(self, giveaway_id: int, user_id: int) -> bool:
+        cur = self._db.execute(
+            "INSERT OR IGNORE INTO giveaway_entries (giveaway_id, user_id) VALUES (?, ?)", (giveaway_id, user_id)
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def remove_giveaway_entry(self, giveaway_id: int, user_id: int) -> bool:
+        cur = self._db.execute(
+            "DELETE FROM giveaway_entries WHERE giveaway_id = ? AND user_id = ?", (giveaway_id, user_id)
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def giveaway_entries(self, giveaway_id: int) -> list[int]:
+        rows = self._db.execute("SELECT user_id FROM giveaway_entries WHERE giveaway_id = ?", (giveaway_id,))
+        return [int(r["user_id"]) for r in rows]
+
+    def finish_giveaway(self, giveaway_id: int, winner_ids: list[int]) -> None:
+        self._db.execute(
+            "UPDATE giveaways SET ended = 1, winner_ids = ? WHERE id = ?",
+            (",".join(str(w) for w in winner_ids), giveaway_id),
+        )
         self._db.commit()
 
     def close(self) -> None:

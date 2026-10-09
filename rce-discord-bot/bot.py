@@ -31,7 +31,8 @@ log = logging.getLogger("rce.bot")
 EXIT_FATAL = 3
 BASE_DIR = Path(__file__).resolve().parent
 
-COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits", "cogs.tickets")
+COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits", "cogs.tickets",
+        "cogs.community", "cogs.moderation", "cogs.giveaways")
 
 # Ereignisklasse -> Discord-Eventname (Listener heißen dann on_<name>)
 EVENT_NAMES: dict[type, str] = {
@@ -53,8 +54,12 @@ class RceBot(commands.Bot):
         intents = discord.Intents.default()
         # Nachrichteninhalt (privilegierter Intent, im Developer Portal aktivieren) brauchen
         # die Chat-Bridge Discord -> Spiel und die Support-Tickets (KI liest die Nachrichten).
+        # Discord-Log (bearbeitete/gelöschte Nachrichten) braucht ihn ebenfalls.
         intents.message_content = bool(
-            (config.chat_channel_id and config.chat_bridge_to_game) or config.ticket_category_id)
+            (config.chat_channel_id and config.chat_bridge_to_game) or config.ticket_category_id
+            or config.discord_log_channel_id)
+        # Server-Mitglieder-Intent (privilegiert): Willkommensnachricht, Auto-Rolle, Join/Leave-Log
+        intents.members = bool(config.welcome_channel_id or config.auto_role_id or config.discord_log_channel_id)
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
 
         self.config = config
@@ -120,6 +125,14 @@ class RceBot(commands.Bot):
             self._feeds[channel_id] = ChannelBuffer(self, channel_id, code_block=code_block)
         return self._feeds[channel_id]
 
+    def discord_log(self, embed: discord.Embed) -> None:
+        """Eintrag im Discord-Log-Channel (Mitglieder, Nachrichten, Moderation, Giveaways)."""
+        feed = self.feed(self.config.discord_log_channel_id)
+        if feed:
+            if embed.timestamp is None:
+                embed.timestamp = discord.utils.utcnow()
+            feed.add_embed(embed)
+
     def audit(self, text: str) -> None:
         """Eintrag im Admin-Log-Channel (falls konfiguriert)."""
         feed = self.feed(self.config.admin_log_channel_id)
@@ -164,6 +177,12 @@ class RceBot(commands.Bot):
             text = "⛔ Dafür hast du keine Berechtigung (nur für konfigurierte Admin-Rollen/User)."
         elif isinstance(error, app_commands.NoPrivateMessage):
             text = "Dieser Befehl funktioniert nur auf dem Discord-Server, nicht per DM."
+        elif isinstance(error, app_commands.MissingPermissions):
+            text = "⛔ Dir fehlt die Discord-Berechtigung: " + ", ".join(error.missing_permissions)
+        elif isinstance(error, app_commands.BotMissingPermissions):
+            text = "⚠️ Dem Bot fehlt die Discord-Berechtigung: " + ", ".join(error.missing_permissions)
+        elif isinstance(original, discord.Forbidden):
+            text = "⚠️ Discord hat die Aktion verweigert – fehlen dem Bot Rechte oder steht seine Rolle zu tief?"
         elif isinstance(original, RconError):
             text = f"⚠️ {original}"
         else:
@@ -222,8 +241,9 @@ def main() -> None:
     except discord.LoginFailure:
         fatal("Discord-Login fehlgeschlagen: DISCORD_TOKEN ist ungültig.")
     except discord.PrivilegedIntentsRequired:
-        fatal("Der 'Message Content Intent' ist im Developer Portal nicht aktiviert (nötig für Chat-Bridge "
-              "und Tickets). Aktivieren oder CHAT_BRIDGE_TO_GAME=false und TICKET_CATEGORY_ID leer lassen.")
+        fatal("Ein privilegierter Intent ist im Developer Portal nicht aktiviert. Unter Bot -> Privileged "
+              "Gateway Intents 'Message Content Intent' (Chat-Bridge, Tickets, Discord-Log) und 'Server Members "
+              "Intent' (Willkommen, Auto-Rolle, Join/Leave-Log) einschalten – oder die Features in der .env leeren.")
 
 
 if __name__ == "__main__":

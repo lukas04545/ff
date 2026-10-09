@@ -64,6 +64,10 @@ und das [öffentliche Helios-Listing](https://top.gg/bot/1327703273410658324).
 | **Custom Kits** | Bot-Datenbank → `inventory.giveto` pro Item | Kits, die **nur im Bot** existieren und im Ingame-Kitmanager unsichtbar sind. Details siehe [Custom Kits](#custom-kits). |
 | **Autokits** | Respawn-Logzeile bzw. Quick-Chat-Phrase → `kit givetoplayer` bzw. Custom Kit | Pro Regel Cooldown und Limit pro Spieler, Wipe-Reset. Quick-Chat-Kits melden sich ingame per `say`. |
 | **Support-Tickets mit KI** | Discord + [DeepSeek-Plattform](https://platform.deepseek.com) | Private Ticket-Channels, KI antwortet aus deiner Wissensbasis und pingt Staff bei Bedarf. Details siehe [Support-Tickets](#support-tickets-mit-ki-deepseek). |
+| **Community** | Discord | Willkommensnachricht, Auto-Rolle, `/ping`, `/rust`, `/regeln` (Regeln aus `rules.md`). Details siehe [Community & Moderation](#community--moderation). |
+| **Discord-Moderation** | Discord | `/mod timeout/untimeout/kick/ban/unban/purge` mit Rechte- und Rollen-Hierarchie-Prüfung |
+| **Discord-Log** | Discord | Beitritte/Austritte, gelöschte und bearbeitete Nachrichten, Moderation, Giveaways |
+| **Giveaways** | Discord + Datenbank | Teilnahme per Button, automatische Auslosung, mehrere Gewinner, Gewinner-Rolle, Reroll; **überleben Neustarts** |
 | **Auto-Reconnect** | exponentielles Backoff 5 s → 120 s | Eine tote Verbindung wird nach 3 unbeantworteten Befehlen erkannt. Laufende Befehle bekommen eine verständliche Fehlermeldung. |
 
 ### 🔜 Technisch machbar, aber nicht in diesem Prototyp
@@ -158,11 +162,15 @@ rce-discord-bot/
 │   ├── stats.py           # /leaderboard /stats
 │   ├── kits.py            # Kitmanager: /kit … und Autokits
 │   ├── custom_kits.py     # Custom Kits: /customkit … (nur im Bot)
-│   └── tickets.py         # Support-Tickets mit KI: /ticket …
+│   ├── tickets.py         # Support-Tickets mit KI: /ticket …
+│   ├── community.py       # /ping /rust /regeln, Willkommen, Auto-Rolle, Discord-Log
+│   ├── moderation.py      # /mod timeout/kick/ban/unban/purge (Discord-Mitglieder)
+│   └── giveaways.py       # /giveaway … (dauerhaft in der Datenbank)
 ├── support/
 │   ├── deepseek.py        # Client für die DeepSeek-Plattform-API
 │   └── prompt.py          # System-Prompt, Verlauf, Auswertung der KI-Antwort
 ├── support_knowledge.md   # Wissensbasis für die KI  ← selbst ausfüllen
+├── rules.md               # Regeln für /regeln  ← anpassen
 ├── web/
 │   ├── server.py          # Webinterface: Login + JSON-API (läuft im Bot-Prozess)
 │   └── static/            # Oberfläche (HTML/CSS/JS, keine externen Dateien)
@@ -194,13 +202,19 @@ rce-discord-bot/
 1. Öffne <https://discord.com/developers/applications> → **New Application** → Namen vergeben.
 2. Links auf **Bot**:
    - **Reset Token** → Token kopieren. Das ist `DISCORD_TOKEN`. Gib es niemals weiter!
-   - Unter **Privileged Gateway Intents** den **Message Content Intent** aktivieren. Er wird nur
-     für die Chat-Bridge Discord → Spiel gebraucht. Wenn du die Bridge nicht nutzt, setze
-     `CHAT_BRIDGE_TO_GAME=false`.
+   - Unter **Privileged Gateway Intents**:
+     - **Message Content Intent** – für Chat-Bridge, KI-Tickets und Nachrichten-Log.
+     - **Server Members Intent** – für Willkommensnachricht, Auto-Rolle und Join/Leave-Log.
+     Werden die Features nicht genutzt (Channels in der `.env` leer), fragt der Bot die Intents
+     auch nicht an.
 3. Links **OAuth2 → URL Generator**:
    - Scopes: `bot` und `applications.commands`
    - Bot-Berechtigungen: *View Channels*, *Send Messages*, *Embed Links*, *Attach Files*,
-     *Read Message History*, *Add Reactions*
+     *Read Message History*, *Add Reactions*, *Manage Channels* (Tickets), *Manage Roles*
+     (Auto-Rolle, Gewinner-Rolle), *Moderate Members* (Timeout), *Kick Members*, *Ban Members*,
+     *Manage Messages* (Purge), *Mention @everyone, @here and All Roles* (Staff-Ping)
+   - Die **Bot-Rolle** in den Servereinstellungen über die Rollen ziehen, die er vergeben oder
+     moderieren soll.
    - Erzeugte URL öffnen und den Bot auf deinen Discord-Server einladen.
 4. IDs kopieren: Discord → Einstellungen → Erweitert → **Entwicklermodus** an. Danach
    Rechtsklick auf Server, Channel oder Rolle → „ID kopieren“.
@@ -299,6 +313,7 @@ Start öffnet sich der Browser automatisch, sonst **<http://localhost:8080>** au
 | 🎒 Kits | Kits vergeben (Spieler/alle), Ingame-Kits ansehen, **Custom Kits** anlegen/bearbeiten, **Autokits** anlegen/pausieren/löschen, Wipe-Reset, Vergabe-Verlauf |
 | 🎫 Tickets | Alle Tickets mit Status, **Transkripte geschlossener Tickets**, DeepSeek-Guthaben |
 | 🏆 Statistiken | Leaderboard (Kills, Tode, K/D, Spielzeit), Plattform, zuletzt gesehen |
+| 🎉 Community | Giveaways (vorzeitig auslosen, neu auslosen), **Regeln bearbeiten**, Übersicht der Community-Einstellungen |
 | 📚 Wissensbasis | `support_knowledge.md` direkt im Browser bearbeiten (gilt sofort) |
 | 🧾 Bot-Log | Die letzten 500 Log-Zeilen des Bots |
 
@@ -357,9 +372,19 @@ Die automatischen Tests startest du mit `pip install pytest && pytest`.
 | `/ticket oeffnen`, `/ticket schliessen` | alle | Ticket öffnen bzw. eigenes Ticket schließen |
 | `/ticket ki`, `/ticket hinzufuegen` | Staff | KI im Ticket an/aus, Mitglied hinzufügen |
 | `/ticket panel`, `/ticket ki-status`, `/ticket ki-test` | Admins | Ticket-Panel posten, DeepSeek-Guthaben anzeigen, KI testen |
+| `/ping`, `/rust`, `/regeln` | alle | Bot-/RCON-Latenz, Serverinfos (Plattform, Wipe, Live-Status), Regeln |
+| `/mod timeout`, `/mod untimeout` | „Mitglieder timeouten“ | Discord-Mitglied stummschalten (max. 28 Tage) bzw. aufheben |
+| `/mod kick`, `/mod ban`, `/mod unban` | „Kicken“/„Bannen“ | Discord-Mitglied kicken/bannen (mit DM an den Nutzer), Bann per User-ID aufheben |
+| `/mod purge` | „Nachrichten verwalten“ | 1–100 Nachrichten löschen, optional nur von einem Nutzer |
+| `/giveaway start/ende/neu/liste` | „Server verwalten“ | Giveaways starten, vorzeitig auslosen, neu auslosen, auflisten |
 
-Admin-Rechte bekommen nur die Rollen bzw. User aus `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Discords
-eigene Rechte wie „Administrator“ zählen bewusst **nicht** automatisch. Jede Admin-Aktion wird mit
+Admin-Rechte für **Server-Befehle** (RCON, Kits, Tickets-Verwaltung) bekommen nur die Rollen bzw.
+User aus `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Discords eigene Rechte wie „Administrator“ zählen dort
+bewusst **nicht** automatisch. `/mod` und `/giveaway` betreffen dagegen nur Discord und nutzen
+deshalb die normalen **Discord-Berechtigungen** (wie Discord selbst).
+
+> **Achtung, zwei Arten von Kick/Ban:** `/kick` und `/ban` wirken auf **Ingame-Spieler** (RCON).
+> `/mod kick` und `/mod ban` wirken auf **Discord-Mitglieder**. Jede Admin-Aktion wird mit
 dem ausführenden Discord-Nutzer im Admin-Log protokolliert.
 
 ---
@@ -508,6 +533,32 @@ Discord). Ohne API-Key funktioniert das Ticketsystem auch ganz ohne KI.
 
 ---
 
+## Community & Moderation
+
+Diese Funktionen stammen aus dem KRYVON-Bot und sind hier nachgebaut und erweitert:
+
+| KRYVON-Bot | Hier |
+|---|---|
+| Willkommensnachricht | `WELCOME_CHANNEL_ID` + frei formulierbare `WELCOME_MESSAGE` mit Platzhaltern `{member}`, `{server}`, `{count}`, `{rules}` |
+| Auto-Rolle | `AUTO_ROLE_ID` (mit Prüfung, ob die Bot-Rolle hoch genug steht) |
+| Logs (Join/Leave, gelöschte/bearbeitete Nachrichten, Moderation) | `DISCORD_LOG_CHANNEL_ID`, zusätzlich Giveaways |
+| `/timeout`, `/kick`, `/ban`, `/purge` | `/mod …`, zusätzlich `untimeout`, `unban`, Purge nach Nutzer, DM an Betroffene |
+| `/giveaway` (nur im Speicher) | `/giveaway …` in der **Datenbank** – übersteht Neustarts; mehrere Gewinner, Reroll, Gewinner-Rolle, im Webinterface steuerbar |
+| `/ping`, `/rust`, `/rules` | `/ping` (inkl. RCON-Latenz), `/rust` (inkl. Live-Status), `/regeln` (aus `rules.md`, im Webinterface bearbeitbar) |
+| `/ticket`, `/setup-ticket`, `/close` | `/ticket oeffnen`, `/ticket panel`, `/ticket schliessen` – mit KI, Transkripten, Staff-Ping |
+| `/kit` (nur Info) | `/kit …` vergibt echte Kits, dazu Custom Kits und Autokits |
+| `/helios-status` | entfällt – dieser Bot spricht direkt per RCON mit dem Server und braucht Helios nicht |
+
+**Hinweise**
+
+- Der Nachrichten-Log zeigt gelöschte/bearbeitete Nachrichten nur, wenn der Bot sie seit seinem
+  letzten Start gesehen hat (Discord liefert ältere Inhalte nicht mit).
+- Informiere deine Community darüber, was geloggt wird (z. B. in den Regeln) – Datenschutz.
+- Giveaway-Gewinne werden **nicht** automatisch ingame vergeben (Discord-Nutzer und Ingame-Name
+  sind nicht verknüpft). Gib Preise z. B. per `/customkit geben` oder `/kit geben` aus.
+
+---
+
 ## Fehlersuche
 
 | Meldung / Problem | Lösung |
@@ -520,6 +571,9 @@ Discord). Ohne API-Key funktioniert das Ticketsystem auch ganz ohne KI.
 | Kick/Ban wirkt nicht | Befehlssyntax per `/rcon` testen und die `*_COMMAND_TEMPLATE` in der `.env` anpassen |
 | Kit kommt nicht an | `/rcon kit givetoplayer "Kit" "Spieler"` testen und die Antwort im Konsolen-Log prüfen. Bei abweichender Syntax `KIT_GIVE_TEMPLATE` anpassen. |
 | Custom Kit kommt nicht an | `/rcon inventory.giveto "DeinName" "wood" 100` testen. Bei abweichender Syntax `ITEM_GIVE_TEMPLATE` anpassen. Fehlt die `giving …`-Zeile im Admin-Log, stimmt meist der Shortname nicht. |
+| „privilegierter Intent … nicht aktiviert“ beim Start | Developer Portal → Bot → *Message Content Intent* und *Server Members Intent* einschalten |
+| Auto-Rolle/Gewinner-Rolle wird nicht vergeben | Bot-Rolle in den Servereinstellungen über diese Rolle ziehen, *Manage Roles* erlauben |
+| `/mod …`: „Rolle steht über der Bot-Rolle“ | Discord erlaubt Moderation nur unterhalb der eigenen höchsten Rolle – Bot-Rolle nach oben ziehen |
 | `start.bat`: „Python wurde nicht gefunden“ | Python von python.org installieren, Haken bei „Add Python to PATH“, PC neu anmelden |
 | Webinterface: „Port … nicht öffnen“ | Ein anderes Programm nutzt den Port → `WEB_PORT=8090` o. ä. setzen |
 | Webinterface-Passwort vergessen | `WEB_PASSWORD` in der `.env` setzen und Bot neu starten |

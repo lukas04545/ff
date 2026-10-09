@@ -112,6 +112,17 @@ class Config:
     support_knowledge_file: Path
     ticket_ai_max_replies: int
 
+    # Community (Willkommen, Auto-Rolle, Discord-Logs, Regeln, Giveaways)
+    welcome_channel_id: int | None
+    welcome_message: str
+    auto_role_id: int | None
+    discord_log_channel_id: int | None
+    rules_channel_id: int | None
+    rules_file: Path
+    rust_server_platform: str
+    rust_server_wipe: str
+    giveaway_winner_role_id: int | None
+
     # Webinterface
     web_enabled: bool
     web_host: str
@@ -172,6 +183,16 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         deepseek_base_url=_get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
         support_knowledge_file=Path(_get("SUPPORT_KNOWLEDGE_FILE", "support_knowledge.md")),
         ticket_ai_max_replies=max(1, _int("TICKET_AI_MAX_REPLIES", 20)),
+        welcome_channel_id=_int("WELCOME_CHANNEL_ID"),
+        welcome_message=_get("WELCOME_MESSAGE",
+                             "Willkommen {member} auf **{server}**! Lies dir die Regeln durch{rules} – viel Spaß!"),
+        auto_role_id=_int("AUTO_ROLE_ID"),
+        discord_log_channel_id=_int("DISCORD_LOG_CHANNEL_ID"),
+        rules_channel_id=_int("RULES_CHANNEL_ID"),
+        rules_file=Path(_get("RULES_FILE", "rules.md")),
+        rust_server_platform=_get("RUST_SERVER_PLATFORM", "Rust Console Edition (Xbox & PlayStation)"),
+        rust_server_wipe=_get("RUST_SERVER_WIPE", "Siehe Ankündigungen im Discord"),
+        giveaway_winner_role_id=_int("GIVEAWAY_WINNER_ROLE_ID"),
         web_enabled=_bool("WEB_ENABLED", True),
         web_host=_get("WEB_HOST", "127.0.0.1"),
         web_port=_int("WEB_PORT", 8080),

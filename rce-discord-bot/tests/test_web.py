@@ -90,3 +90,15 @@ def test_custom_kits_autokits_knowledge(bot):
         assert (await c.get("/api/leaderboard?category=kd")).status == 200
         assert (await c.get("/api/leaderboard?category=drop")).status == 400
     run(bot, scenario)
+
+
+def test_rules_and_community(bot, tmp_path, monkeypatch):
+    async def scenario(c):
+        await c.post("/api/login", json={"password": "geheim123"}, headers=H)
+        assert (await c.put("/api/rules", json={"text": "Kein Cheaten\nRespekt"}, headers=H)).status == 200
+        assert (await (await c.get("/api/rules")).json())["text"] == "Kein Cheaten\nRespekt"
+        data = await (await c.get("/api/community")).json()
+        assert data["giveaways"] == [] and data["welcome_channel"] is None
+        assert (await c.post("/api/giveaways/99/end", headers=H)).status == 404
+    monkeypatch.chdir(tmp_path)  # rules.md im Testordner anlegen, nicht im Projekt
+    run(bot, scenario)

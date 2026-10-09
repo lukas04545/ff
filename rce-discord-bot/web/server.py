@@ -101,6 +101,10 @@ class WebInterface:
         r.add_put("/api/knowledge", self.put_knowledge)
         r.add_get("/api/ai", self.ai_status)
         r.add_get("/api/botlog", self.botlog)
+        r.add_get("/api/rules", self.get_rules)
+        r.add_put("/api/rules", self.put_rules)
+        r.add_get("/api/community", self.community)
+        r.add_post("/api/giveaways/{giveaway_id:\\d+}/{action:end|reroll}", self.giveaway_action)
         return app
 
     async def start(self) -> None:
@@ -482,6 +486,59 @@ class WebInterface:
         except DeepSeekError as exc:
             result["error"] = str(exc)
         return web.json_response(result)
+
+    # ------------------------------------------------------------ Community
+
+    async def get_rules(self, request: web.Request) -> web.Response:
+        path: Path = self.bot.config.rules_file
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+        return web.json_response({"path": str(path), "text": text})
+
+    async def put_rules(self, request: web.Request) -> web.Response:
+        text = str((await self._json(request)).get("text", ""))
+        if len(text) > 20000:
+            raise ApiError("Text zu lang (max. 20.000 Zeichen).")
+        path: Path = self.bot.config.rules_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        self._audit("Regeln bearbeitet")
+        return web.json_response({"ok": True})
+
+    async def community(self, request: web.Request) -> web.Response:
+        cfg = self.bot.config
+
+        def channel(cid):
+            ch = self.bot.get_channel(cid) if cid else None
+            return f"#{ch.name}" if ch else (str(cid) if cid else None)
+
+        guild = self.bot.get_guild(cfg.guild_id) if cfg.guild_id else (self.bot.guilds[0] if self.bot.guilds else None)
+        role = guild.get_role(cfg.auto_role_id) if guild and cfg.auto_role_id else None
+        return web.json_response({
+            "guild": guild.name if guild else None,
+            "members": guild.member_count if guild else None,
+            "welcome_channel": channel(cfg.welcome_channel_id),
+            "welcome_message": cfg.welcome_message,
+            "auto_role": role.name if role else (str(cfg.auto_role_id) if cfg.auto_role_id else None),
+            "discord_log_channel": channel(cfg.discord_log_channel_id),
+            "rules_channel": channel(cfg.rules_channel_id),
+            "giveaways": [dict(r) for r in self.bot.db.giveaways(limit=30)],
+        })
+
+    async def giveaway_action(self, request: web.Request) -> web.Response:
+        row = self.bot.db.giveaway(int(request.match_info["giveaway_id"]))
+        action = request.match_info["action"]
+        if row is None:
+            raise ApiError("Giveaway nicht gefunden.", 404)
+        cog = self._cog("Giveaways")
+        if action == "end" and row["ended"]:
+            raise ApiError("Giveaway ist schon beendet.")
+        if action == "reroll" and not row["ended"]:
+            raise ApiError("Nur beendete Giveaways können neu ausgelost werden.")
+        if not self.bot.is_ready():
+            raise ApiError("Discord ist noch nicht verbunden.", 503)
+        winners = await cog.finish(row, reroll=action == "reroll")
+        self._audit(f"Giveaway #{row['id']} {'beendet' if action == 'end' else 'neu ausgelost'}")
+        return web.json_response({"ok": True, "winners": [str(w) for w in winners]})
 
     async def botlog(self, request: web.Request) -> web.Response:
         return web.json_response({"lines": list(memory_log.records)})

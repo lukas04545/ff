@@ -468,6 +468,46 @@ views.knowledge = async (main) => {
   info.textContent = `Datei: ${r.path}`;
 };
 
+// ------------------------------------------------------------------ Community
+
+views.community = async (main) => {
+  const info = h("div", { class: "card" }, h("p", { class: "muted", text: "Lade …" }));
+  const gBody = h("tbody");
+  const rulesArea = h("textarea", { rows: 12 });
+  main.append(h("h1", { text: "Community" }), info,
+    h("div", { class: "card" }, h("h2", { text: "🎉 Giveaways" }),
+      h("p", { class: "muted", text: "Starten mit /giveaway start im gewünschten Discord-Channel." }),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["#", "Preis", "Teilnehmer", "Status", ""].map((t) => h("th", { text: t })))),
+        gBody))),
+    h("div", { class: "card" }, h("h2", { text: "📜 Regeln (/regeln)" }),
+      h("p", { class: "muted", text: "Eine Regel pro Zeile. Zeilen mit # werden ignoriert." }), rulesArea,
+      h("div", { class: "row", style: "margin-top:.75rem" },
+        h("button", { class: "primary", text: "Speichern", onclick: () => act(() => api("/api/rules", { method: "PUT", body: { text: rulesArea.value } }), "Regeln gespeichert") }))));
+
+  const load = async () => {
+    const c = await api("/api/community");
+    const item = (label, value) => h("div", { class: "stat" }, h("div", { class: "label", text: label }), h("div", { class: "value", style: "font-size:1rem", text: value || "– (aus)" }));
+    info.replaceChildren(h("div", { class: "grid", style: "margin:0" },
+      item("Discord-Server", c.guild && `${c.guild} (${c.members ?? "?"} Mitglieder)`),
+      item("Willkommens-Channel", c.welcome_channel),
+      item("Auto-Rolle", c.auto_role),
+      item("Discord-Log", c.discord_log_channel),
+      item("Regel-Channel", c.rules_channel)),
+      h("p", { class: "muted", style: "margin:.75rem 0 0", text: "Ändern über die .env (WELCOME_CHANNEL_ID, AUTO_ROLE_ID, DISCORD_LOG_CHANNEL_ID, …) und Bot neu starten." }));
+    gBody.replaceChildren(...(c.giveaways.length ? c.giveaways.map((g) => h("tr", {},
+      h("td", { text: g.id }), h("td", { text: g.prize }), h("td", { text: g.entries }),
+      h("td", { text: g.ended ? `beendet${g.winner_ids ? " – " + g.winner_ids.split(",").length + " Gewinner" : " – keine Gewinner"}` : "läuft bis " + new Date(g.ends_at * 1000).toLocaleString() }),
+      h("td", {}, g.ended
+        ? h("button", { class: "small", text: "Neu auslosen", onclick: async () => { await act(() => api(`/api/giveaways/${g.id}/reroll`, { method: "POST" }), "Neu ausgelost"); load(); } })
+        : h("button", { class: "small", text: "Jetzt beenden", onclick: async () => { if (!confirm("Giveaway jetzt auslosen?")) return; await act(() => api(`/api/giveaways/${g.id}/end`, { method: "POST" }), "Ausgelost"); load(); } }))))
+      : [h("tr", {}, h("td", { colspan: 5, class: "muted", text: "Noch keine Giveaways." }))]));
+  };
+  every(15000, () => load().catch(() => {}));
+  const r = await api("/api/rules").catch(() => ({ text: "" }));
+  rulesArea.value = r.text;
+};
+
 // ------------------------------------------------------------------ Bot-Log
 
 views.botlog = (main) => {
