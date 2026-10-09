@@ -112,6 +112,13 @@ class Config:
     support_knowledge_file: Path
     ticket_ai_max_replies: int
 
+    # Webinterface
+    web_enabled: bool
+    web_host: str
+    web_port: int
+    web_password: str
+    web_open_browser: bool
+
     database_path: Path
 
 
@@ -165,6 +172,11 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         deepseek_base_url=_get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
         support_knowledge_file=Path(_get("SUPPORT_KNOWLEDGE_FILE", "support_knowledge.md")),
         ticket_ai_max_replies=max(1, _int("TICKET_AI_MAX_REPLIES", 20)),
+        web_enabled=_bool("WEB_ENABLED", True),
+        web_host=_get("WEB_HOST", "127.0.0.1"),
+        web_port=_int("WEB_PORT", 8080),
+        web_password=_get("WEB_PASSWORD"),
+        web_open_browser=_bool("WEB_OPEN_BROWSER", True),
         database_path=Path(_get("DATABASE_PATH", "data/bot.db")),
     )
 

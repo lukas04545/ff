@@ -163,8 +163,15 @@ rce-discord-bot/
 │   ├── deepseek.py        # Client für die DeepSeek-Plattform-API
 │   └── prompt.py          # System-Prompt, Verlauf, Auswertung der KI-Antwort
 ├── support_knowledge.md   # Wissensbasis für die KI  ← selbst ausfüllen
+├── web/
+│   ├── server.py          # Webinterface: Login + JSON-API (läuft im Bot-Prozess)
+│   └── static/            # Oberfläche (HTML/CSS/JS, keine externen Dateien)
+├── logbuffer.py           # Letzte Log-Zeilen für das Webinterface
+├── start.bat              # Windows: Doppelklick = einrichten + starten + Auto-Neustart
+├── start.sh               # Linux/macOS: dasselbe
 ├── tools/mock_rcon_server.py  # Simulierter RCE-Server zum Testen
-├── tests/                 # pytest: Parser + RCON-Client inkl. Reconnect
+├── tests/                 # pytest: Parser, RCON-Client, Kits, Tickets, Webinterface
+├── logs/bot.log           # Log-Datei (wird automatisch angelegt)
 ├── requirements.txt
 └── .env.example
 ```
@@ -177,8 +184,10 @@ rce-discord-bot/
 
 - **Python 3.10 oder neuer** ([python.org](https://www.python.org/downloads/), unter Windows bei
   der Installation „Add Python to PATH“ anhaken)
-- Ein Rechner oder VPS, der dauerhaft läuft. Der Bot muss ausgehend die Server-IP und den
-  RCON-Port erreichen können.
+- Ein Rechner, der läuft, solange der Bot laufen soll – z. B. **dein eigener PC** (siehe
+  [Auf deinem PC hosten](#auf-deinem-pc-hosten)) oder ein VPS. Der Bot verbindet sich nur
+  **ausgehend** zu Discord, zum G-Portal-Server und zu DeepSeek – du musst **keine Ports im
+  Router freigeben**.
 
 ### 2. Discord-Bot im Developer Portal anlegen
 
@@ -213,6 +222,14 @@ rce-discord-bot/
 
 ### 4. Bot einrichten
 
+**Windows (einfachster Weg):** Doppelklick auf **`start.bat`**. Beim ersten Start legt das Skript
+die Python-Umgebung an, installiert alles, erstellt die `.env` und öffnet sie im Editor. Dort
+ausfüllen, speichern, Editor schließen – der Bot startet danach von selbst.
+
+**Linux/macOS:** `./start.sh` ausführen, `.env` ausfüllen (`nano .env`), erneut `./start.sh`.
+
+**Manuell (alle Systeme):**
+
 ```bash
 cd rce-discord-bot
 python -m venv .venv
@@ -231,16 +248,78 @@ zugehörige Feature aus. Empfohlen: `CONSOLE_LOG_CHANNEL_ID` und `ADMIN_LOG_CHAN
 
 ### 5. Starten
 
-```bash
-python bot.py
-```
+`start.bat` (Windows) bzw. `./start.sh` (Linux/macOS) – oder manuell `python bot.py`.
 
-Im Terminal sollte `RCON verbunden.` und `Eingeloggt als …` erscheinen. Mit gesetzter `GUILD_ID`
-sind die Slash-Commands sofort da. Ohne `GUILD_ID` werden sie global registriert, das kann bis
-zu einer Stunde dauern.
+Im Fenster sollte `RCON verbunden.`, `Eingeloggt als …` und `Webinterface läuft:
+http://localhost:8080` erscheinen; der Browser öffnet das Webinterface automatisch. Mit gesetzter
+`GUILD_ID` sind die Slash-Commands sofort da. Ohne `GUILD_ID` werden sie global registriert, das
+kann bis zu einer Stunde dauern.
 
-Für den Dauerbetrieb lohnt sich ein Dienst (z. B. `systemd` unter Linux, `pm2` oder ein
-Windows-Task), der den Bot nach einem Absturz oder Neustart wieder startet.
+Die Start-Skripte starten den Bot nach einem Absturz nach 10 Sekunden neu. Bei
+Konfigurationsfehlern (falscher Token, fehlende Angaben) halten sie stattdessen an und zeigen
+die Meldung – erst `.env` korrigieren, dann neu starten.
+
+---
+
+## Auf deinem PC hosten
+
+Der Bot läuft problemlos auf einem normalen Windows-, Linux- oder Mac-PC:
+
+- **Keine Portfreigabe nötig.** Der Bot baut nur ausgehende Verbindungen auf (Discord,
+  G-Portal-RCON, DeepSeek). Das Webinterface ist standardmäßig nur auf diesem PC erreichbar.
+- **Der PC muss an bleiben.** Ist er aus oder im **Energiesparmodus/Ruhezustand**, ist der Bot
+  offline. Unter Windows: *Einstellungen → System → Netzbetrieb & Energiesparen → Energiesparmodus
+  „Nie“* (zumindest bei Netzbetrieb). Bildschirm-Aus ist dagegen egal.
+- **Fenster offen lassen.** Das schwarze `start.bat`-Fenster ist der Bot. Schließen = Bot aus.
+  Minimieren ist okay.
+- **Automatisch mit Windows starten:** `Win + R` → `shell:startup` → Enter. In den geöffneten
+  Ordner eine **Verknüpfung** zu `start.bat` legen (Rechtsklick auf `start.bat` → *Verknüpfung
+  erstellen* → Verknüpfung dorthin verschieben). Der Bot startet dann bei jeder Anmeldung.
+  (Ohne Anmeldung: *Aufgabenplanung* → *Einfache Aufgabe* → Trigger „Beim Start des Computers“ →
+  Programm `start.bat`, „Starten in“ = Bot-Ordner.)
+- **Linux:** `./start.sh` in einer `tmux`/`screen`-Sitzung oder als systemd-Dienst
+  (`ExecStart=/pfad/rce-discord-bot/start.sh`, `Restart=always`).
+- **Ressourcen:** Der Bot braucht nur ca. 100–150 MB RAM und kaum CPU – er läuft gut nebenbei.
+- **Logs:** alles landet zusätzlich in `logs/bot.log` (rotiert automatisch, max. ~8 MB).
+- **Daten sichern:** wichtig sind nur `.env`, `data/bot.db` (Statistiken, Kits, Tickets) und
+  `support_knowledge.md`. Diese drei Dateien kopieren = komplettes Backup; damit kannst du auch
+  auf einen anderen PC umziehen.
+
+---
+
+## Webinterface
+
+Das Webinterface läuft **im Bot mit** – kein zusätzliches Programm, keine Zusatzpakete. Nach dem
+Start öffnet sich der Browser automatisch, sonst **<http://localhost:8080>** aufrufen.
+
+| Seite | Funktionen |
+|---|---|
+| 📊 Übersicht | Serverstatus (Spieler, Map, Uptime, FPS), Online-Spieler mit **Kick/Ban**, Entbannen, Nachricht ins Spiel |
+| ⌨️ Konsole | **Live-Serverkonsole** und Eingabe beliebiger RCON-Befehle (wenn `ALLOW_RAW_RCON=true`) |
+| 🎒 Kits | Kits vergeben (Spieler/alle), Ingame-Kits ansehen, **Custom Kits** anlegen/bearbeiten, **Autokits** anlegen/pausieren/löschen, Wipe-Reset, Vergabe-Verlauf |
+| 🎫 Tickets | Alle Tickets mit Status, **Transkripte geschlossener Tickets**, DeepSeek-Guthaben |
+| 🏆 Statistiken | Leaderboard (Kills, Tode, K/D, Spielzeit), Plattform, zuletzt gesehen |
+| 📚 Wissensbasis | `support_knowledge.md` direkt im Browser bearbeiten (gilt sofort) |
+| 🧾 Bot-Log | Die letzten 500 Log-Zeilen des Bots |
+
+Alles, was du im Webinterface tust, steht im Admin-Log-Channel in Discord („🌐 Webinterface: …“).
+Die Oberfläche funktioniert auch auf dem Handy.
+
+**Einstellungen in der `.env`:**
+
+| Variable | Standard | Bedeutung |
+|---|---|---|
+| `WEB_PASSWORD` | leer | Login-Passwort. **Leer = bei jedem Start ein Zufallspasswort**, das im Bot-Fenster steht. Setz am besten ein eigenes. |
+| `WEB_HOST` | `127.0.0.1` | `127.0.0.1` = nur dieser PC. `0.0.0.0` = auch Handy/Laptop im **selben Heimnetz** über `http://<IP-deines-PCs>:8080` (Windows fragt dann einmal nach Firewall-Freigabe → „Private Netzwerke“ erlauben). |
+| `WEB_PORT` | `8080` | Port, falls 8080 schon belegt ist |
+| `WEB_OPEN_BROWSER` | `true` | Browser beim Start automatisch öffnen |
+| `WEB_ENABLED` | `true` | Webinterface ganz abschalten |
+
+**Sicherheit:** Login mit Passwort (max. 5 Versuche pro Minute), Sitzung läuft nach 12 Stunden ab,
+Schutz gegen fremde Webseiten (CSRF), alle Spieler- und Konsolentexte werden nur als Text
+angezeigt. Das Webinterface hat aber **kein HTTPS** – stelle es **niemals per Portfreigabe im
+Router ins Internet**. Für Zugriff von unterwegs nutze lieber ein VPN wie Tailscale oder
+WireGuard zu deinem Heimnetz.
 
 ### Ohne echten Server testen
 
@@ -441,6 +520,10 @@ Discord). Ohne API-Key funktioniert das Ticketsystem auch ganz ohne KI.
 | Kick/Ban wirkt nicht | Befehlssyntax per `/rcon` testen und die `*_COMMAND_TEMPLATE` in der `.env` anpassen |
 | Kit kommt nicht an | `/rcon kit givetoplayer "Kit" "Spieler"` testen und die Antwort im Konsolen-Log prüfen. Bei abweichender Syntax `KIT_GIVE_TEMPLATE` anpassen. |
 | Custom Kit kommt nicht an | `/rcon inventory.giveto "DeinName" "wood" 100` testen. Bei abweichender Syntax `ITEM_GIVE_TEMPLATE` anpassen. Fehlt die `giving …`-Zeile im Admin-Log, stimmt meist der Shortname nicht. |
+| `start.bat`: „Python wurde nicht gefunden“ | Python von python.org installieren, Haken bei „Add Python to PATH“, PC neu anmelden |
+| Webinterface: „Port … nicht öffnen“ | Ein anderes Programm nutzt den Port → `WEB_PORT=8090` o. ä. setzen |
+| Webinterface-Passwort vergessen | `WEB_PASSWORD` in der `.env` setzen und Bot neu starten |
+| Webinterface vom Handy nicht erreichbar | `WEB_HOST=0.0.0.0`, Windows-Firewall für private Netzwerke erlauben, PC-IP mit `ipconfig` nachsehen |
 | Ticket: „Kanäle verwalten“ fehlt | Dem Bot in der Ticket-Kategorie „Kanäle verwalten“ und „Berechtigungen verwalten“ geben |
 | Ticket: Staff-Ping kommt nicht an | Support-Rolle „erwähnbar“ machen oder dem Bot „Alle Rollen erwähnen“ erlauben; `SUPPORT_ROLE_IDS` prüfen |
 | `HTTP 402` / KI antwortet nicht | DeepSeek-Guthaben leer → [platform.deepseek.com/usage](https://platform.deepseek.com/usage), Status mit `/ticket ki-status` |

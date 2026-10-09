@@ -429,7 +429,7 @@ class Tickets(commands.Cog):
     async def _close(self, channel: discord.TextChannel, ticket, closer: discord.abc.User,
                      reason: str | None) -> None:
         transcript = await self._transcript(channel)
-        self.bot.db.close_ticket(ticket["id"], str(closer), reason)
+        self.bot.db.close_ticket(ticket["id"], str(closer), reason, transcript)
 
         embed = discord.Embed(title=f"🔒 Ticket #{ticket['id']} geschlossen", colour=discord.Colour.dark_grey())
         embed.add_field(name="Ersteller", value=f"<@{ticket['user_id']}>")

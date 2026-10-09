@@ -1,24 +1,35 @@
 """Discord-Bot für Rust Console Edition (G-Portal) über WebRCON.
 
-Start:  python bot.py
+Start:  python bot.py   (oder start.bat / start.sh – richten alles automatisch ein)
 """
 from __future__ import annotations
 
+import itertools
 import json
 import logging
+import logging.handlers
+import os
 import sys
+import time
+from collections import deque
+from pathlib import Path
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from config import Config, ConfigError, load_config
+from logbuffer import memory_log
 from rce import log_parser
 from rce.rcon_client import RconClient, RconError, RconMessage
 from storage import Storage
 from utils import ChannelBuffer, NotAdmin
 
 log = logging.getLogger("rce.bot")
+
+# Exit-Code für Fehler, bei denen ein Neustart nichts bringt (start.bat/start.sh starten dann nicht neu)
+EXIT_FATAL = 3
+BASE_DIR = Path(__file__).resolve().parent
 
 COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits", "cogs.tickets")
 
@@ -40,9 +51,8 @@ EVENT_NAMES: dict[type, str] = {
 class RceBot(commands.Bot):
     def __init__(self, config: Config) -> None:
         intents = discord.Intents.default()
-        # Nachrichteninhalt wird nur für die Chat-Bridge Discord -> Spiel gebraucht
-        # (privilegierter Intent, muss im Developer Portal aktiviert sein).
-        # (privilegierter Intent) – außerdem für Support-Tickets, damit die KI Nachrichten lesen kann.
+        # Nachrichteninhalt (privilegierter Intent, im Developer Portal aktivieren) brauchen
+        # die Chat-Bridge Discord -> Spiel und die Support-Tickets (KI liest die Nachrichten).
         intents.message_content = bool(
             (config.chat_channel_id and config.chat_bridge_to_game) or config.ticket_category_id)
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
@@ -56,6 +66,11 @@ class RceBot(commands.Bot):
         self.server_info: dict | None = None
 
         self._feeds: dict[int, ChannelBuffer] = {}
+
+        # Letzte Konsolenzeilen für das Webinterface (id, Zeitstempel, Text)
+        self.console_buffer: deque[dict] = deque(maxlen=1000)
+        self._console_ids = itertools.count(1)
+        self.web = None  # web.server.WebInterface, falls aktiviert
 
     # ------------------------------------------------------------ Lebenszyklus
 
@@ -78,10 +93,17 @@ class RceBot(commands.Bot):
 
         await self.rcon.start()
 
+        if self.config.web_enabled:
+            from web.server import WebInterface
+            self.web = WebInterface(self)
+            await self.web.start()
+
     async def on_ready(self) -> None:
         log.info("Eingeloggt als %s (ID %s).", self.user, self.user.id if self.user else "?")
 
     async def close(self) -> None:
+        if self.web is not None:
+            await self.web.stop()
         await self.rcon.close()
         for buffer in self._feeds.values():
             await buffer.flush()
@@ -98,10 +120,20 @@ class RceBot(commands.Bot):
             self._feeds[channel_id] = ChannelBuffer(self, channel_id, code_block=code_block)
         return self._feeds[channel_id]
 
+    def audit(self, text: str) -> None:
+        """Eintrag im Admin-Log-Channel (falls konfiguriert)."""
+        feed = self.feed(self.config.admin_log_channel_id)
+        if feed:
+            feed.add_line(text)
+
     # ------------------------------------------------------------ RCON -> Events
 
     async def _on_rcon_message(self, msg: RconMessage) -> None:
         self.dispatch("rce_console", msg)
+        now = time.time()
+        for line in msg.text.splitlines():
+            if line.strip():
+                self.console_buffer.append({"id": next(self._console_ids), "ts": now, "text": line.strip()})
 
         # Fallback: Rust-PC-Format, falls ein Server Chat als JSON (Type "Chat") sendet.
         if msg.type == "Chat":
@@ -148,32 +180,50 @@ class RceBot(commands.Bot):
             pass
 
 
-def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-    )
-    logging.getLogger("discord.http").setLevel(logging.WARNING)
+def setup_logging() -> None:
+    # Windows-Konsole: UTF-8 erzwingen, sonst brechen Umlaute/Emojis in Logzeilen
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
+    fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S")
+    (BASE_DIR / "logs").mkdir(exist_ok=True)
+    file_handler = logging.handlers.RotatingFileHandler(
+        BASE_DIR / "logs" / "bot.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+    console = logging.StreamHandler()
+    for handler in (file_handler, console, memory_log):
+        handler.setFormatter(fmt)
+    logging.basicConfig(level=logging.INFO, handlers=[console, file_handler, memory_log])
+    logging.getLogger("discord.http").setLevel(logging.WARNING)
+    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+
+
+def fatal(message: str) -> None:
+    log.critical(message)
+    sys.exit(EXIT_FATAL)
+
+
+def main() -> None:
+    # Arbeitsverzeichnis = Bot-Ordner, damit .env, Datenbank und Wissensbasis auch bei
+    # Doppelklick oder Autostart gefunden werden.
+    os.chdir(BASE_DIR)
+    setup_logging()
+
+    if not Path(".env").exists():
+        fatal("Keine .env-Datei gefunden. Kopiere .env.example nach .env und trage deine Daten ein.")
     try:
         config = load_config()
     except ConfigError as exc:
-        print(f"Konfigurationsfehler: {exc}", file=sys.stderr)
-        sys.exit(1)
+        fatal(f"Konfigurationsfehler: {exc}")
 
     bot = RceBot(config)
     try:
         bot.run(config.discord_token, log_handler=None)
     except discord.LoginFailure:
-        print("Discord-Login fehlgeschlagen: DISCORD_TOKEN ist ungültig.", file=sys.stderr)
-        sys.exit(1)
+        fatal("Discord-Login fehlgeschlagen: DISCORD_TOKEN ist ungültig.")
     except discord.PrivilegedIntentsRequired:
-        print(
-            "Der 'Message Content Intent' ist im Developer Portal nicht aktiviert "
-            "(nötig für die Chat-Bridge). Aktivieren oder CHAT_BRIDGE_TO_GAME=false setzen.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        fatal("Der 'Message Content Intent' ist im Developer Portal nicht aktiviert (nötig für Chat-Bridge "
+              "und Tickets). Aktivieren oder CHAT_BRIDGE_TO_GAME=false und TICKET_CATEGORY_ID leer lassen.")
 
 
 if __name__ == "__main__":

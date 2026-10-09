@@ -90,10 +90,13 @@ class Storage:
             );
             """
         )
-        # Migration: ältere Datenbanken kennen die Spalte kit_type noch nicht
+        # Migrationen: ältere Datenbanken kennen neuere Spalten noch nicht
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_rules)")}
         if "kit_type" not in columns:
             self._db.execute("ALTER TABLE kit_rules ADD COLUMN kit_type TEXT NOT NULL DEFAULT 'ingame'")
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(tickets)")}
+        if "transcript" not in columns:
+            self._db.execute("ALTER TABLE tickets ADD COLUMN transcript TEXT")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 
@@ -307,13 +310,21 @@ class Storage:
         self._db.commit()
         return int(self.ticket(ticket_id)["ai_replies"])
 
-    def close_ticket(self, ticket_id: int, closed_by: str, reason: str | None) -> None:
+    def close_ticket(self, ticket_id: int, closed_by: str, reason: str | None,
+                     transcript: str | None = None) -> None:
         self._db.execute(
-            "UPDATE tickets SET status = 'closed', closed_at = CURRENT_TIMESTAMP, closed_by = ?, close_reason = ? "
-            "WHERE id = ?",
-            (closed_by, reason, ticket_id),
+            "UPDATE tickets SET status = 'closed', closed_at = CURRENT_TIMESTAMP, closed_by = ?, close_reason = ?, "
+            "transcript = ? WHERE id = ?",
+            (closed_by, reason, transcript, ticket_id),
         )
         self._db.commit()
+
+    def tickets(self, *, status: str | None = None, limit: int = 100) -> list[sqlite3.Row]:
+        sql, args = "SELECT * FROM tickets WHERE channel_id IS NOT NULL", []
+        if status:
+            sql += " AND status = ?"
+            args.append(status)
+        return self._db.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
 
     def delete_ticket(self, ticket_id: int) -> None:
         self._db.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
