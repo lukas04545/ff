@@ -102,6 +102,16 @@ class Config:
     autokit_delay: int
     kit_claim_announce: bool
 
+    # Support-Tickets mit DeepSeek-KI
+    ticket_category_id: int | None
+    ticket_log_channel_id: int | None
+    support_role_ids: frozenset[int]
+    deepseek_api_key: str
+    deepseek_model: str
+    deepseek_base_url: str
+    support_knowledge_file: Path
+    ticket_ai_max_replies: int
+
     database_path: Path
 
 
@@ -146,6 +156,15 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         item_give_template=_get("ITEM_GIVE_TEMPLATE", 'inventory.giveto "{name}" "{item}" {amount}'),
         autokit_delay=max(0, _int("AUTOKIT_DELAY", 3)),
         kit_claim_announce=_bool("KIT_CLAIM_ANNOUNCE", True),
+        ticket_category_id=_int("TICKET_CATEGORY_ID"),
+        ticket_log_channel_id=_int("TICKET_LOG_CHANNEL_ID"),
+        # Ohne eigene Support-Rollen übernehmen die Admin-Rollen den Support
+        support_role_ids=_id_set("SUPPORT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),
+        deepseek_api_key=_get("DEEPSEEK_API_KEY"),
+        deepseek_model=_get("DEEPSEEK_MODEL", "deepseek-flash"),
+        deepseek_base_url=_get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
+        support_knowledge_file=Path(_get("SUPPORT_KNOWLEDGE_FILE", "support_knowledge.md")),
+        ticket_ai_max_replies=max(1, _int("TICKET_AI_MAX_REPLIES", 20)),
         database_path=Path(_get("DATABASE_PATH", "data/bot.db")),
     )
 

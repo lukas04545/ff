@@ -20,7 +20,7 @@ from utils import ChannelBuffer, NotAdmin
 
 log = logging.getLogger("rce.bot")
 
-COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits")
+COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits", "cogs.tickets")
 
 # Ereignisklasse -> Discord-Eventname (Listener heißen dann on_<name>)
 EVENT_NAMES: dict[type, str] = {
@@ -42,7 +42,9 @@ class RceBot(commands.Bot):
         intents = discord.Intents.default()
         # Nachrichteninhalt wird nur für die Chat-Bridge Discord -> Spiel gebraucht
         # (privilegierter Intent, muss im Developer Portal aktiviert sein).
-        intents.message_content = bool(config.chat_channel_id and config.chat_bridge_to_game)
+        # (privilegierter Intent) – außerdem für Support-Tickets, damit die KI Nachrichten lesen kann.
+        intents.message_content = bool(
+            (config.chat_channel_id and config.chat_bridge_to_game) or config.ticket_category_id)
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
 
         self.config = config

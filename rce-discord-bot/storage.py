@@ -65,6 +65,23 @@ class Storage:
                 created_by TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            -- Support-Tickets
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id INTEGER UNIQUE,
+                user_id INTEGER NOT NULL,
+                topic TEXT NOT NULL,
+                ingame_name TEXT,
+                status TEXT NOT NULL DEFAULT 'open',      -- 'open' / 'closed'
+                ai_enabled INTEGER NOT NULL DEFAULT 1,
+                escalated INTEGER NOT NULL DEFAULT 0,     -- Staff wurde gepingt
+                staff_joined INTEGER NOT NULL DEFAULT 0,  -- Staff hat geschrieben -> KI pausiert
+                ai_replies INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                closed_at TEXT,
+                closed_by TEXT,
+                close_reason TEXT
+            );
             CREATE TABLE IF NOT EXISTS custom_kit_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
@@ -252,6 +269,55 @@ class Storage:
         return self._db.execute(
             "SELECT * FROM custom_kit_items WHERE kit = ? ORDER BY id", (kit,)
         ).fetchall()
+
+    # ------------------------------------------------------------ Tickets
+
+    _TICKET_FIELDS = {"channel_id", "ai_enabled", "escalated", "staff_joined", "ai_replies"}
+
+    def create_ticket(self, user_id: int, topic: str, ingame_name: str | None) -> int:
+        cur = self._db.execute(
+            "INSERT INTO tickets (user_id, topic, ingame_name) VALUES (?, ?, ?)", (user_id, topic, ingame_name)
+        )
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def ticket(self, ticket_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+
+    def ticket_by_channel(self, channel_id: int) -> sqlite3.Row | None:
+        return self._db.execute(
+            "SELECT * FROM tickets WHERE channel_id = ? AND status = 'open'", (channel_id,)
+        ).fetchone()
+
+    def open_ticket_of_user(self, user_id: int) -> sqlite3.Row | None:
+        return self._db.execute(
+            "SELECT * FROM tickets WHERE user_id = ? AND status = 'open' AND channel_id IS NOT NULL", (user_id,)
+        ).fetchone()
+
+    def update_ticket(self, ticket_id: int, **fields) -> None:
+        unknown = set(fields) - self._TICKET_FIELDS
+        if unknown:
+            raise ValueError(f"Unbekannte Ticket-Felder: {unknown}")
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        self._db.execute(f"UPDATE tickets SET {assignments} WHERE id = ?", (*fields.values(), ticket_id))
+        self._db.commit()
+
+    def increment_ticket_ai_replies(self, ticket_id: int) -> int:
+        self._db.execute("UPDATE tickets SET ai_replies = ai_replies + 1 WHERE id = ?", (ticket_id,))
+        self._db.commit()
+        return int(self.ticket(ticket_id)["ai_replies"])
+
+    def close_ticket(self, ticket_id: int, closed_by: str, reason: str | None) -> None:
+        self._db.execute(
+            "UPDATE tickets SET status = 'closed', closed_at = CURRENT_TIMESTAMP, closed_by = ?, close_reason = ? "
+            "WHERE id = ?",
+            (closed_by, reason, ticket_id),
+        )
+        self._db.commit()
+
+    def delete_ticket(self, ticket_id: int) -> None:
+        self._db.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        self._db.commit()
 
     def close(self) -> None:
         self._db.close()

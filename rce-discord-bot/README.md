@@ -63,6 +63,7 @@ und das [öffentliche Helios-Listing](https://top.gg/bot/1327703273410658324).
 | **Kitmanager** | eingebaute Kit-Befehle der Console Edition | Kits anzeigen, an Spieler, Auth-Gruppen oder alle vergeben (mit Bestätigung), Items hinzufügen/entfernen, Verlauf. Details siehe [Kitmanager](#kitmanager). |
 | **Custom Kits** | Bot-Datenbank → `inventory.giveto` pro Item | Kits, die **nur im Bot** existieren und im Ingame-Kitmanager unsichtbar sind. Details siehe [Custom Kits](#custom-kits). |
 | **Autokits** | Respawn-Logzeile bzw. Quick-Chat-Phrase → `kit givetoplayer` bzw. Custom Kit | Pro Regel Cooldown und Limit pro Spieler, Wipe-Reset. Quick-Chat-Kits melden sich ingame per `say`. |
+| **Support-Tickets mit KI** | Discord + [DeepSeek-Plattform](https://platform.deepseek.com) | Private Ticket-Channels, KI antwortet aus deiner Wissensbasis und pingt Staff bei Bedarf. Details siehe [Support-Tickets](#support-tickets-mit-ki-deepseek). |
 | **Auto-Reconnect** | exponentielles Backoff 5 s → 120 s | Eine tote Verbindung wird nach 3 unbeantworteten Befehlen erkannt. Laufende Befehle bekommen eine verständliche Fehlermeldung. |
 
 ### 🔜 Technisch machbar, aber nicht in diesem Prototyp
@@ -156,7 +157,12 @@ rce-discord-bot/
 │   ├── admin.py           # /kick /ban /unban /say /rcon
 │   ├── stats.py           # /leaderboard /stats
 │   ├── kits.py            # Kitmanager: /kit … und Autokits
-│   └── custom_kits.py     # Custom Kits: /customkit … (nur im Bot)
+│   ├── custom_kits.py     # Custom Kits: /customkit … (nur im Bot)
+│   └── tickets.py         # Support-Tickets mit KI: /ticket …
+├── support/
+│   ├── deepseek.py        # Client für die DeepSeek-Plattform-API
+│   └── prompt.py          # System-Prompt, Verlauf, Auswertung der KI-Antwort
+├── support_knowledge.md   # Wissensbasis für die KI  ← selbst ausfüllen
 ├── tools/mock_rcon_server.py  # Simulierter RCE-Server zum Testen
 ├── tests/                 # pytest: Parser + RCON-Client inkl. Reconnect
 ├── requirements.txt
@@ -269,6 +275,9 @@ Die automatischen Tests startest du mit `pip install pytest && pytest`.
 | `/customkit erstellen`, `item-hinzufuegen`, `item-entfernen`, `loeschen` | Admins | Custom Kits anlegen und bearbeiten |
 | `/customkit liste`, `/customkit info` | Admins | Custom Kits anzeigen (nur für Admins sichtbar) |
 | `/customkit geben`, `/customkit alle` | Admins | Custom Kit an einen Spieler bzw. alle Online-Spieler |
+| `/ticket oeffnen`, `/ticket schliessen` | alle | Ticket öffnen bzw. eigenes Ticket schließen |
+| `/ticket ki`, `/ticket hinzufuegen` | Staff | KI im Ticket an/aus, Mitglied hinzufügen |
+| `/ticket panel`, `/ticket ki-status`, `/ticket ki-test` | Admins | Ticket-Panel posten, DeepSeek-Guthaben anzeigen, KI testen |
 
 Admin-Rechte bekommen nur die Rollen bzw. User aus `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Discords
 eigene Rechte wie „Administrator“ zählen bewusst **nicht** automatisch. Jede Admin-Aktion wird mit
@@ -368,6 +377,58 @@ Im Admin-Log siehst du pro Item die Bestätigungszeile des Servers (`🎁 Name e
 
 ---
 
+## Support-Tickets mit KI (DeepSeek)
+
+Spieler öffnen über einen Button ein Ticket. Der Bot legt dafür einen **privaten Channel** an,
+den nur der Spieler, die Support-Rollen und der Bot sehen. Ein KI-Assistent (DeepSeek) antwortet
+sofort aus deiner Wissensbasis. Kann er nicht helfen, **pingt er die Support-Rollen**.
+
+**Wann wird Staff gepingt?** (pro Ticket einmal; danach nur über den Button, frühestens alle 10 min)
+
+- Die KI entscheidet, dass ein Mensch nötig ist: Ban-Einspruch, Cheater-Meldung, Zahlung,
+  verlorene Items, Frage nicht in der Wissensbasis, Nutzer will einen Menschen …
+- Der Nutzer klickt auf **🔔 Staff rufen**.
+- Die KI ist nicht erreichbar (z. B. kein Guthaben) oder das Antwortlimit pro Ticket ist erreicht.
+- Ohne `DEEPSEEK_API_KEY` geht jedes neue Ticket direkt an den Staff.
+
+Schreibt ein Staff-Mitglied im Ticket, **pausiert die KI automatisch**. Mit `/ticket ki aktiv:true`
+schaltest du sie wieder ein. Beim Schließen landet ein **Transkript** als Textdatei im
+`TICKET_LOG_CHANNEL_ID`, der Nutzer bekommt eine DM, und der Channel wird gelöscht.
+
+**Sicherheit:** Die KI kann nur antworten und Staff rufen. Sie hat **keinen Zugriff auf RCON**,
+kann also keine Kits geben, niemanden entbannen und keine Befehle ausführen, egal was im Ticket
+steht. Sie bekommt nur die Wissensbasis und den Live-Status (online/offline, Spielerzahl), keine
+Spielerliste und keine Custom Kits. Antworten werden ohne @-Erwähnungen gesendet.
+
+### Einrichtung
+
+1. **DeepSeek-Plattform:** Konto auf [platform.deepseek.com](https://platform.deepseek.com)
+   anlegen, unter [Usage/Billing](https://platform.deepseek.com/usage) Guthaben aufladen (die API
+   ist kostenpflichtig, abgerechnet pro Token), dann unter
+   [API Keys](https://platform.deepseek.com/api_keys) einen Key erstellen → `DEEPSEEK_API_KEY`.
+2. **Modell:** Voreingestellt ist `DEEPSEEK_MODEL=deepseek-flash`. Die alten Namen
+   `deepseek-chat`/`deepseek-reasoner` hat DeepSeek im Juli 2026 abgeschaltet. Bekommst du
+   „HTTP 400/422 – stimmt DEEPSEEK_MODEL?“, trage den aktuellen Modellnamen aus den
+   [API-Docs](https://api-docs.deepseek.com) ein.
+3. **Discord:** eine Kategorie für Tickets anlegen → `TICKET_CATEGORY_ID`. Einen privaten
+   Log-Channel → `TICKET_LOG_CHANNEL_ID`. Die Support-Rolle(n) → `SUPPORT_ROLE_IDS`.
+4. **Bot-Rechte:** In der Ticket-Kategorie braucht der Bot **Kanäle verwalten** und
+   **Berechtigungen verwalten**. Damit der Ping ankommt, muss die Support-Rolle „erwähnbar“ sein,
+   oder der Bot bekommt **@everyone, @here und alle Rollen erwähnen**. Der
+   **Message Content Intent** muss aktiv sein (siehe Installation).
+5. **Wissensbasis:** `support_knowledge.md` mit deinen Regeln, Wipe-Zeiten und FAQ füllen.
+   Änderungen gelten ohne Neustart. Nichts Geheimes eintragen, denn die KI darf alles daraus
+   weitergeben.
+6. Bot starten, dann `/ticket ki-status` (zeigt Guthaben und Modell) und
+   `/ticket ki-test frage:"Wann ist Wipe?"` ausprobieren. Zum Schluss im gewünschten Channel
+   `/ticket panel` ausführen.
+
+**Datenschutz:** Ticket-Nachrichten werden zur Beantwortung an DeepSeek übermittelt. Das Panel
+weist darauf hin. Prüfe, ob das für deine Community passt (DSGVO, Datenschutzhinweis im
+Discord). Ohne API-Key funktioniert das Ticketsystem auch ganz ohne KI.
+
+---
+
 ## Fehlersuche
 
 | Meldung / Problem | Lösung |
@@ -380,6 +441,10 @@ Im Admin-Log siehst du pro Item die Bestätigungszeile des Servers (`🎁 Name e
 | Kick/Ban wirkt nicht | Befehlssyntax per `/rcon` testen und die `*_COMMAND_TEMPLATE` in der `.env` anpassen |
 | Kit kommt nicht an | `/rcon kit givetoplayer "Kit" "Spieler"` testen und die Antwort im Konsolen-Log prüfen. Bei abweichender Syntax `KIT_GIVE_TEMPLATE` anpassen. |
 | Custom Kit kommt nicht an | `/rcon inventory.giveto "DeinName" "wood" 100` testen. Bei abweichender Syntax `ITEM_GIVE_TEMPLATE` anpassen. Fehlt die `giving …`-Zeile im Admin-Log, stimmt meist der Shortname nicht. |
+| Ticket: „Kanäle verwalten“ fehlt | Dem Bot in der Ticket-Kategorie „Kanäle verwalten“ und „Berechtigungen verwalten“ geben |
+| Ticket: Staff-Ping kommt nicht an | Support-Rolle „erwähnbar“ machen oder dem Bot „Alle Rollen erwähnen“ erlauben; `SUPPORT_ROLE_IDS` prüfen |
+| `HTTP 402` / KI antwortet nicht | DeepSeek-Guthaben leer → [platform.deepseek.com/usage](https://platform.deepseek.com/usage), Status mit `/ticket ki-status` |
+| `HTTP 401` | `DEEPSEEK_API_KEY` falsch → neuen Key unter [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys) |
 | `/kit info` zeigt nur Rohdaten | Das Ausgabeformat weicht ab. Die Regex in `rce/kits.py` anpassen. |
 
 ---
