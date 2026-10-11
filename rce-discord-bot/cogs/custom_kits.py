@@ -6,11 +6,17 @@ they can't be viewed, claimed or edited.
 
 Limitation: "inventory.giveto" supports neither condition nor slot (hotbar/clothing) –
 the items go into the player's inventory (if it is full, they may drop on the ground).
+
+Self-service: admins pick roles per kit (/customkit access). Members with one of those roles
+claim the kit with /customkit claim – limited by a per-kit cooldown (/customkit cooldown) that is
+tracked per Discord account, so switching in-game names doesn't reset it.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import discord
@@ -21,7 +27,8 @@ from cogs.kits import ConfirmView
 from rce import items as itemlist
 from rce import kits as kitparse
 from rce.rcon_client import RconError, RconNotConnected
-from utils import admin_only, player_choices, safe_md, sanitize_player_name
+from utils import (admin_only, format_minutes, parse_duration, player_choices, safe_md,
+                   sanitize_player_name)
 
 if TYPE_CHECKING:
     from bot import RceBot
@@ -29,6 +36,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("rce.customkits")
 
 MAX_ITEMS_PER_KIT = 30
+MAX_COOLDOWN_MINUTES = 365 * 1440
+NAME_KEY = "claim_name:{}"  # kv key: in-game name a Discord user last claimed with
 
 
 class CustomKits(commands.Cog):
@@ -40,6 +49,7 @@ class CustomKits(commands.Cog):
 
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
+        self._claim_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     # ------------------------------------------------------------ Delivery (also used by autokits)
 
@@ -79,6 +89,18 @@ class CustomKits(commands.Cog):
         await interaction.response.send_message(
             f"Custom kit **{safe_md(kit)}** does not exist. Overview: `/customkit list`", ephemeral=True)
 
+    def can_claim(self, member: discord.abc.User, row) -> bool:
+        """May this member claim the kit themselves? (has one of the kit's claim roles)"""
+        allowed = set(self.bot.db.claim_roles(row))
+        return bool(allowed) and any(r.id in allowed for r in getattr(member, "roles", []))
+
+    def _access_text(self, guild: discord.Guild | None, row) -> str:
+        roles = self.bot.db.claim_roles(row)
+        if not roles:
+            return "admins only"
+        role_obj = guild.get_role if guild else (lambda _id: None)
+        return ", ".join(role_obj(r).mention if role_obj(r) else f"<@&{r}>" for r in roles)
+
     @staticmethod
     def _delivery_text(sent: int, total: int) -> str:
         if sent == total:
@@ -89,6 +111,12 @@ class CustomKits(commands.Cog):
 
     async def _kit_ac(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         names = [r["name"] for r in self.bot.db.custom_kits()]
+        return [app_commands.Choice(name=n[:100], value=n[:100])
+                for n in names if current.lower() in n.lower()][:25]
+
+    async def _claimable_ac(self, interaction: discord.Interaction,
+                            current: str) -> list[app_commands.Choice[str]]:
+        names = [r["name"] for r in self.bot.db.custom_kits() if self.can_claim(interaction.user, r)]
         return [app_commands.Choice(name=n[:100], value=n[:100])
                 for n in names if current.lower() in n.lower()][:25]
 
@@ -209,6 +237,8 @@ class CustomKits(commands.Cog):
         auto = {r["kit"].lower() for r in self.bot.db.kit_rules(enabled_only=True) if r["kit_type"] == "custom"}
         lines = [f"• **{safe_md(r['name'])}** – {r['item_count']} items"
                  + (" · 🤖 Autokit" if r["name"].lower() in auto else "")
+                 + (f" · 🙋 claim: {self._access_text(interaction.guild, r)}, "
+                    f"every {format_minutes(r['cooldown_minutes'])}" if self.bot.db.claim_roles(r) else "")
                  + (f"\n  _{safe_md(r['description'])}_" if r["description"] else "")
                  for r in rows]
         embed = discord.Embed(title=f"🔒 Custom kits ({len(rows)})", description="\n".join(lines)[:4000],
@@ -234,6 +264,8 @@ class CustomKits(commands.Cog):
                               colour=discord.Colour.dark_purple())
         if row["description"]:
             embed.add_field(name="Note", value=row["description"][:1024], inline=False)
+        embed.add_field(name="🙋 Who can claim", value=self._access_text(interaction.guild, row)[:1024])
+        embed.add_field(name="⏱️ Claim cooldown", value=format_minutes(row["cooldown_minutes"]))
         rules = [r for r in self.bot.db.kit_rules()
                  if r["kit_type"] == "custom" and r["kit"].lower() == row["name"].lower()]
         if rules:
@@ -300,6 +332,120 @@ class CustomKits(commands.Cog):
         self._audit(interaction, f"Custom kit **{safe_md(row['name'])}** to everyone ({ok}/{len(players)} players)")
         await interaction.edit_original_response(
             content=f"🔒 Custom kit **{safe_md(row['name'])}** sent to {ok} of {len(players)} players.")
+
+    # ------------------------------------------------------------ Self-service claim
+
+    @customkit.command(name="claim", description="Claim a custom kit your role gives you access to.")
+    @app_commands.describe(kit="Custom kit", player="Your in-game name (remembered after the first claim)")
+    @app_commands.autocomplete(kit=_claimable_ac, player=_player_ac)
+    async def claim(self, interaction: discord.Interaction, kit: str, player: str | None = None) -> None:
+        row = self._resolve(kit)
+        if row is None or not self.can_claim(interaction.user, row):
+            claimable = [r["name"] for r in self.bot.db.custom_kits() if self.can_claim(interaction.user, r)]
+            hint = (f"Kits you can claim: {', '.join(f'**{safe_md(n)}**' for n in claimable)}" if claimable
+                    else "Your roles don't give you access to any custom kit.")
+            await interaction.response.send_message(
+                f"⛔ You can't claim **{safe_md(kit)}**.\n{hint}", ephemeral=True)
+            return
+
+        async with self._claim_locks[interaction.user.id]:  # no double claims by clicking twice
+            cooldown = int(row["cooldown_minutes"])
+            since = self.bot.db.minutes_since_custom_claim(row["name"], interaction.user.id)
+            if cooldown and since is not None and since < cooldown:
+                ready_at = int(time.time() + (cooldown - since) * 60)
+                await interaction.response.send_message(
+                    f"⏱️ You already claimed **{safe_md(row['name'])}**. You can claim it again <t:{ready_at}:R> "
+                    f"(cooldown: {format_minutes(cooldown)}).", ephemeral=True)
+                return
+
+            saved = self.bot.db.get_value(NAME_KEY.format(interaction.user.id))
+            name = sanitize_player_name(player or saved or "")
+            if not name:
+                await interaction.response.send_message(
+                    "Please enter your in-game name in the `player` option – it's remembered for next time.",
+                    ephemeral=True)
+                return
+            # Must be online: items given to an offline player are lost
+            online = next((n for n in self.bot.online_players if n.lower() == name.lower()), None)
+            if online is None:
+                await interaction.response.send_message(
+                    f"🎮 **{safe_md(name)}** is not online on the server right now. Join the game first, "
+                    "then claim the kit (the player list updates every minute).", ephemeral=True)
+                return
+            if not self.bot.db.custom_kit_items(row["name"]):
+                await interaction.response.send_message("This kit is empty – please tell an admin.", ephemeral=True)
+                return
+
+            await interaction.response.defer(ephemeral=True)
+            sent, total = await self.deliver(row["name"], online)
+            self.bot.db.record_custom_claim(row["name"], online, interaction.user.id, str(interaction.user))
+            self.bot.db.set_value(NAME_KEY.format(interaction.user.id), online)
+
+        self._audit(interaction, f"claimed custom kit **{safe_md(row['name'])}** as **{safe_md(online)}** "
+                                 f"({self._delivery_text(sent, total)})")
+        next_claim = f" Next claim in {format_minutes(cooldown)}." if cooldown else ""
+        await interaction.followup.send(
+            f"🎁 **{safe_md(row['name'])}** sent to **{safe_md(online)}** in-game "
+            f"({self._delivery_text(sent, total)}).{next_claim}", ephemeral=True)
+
+    @customkit.command(name="access", description="Allows or removes a role that may claim a custom kit.")
+    @app_commands.describe(kit="Custom kit", role="Role whose members may claim the kit",
+                           allow="True = role may claim, False = remove the role")
+    @app_commands.autocomplete(kit=_kit_ac)
+    @admin_only()
+    async def access(self, interaction: discord.Interaction, kit: str, role: discord.Role, allow: bool = True) -> None:
+        row = self._resolve(kit)
+        if row is None:
+            await self._missing(interaction, kit)
+            return
+        roles = self.bot.db.claim_roles(row)
+        roles = roles + [role.id] if allow else [r for r in roles if r != role.id]
+        self.bot.db.set_custom_kit_roles(row["name"], roles)
+        row = self._resolve(row["name"])
+        self._audit(interaction, f"Custom kit **{safe_md(row['name'])}** – {role.mention} "
+                                 f"{'may claim' if allow else 'removed'}")
+        await interaction.response.send_message(
+            f"✅ **{safe_md(row['name'])}** can be claimed by: {self._access_text(interaction.guild, row)} "
+            f"(cooldown {format_minutes(row['cooldown_minutes'])}).", ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none())
+
+    @customkit.command(name="cooldown", description="Sets how often a custom kit can be claimed.")
+    @app_commands.describe(kit="Custom kit", duration="e.g. 30m, 12h, 1d, 1d 12h – or 0 for no cooldown")
+    @app_commands.autocomplete(kit=_kit_ac)
+    @admin_only()
+    async def cooldown(self, interaction: discord.Interaction, kit: str, duration: str) -> None:
+        row = self._resolve(kit)
+        if row is None:
+            await self._missing(interaction, kit)
+            return
+        minutes = parse_duration(duration)
+        if minutes is None or minutes > MAX_COOLDOWN_MINUTES:
+            await interaction.response.send_message(
+                "Invalid duration. Examples: `30m`, `12h`, `1d`, `1d 12h`, `0` (no cooldown). Max. 365 days.",
+                ephemeral=True)
+            return
+        self.bot.db.set_custom_kit_cooldown(row["name"], minutes)
+        self._audit(interaction, f"Custom kit **{safe_md(row['name'])}** – cooldown {format_minutes(minutes)}")
+        await interaction.response.send_message(
+            f"⏱️ Cooldown for **{safe_md(row['name'])}**: {format_minutes(minutes)}. "
+            "Applies immediately, also to earlier claims.", ephemeral=True)
+
+    @customkit.command(name="reset-cooldown", description="Lets members claim a custom kit again right away.")
+    @app_commands.describe(kit="Custom kit", member="Only this member (empty = everyone)")
+    @app_commands.autocomplete(kit=_kit_ac)
+    @admin_only()
+    async def reset_cooldown(self, interaction: discord.Interaction, kit: str,
+                             member: discord.Member | None = None) -> None:
+        row = self._resolve(kit)
+        if row is None:
+            await self._missing(interaction, kit)
+            return
+        count = self.bot.db.reset_custom_claims(row["name"], member.id if member else None)
+        who = member.mention if member else "everyone"
+        self._audit(interaction, f"Custom kit **{safe_md(row['name'])}** – cooldown reset for {who}")
+        await interaction.response.send_message(
+            f"🔄 Cooldown of **{safe_md(row['name'])}** reset for {who} ({count} claims).", ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none())
 
 
 async def setup(bot: "RceBot") -> None:

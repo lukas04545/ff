@@ -41,7 +41,7 @@ from rce import quickchat
 from rce.rcon_client import RconError
 from storage import LEADERBOARD_COLUMNS
 from support.deepseek import DeepSeekError
-from utils import sanitize_ingame_text, sanitize_player_name, strip_rich_text
+from utils import format_minutes, parse_duration, sanitize_ingame_text, sanitize_player_name, strip_rich_text
 
 if TYPE_CHECKING:
     from bot import RceBot
@@ -257,6 +257,7 @@ class WebInterface:
         r.add_post("/api/kits/give", self.give_kit)
         r.add_post("/api/custom-kits", self.create_custom_kit)
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
+        r.add_put("/api/custom-kits/{name}/claim", self.custom_kit_claim_settings)
         r.add_post("/api/custom-kits/{name}/items", self.add_custom_item)
         r.add_delete("/api/custom-kits/{name}/items/{item_id:\\d+}", self.remove_custom_item)
         r.add_post("/api/autokits", self.create_autokit)
@@ -753,6 +754,26 @@ class WebInterface:
         rules = self.bot.db.delete_custom_kit(name)
         self._audit(f"Custom kit **{name}** deleted ({rules} autokit rules)")
         return web.json_response({"ok": True, "rules_deleted": rules})
+
+    async def custom_kit_claim_settings(self, request: web.Request) -> web.Response:
+        """Self-service claim: which roles may claim the kit and how often."""
+        from cogs.custom_kits import MAX_COOLDOWN_MINUTES
+        kit = self.bot.db.custom_kit(request.match_info["name"])
+        if kit is None:
+            raise ApiError("Custom kit not found.", 404)
+        data = await self._json(request)
+        minutes = parse_duration(str(data.get("cooldown", "")))
+        if minutes is None or minutes > MAX_COOLDOWN_MINUTES:
+            raise ApiError("Invalid cooldown. Examples: 30m, 12h, 1d, 1d 12h, 0 (no cooldown). Max. 365 days.")
+        raw_roles = data.get("role_ids") or []
+        if not isinstance(raw_roles, list) or not all(str(r).isdigit() for r in raw_roles):
+            raise ApiError("Invalid roles.")
+        role_ids = [int(r) for r in raw_roles][:25]
+        self.bot.db.set_custom_kit_cooldown(kit["name"], minutes)
+        self.bot.db.set_custom_kit_roles(kit["name"], role_ids)
+        self._audit(f"Custom kit **{kit['name']}** – claim roles: {len(role_ids)}, "
+                    f"cooldown {format_minutes(minutes)}")
+        return web.json_response({"ok": True, "cooldown_minutes": minutes})
 
     async def add_custom_item(self, request: web.Request) -> web.Response:
         from cogs.custom_kits import MAX_ITEMS_PER_KIT
