@@ -256,8 +256,10 @@ class WebInterface:
         r.add_get("/api/kits/ingame/{name}", self.ingame_kit_info)
         r.add_post("/api/kits/give", self.give_kit)
         r.add_post("/api/custom-kits", self.create_custom_kit)
+        r.add_post("/api/custom-kits/import", self.import_custom_kits)
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
         r.add_put("/api/custom-kits/{name}/claim", self.custom_kit_claim_settings)
+        r.add_delete("/api/linked-players/{user_id:\\d+}", self.unlink_player)
         r.add_post("/api/custom-kits/{name}/items", self.add_custom_item)
         r.add_delete("/api/custom-kits/{name}/items/{item_id:\\d+}", self.remove_custom_item)
         r.add_post("/api/autokits", self.create_autokit)
@@ -693,7 +695,10 @@ class WebInterface:
             item_rows = self.bot.db.custom_kit_items(row["name"])
             custom.append({**dict(row), "items": [dict(i) for i in item_rows]})
         rules = [dict(r) for r in self.bot.db.kit_rules()]
-        return web.json_response({"ingame": ingame, "custom": custom, "rules": rules,
+        linked = [{"user_id": str(r["user_id"]), "player": r["player"], "linked_at": r["linked_at"],
+                   "user": str(self.bot.get_user(r["user_id"]) or r["user_id"])}
+                  for r in self.bot.db.linked_players()]
+        return web.json_response({"ingame": ingame, "custom": custom, "rules": rules, "linked": linked,
                                   "history": [dict(r) for r in self.bot.db.kit_claim_history(limit=30)]})
 
     async def ingame_kit_info(self, request: web.Request) -> web.Response:
@@ -747,6 +752,20 @@ class WebInterface:
         self._audit(f"Custom kit **{name}** created")
         return web.json_response({"ok": True})
 
+    async def import_custom_kits(self, request: web.Request) -> web.Response:
+        """Kit builder output ('kit add "Kit" "item" amount ...') -> custom kits."""
+        from cogs.custom_kits import MAX_IMPORT_BYTES, import_kit_commands
+        data = await self._json(request)
+        text = self._text(data, "text", limit=MAX_IMPORT_BYTES)
+        kit = self._text(data, "kit", required=False, limit=40) or None
+        result = import_kit_commands(self.bot.db, text, kit_name=kit, replace=data.get("replace", True) is not False,
+                                     created_by="Web interface")
+        if not result["kits"]:
+            raise ApiError('No "kit add" commands found.')
+        for k in result["kits"]:
+            self._audit(f"Custom kit **{k['name']}** imported from kit builder ({k['added']} items)")
+        return web.json_response({"ok": True, **result})
+
     async def delete_custom_kit(self, request: web.Request) -> web.Response:
         name = request.match_info["name"]
         if self.bot.db.custom_kit(name) is None:
@@ -774,6 +793,13 @@ class WebInterface:
         self._audit(f"Custom kit **{kit['name']}** – claim roles: {len(role_ids)}, "
                     f"cooldown {format_minutes(minutes)}")
         return web.json_response({"ok": True, "cooldown_minutes": minutes})
+
+    async def unlink_player(self, request: web.Request) -> web.Response:
+        player = self.bot.db.unlink_player(int(request.match_info["user_id"]))
+        if player is None:
+            raise ApiError("Not linked.", 404)
+        self._audit(f"Unlinked Discord user {request.match_info['user_id']} from **{player}**")
+        return web.json_response({"ok": True})
 
     async def add_custom_item(self, request: web.Request) -> web.Response:
         from cogs.custom_kits import MAX_ITEMS_PER_KIT

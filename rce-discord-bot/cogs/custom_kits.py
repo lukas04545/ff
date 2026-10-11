@@ -7,16 +7,20 @@ they can't be viewed, claimed or edited.
 Limitation: "inventory.giveto" supports neither condition nor slot (hotbar/clothing) –
 the items go into the player's inventory (if it is full, they may drop on the ground).
 
-Self-service: admins pick roles per kit (/customkit access). Members with one of those roles
-claim the kit with /customkit claim – limited by a per-kit cooldown (/customkit cooldown) that is
-tracked per Discord account, so switching in-game names doesn't reset it.
+Self-service: admins pick roles per kit (/customkit access). Members first link their Discord
+account to their in-game player (/customkit link) – verified by sending two requested quick chat
+phrases in-game, so nobody can claim for someone else's account. Members with one of the roles then
+claim the kit with /customkit claim; it always goes to their own linked player. The cooldown
+(/customkit cooldown) is per kit and per player.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import discord
@@ -26,6 +30,7 @@ from discord.ext import commands
 from cogs.kits import ConfirmView
 from rce import items as itemlist
 from rce import kits as kitparse
+from rce import quickchat
 from rce.rcon_client import RconError, RconNotConnected
 from utils import (admin_only, format_minutes, parse_duration, player_choices, safe_md,
                    sanitize_player_name)
@@ -35,9 +40,90 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("rce.customkits")
 
-MAX_ITEMS_PER_KIT = 30
+MAX_ITEMS_PER_KIT = 60
+MAX_IMPORT_BYTES = 200_000
 MAX_COOLDOWN_MINUTES = 365 * 1440
-NAME_KEY = "claim_name:{}"  # kv key: in-game name a Discord user last claimed with
+VERIFY_SECONDS = 300                       # time to send the verification quick chats in-game
+VERIFY_SKIP_CATEGORIES = ("_responses_",)  # "Yes", "Hello", ... are sent too often to prove anything
+
+
+@dataclass
+class PendingLink:
+    user_id: int
+    phrases: list[str]
+    interaction: discord.Interaction
+    expires: float
+    step: int = 0
+
+
+def _category(raw: str) -> str:
+    """'d11_quick_chat_orders_slot_6' -> 'Orders' (menu where players find the phrase)."""
+    return raw.removeprefix("d11_quick_chat_").rsplit("_slot_", 1)[0].replace("_", " ").title()
+
+
+def import_kit_commands(db, text: str, *, kit_name: str | None, replace: bool, created_by: str) -> dict:
+    """Creates/fills custom kits from kit builder output ('kit add "Kit" "item" amount ...').
+
+    kit_name: put all items into this kit instead of the names in the commands.
+    replace:  existing items of the kit are removed first (the builder output is the whole kit).
+    Returns a summary: {"kits": [{name, created, replaced, added, skipped}], "errors": [...]}.
+    """
+    lines, errors = kitparse.parse_kit_add_commands(text)
+    override = kitparse.clean_arg(kit_name or "", limit=40)
+    by_kit: dict[str, list] = {}
+    for line in lines:
+        name = override or line.kit
+        key = next((k for k in by_kit if k.lower() == name.lower()), name)  # kit names are case-insensitive
+        by_kit.setdefault(key, []).append(line)
+
+    kits = []
+    for name, items in by_kit.items():
+        created = db.create_custom_kit(name, None, created_by)
+        name = db.custom_kit(name)["name"]
+        replaced = db.clear_custom_kit_items(name) if replace and not created else 0
+        room = MAX_ITEMS_PER_KIT - len(db.custom_kit_items(name))
+        for line in items[:max(room, 0)]:
+            db.add_custom_kit_item(name, line.item, line.amount)
+        added = min(len(items), max(room, 0))
+        unknown = sorted({i.item for i in items[:added] if i.item not in itemlist.COMMON_ITEMS})
+        kits.append({"name": name, "created": created, "replaced": replaced, "added": added,
+                     "skipped": len(items) - added, "unknown": unknown})
+    return {"kits": kits, "errors": errors}
+
+
+def import_summary(result: dict) -> str:
+    """Discord text for the result of import_kit_commands()."""
+    if not result["kits"]:
+        return ("⚠️ No `kit add` commands found. Expected lines like\n"
+                '`kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main`')
+    lines = []
+    for k in result["kits"]:
+        status = "new kit" if k["created"] else (f"replaced {k['replaced']} old items" if k["replaced"]
+                                                 else "added to the existing kit")
+        lines.append(f"📥 **{safe_md(k['name'])}**: {k['added']} items ({status})")
+        if k["skipped"]:
+            lines.append(f"   ⚠️ {k['skipped']} items skipped – max. {MAX_ITEMS_PER_KIT} items per kit")
+        if k["unknown"]:
+            lines.append("   ℹ️ Unknown shortnames (check by testing): "
+                         + ", ".join(f"`{u}`" for u in k["unknown"][:15]))
+    if result["errors"]:
+        lines.append(f"⚠️ {len(result['errors'])} commands could not be read, e.g. `{result['errors'][0][:100]}`")
+    lines.append("Container and condition from the builder are ignored – custom kit items go into the inventory.")
+    return "\n".join(lines)[:1990]
+
+
+class ImportModal(discord.ui.Modal, title="Import from kit builder"):
+    commands_text = discord.ui.TextInput(
+        label="Kit builder commands", style=discord.TextStyle.paragraph, max_length=4000,
+        placeholder='kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main\n'
+                    'kit add "Custom kit 1" "rifle.ak" 1 100 belt')
+
+    def __init__(self, cog: "CustomKits", kit_name: str | None, replace: bool) -> None:
+        super().__init__()
+        self.cog, self.kit_name, self.replace = cog, kit_name, replace
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.cog.run_import(interaction, str(self.commands_text.value), self.kit_name, self.replace)
 
 
 class CustomKits(commands.Cog):
@@ -49,7 +135,8 @@ class CustomKits(commands.Cog):
 
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
-        self._claim_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._claim_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._pending: dict[str, PendingLink] = {}  # player (lowercase) -> open ownership check
 
     # ------------------------------------------------------------ Delivery (also used by autokits)
 
@@ -184,6 +271,40 @@ class CustomKits(commands.Cog):
         self._audit(interaction, f"Custom kit **{safe_md(row['name'])}** + `{short}` × {amount}")
         await interaction.response.send_message(
             f"➕ Added `{short}` × {amount} to **{safe_md(row['name'])}**.{hint}", ephemeral=True)
+
+    @customkit.command(name="import", description="Creates/fills custom kits from kit builder commands (kit add ...).")
+    @app_commands.describe(
+        file="Optional: .txt file with the commands (otherwise a text box opens)",
+        kit="Optional: put everything into this kit instead of the names in the commands",
+        replace="Replace the existing items of the kit (default: yes)")
+    @admin_only()
+    async def import_cmd(self, interaction: discord.Interaction, file: discord.Attachment | None = None,
+                         kit: str | None = None, replace: bool = True) -> None:
+        if file is None:
+            await interaction.response.send_modal(ImportModal(self, kit, replace))
+            return
+        if file.size > MAX_IMPORT_BYTES:
+            await interaction.response.send_message("The file is too big (max. 200 KB).", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            text = (await file.read()).decode("utf-8-sig")
+        except UnicodeDecodeError:
+            await interaction.followup.send("Please upload a plain text file (.txt).", ephemeral=True)
+            return
+        await self.run_import(interaction, text, kit, replace)
+
+    async def run_import(self, interaction: discord.Interaction, text: str, kit: str | None, replace: bool) -> None:
+        result = import_kit_commands(self.bot.db, text, kit_name=kit, replace=replace,
+                                     created_by=str(interaction.user))
+        for k in result["kits"]:
+            self._audit(interaction, f"Custom kit **{safe_md(k['name'])}** imported from kit builder "
+                                     f"({k['added']} items{', replaced' if k['replaced'] else ''})")
+        text = import_summary(result)
+        if interaction.response.is_done():
+            await interaction.followup.send(text, ephemeral=True)
+        else:
+            await interaction.response.send_message(text, ephemeral=True)
 
     @customkit.command(name="remove-item", description="Removes an item from a custom kit.")
     @app_commands.describe(kit="Custom kit", item="Item in the kit")
@@ -333,12 +454,99 @@ class CustomKits(commands.Cog):
         await interaction.edit_original_response(
             content=f"🔒 Custom kit **{safe_md(row['name'])}** sent to {ok} of {len(players)} players.")
 
+    # ------------------------------------------------------------ Link Discord account <-> player
+
+    def _verification_phrases(self) -> list[str]:
+        """Two random quick chat phrases for the ownership check (not used as autokit triggers)."""
+        triggers = {r["phrase"] for r in self.bot.db.kit_rules(trigger="quickchat")}
+        pool = [raw for raw in quickchat.all_phrases()
+                if "_slot_" in raw and raw not in triggers and not any(c in raw for c in VERIFY_SKIP_CATEGORIES)]
+        return random.sample(pool, 2)
+
+    @commands.Cog.listener()
+    async def on_rce_chat(self, ev) -> None:
+        """Ownership check: the player sends the requested quick chats in order in-game."""
+        pending = self._pending.get(ev.player.lower())
+        if pending is None or ev.channel == "SERVER":
+            return
+        if time.monotonic() > pending.expires:
+            self._pending.pop(ev.player.lower(), None)
+            return
+        if ev.raw == pending.phrases[pending.step]:
+            pending.step += 1
+        elif ev.raw == pending.phrases[0]:
+            pending.step = 1  # started over
+        if pending.step < len(pending.phrases):
+            return
+        self._pending.pop(ev.player.lower(), None)
+        if not self.bot.db.link_player(pending.user_id, ev.player):
+            text = f"⛔ **{safe_md(ev.player)}** was linked to another Discord account in the meantime."
+        else:
+            text = (f"✅ Verified! Your Discord account is now linked to **{safe_md(ev.player)}**. "
+                    "You can claim kits with `/customkit claim`.")
+            feed = self.bot.feed(self.bot.config.admin_log_channel_id)
+            if feed:
+                feed.add_line(f"🔗 <@{pending.user_id}> linked to in-game player **{safe_md(ev.player)}**")
+        try:
+            await pending.interaction.edit_original_response(content=text)
+        except discord.HTTPException:
+            pass
+
+    @customkit.command(name="link",
+                       description="Link your Discord account to your in-game player (needed to claim kits).")
+    @app_commands.describe(player="Your in-game name (you must be online)")
+    @app_commands.autocomplete(player=_player_ac)
+    async def link(self, interaction: discord.Interaction, player: str) -> None:
+        name = sanitize_player_name(player)
+        online = next((n for n in self.bot.online_players if n.lower() == name.lower()), None)
+        if online is None:
+            await interaction.response.send_message(
+                f"🎮 **{safe_md(name)}** is not online right now. Join the game first – you have to confirm "
+                "in-game that this is your account.", ephemeral=True)
+            return
+        owner = self.bot.db.player_owner(online)
+        if owner == interaction.user.id:
+            await interaction.response.send_message(f"✅ You are already linked to **{safe_md(online)}**.",
+                                                    ephemeral=True)
+            return
+        if owner is not None:
+            await interaction.response.send_message(
+                f"⛔ **{safe_md(online)}** is already linked to another Discord account. If that's wrong, "
+                "ask an admin (`/customkit unlink`).", ephemeral=True)
+            return
+        phrases = self._verification_phrases()
+        for key, other in list(self._pending.items()):  # one open verification per Discord account
+            if other.user_id == interaction.user.id:
+                self._pending.pop(key)
+        self._pending[online.lower()] = PendingLink(interaction.user.id, phrases, interaction,
+                                                    time.monotonic() + VERIFY_SECONDS)
+        steps = "\n".join(f"{i}. **{quickchat.translate(raw)}**  _(quick chat → {_category(raw)})_"
+                          for i, raw in enumerate(phrases, 1))
+        await interaction.response.send_message(
+            f"🔗 To prove that **{safe_md(online)}** is your account, send these **quick chat** messages "
+            f"in-game, in this order, within {VERIFY_SECONDS // 60} minutes:\n{steps}\n"
+            "This message updates as soon as it worked.", ephemeral=True)
+
+    @customkit.command(name="unlink", description="Removes the link between a member and their in-game player.")
+    @app_commands.describe(member="Discord member")
+    @admin_only()
+    async def unlink(self, interaction: discord.Interaction, member: discord.Member) -> None:
+        player = self.bot.db.unlink_player(member.id)
+        if player is None:
+            await interaction.response.send_message(f"{member.mention} is not linked.", ephemeral=True,
+                                                    allowed_mentions=discord.AllowedMentions.none())
+            return
+        self._audit(interaction, f"unlinked {member.mention} from **{safe_md(player)}**")
+        await interaction.response.send_message(
+            f"🔓 {member.mention} is no longer linked to **{safe_md(player)}**. They can link again with "
+            "`/customkit link`.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
     # ------------------------------------------------------------ Self-service claim
 
     @customkit.command(name="claim", description="Claim a custom kit your role gives you access to.")
-    @app_commands.describe(kit="Custom kit", player="Your in-game name (remembered after the first claim)")
-    @app_commands.autocomplete(kit=_claimable_ac, player=_player_ac)
-    async def claim(self, interaction: discord.Interaction, kit: str, player: str | None = None) -> None:
+    @app_commands.describe(kit="Custom kit")
+    @app_commands.autocomplete(kit=_claimable_ac)
+    async def claim(self, interaction: discord.Interaction, kit: str) -> None:
         row = self._resolve(kit)
         if row is None or not self.can_claim(interaction.user, row):
             claimable = [r["name"] for r in self.bot.db.custom_kits() if self.can_claim(interaction.user, r)]
@@ -347,29 +555,28 @@ class CustomKits(commands.Cog):
             await interaction.response.send_message(
                 f"⛔ You can't claim **{safe_md(kit)}**.\n{hint}", ephemeral=True)
             return
+        # The kit only ever goes to the player linked (and verified) for this Discord account
+        player = self.bot.db.linked_player(interaction.user.id)
+        if player is None:
+            await interaction.response.send_message(
+                "🔗 First link your in-game player with `/customkit link` – the kit can only be sent to "
+                "your own account.", ephemeral=True)
+            return
 
-        async with self._claim_locks[interaction.user.id]:  # no double claims by clicking twice
+        async with self._claim_locks[player.lower()]:  # no double claims by clicking twice
             cooldown = int(row["cooldown_minutes"])
-            since = self.bot.db.minutes_since_custom_claim(row["name"], interaction.user.id)
+            since = self.bot.db.minutes_since_custom_claim(row["name"], player)
             if cooldown and since is not None and since < cooldown:
                 ready_at = int(time.time() + (cooldown - since) * 60)
                 await interaction.response.send_message(
-                    f"⏱️ You already claimed **{safe_md(row['name'])}**. You can claim it again <t:{ready_at}:R> "
-                    f"(cooldown: {format_minutes(cooldown)}).", ephemeral=True)
-                return
-
-            saved = self.bot.db.get_value(NAME_KEY.format(interaction.user.id))
-            name = sanitize_player_name(player or saved or "")
-            if not name:
-                await interaction.response.send_message(
-                    "Please enter your in-game name in the `player` option – it's remembered for next time.",
-                    ephemeral=True)
+                    f"⏱️ **{safe_md(player)}** already claimed **{safe_md(row['name'])}**. You can claim it again "
+                    f"<t:{ready_at}:R> (cooldown: {format_minutes(cooldown)}).", ephemeral=True)
                 return
             # Must be online: items given to an offline player are lost
-            online = next((n for n in self.bot.online_players if n.lower() == name.lower()), None)
+            online = next((n for n in self.bot.online_players if n.lower() == player.lower()), None)
             if online is None:
                 await interaction.response.send_message(
-                    f"🎮 **{safe_md(name)}** is not online on the server right now. Join the game first, "
+                    f"🎮 **{safe_md(player)}** is not online on the server right now. Join the game first, "
                     "then claim the kit (the player list updates every minute).", ephemeral=True)
                 return
             if not self.bot.db.custom_kit_items(row["name"]):
@@ -378,8 +585,7 @@ class CustomKits(commands.Cog):
 
             await interaction.response.defer(ephemeral=True)
             sent, total = await self.deliver(row["name"], online)
-            self.bot.db.record_custom_claim(row["name"], online, interaction.user.id, str(interaction.user))
-            self.bot.db.set_value(NAME_KEY.format(interaction.user.id), online)
+            self.bot.db.record_custom_claim(row["name"], player, interaction.user.id, str(interaction.user))
 
         self._audit(interaction, f"claimed custom kit **{safe_md(row['name'])}** as **{safe_md(online)}** "
                                  f"({self._delivery_text(sent, total)})")
@@ -430,23 +636,21 @@ class CustomKits(commands.Cog):
             f"⏱️ Cooldown for **{safe_md(row['name'])}**: {format_minutes(minutes)}. "
             "Applies immediately, also to earlier claims.", ephemeral=True)
 
-    @customkit.command(name="reset-cooldown", description="Lets members claim a custom kit again right away.")
-    @app_commands.describe(kit="Custom kit", member="Only this member (empty = everyone)")
-    @app_commands.autocomplete(kit=_kit_ac)
+    @customkit.command(name="reset-cooldown", description="Lets players claim a custom kit again right away.")
+    @app_commands.describe(kit="Custom kit", player="Only this in-game player (empty = everyone)")
+    @app_commands.autocomplete(kit=_kit_ac, player=_player_ac)
     @admin_only()
-    async def reset_cooldown(self, interaction: discord.Interaction, kit: str,
-                             member: discord.Member | None = None) -> None:
+    async def reset_cooldown(self, interaction: discord.Interaction, kit: str, player: str | None = None) -> None:
         row = self._resolve(kit)
         if row is None:
             await self._missing(interaction, kit)
             return
-        count = self.bot.db.reset_custom_claims(row["name"], member.id if member else None)
-        who = member.mention if member else "everyone"
+        player = sanitize_player_name(player) if player else None
+        count = self.bot.db.reset_custom_claims(row["name"], player)
+        who = f"**{safe_md(player)}**" if player else "everyone"
         self._audit(interaction, f"Custom kit **{safe_md(row['name'])}** – cooldown reset for {who}")
         await interaction.response.send_message(
-            f"🔄 Cooldown of **{safe_md(row['name'])}** reset for {who} ({count} claims).", ephemeral=True,
-            allowed_mentions=discord.AllowedMentions.none())
-
+            f"🔄 Cooldown of **{safe_md(row['name'])}** reset for {who} ({count} claims).", ephemeral=True)
 
 async def setup(bot: "RceBot") -> None:
     await bot.add_cog(CustomKits(bot))

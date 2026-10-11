@@ -105,6 +105,12 @@ class Storage:
                 user_id INTEGER NOT NULL,
                 PRIMARY KEY (giveaway_id, user_id)
             );
+            -- Verified link Discord account <-> in-game player (one each, for self-service kit claims)
+            CREATE TABLE IF NOT EXISTS linked_players (
+                user_id INTEGER PRIMARY KEY,
+                player TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS custom_kit_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
@@ -129,7 +135,7 @@ class Storage:
                              f"DEFAULT {DEFAULT_CLAIM_COOLDOWN}")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_claims)")}
         if "user_id" not in columns:
-            # Discord user who claimed the kit (self-service claims; cooldown is per Discord account)
+            # Discord user who claimed the kit (self-service claims)
             self._db.execute("ALTER TABLE kit_claims ADD COLUMN user_id INTEGER")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_kit_claims_user ON kit_claims (user_id, kit)")
         self._db.execute("PRAGMA foreign_keys = ON")
@@ -298,6 +304,11 @@ class Storage:
         self._db.commit()
         return int(cur.lastrowid)
 
+    def clear_custom_kit_items(self, kit: str) -> int:
+        cur = self._db.execute("DELETE FROM custom_kit_items WHERE kit = ?", (kit,))
+        self._db.commit()
+        return cur.rowcount
+
     def remove_custom_kit_item(self, kit: str, item_id: int) -> bool:
         cur = self._db.execute("DELETE FROM custom_kit_items WHERE id = ? AND kit = ?", (item_id, kit))
         self._db.commit()
@@ -331,25 +342,53 @@ class Storage:
         self._db.commit()
         return int(cur.lastrowid)
 
-    def minutes_since_custom_claim(self, kit: str, user_id: int) -> float | None:
-        """Minutes since this Discord user last claimed the kit themselves (None = never)."""
+    def minutes_since_custom_claim(self, kit: str, player: str) -> float | None:
+        """Minutes since this player last claimed the kit themselves (None = never). Cooldown is per player."""
         row = self._db.execute(
             "SELECT (julianday('now') - julianday(MAX(claimed_at))) * 1440 AS minutes FROM kit_claims "
-            "WHERE user_id = ? AND kit = ? COLLATE NOCASE AND source LIKE ?",
-            (user_id, kit, CLAIM_SOURCE + ":%"),
+            "WHERE player = ? AND kit = ? COLLATE NOCASE AND source LIKE ?",
+            (player, kit, CLAIM_SOURCE + ":%"),
         ).fetchone()
         return row["minutes"]
 
-    def reset_custom_claims(self, kit: str, user_id: int | None = None) -> int:
-        """Resets claim cooldowns of a kit (for one user or everyone); the history entries stay visible."""
+    def reset_custom_claims(self, kit: str, player: str | None = None) -> int:
+        """Resets claim cooldowns of a kit (for one player or everyone); the history entries stay visible."""
         sql = "UPDATE kit_claims SET source = 'reset-' || source WHERE kit = ? COLLATE NOCASE AND source LIKE ?"
         args: list = [kit, CLAIM_SOURCE + ":%"]
-        if user_id is not None:
-            sql += " AND user_id = ?"
-            args.append(user_id)
+        if player is not None:
+            sql += " AND player = ?"
+            args.append(player)
         cur = self._db.execute(sql, args)
         self._db.commit()
         return cur.rowcount
+
+    # ------------------------------------------------------------ Linked players
+
+    def linked_player(self, user_id: int) -> str | None:
+        row = self._db.execute("SELECT player FROM linked_players WHERE user_id = ?", (user_id,)).fetchone()
+        return row["player"] if row else None
+
+    def player_owner(self, player: str) -> int | None:
+        row = self._db.execute("SELECT user_id FROM linked_players WHERE player = ?", (player,)).fetchone()
+        return int(row["user_id"]) if row else None
+
+    def link_player(self, user_id: int, player: str) -> bool:
+        """Links (or re-links) a Discord account to a player. False if the player belongs to someone else."""
+        owner = self.player_owner(player)
+        if owner is not None and owner != user_id:
+            return False
+        self._db.execute("INSERT OR REPLACE INTO linked_players (user_id, player) VALUES (?, ?)", (user_id, player))
+        self._db.commit()
+        return True
+
+    def unlink_player(self, user_id: int) -> str | None:
+        player = self.linked_player(user_id)
+        self._db.execute("DELETE FROM linked_players WHERE user_id = ?", (user_id,))
+        self._db.commit()
+        return player
+
+    def linked_players(self) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM linked_players ORDER BY player").fetchall()
 
     # ------------------------------------------------------------ Tickets
 

@@ -77,3 +77,48 @@ def parse_auth_groups(raw: str) -> list[str]:
 def clean_arg(value: str, limit: int = 64) -> str:
     """Argument for kit commands: no quotes/line breaks."""
     return re.sub(r"[\"\r\n]", "", value).strip()[:limit]
+
+
+# ---------------------------------------------------------------- Kit builder import
+
+@dataclass(slots=True)
+class KitAddLine:
+    """One 'kit add' command from a kit builder."""
+    kit: str
+    item: str
+    amount: int
+    condition: int | None = None
+    container: str | None = None
+
+
+_KIT_ADD = re.compile(r"\bkit\s+add\b", re.IGNORECASE)
+_TOKEN = re.compile(r'"([^"]*)"|(\S+)')
+_SHORTNAME = re.compile(r"[a-z0-9][a-z0-9._-]*")
+
+
+def parse_kit_add_commands(text: str) -> tuple[list[KitAddLine], list[str]]:
+    """Parses kit builder output like
+
+        kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main
+
+    ("kit add" is stripped; then kit, item, amount, [condition], [container]). Several commands may be
+    on separate lines or on one line (Discord turns pasted line breaks into spaces).
+    Returns (parsed commands, segments that could not be read).
+    """
+    parsed: list[KitAddLine] = []
+    errors: list[str] = []
+    for line in text.replace("\\n", "\n").splitlines():
+        for segment in _KIT_ADD.split(line)[1:]:  # text before the first "kit add" is not a command
+            tokens = [m[1] if m[1] is not None else m[2] for m in _TOKEN.finditer(segment)]
+            item = tokens[1].strip().lower() if len(tokens) > 1 else ""
+            amount = tokens[2] if len(tokens) > 2 else "1"
+            if len(tokens) < 2 or not tokens[0].strip() or not _SHORTNAME.fullmatch(item) or not amount.isdigit():
+                errors.append(("kit add" + segment).strip()[:120])
+                continue
+            condition = tokens[3] if len(tokens) > 3 and tokens[3].isdigit() else None
+            container = tokens[4] if len(tokens) > 4 and tokens[4].lower() in CONTAINER_LABELS else None
+            parsed.append(KitAddLine(kit=clean_arg(tokens[0], limit=40), item=item,
+                                     amount=max(1, min(int(amount), 100000)),
+                                     condition=int(condition) if condition else None,
+                                     container=container.capitalize() if container else None))
+    return parsed, errors

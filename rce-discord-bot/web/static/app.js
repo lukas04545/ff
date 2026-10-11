@@ -359,7 +359,7 @@ views.kits = async (main) => {
             h("td", { class: "muted", text: i.item_id !== null ? "ID " + i.item_id : "" }))))) : h("pre", { class: "transcript", text: info.raw || "No items." }));
       } }))) : h("p", { class: "muted", text: "No kits found (or no RCON connection)." }),
       ingameInfo),
-    customKitsCard(data, reload, opts)));
+    customKitsCard(data, reload, opts)), linkedPlayersCard(data, reload));
 
   // --- Autokits
   box.append(autokitCard(data, m, reload));
@@ -390,7 +390,7 @@ function claimSettings(kit, opts, reload) {
   const cooldown = h("input", { value: minutesToDuration(kit.cooldown_minutes), placeholder: "e.g. 12h, 1d, 0", style: "max-width:140px" });
   return h("details", { style: "margin-top:.5rem" },
     h("summary", { text: `🙋 Claim by role: ${current.size ? current.size + " role(s), cooldown " + minutesToDuration(kit.cooldown_minutes) : "off (admins only)"}` }),
-    h("p", { class: "muted", text: "Members with one of these roles can claim the kit themselves with /customkit claim (they must be online in-game). The cooldown counts per Discord account." }),
+    h("p", { class: "muted", text: "Members with one of these roles can claim the kit with /customkit claim. It always goes to their own in-game player, which they verify once with /customkit link. They must be online; the cooldown counts per player." }),
     roles.length ? h("div", { class: "checklist" }, boxes.map(([cb, r]) => h("label", {}, cb, r.name)),
       unknown.length ? h("div", { class: "muted", text: `Other role IDs: ${unknown.join(", ")}` }) : null) : manual,
     h("div", { class: "row", style: "margin-top:.5rem" }, h("span", { text: "Cooldown:" }), cooldown,
@@ -402,6 +402,47 @@ function claimSettings(kit, opts, reload) {
       } })));
 }
 
+// Discord accounts linked (verified) to in-game players – needed for /customkit claim
+function linkedPlayersCard(data, reload) {
+  const rows = data.linked || [];
+  return h("div", { class: "card" }, h("h2", { text: `🔗 Linked players (${rows.length})` }),
+    h("p", { class: "muted", text: "Members link themselves with /customkit link (verified in-game by sending two quick chat phrases). Custom kit claims only go to the linked player." }),
+    rows.length ? h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["In-game player", "Discord", "Linked", ""].map((t) => h("th", { text: t })))),
+      h("tbody", {}, rows.map((r) => h("tr", {},
+        h("td", { text: r.player }), h("td", { text: r.user }), h("td", { class: "muted", text: r.linked_at }),
+        h("td", {}, h("button", { class: "small danger", text: "Unlink", onclick: async () => {
+          if (!confirm(`Unlink ${r.player} from ${r.user}?`)) return;
+          await act(() => api(`/api/linked-players/${r.user_id}`, { method: "DELETE" }), "Unlinked");
+          reload();
+        } }))))))) : h("p", { class: "muted", text: "Nobody linked yet." }));
+}
+
+// Kit builder output ("kit add "Kit" "item" 1 100 main") -> custom kits
+function importBox(reload) {
+  const text = h("textarea", { rows: 6, placeholder: 'kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main\nkit add "Custom kit 1" "rifle.ak" 1 100 belt' });
+  const kit = h("input", { placeholder: "Optional: import everything into this kit", maxlength: 40 });
+  const replace = h("input", { type: "checkbox" });
+  replace.checked = true;
+  const out = h("div");
+  return h("details", { style: "margin:.75rem 0" }, h("summary", { text: "📥 Import from kit builder" }),
+    h("p", { class: "muted", text: "Paste the kit add commands from a kit builder. \"kit add\" is stripped; kit name, item and amount are used (container/condition are ignored – custom kit items go into the inventory). Missing kits are created." }),
+    text,
+    h("div", { class: "row", style: "margin-top:.5rem" }, kit,
+      h("label", { class: "row", style: "gap:.3rem" }, replace, "Replace existing items"),
+      h("button", { class: "primary", text: "Import", onclick: async () => {
+        const r = await act(() => api("/api/custom-kits/import", { method: "POST", body: { text: text.value, kit: kit.value, replace: replace.checked } }));
+        if (!r) return;
+        out.replaceChildren(h("ul", { class: "steps" }, [
+          ...r.kits.map((k) => h("li", { class: k.skipped ? "warn" : "ok", text: `${k.name}: ${k.added} items ${k.created ? "(new kit)" : k.replaced ? `(replaced ${k.replaced} old items)` : "(added)"}${k.skipped ? ` – ${k.skipped} skipped (item limit)` : ""}${k.unknown.length ? ` – unknown shortnames: ${k.unknown.join(", ")}` : ""}` })),
+          ...r.errors.map((e) => h("li", { class: "fail", text: "Could not read: " + e })),
+        ]));
+        toast("Imported");
+        setTimeout(reload, 2500);
+      } })),
+    out);
+}
+
 function customKitsCard(data, reload, opts) {
   const name = h("input", { placeholder: "Name of the new custom kit", maxlength: 40 });
   const desc = h("input", { placeholder: "Note (optional)", maxlength: 300 });
@@ -411,7 +452,8 @@ function customKitsCard(data, reload, opts) {
       e.preventDefault();
       await act(() => api("/api/custom-kits", { method: "POST", body: { name: name.value, description: desc.value } }), "Custom kit created");
       reload();
-    } }, name, desc, h("button", { class: "primary", text: "Create" })));
+    } }, name, desc, h("button", { class: "primary", text: "Create" })),
+    importBox(reload));
 
   for (const kit of data.custom) {
     const item = h("input", { placeholder: "Item shortname", list: "dl-items" });
