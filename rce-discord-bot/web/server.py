@@ -34,6 +34,7 @@ from envfile import read_env, update_env
 from rce.diagnostics import diagnose_rcon
 
 from logbuffer import memory_log
+from permcheck import check_permissions
 from rce import items as itemlist
 from rce import kits as kitparse
 from rce import quickchat
@@ -75,6 +76,12 @@ INVITE_PERMISSIONS = discord.Permissions(
     add_reactions=True, manage_channels=True, manage_roles=True, moderate_members=True, kick_members=True,
     ban_members=True, manage_messages=True, mention_everyone=True,
 ).value
+
+
+def invite_url(app_id) -> str | None:
+    """Einladungslink mit allen nötigen Rechten. Erneut benutzt, aktualisiert er die Rechte der Bot-Rolle."""
+    return (f"https://discord.com/oauth2/authorize?client_id={app_id}"
+            f"&scope=bot+applications.commands&permissions={INVITE_PERMISSIONS}") if app_id else None
 
 
 INTENT_LABELS = {"message_content": "Message Content Intent", "members": "Server Members Intent"}
@@ -550,8 +557,7 @@ class WebInterface:
         app_id = info["app_id"]
         return web.json_response({
             "ok": True, "bot_name": info["bot_name"], "app_id": app_id, "intents": info["intents"],
-            "invite_url": (f"https://discord.com/oauth2/authorize?client_id={app_id}"
-                           f"&scope=bot+applications.commands&permissions={INVITE_PERMISSIONS}") if app_id else None,
+            "invite_url": invite_url(app_id),
         })
 
     async def _preflight(self) -> dict | None:
@@ -627,6 +633,8 @@ class WebInterface:
             "rcon_target": f"{cfg.rcon_host}:{cfg.rcon_port}",
             "discord_ready": bot.is_ready(),
             "discord_user": str(bot.user) if bot.user else None,
+            "permission_problems": check_permissions(bot) if bot.is_ready() else [],
+            "invite_url": invite_url(bot.application_id),
             "server": {
                 "name": cfg.server_display_name or strip_rich_text(str(info.get("Hostname", ""))),
                 "players": info.get("Players"), "max_players": info.get("MaxPlayers"),

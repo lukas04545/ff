@@ -22,6 +22,7 @@ from discord.ext import commands
 
 from config import Config, ConfigError, load_config, required_intents
 from logbuffer import memory_log
+from permcheck import check_permissions, explain_forbidden
 from rce import log_parser
 from rce.rcon_client import RconClient, RconError, RconMessage
 from storage import Storage
@@ -114,6 +115,13 @@ class RceBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Eingeloggt als %s (ID %s).", self.user, self.user.id if self.user else "?")
+        problems = check_permissions(self)
+        if problems:
+            log.warning("Dem Bot fehlen Discord-Rechte (Details auch im Webinterface → Übersicht):")
+            for problem in problems:
+                log.warning("  - %s", problem)
+        else:
+            log.info("Discord-Rechte: alles in Ordnung.")
 
     async def _rcon_watchdog(self) -> None:
         """Klappt RCON nicht, die Ursache automatisch ermitteln und im Log/Webinterface anzeigen."""
@@ -214,7 +222,8 @@ class RceBot(commands.Bot):
         elif isinstance(error, app_commands.BotMissingPermissions):
             text = "⚠️ Dem Bot fehlt die Discord-Berechtigung: " + ", ".join(error.missing_permissions)
         elif isinstance(original, discord.Forbidden):
-            text = "⚠️ Discord hat die Aktion verweigert – fehlen dem Bot Rechte oder steht seine Rolle zu tief?"
+            text = explain_forbidden(original, self)
+            log.warning("/%s: %s", interaction.command and interaction.command.qualified_name, text.replace("\n", " "))
         elif isinstance(original, RconError):
             text = f"⚠️ {original}"
         else:

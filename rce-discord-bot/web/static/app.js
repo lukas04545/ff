@@ -177,10 +177,21 @@ views.overview = (main) => {
   const intentCard = h("div", { class: "card hidden", style: "border-left:4px solid var(--warn)" },
     h("h2", { text: "⚠️ Eingeschränkter Modus" }), intentInfo);
 
+  // Orange Karte: fehlende Discord-Rechte des Bots in Channels/Rollen
+  const permList = h("ul", { style: "margin:.25rem 0" });
+  const inviteLink = h("a", { target: "_blank", rel: "noopener" }, h("button", { class: "small", text: "🔗 Bot mit allen Rechten neu einladen ↗" }));
+  const permCard = h("div", { class: "card hidden", style: "border-left:4px solid var(--warn)" },
+    h("h2", { text: "🔐 Dem Bot fehlen Discord-Rechte" }), permList,
+    h("p", { class: "muted", style: "margin:.25rem 0" }, "Beheben: Discord → Servereinstellungen → Rollen → Rolle des Bots: Rechte einschalten und die Rolle weit nach oben ziehen. ",
+      "Hat ein Channel/eine Kategorie eigene Berechtigungen, die Bot-Rolle dort ebenfalls erlauben. ",
+      "Alternativ den Einladungslink erneut öffnen – das setzt die Rechte der Bot-Rolle (Channel-Berechtigungen bleiben)."),
+    h("div", { class: "row" }, inviteLink));
+
   main.append(
     h("h1", { text: "Übersicht" }),
     rconCard,
     intentCard,
+    permCard,
     stats,
     h("div", { class: "card" },
       h("h2", { text: "📢 Nachricht ins Spiel" }),
@@ -208,6 +219,11 @@ views.overview = (main) => {
       intentInfo.dataset.shown = "1";
       intentInfo.replaceChildren(h("p", { style: "margin:0", text: status.intent_warning }), fixLink(status.intent_fix_url));
     }
+    const perms = status.permission_problems || [];
+    permCard.classList.toggle("hidden", !perms.length);
+    permList.replaceChildren(...perms.map((p) => h("li", { text: p })));
+    inviteLink.classList.toggle("hidden", !status.invite_url);
+    if (status.invite_url) inviteLink.href = status.invite_url;
     rconCard.classList.toggle("hidden", !!status.rcon_connected);
     if (!status.rcon_connected) {
       const d = status.rcon_diagnosis;

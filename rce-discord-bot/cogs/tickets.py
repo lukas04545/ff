@@ -25,6 +25,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs.kits import ConfirmView
+from permcheck import explain_forbidden
 from support.deepseek import PLATFORM_KEYS_URL, PLATFORM_USAGE_URL, DeepSeekClient, DeepSeekError
 from support.prompt import build_messages, build_system_prompt, parse_answer
 from utils import admin_only, format_duration, is_admin, safe_md, strip_rich_text
@@ -225,9 +226,10 @@ class Tickets(commands.Cog):
         except discord.HTTPException as exc:
             self.bot.db.delete_ticket(ticket_id)
             log.error("Ticket-Channel konnte nicht erstellt werden: %s", exc)
-            await interaction.followup.send(
-                "⚠️ Ticket konnte nicht erstellt werden. Der Bot braucht die Berechtigung „Kanäle verwalten“ "
-                "in der Ticket-Kategorie.", ephemeral=True)
+            text = "⚠️ Ticket konnte nicht erstellt werden."
+            if isinstance(exc, discord.Forbidden):
+                text += "\n" + explain_forbidden(exc, self.bot)
+            await interaction.followup.send(text[:2000], ephemeral=True)
             return
         self.bot.db.update_ticket(ticket_id, channel_id=channel.id)
 
