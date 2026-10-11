@@ -99,6 +99,10 @@ class RconClient:
         self._state_listeners.append(listener)
 
     async def start(self) -> None:
+        bad = sorted(set(self._password) & set("/?#%&@!+ :\\\"'<>"))
+        if bad:
+            log.warning("Das RCON-Passwort enthält Sonderzeichen (%s), die in der WebRCON-URL kaputtgehen können. "
+                        "Setze in G-Portal ein Passwort nur aus Buchstaben und Zahlen.", " ".join(bad))
         if self._task is None:
             self._session = aiohttp.ClientSession()
             self._task = asyncio.create_task(self._run_forever(), name="rcon-connection")

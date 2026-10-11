@@ -177,6 +177,7 @@ rce-discord-bot/
 ├── logbuffer.py           # Letzte Log-Zeilen für das Webinterface
 ├── start.bat              # Windows: Doppelklick = einrichten + starten + Auto-Neustart
 ├── start.sh               # Linux/macOS: dasselbe
+├── rcon_test.bat          # Windows: RCON-Verbindung Schritt für Schritt testen (tools/rcon_test.py)
 ├── tools/mock_rcon_server.py  # Simulierter RCE-Server zum Testen
 ├── tests/                 # pytest: Parser, RCON-Client, Kits, Tickets, Webinterface
 ├── logs/bot.log           # Log-Datei (wird automatisch angelegt)
@@ -565,6 +566,7 @@ Diese Funktionen stammen aus dem KRYVON-Bot und sind hier nachgebaut und erweite
 |---|---|
 | `RCON-Handshake abgelehnt` oder `direkt nach dem Aufbau getrennt` | RCON-Passwort oder -Port falsch. Server nach einer Passwortänderung neu gestartet? |
 | `RCON-Verbindung fehlgeschlagen: … timeout` | IP/Port falsch, Server offline oder Firewall blockiert ausgehende Verbindungen |
+| RCON verbindet nicht – Ursache unklar | **`rcon_test.bat`** (Windows) bzw. `python tools/rcon_test.py` ausführen: prüft Einstellungen, Port, WebSocket, Passwort und Antwort Schritt für Schritt und nennt die Ursache |
 | `Message Content Intent … nicht aktiviert` | Developer Portal → Bot → Message Content Intent einschalten, oder `CHAT_BRIDGE_TO_GAME=false` |
 | Slash-Commands fehlen | `GUILD_ID` setzen und Bot mit Scope `applications.commands` einladen |
 | Killfeed oder Chat bleiben leer | `CONSOLE_LOG_CHANNEL_ID` setzen und die echten Logzeilen mit `rce/log_parser.py` vergleichen |
