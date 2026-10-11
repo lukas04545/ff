@@ -4,6 +4,7 @@ Start:  python bot.py   (oder start.bat / start.sh – richten alles automatisch
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import logging
@@ -14,6 +15,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -76,6 +78,8 @@ class RceBot(commands.Bot):
         self.console_buffer: deque[dict] = deque(maxlen=1000)
         self._console_ids = itertools.count(1)
         self.web = None  # web.server.WebInterface, falls aktiviert
+        self.restart_requested = False
+        self._first_start = True
 
     # ------------------------------------------------------------ Lebenszyklus
 
@@ -101,10 +105,16 @@ class RceBot(commands.Bot):
         if self.config.web_enabled:
             from web.server import WebInterface
             self.web = WebInterface(self)
-            await self.web.start()
+            # Browser nur beim allerersten Start öffnen, nicht bei jedem Neustart aus dem Webinterface
+            await self.web.start(open_browser=None if self._first_start else False)
 
     async def on_ready(self) -> None:
         log.info("Eingeloggt als %s (ID %s).", self.user, self.user.id if self.user else "?")
+
+    def request_restart(self) -> None:
+        """Beendet den Bot sauber; main() startet ihn danach mit neu geladener .env wieder."""
+        self.restart_requested = True
+        asyncio.get_running_loop().call_later(0.5, lambda: asyncio.ensure_future(self.close()))
 
     async def close(self) -> None:
         if self.web is not None:
@@ -222,29 +232,75 @@ def fatal(message: str) -> None:
     sys.exit(EXIT_FATAL)
 
 
+async def run_setup(error: str) -> None:
+    """Einrichtungsmodus: nur das Webinterface läuft, bis eine gültige Konfiguration gespeichert ist."""
+    from web.server import WebInterface, web_settings_from_env
+
+    done = asyncio.Event()
+    web = WebInterface(None, web_settings=web_settings_from_env(), setup_error=error, on_config_saved=done.set)
+    if not await web.start():
+        fatal("Einrichtung nicht möglich: Das Webinterface konnte nicht starten (Port belegt?). "
+              "WEB_PORT in der .env ändern oder die .env von Hand ausfüllen.")
+    await done.wait()
+    await asyncio.sleep(1.5)  # Antwort noch an den Browser ausliefern
+    await web.stop()
+
+
+PRIVILEGED_INTENTS_HELP = (
+    "Ein privilegierter Intent ist im Developer Portal nicht aktiviert. Unter Bot → Privileged Gateway Intents "
+    "„Message Content Intent“ (Chat-Bridge, Tickets, Discord-Log) und „Server Members Intent“ (Willkommen, "
+    "Auto-Rolle, Join/Leave-Log) einschalten – dann hier „Bot starten“ klicken. Oder die betroffenen Channels leeren.")
+
+
 def main() -> None:
     # Arbeitsverzeichnis = Bot-Ordner, damit .env, Datenbank und Wissensbasis auch bei
     # Doppelklick oder Autostart gefunden werden.
     os.chdir(BASE_DIR)
     setup_logging()
+    from web.server import web_settings_from_env
 
-    if not Path(".env").exists():
-        fatal("Keine .env-Datei gefunden. Kopiere .env.example nach .env und trage deine Daten ein.")
-    try:
-        config = load_config()
-    except ConfigError as exc:
-        fatal(f"Konfigurationsfehler: {exc}")
+    setup_error: str | None = None
+    first_start = True
+    while True:
+        if setup_error is None:
+            try:
+                config = load_config()
+            except ConfigError as exc:
+                setup_error = f"Konfiguration unvollständig: {exc}"
+        if setup_error is not None:
+            # Statt abzubrechen: Einstellungen im Browser eintragen lassen
+            if not web_settings_from_env().enabled:
+                fatal(f"{setup_error} (Webinterface ist deaktiviert – bitte die .env von Hand korrigieren.)")
+            log.warning(setup_error)
+            asyncio.run(run_setup(setup_error))
+            setup_error = None
+            first_start = False  # Browser ist schon offen
+            continue
 
-    bot = RceBot(config)
-    try:
-        bot.run(config.discord_token, log_handler=None)
-    except discord.LoginFailure:
-        fatal("Discord-Login fehlgeschlagen: DISCORD_TOKEN ist ungültig.")
-    except discord.PrivilegedIntentsRequired:
-        fatal("Ein privilegierter Intent ist im Developer Portal nicht aktiviert. Unter Bot -> Privileged "
-              "Gateway Intents 'Message Content Intent' (Chat-Bridge, Tickets, Discord-Log) und 'Server Members "
-              "Intent' (Willkommen, Auto-Rolle, Join/Leave-Log) einschalten – oder die Features in der .env leeren.")
+        bot = RceBot(config)
+        bot._first_start = first_start
+        first_start = False
+        try:
+            bot.run(config.discord_token, log_handler=None)
+        except discord.LoginFailure:
+            setup_error = "Discord hat den Bot-Token abgelehnt – bitte einen neuen Token eintragen."
+            continue
+        except discord.PrivilegedIntentsRequired:
+            setup_error = PRIVILEGED_INTENTS_HELP
+            continue
+        except (aiohttp.ClientError, OSError) as exc:
+            # z. B. PC gerade gestartet und noch ohne Internet – einfach später erneut versuchen
+            log.error("Keine Verbindung zu Discord (%s). Neuer Versuch in 30 Sekunden …", exc)
+            time.sleep(30)
+            continue
+        if bot.restart_requested:
+            log.info("Neustart mit neuen Einstellungen …")
+            continue
+        break
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

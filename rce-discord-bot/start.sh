@@ -24,8 +24,7 @@ echo "Prüfe/Installiere Abhängigkeiten ..."
 
 if [ ! -f ".env" ]; then
     cp .env.example .env
-    echo "Neue .env angelegt – bitte ausfüllen (z. B. 'nano .env') und dann erneut starten."
-    exit 0
+    echo "Erster Start: Die Einstellungen trägst du gleich im Browser ein (Link erscheint unten)."
 fi
 
 while true; do

@@ -4,22 +4,34 @@ Sicherheit:
   * Standardmäßig nur auf 127.0.0.1 erreichbar (nur dieser PC). Für Zugriff aus dem
     Heimnetz WEB_HOST=0.0.0.0 setzen – dann unbedingt ein starkes WEB_PASSWORD wählen.
     NICHT per Portfreigabe ins Internet stellen (kein HTTPS).
-  * Login per Passwort, Session-Cookie (HttpOnly, SameSite=Strict), Login-Bremse.
+  * Login per Passwort oder Einmal-Link aus dem Bot-Fenster; signiertes Session-Cookie
+    (HttpOnly, SameSite=Strict) – übersteht Bot-Neustarts, wird bei Passwortwechsel ungültig.
+  * Login-Bremse, Host-Prüfung gegen DNS-Rebinding (bei Betrieb nur auf diesem PC).
   * Schreibende Anfragen brauchen den Header X-Requested-With (Schutz gegen CSRF).
   * Jede Aktion wird im Admin-Log-Channel protokolliert.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
+import os
 import secrets
 import time
 import webbrowser
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
+import aiohttp
+import discord
 from aiohttp import web
+
+import settings_schema
+from config import ConfigError, load_config
+from envfile import read_env, update_env
+from rce.diagnostics import diagnose_rcon
 
 from logbuffer import memory_log
 from rce import items as itemlist
@@ -53,31 +65,107 @@ def _row(row) -> dict:
     return dict(row) if row is not None else None
 
 
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+ENV_PATH = Path(".env")
+ENV_TEMPLATE = Path(".env.example")
+DISCORD_API = "https://discord.com/api/v10"
+# Bot-Rechte für den Einladungslink (alle Funktionen dieses Bots)
+INVITE_PERMISSIONS = discord.Permissions(
+    view_channel=True, send_messages=True, embed_links=True, attach_files=True, read_message_history=True,
+    add_reactions=True, manage_channels=True, manage_roles=True, moderate_members=True, kick_members=True,
+    ban_members=True, manage_messages=True, mention_everyone=True,
+).value
+
+
+@dataclass
+class WebSettings:
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 8080
+    password: str = ""
+    open_browser: bool = True
+
+
+def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
+    """WEB_*-Werte direkt aus der .env – auch wenn der Rest der Konfiguration noch unvollständig ist."""
+    env = {**read_env(path), **{k: v for k, v in os.environ.items() if k.startswith("WEB_")}}
+
+    def flag(key: str, default: bool) -> bool:
+        raw = str(env.get(key) or "").strip().lower()
+        return default if not raw else raw in ("1", "true", "yes", "ja", "on")
+
+    try:
+        port = int(str(env.get("WEB_PORT") or "8080").strip())
+    except ValueError:
+        port = 8080
+    return WebSettings(enabled=flag("WEB_ENABLED", True), host=(env.get("WEB_HOST") or "127.0.0.1").strip(),
+                       port=port, password=(env.get("WEB_PASSWORD") or "").strip(),
+                       open_browser=flag("WEB_OPEN_BROWSER", True))
+
+
 class WebInterface:
-    def __init__(self, bot: "RceBot") -> None:
+    """bot=None startet den Einrichtungsmodus: nur Login und Einstellungen, ohne Discord/RCON."""
+
+    def __init__(self, bot: "RceBot | None", *, web_settings: WebSettings | None = None,
+                 setup_error: str | None = None, on_config_saved: Callable[[], None] | None = None,
+                 env_path: Path = ENV_PATH, secret_path: Path = Path("data") / "web_secret.key") -> None:
         self.bot = bot
-        cfg = bot.config
-        self.password = cfg.web_password
+        self.setup_mode = bot is None
+        self.setup_error = setup_error
+        self.on_config_saved = on_config_saved
+        self.env_path = env_path
+        if web_settings is None:
+            cfg = bot.config
+            web_settings = WebSettings(True, cfg.web_host, cfg.web_port, cfg.web_password, cfg.web_open_browser)
+        self.ws = web_settings
+        self.password = web_settings.password
         if not self.password:
+            # Ohne festes Passwort: Zufallspasswort + Einmal-Link (siehe start())
             self.password = secrets.token_urlsafe(9)
-            log.warning("WEB_PASSWORD ist nicht gesetzt – temporäres Passwort für diesen Start: %s", self.password)
-        self._sessions: dict[str, float] = {}
+        self.login_token = secrets.token_urlsafe(24)
+        self._secret = self._load_secret(secret_path)
+        self._revoked: set[str] = set()
         self._login_attempts: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
         self._runner: web.AppRunner | None = None
+        self.restart_required = False
         self.app = self._build_app()
+
+    @staticmethod
+    def _load_secret(path: Path) -> bytes:
+        """Geheimer Schlüssel für die Session-Cookies – bleibt über Neustarts gleich."""
+        try:
+            return bytes.fromhex(path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            secret = secrets.token_bytes(32)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(secret.hex(), encoding="utf-8")
+            except OSError:
+                log.warning("Konnte %s nicht speichern – Logins gelten nur bis zum Neustart.", path)
+            return secret
 
     # ------------------------------------------------------------ Start/Stopp
 
     def _build_app(self) -> web.Application:
-        app = web.Application(middlewares=[self._error_middleware, self._auth_middleware],
+        app = web.Application(middlewares=[self._error_middleware, self._host_middleware, self._auth_middleware],
                               client_max_size=1024 ** 2)
         r = app.router
         r.add_get("/", self._index)
         r.add_static("/static/", STATIC_DIR)
+        r.add_get("/auth", self.auth_link)
         r.add_post("/api/login", self.login)
         r.add_post("/api/logout", self.logout)
         r.add_get("/api/me", self.me)
         r.add_get("/api/status", self.status)
+        r.add_get("/api/settings", self.get_settings)
+        r.add_put("/api/settings", self.put_settings)
+        r.add_post("/api/settings/test-rcon", self.settings_test_rcon)
+        r.add_post("/api/settings/test-discord", self.settings_test_discord)
+        r.add_get("/api/settings/discord-options", self.settings_discord_options)
+        if self.setup_mode:
+            r.add_post("/api/setup/continue", self.setup_continue)
+            return app
+        r.add_post("/api/restart", self.restart)
         r.add_get("/api/console", self.console)
         r.add_post("/api/command", self.command)
         r.add_post("/api/say", self.say)
@@ -107,26 +195,34 @@ class WebInterface:
         r.add_post("/api/giveaways/{giveaway_id:\\d+}/{action:end|reroll}", self.giveaway_action)
         return app
 
-    async def start(self) -> None:
-        cfg = self.bot.config
+    async def start(self, *, open_browser: bool | None = None) -> bool:
+        ws = self.ws
         self._runner = web.AppRunner(self.app, access_log=None)
         await self._runner.setup()
         try:
-            await web.TCPSite(self._runner, cfg.web_host, cfg.web_port).start()
+            await web.TCPSite(self._runner, ws.host, ws.port).start()
         except OSError as exc:
-            log.error("Webinterface konnte Port %s nicht öffnen (%s) – anderen WEB_PORT wählen.", cfg.web_port, exc)
-            return
-        shown_host = "localhost" if cfg.web_host in ("127.0.0.1", "0.0.0.0", "") else cfg.web_host
-        url = f"http://{shown_host}:{cfg.web_port}"
-        log.info("Webinterface läuft: %s", url)
-        if cfg.web_host not in ("127.0.0.1", "localhost"):
+            log.error("Webinterface konnte Port %s nicht öffnen (%s) – anderen WEB_PORT wählen.", ws.port, exc)
+            return False
+        shown_host = "localhost" if ws.host in ("127.0.0.1", "0.0.0.0", "") else ws.host
+        url = f"http://{shown_host}:{ws.port}"
+        login_url = f"{url}/auth?token={self.login_token}"
+        if self.setup_mode:
+            log.warning("EINRICHTUNG: Öffne %s im Browser, um die fehlenden Einstellungen einzutragen.", login_url)
+        else:
+            log.info("Webinterface läuft: %s", url)
+            if not ws.password:
+                log.warning("Kein WEB_PASSWORD gesetzt – Login über diesen Link: %s  (oder Passwort: %s)",
+                            login_url, self.password)
+        if ws.host not in ("127.0.0.1", "localhost"):
             log.warning("Webinterface ist im Netzwerk erreichbar (WEB_HOST=%s). Nicht ins Internet freigeben!",
-                        cfg.web_host)
-        if cfg.web_open_browser:
+                        ws.host)
+        if ws.open_browser if open_browser is None else open_browser:
             try:
-                webbrowser.open(url)
+                webbrowser.open(login_url)
             except Exception:  # z. B. kein Browser auf einem Server
                 pass
+        return True
 
     async def stop(self) -> None:
         if self._runner is not None:
@@ -149,6 +245,16 @@ class WebInterface:
             return web.json_response({"error": "Interner Fehler – Details im Bot-Log."}, status=500)
 
     @web.middleware
+    async def _host_middleware(self, request: web.Request, handler):
+        # Schutz gegen DNS-Rebinding: Läuft das Webinterface nur lokal, muss der Host auch lokal sein.
+        if self.ws.host in ("127.0.0.1", "localhost"):
+            host = (request.host or "").rsplit(":", 1)[0] if not (request.host or "").startswith("[") \
+                else (request.host or "").split("]")[0] + "]"
+            if host.lower() not in LOCAL_HOSTS:
+                raise web.HTTPForbidden(text="Unbekannter Host.")
+        return await handler(request)
+
+    @web.middleware
     async def _auth_middleware(self, request: web.Request, handler):
         path = request.path
         if not path.startswith("/api/"):
@@ -161,13 +267,25 @@ class WebInterface:
             raise ApiError("Nicht angemeldet.", 401)
         return await handler(request)
 
+    def _sign(self, expires: int) -> str:
+        # Das konfigurierte Passwort fließt ein: Passwortwechsel meldet alle ab.
+        msg = f"{expires}:{self.ws.password}".encode()
+        return f"{expires}.{hmac.new(self._secret, msg, hashlib.sha256).hexdigest()}"
+
+    def _new_session(self) -> str:
+        return self._sign(int(time.time()) + SESSION_TTL)
+
     def _valid_session(self, request: web.Request) -> bool:
         token = request.cookies.get(SESSION_COOKIE, "")
-        expires = self._sessions.get(token)
-        if not expires or expires < time.time():
-            self._sessions.pop(token, None)
+        if not token or token in self._revoked or "." not in token:
             return False
-        return True
+        expires_raw = token.split(".", 1)[0]
+        if not expires_raw.isdigit() or int(expires_raw) < time.time():
+            return False
+        return hmac.compare_digest(token, self._sign(int(expires_raw)))
+
+    def _set_session_cookie(self, resp: web.StreamResponse) -> None:
+        resp.set_cookie(SESSION_COOKIE, self._new_session(), max_age=SESSION_TTL, httponly=True, samesite="Strict")
 
     # ------------------------------------------------------------ Hilfen
 
@@ -196,7 +314,8 @@ class WebInterface:
         return max(lo, min(hi, value))
 
     def _audit(self, text: str) -> None:
-        self.bot.audit(f"🌐 Webinterface: {text}")
+        if self.bot is not None:
+            self.bot.audit(f"🌐 Webinterface: {text}")
         log.info("Web-Aktion: %s", text)
 
     def _cog(self, name: str):
@@ -225,25 +344,185 @@ class WebInterface:
             log.warning("Fehlgeschlagener Web-Login von %s", ip)
             raise ApiError("Falsches Passwort.", 401)
         attempts.clear()
-        token = secrets.token_urlsafe(32)
-        self._sessions[token] = now + SESSION_TTL
         resp = web.json_response({"ok": True})
-        resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL, httponly=True, samesite="Strict")
+        self._set_session_cookie(resp)
         log.info("Web-Login von %s", ip)
         return resp
 
+    async def auth_link(self, request: web.Request) -> web.Response:
+        """Einmal-Link aus dem Bot-Fenster: meldet an und öffnet die passende Seite."""
+        if not hmac.compare_digest(request.query.get("token", ""), self.login_token):
+            raise web.HTTPFound("/")
+        resp = web.HTTPFound("/#settings" if self.setup_mode else "/#overview")
+        self._set_session_cookie(resp)
+        raise resp
+
     async def logout(self, request: web.Request) -> web.Response:
-        self._sessions.pop(request.cookies.get(SESSION_COOKIE, ""), None)
+        self._revoked.add(request.cookies.get(SESSION_COOKIE, ""))
         resp = web.json_response({"ok": True})
         resp.del_cookie(SESSION_COOKIE)
         return resp
 
     async def me(self, request: web.Request) -> web.Response:
+        return web.json_response({"ok": True, "setup_mode": self.setup_mode})
+
+    # ------------------------------------------------------------ Einstellungen
+
+    async def get_settings(self, request: web.Request) -> web.Response:
+        env = read_env(self.env_path)
+        fields = []
+        for f in settings_schema.FIELDS:
+            item = {"key": f.key, "label": f.label, "group": f.group, "kind": f.kind, "help": f.help,
+                    "required": f.required, "pick": f.pick, "advanced": f.advanced,
+                    "placeholder": f.placeholder, "choices": list(f.choices)}
+            if f.kind == "secret":
+                item["is_set"] = bool((env.get(f.key) or "").strip())  # Geheimnisse nie ausliefern
+            else:
+                item["value"] = env.get(f.key, "")
+            fields.append(item)
+        try:
+            load_config(self.env_path)
+            config_error = None
+        except ConfigError as exc:
+            config_error = str(exc)
+        return web.json_response({
+            "groups": [{"id": g, "label": label} for g, label in settings_schema.GROUPS],
+            "fields": fields, "setup_mode": self.setup_mode, "setup_error": self.setup_error,
+            "config_error": config_error, "restart_required": self.restart_required,
+        })
+
+    async def put_settings(self, request: web.Request) -> web.Response:
+        values = (await self._json(request)).get("values")
+        if not isinstance(values, dict):
+            raise ApiError("Ungültige Daten.")
+        current = read_env(self.env_path)
+        updates, errors = {}, {}
+        for key, raw in values.items():
+            f = settings_schema.FIELDS_BY_KEY.get(key)
+            if f is None:
+                continue
+            value = "" if raw is None else str(raw)
+            if f.kind != "textarea":
+                value = value.strip()
+            if f.kind == "secret" and not value:
+                continue  # leer = unverändert lassen
+            if f.kind == "ids":
+                value = ",".join(p.strip() for p in value.split(",") if p.strip())
+            if value == (current.get(key) or ""):
+                continue  # unverändert – nichts schreiben
+            if error := settings_schema.validate(key, value):
+                errors[key] = error
+            else:
+                updates[key] = value
+        if errors:
+            return web.json_response({"error": "Bitte die markierten Felder korrigieren.", "errors": errors},
+                                     status=400)
+        if updates:
+            update_env(self.env_path, updates, template=ENV_TEMPLATE)
+            self._audit("Einstellungen geändert: " + ", ".join(sorted(updates)))
+        if "WEB_PASSWORD" in updates:
+            # Neues Passwort gilt sofort; die aktuelle Sitzung bleibt angemeldet
+            self.ws.password = self.password = updates["WEB_PASSWORD"]
+        try:
+            load_config(self.env_path)
+        except ConfigError as exc:
+            resp = web.json_response({"ok": True, "saved": sorted(updates), "config_error": str(exc)})
+        else:
+            if self.setup_mode:
+                resp = web.json_response({"ok": True, "saved": sorted(updates), "starting": True})
+                if self.on_config_saved:
+                    self.on_config_saved()
+            else:
+                self.restart_required = self.restart_required or bool(updates)
+                resp = web.json_response({"ok": True, "saved": sorted(updates),
+                                          "restart_required": self.restart_required})
+        if "WEB_PASSWORD" in updates:
+            self._set_session_cookie(resp)
+        return resp
+
+    def _saved(self, key: str) -> str:
+        return (read_env(self.env_path).get(key) or "").strip()
+
+    async def settings_test_rcon(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        host = str(data.get("host") or self._saved("RCON_HOST"))
+        port = str(data.get("port") or self._saved("RCON_PORT"))
+        password = str(data.get("password") or self._saved("RCON_PASSWORD"))
+        result = await diagnose_rcon(host, port, password)
+        return web.json_response({"ok": result.ok, "steps": result.steps})
+
+    async def settings_test_discord(self, request: web.Request) -> web.Response:
+        token = str((await self._json(request)).get("token") or self._saved("DISCORD_TOKEN")).strip()
+        if not token:
+            raise ApiError("Kein Bot-Token eingetragen.")
+        headers = {"Authorization": f"Bot {token}"}
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+                async with session.get(f"{DISCORD_API}/users/@me", headers=headers) as resp:
+                    if resp.status == 401:
+                        return web.json_response({"ok": False, "error": "Discord lehnt den Token ab – im Developer "
+                                                  "Portal unter Bot → Reset Token einen neuen erzeugen."})
+                    if resp.status != 200:
+                        return web.json_response({"ok": False, "error": f"Discord antwortet mit HTTP {resp.status}."})
+                    user = await resp.json()
+                async with session.get(f"{DISCORD_API}/applications/@me", headers=headers) as resp:
+                    app_info = await resp.json() if resp.status == 200 else {}
+        except (aiohttp.ClientError, TimeoutError) as exc:
+            return web.json_response({"ok": False, "error": f"Discord nicht erreichbar: {exc}"})
+        flags = int(app_info.get("flags") or 0)
+        app_id = app_info.get("id") or user.get("id")
+        return web.json_response({
+            "ok": True,
+            "bot_name": user.get("username"),
+            "app_id": app_id,
+            # Application-Flags: GATEWAY_GUILD_MEMBERS(_LIMITED) = 1<<14/1<<15, MESSAGE_CONTENT(_LIMITED) = 1<<18/1<<19
+            "intents": {"members": bool(flags & (1 << 14 | 1 << 15)),
+                        "message_content": bool(flags & (1 << 18 | 1 << 19))} if app_info else None,
+            "invite_url": (f"https://discord.com/oauth2/authorize?client_id={app_id}"
+                           f"&scope=bot+applications.commands&permissions={INVITE_PERMISSIONS}") if app_id else None,
+        })
+
+    async def settings_discord_options(self, request: web.Request) -> web.Response:
+        """Channels/Rollen/Server zur Auswahl – nur wenn der Bot mit Discord verbunden ist."""
+        bot = self.bot
+        if bot is None or not bot.is_ready():
+            return web.json_response({"available": False})
+        guilds = [{"id": str(g.id), "name": g.name} for g in bot.guilds]
+        guild = bot.get_guild(bot.config.guild_id) if bot.config.guild_id else None
+        guild = guild or (bot.guilds[0] if len(bot.guilds) == 1 else None)
+        result = {"available": True, "guilds": guilds, "guild": guild.name if guild else None,
+                  "text_channels": [], "categories": [], "roles": []}
+        if guild is not None:
+            result["text_channels"] = [
+                {"id": str(c.id), "name": f"#{c.name}" + (f" ({c.category.name})" if c.category else "")}
+                for c in sorted(guild.text_channels, key=lambda c: (c.category.position if c.category else -1,
+                                                                    c.position))]
+            result["categories"] = [{"id": str(c.id), "name": c.name} for c in guild.categories]
+            result["roles"] = [{"id": str(r.id), "name": r.name} for r in reversed(guild.roles)
+                               if not r.is_default() and not r.managed]
+        return web.json_response(result)
+
+    async def restart(self, request: web.Request) -> web.Response:
+        self._audit("Bot-Neustart angefordert")
+        self.bot.request_restart()
         return web.json_response({"ok": True})
+
+    async def setup_continue(self, request: web.Request) -> web.Response:
+        """Einrichtung: Bot mit der gespeicherten Konfiguration starten (z. B. nach Intents-Freigabe)."""
+        try:
+            load_config(self.env_path)
+        except ConfigError as exc:
+            raise ApiError(f"Noch nicht vollständig: {exc}")
+        if self.on_config_saved:
+            self.on_config_saved()
+        return web.json_response({"ok": True, "starting": True})
 
     # ------------------------------------------------------------ Status & Konsole
 
     async def status(self, request: web.Request) -> web.Response:
+        if self.setup_mode:
+            return web.json_response({"setup_mode": True, "setup_error": self.setup_error,
+                                      "rcon_connected": False, "discord_ready": False, "players": []})
         bot, cfg = self.bot, self.bot.config
         info = bot.server_info or {}
         players = [
@@ -251,6 +530,8 @@ class WebInterface:
             for name, p in sorted(bot.online_players.items(), key=lambda kv: kv[0].lower())
         ]
         return web.json_response({
+            "setup_mode": False,
+            "restart_required": self.restart_required,
             "rcon_connected": bot.rcon.connected,
             "rcon_target": f"{cfg.rcon_host}:{cfg.rcon_port}",
             "discord_ready": bot.is_ready(),

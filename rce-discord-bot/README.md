@@ -154,6 +154,7 @@ rce-discord-bot/
 │   ├── kill_sources.py    # Todesursachen (Natur/NPC/Falle)
 │   ├── kits.py            # Auswertung von kit list / kit info / getauthlevels
 │   ├── items.py           # Häufige Item-Shortnames (Autovervollständigung)
+│   ├── diagnostics.py     # RCON-Verbindungstest (Webinterface + rcon_test.bat)
 │   └── quickchat.py       # Quick-Chat-Übersetzung
 ├── cogs/
 │   ├── status.py          # Status-Embed, Aktivität, /status, /spieler, Join/Leave
@@ -175,6 +176,8 @@ rce-discord-bot/
 │   ├── server.py          # Webinterface: Login + JSON-API (läuft im Bot-Prozess)
 │   └── static/            # Oberfläche (HTML/CSS/JS, keine externen Dateien)
 ├── logbuffer.py           # Letzte Log-Zeilen für das Webinterface
+├── settings_schema.py     # Alle Einstellungen fürs Formular (Bezeichnung, Typ, Hilfe, Prüfung)
+├── envfile.py             # .env lesen/schreiben (Kommentare bleiben erhalten)
 ├── start.bat              # Windows: Doppelklick = einrichten + starten + Auto-Neustart
 ├── start.sh               # Linux/macOS: dasselbe
 ├── rcon_test.bat          # Windows: RCON-Verbindung Schritt für Schritt testen (tools/rcon_test.py)
@@ -238,10 +241,18 @@ rce-discord-bot/
 ### 4. Bot einrichten
 
 **Windows (einfachster Weg):** Doppelklick auf **`start.bat`**. Beim ersten Start legt das Skript
-die Python-Umgebung an, installiert alles, erstellt die `.env` und öffnet sie im Editor. Dort
-ausfüllen, speichern, Editor schließen – der Bot startet danach von selbst.
+die Python-Umgebung an und installiert alles. Danach öffnet sich der **Browser mit der
+Einrichtung**: Bot-Token, Server-IP, RCON-Port, RCON-Passwort und deine Discord-ID eintragen,
+„RCON-Verbindung testen“ klicken, dann **„Speichern & Bot starten“**. Fertig – kein Editor nötig.
 
-**Linux/macOS:** `./start.sh` ausführen, `.env` ausfüllen (`nano .env`), erneut `./start.sh`.
+Öffnet sich kein Browser, steht im Bot-Fenster ein Link der Form
+`http://localhost:8080/auth?token=…` – einfach im Browser öffnen.
+
+**Linux/macOS:** `./start.sh` ausführen und den Link aus dem Fenster im Browser öffnen.
+
+> Fehlen Pflichtangaben oder ist der Discord-Token ungültig, beendet sich der Bot nicht mehr,
+> sondern startet im **Einrichtungsmodus** (nur die Einstellungsseite). Die `.env` kannst du
+> weiterhin auch von Hand bearbeiten – das Webinterface schreibt in dieselbe Datei.
 
 **Manuell (alle Systeme):**
 
@@ -317,6 +328,7 @@ Start öffnet sich der Browser automatisch, sonst **<http://localhost:8080>** au
 | 🎉 Community | Giveaways (vorzeitig auslosen, neu auslosen), **Regeln bearbeiten**, Übersicht der Community-Einstellungen |
 | 📚 Wissensbasis | `support_knowledge.md` direkt im Browser bearbeiten (gilt sofort) |
 | 🧾 Bot-Log | Die letzten 500 Log-Zeilen des Bots |
+| ⚙️ Einstellungen | **Alle Einstellungen** der `.env` als Formular: Channels und Rollen per Auswahlliste (sobald der Bot verbunden ist), **RCON-Verbindung testen**, **Bot-Token prüfen** (inkl. Intents-Status und Einladungslink), danach **Bot neu starten** per Knopf |
 
 Alles, was du im Webinterface tust, steht im Admin-Log-Channel in Discord („🌐 Webinterface: …“).
 Die Oberfläche funktioniert auch auf dem Handy.
@@ -325,7 +337,7 @@ Die Oberfläche funktioniert auch auf dem Handy.
 
 | Variable | Standard | Bedeutung |
 |---|---|---|
-| `WEB_PASSWORD` | leer | Login-Passwort. **Leer = bei jedem Start ein Zufallspasswort**, das im Bot-Fenster steht. Setz am besten ein eigenes. |
+| `WEB_PASSWORD` | leer | Login-Passwort. **Leer = Anmeldung über den Link im Bot-Fenster** (oder das dort angezeigte Zufallspasswort). Setz am besten ein eigenes – geht auch unter ⚙️ Einstellungen. |
 | `WEB_HOST` | `127.0.0.1` | `127.0.0.1` = nur dieser PC. `0.0.0.0` = auch Handy/Laptop im **selben Heimnetz** über `http://<IP-deines-PCs>:8080` (Windows fragt dann einmal nach Firewall-Freigabe → „Private Netzwerke“ erlauben). |
 | `WEB_PORT` | `8080` | Port, falls 8080 schon belegt ist |
 | `WEB_OPEN_BROWSER` | `true` | Browser beim Start automatisch öffnen |
@@ -566,6 +578,7 @@ Diese Funktionen stammen aus dem KRYVON-Bot und sind hier nachgebaut und erweite
 |---|---|
 | `RCON-Handshake abgelehnt` oder `direkt nach dem Aufbau getrennt` | RCON-Passwort oder -Port falsch. Server nach einer Passwortänderung neu gestartet? |
 | `RCON-Verbindung fehlgeschlagen: … timeout` | IP/Port falsch, Server offline oder Firewall blockiert ausgehende Verbindungen |
+| Einstellungen ändern ohne Editor | Webinterface → ⚙️ Einstellungen → Speichern → „Bot jetzt neu starten“ |
 | RCON verbindet nicht – Ursache unklar | **`rcon_test.bat`** (Windows) bzw. `python tools/rcon_test.py` ausführen: prüft Einstellungen, Port, WebSocket, Passwort und Antwort Schritt für Schritt und nennt die Ursache |
 | `Message Content Intent … nicht aktiviert` | Developer Portal → Bot → Message Content Intent einschalten, oder `CHAT_BRIDGE_TO_GAME=false` |
 | Slash-Commands fehlen | `GUILD_ID` setzen und Bot mit Scope `applications.commands` einladen |
