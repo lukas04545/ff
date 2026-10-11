@@ -123,6 +123,9 @@ class Storage:
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_rules)")}
         if "kit_type" not in columns:
             self._db.execute("ALTER TABLE kit_rules ADD COLUMN kit_type TEXT NOT NULL DEFAULT 'ingame'")
+        if "required_role_id" not in columns:
+            # Discord role the (linked) player needs for this autokit; NULL = everyone
+            self._db.execute("ALTER TABLE kit_rules ADD COLUMN required_role_id INTEGER")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(tickets)")}
         if "transcript" not in columns:
             self._db.execute("ALTER TABLE tickets ADD COLUMN transcript TEXT")
@@ -200,14 +203,20 @@ class Storage:
     # ------------------------------------------------------------ Kit manager
 
     def add_kit_rule(self, kit: str, trigger: str, phrase: str | None, cooldown_minutes: int,
-                     max_claims: int, created_by: str, kit_type: str = "ingame") -> int:
+                     max_claims: int, created_by: str, kit_type: str = "ingame",
+                     required_role_id: int | None = None) -> int:
         cur = self._db.execute(
-            "INSERT INTO kit_rules (kit, kit_type, trigger, phrase, cooldown_minutes, max_claims, created_by) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (kit, kit_type, trigger, phrase, cooldown_minutes, max_claims, created_by),
+            "INSERT INTO kit_rules (kit, kit_type, trigger, phrase, cooldown_minutes, max_claims, created_by, "
+            "required_role_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (kit, kit_type, trigger, phrase, cooldown_minutes, max_claims, created_by, required_role_id),
         )
         self._db.commit()
         return int(cur.lastrowid)
+
+    def set_kit_rule_role(self, rule_id: int, role_id: int | None) -> bool:
+        cur = self._db.execute("UPDATE kit_rules SET required_role_id = ? WHERE id = ?", (role_id, rule_id))
+        self._db.commit()
+        return cur.rowcount > 0
 
     def kit_rules(self, *, enabled_only: bool = False, trigger: str | None = None) -> list[sqlite3.Row]:
         sql, args = "SELECT * FROM kit_rules WHERE 1=1", []

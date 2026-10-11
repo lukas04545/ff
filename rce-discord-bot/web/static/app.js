@@ -362,7 +362,7 @@ views.kits = async (main) => {
     customKitsCard(data, reload, opts)), linkedPlayersCard(data, reload));
 
   // --- Autokits
-  box.append(autokitCard(data, m, reload));
+  box.append(autokitCard(data, m, reload, opts));
 
   // --- History
   box.append(h("div", { class: "card" }, h("h2", { text: "📜 Recent claims" }),
@@ -482,7 +482,16 @@ function customKitsCard(data, reload, opts) {
   return card;
 }
 
-function autokitCard(data, m, reload) {
+function autokitCard(data, m, reload, opts) {
+  // Required Discord role (players must be linked with /customkit link)
+  const roles = opts?.available ? opts.roles : [];
+  const roleSelect = (value) => {
+    const el = h("select", {}, h("option", { value: "", text: "Everyone" }), roles.map((r) => h("option", { value: r.id, text: "🎖️ " + r.name })));
+    if (value && !roles.some((r) => r.id === String(value))) el.append(h("option", { value: String(value), text: `Role ID ${value}` }));
+    el.value = value ? String(value) : "";
+    return el;
+  };
+  const newRole = roleSelect("");
   const kit = h("select", {}, [
     ...data.ingame.map((k) => h("option", { value: "ingame:" + k, text: "🎒 " + k })),
     ...data.custom.map((k) => h("option", { value: "custom:" + k.name, text: "🔒 " + k.name })),
@@ -496,13 +505,20 @@ function autokitCard(data, m, reload) {
 
   return h("div", { class: "card" }, h("h2", { text: "🤖 Autokits" }),
     h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["#", "Kit", "Trigger", "Cooldown", "Max.", "Status", ""].map((t) => h("th", { text: t })))),
+      h("thead", {}, h("tr", {}, ["#", "Kit", "Trigger", "Cooldown", "Max.", "Required role", "Status", ""].map((t) => h("th", { text: t })))),
       h("tbody", {}, data.rules.map((r) => h("tr", {},
         h("td", { text: r.id }),
         h("td", { text: (r.kit_type === "custom" ? "🔒 " : "") + r.kit }),
         h("td", { text: r.trigger === "quickchat" ? `💬 "${phraseText[r.phrase] || r.phrase}"` : "🔄 Respawn" }),
         h("td", { text: r.cooldown_minutes ? fmtDuration(r.cooldown_minutes * 60) : "–" }),
         h("td", { text: r.max_claims || "∞" }),
+        h("td", {}, (() => {
+          const sel = roleSelect(r.required_role_id);
+          sel.addEventListener("change", async () => {
+            await act(() => api(`/api/autokits/${r.id}/role`, { method: "PUT", body: { required_role_id: sel.value } }), "Saved");
+          });
+          return sel;
+        })()),
         h("td", {}, h("span", { class: "pill " + (r.enabled ? "ok" : "warn"), text: r.enabled ? "active" : "paused" })),
         h("td", {}, h("div", { class: "row" },
           h("button", { class: "small", text: r.enabled ? "Pause" : "Activate", onclick: async () => {
@@ -519,12 +535,14 @@ function autokitCard(data, m, reload) {
       const [kitType, kitName] = [kit.value.split(":")[0], kit.value.slice(kit.value.indexOf(":") + 1)];
       await act(() => api("/api/autokits", { method: "POST", body: {
         kit: kitName, kit_type: kitType, trigger: trigger.value, phrase: phrase.value,
-        cooldown: Number(cooldown.value), max_claims: Number(maxClaims.value) } }), "Autokit created");
+        cooldown: Number(cooldown.value), max_claims: Number(maxClaims.value), required_role_id: newRole.value } }), "Autokit created");
       reload();
     } }, kit, trigger, phrase,
       h("label", { class: "muted" }, "Cooldown (min) ", cooldown),
       h("label", { class: "muted" }, "Max. per player ", maxClaims),
+      h("label", { class: "muted", title: "Only players whose linked Discord account (/customkit link) has this role" }, "Required role ", newRole),
       h("button", { class: "primary", text: "Create" })),
+    h("p", { class: "muted", style: "margin:.5rem 0 0", text: "Required role: players must link their in-game player to Discord once with /customkit link – the bot then checks their Discord roles (updates within 2 minutes)." }),
     h("div", { class: "row", style: "margin-top:.75rem" },
       h("button", { text: "♻️ Wipe reset (reset cooldowns & limits)", onclick: async () => {
         if (!confirm("Reset all autokit cooldowns and limits?")) return;

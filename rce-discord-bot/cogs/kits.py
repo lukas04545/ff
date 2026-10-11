@@ -26,6 +26,7 @@ from discord.ext import commands
 from rce import kits as kitparse
 from rce import log_parser as lp
 from rce import quickchat
+from permcheck import main_guild
 from rce.rcon_client import RconError
 from utils import (admin_only, format_duration, player_choices, safe_md, sanitize_ingame_text,
                    sanitize_player_name)
@@ -38,6 +39,7 @@ log = logging.getLogger("rce.kits")
 TRIGGER_LABELS = {"respawn": "🔄 Respawn", "quickchat": "💬 Quick chat"}
 KIT_TYPE_LABELS = {"ingame": "In-game kit", "custom": "🔒 Custom kit (bot only)"}
 ANNOUNCE_THROTTLE_SECONDS = 30  # max. one cooldown message per player within this period
+ROLE_CACHE_SECONDS = 120        # how long a member's Discord roles are cached for role-locked autokits
 
 
 class _CachedList:
@@ -105,6 +107,7 @@ class Kits(commands.Cog):
         self.auth_groups = _CachedList(bot, "getauthlevels", kitparse.parse_auth_groups, ttl=900)
         self.phrases = quickchat.all_phrases()
         self._announced: dict[str, float] = {}
+        self._role_cache: dict[int, tuple[float, frozenset[int]]] = {}  # user_id -> (time, role IDs)
 
     # ------------------------------------------------------------ Helpers
 
@@ -133,6 +136,8 @@ class Kits(commands.Cog):
             parts.append(f"Cooldown {format_duration(rule['cooldown_minutes'] * 60)}")
         if rule["max_claims"]:
             parts.append(f"max. {rule['max_claims']}× per player")
+        if rule["required_role_id"]:
+            parts.append(f"🎖️ only <@&{rule['required_role_id']}>")
         if not rule["enabled"]:
             parts.append("⏸️ paused")
         return " · ".join(parts)
@@ -342,6 +347,7 @@ class Kits(commands.Cog):
         phrase="Quick chat only: which phrase triggers the kit",
         cooldown_minutes="Wait time per player until the next claim (0 = none)",
         max_per_player="Max. claims per player until reset (0 = unlimited)",
+        required_role="Only players whose linked Discord account has this role get the kit",
     )
     @app_commands.choices(trigger=[app_commands.Choice(name=v, value=k) for k, v in TRIGGER_LABELS.items()],
                           kit_type=[app_commands.Choice(name=v, value=k) for k, v in KIT_TYPE_LABELS.items()])
@@ -351,7 +357,8 @@ class Kits(commands.Cog):
                           phrase: str | None = None,
                           cooldown_minutes: app_commands.Range[int, 0, 525600] = 0,
                           max_per_player: app_commands.Range[int, 0, 10000] = 0,
-                          kit_type: app_commands.Choice[str] | None = None) -> None:
+                          kit_type: app_commands.Choice[str] | None = None,
+                          required_role: discord.Role | None = None) -> None:
         name = kitparse.clean_arg(kit)
         trigger_key = trigger.value
         if kit_type is not None:
@@ -392,14 +399,36 @@ class Kits(commands.Cog):
         elif not self.bot.db.custom_kit_items(name):
             notes.append("⚠️ The custom kit is still empty.")
 
+        if required_role is not None:
+            notes.append(f"🎖️ Only players with {required_role.mention} get this kit. They link their in-game "
+                         "player once with `/customkit link`.")
         rule_id = self.bot.db.add_kit_rule(name, trigger_key, phrase, cooldown_minutes, max_per_player,
-                                           str(interaction.user), ktype)
+                                           str(interaction.user), ktype,
+                                           required_role.id if required_role else None)
         rule = self.bot.db.kit_rule(rule_id)
         self._audit(f"🤖 {self._who(interaction)}: Autokit created – {self._rule_text(rule)}")
         text = f"✅ Autokit created:\n{self._rule_text(rule)}"
         if notes:
             text += "\n\n" + "\n".join(notes)
-        await interaction.response.send_message(text, ephemeral=True)
+        await interaction.response.send_message(text, ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @kit.command(name="autokit-role", description="Sets the Discord role required for an autokit (e.g. spawn kit).")
+    @app_commands.describe(rule="Autokit rule", role="Required role (empty = everyone gets the kit again)")
+    @app_commands.autocomplete(rule=_rule_ac)
+    @admin_only()
+    async def autokit_role(self, interaction: discord.Interaction, rule: int,
+                           role: discord.Role | None = None) -> None:
+        if not self.bot.db.set_kit_rule_role(rule, role.id if role else None):
+            await interaction.response.send_message(f"Rule #{rule} does not exist.", ephemeral=True)
+            return
+        row = self.bot.db.kit_rule(rule)
+        self._audit(f"🎖️ {self._who(interaction)}: Autokit #{rule} – required role "
+                    f"{role.mention if role else 'removed'}")
+        hint = ("\nPlayers get it only if their in-game player is linked (`/customkit link`) to a Discord "
+                "account with this role." if role else "")
+        await interaction.response.send_message(f"✅ {self._rule_text(row)}{hint}", ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
 
     @kit.command(name="autokit-toggle", description="Pauses or enables an autokit.")
     @app_commands.describe(rule="Autokit rule", enabled="On or off")
@@ -468,8 +497,39 @@ class Kits(commands.Cog):
             if rule["phrase"] == ev.raw:
                 await self._try_claim(rule, ev.player, "quickchat")
 
+    async def player_has_role(self, player: str, role_id: int) -> bool:
+        """Does the Discord account linked to this in-game player have the role? (unlinked = no)"""
+        user_id = self.bot.db.player_owner(player)
+        guild = main_guild(self.bot)
+        if user_id is None or guild is None:
+            return False
+        cached = self._role_cache.get(user_id)
+        if cached is None or time.monotonic() - cached[0] > ROLE_CACHE_SECONDS:
+            member = guild.get_member(user_id)
+            if member is None:
+                # Works without the Server Members Intent; cached so respawns don't spam the API
+                try:
+                    member = await guild.fetch_member(user_id)
+                except discord.NotFound:
+                    member = None  # left the Discord server
+                except discord.HTTPException as exc:
+                    log.warning("Could not load roles of %s: %s", user_id, exc)
+                    return False
+            roles = frozenset(r.id for r in member.roles) if member else frozenset()
+            cached = (time.monotonic(), roles)
+            self._role_cache[user_id] = cached
+        return role_id in cached[1]
+
     async def _try_claim(self, rule, player: str, source: str) -> None:
         kit = rule["kit"]
+        if rule["required_role_id"] and not await self.player_has_role(player, rule["required_role_id"]):
+            guild = main_guild(self.bot)
+            role = guild.get_role(rule["required_role_id"]) if guild else None
+            await self._announce_denied(
+                player, f"Kit <b>{sanitize_ingame_text(kit, 40)}</b> needs the Discord role "
+                        f"<b>{sanitize_ingame_text(role.name if role else 'required role', 32)}</b> "
+                        "(link your account on Discord with /customkit link).", source)
+            return
         count, minutes_since = self.bot.db.kit_claim_state(rule["id"], player)
 
         if rule["max_claims"] and count >= rule["max_claims"]:

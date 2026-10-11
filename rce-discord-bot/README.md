@@ -386,7 +386,7 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/kit list`, `/kit info <kit>`, `/kit autokits` | everyone | Show kits and autokits |
 | `/kit give`, `/kit group`, `/kit all` | Admins | Give a kit to a player, an auth group or everyone |
 | `/kit add-item`, `/kit remove-item` | Admins | Edit kits |
-| `/kit autokit-add`, `/kit autokit-toggle`, `/kit autokit-delete`, `/kit wipe-reset`, `/kit history` | Admins | Manage autokits (also with custom kits) |
+| `/kit autokit-add`, `/kit autokit-role`, `/kit autokit-toggle`, `/kit autokit-delete`, `/kit wipe-reset`, `/kit history` | Admins | Manage autokits (also with custom kits, optionally only for a Discord role) |
 | `/customkit create`, `add-item`, `remove-item`, `delete` | Admins | Create and edit custom kits |
 | `/customkit import`, `/customkit import-file` | Admins | Create/fill custom kits from kit builder `kit add` commands (text box or .txt file) |
 | `/customkit list`, `/customkit info` | Admins | Show custom kits (visible to admins only) |
@@ -445,8 +445,18 @@ Examples:
 ```
 /kit autokit-add kit:starter trigger:"🔄 Respawn" cooldown_minutes:30
 /kit autokit-add kit:raid trigger:"💬 Quick chat" phrase:"Here, take this!" max_per_player:1
+/kit autokit-add kit:vipspawn trigger:"🔄 Respawn" required_role:@VIP   ← spawn kit only for a Discord role
+/kit autokit-role rule:3 role:@VIP     ← set/change the required role of an existing autokit (empty = everyone)
 /kit wipe-reset          ← after the wipe: reset cooldowns and limits
 ```
+
+**Role-locked autokits (e.g. a VIP spawn kit):** an autokit can require a Discord role. The game only
+knows the in-game name, so each player links it to their Discord account once with
+`/customkit link` (verified in-game via two quick chat phrases). On respawn the bot gives the kit
+only if the linked Discord account has the role. Unlinked players and members without the role
+don't get it (for quick chat kits they get a short in-game hint). Role changes on Discord apply
+within 2 minutes. Works without the Server Members Intent. Also in the web interface: Kits →
+Autokits → "Required role" column / new-autokit form.
 
 - Since Console Edition has no free chat, quick chat is the only way for a player to request
   something in-game. The player name comes from the server log, so it can't be spoofed.

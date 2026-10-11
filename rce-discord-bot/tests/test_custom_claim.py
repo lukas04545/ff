@@ -140,3 +140,45 @@ def test_claim_goes_only_to_own_player_with_cooldown_per_player(cog):
     db.reset_custom_claims("VIP")
     assert "not online" in _claim(cog, FakeInteraction(9, [55]))
     assert len(db.kit_claim_history("GamerTag42")) == 3
+
+
+def test_spawn_kit_requires_discord_role(cog, monkeypatch):
+    """Autokit with a required role: only linked players whose Discord account has the role get it."""
+    import discord
+
+    import cogs.kits as kits_module
+    from rce.log_parser import RespawnEvent
+    bot = cog.bot
+    bot.config = bot.config.__class__(**{**bot.config.__dict__, "autokit_delay": 0})
+    members = {7: SimpleNamespace(roles=[SimpleNamespace(id=55)]), 8: SimpleNamespace(roles=[])}
+    fetches = []
+
+    async def fetch_member(user_id):
+        fetches.append(user_id)
+        if user_id not in members:
+            raise discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown Member")
+        return members[user_id]
+    guild = SimpleNamespace(get_member=lambda _id: None, fetch_member=fetch_member,
+                            get_role=lambda _id: SimpleNamespace(name="VIP"))
+    monkeypatch.setattr(kits_module, "main_guild", lambda _bot: guild)
+    kits = kits_module.Kits(bot)
+
+    rule = bot.db.add_kit_rule("starter", "respawn", None, 0, 0, "admin", "ingame", required_role_id=55)
+    bot.db.link_player(7, "VipPlayer")
+    bot.db.link_player(8, "NormalPlayer")
+    bot.db.link_player(9, "LeftDiscord")
+
+    def respawn(player):
+        cog.sent.clear()
+        asyncio.run(kits.on_rce_respawn(RespawnEvent(player=player, platform="Xbox")))
+        return [c for c in cog.sent if c.startswith("kit ")]
+
+    assert respawn("VipPlayer") == ['kit givetoplayer "starter" "VipPlayer"']
+    assert respawn("NormalPlayer") == []        # linked, but no role
+    assert respawn("Unlinked") == []            # not linked -> no kit
+    assert respawn("LeftDiscord") == []         # not on the Discord server any more
+    assert respawn("VipPlayer") and fetches.count(7) == 1  # roles are cached
+
+    # Without a required role everyone gets it again
+    assert bot.db.set_kit_rule_role(rule, None)
+    assert respawn("Unlinked") == ['kit givetoplayer "starter" "Unlinked"']

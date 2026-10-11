@@ -265,6 +265,7 @@ class WebInterface:
         r.add_post("/api/autokits", self.create_autokit)
         r.add_post("/api/autokits/reset", self.reset_autokits)
         r.add_post("/api/autokits/{rule_id:\\d+}/toggle", self.toggle_autokit)
+        r.add_put("/api/autokits/{rule_id:\\d+}/role", self.autokit_role)
         r.add_delete("/api/autokits/{rule_id:\\d+}", self.delete_autokit)
         r.add_get("/api/meta", self.meta)
         r.add_get("/api/tickets", self.tickets)
@@ -839,9 +840,24 @@ class WebInterface:
         rule_id = self.bot.db.add_kit_rule(
             kit, trigger, phrase if trigger == "quickchat" else None,
             self._int(data, "cooldown", 0, 0, 525600), self._int(data, "max_claims", 0, 0, 10000),
-            "Web interface", kit_type)
+            "Web interface", kit_type, self._role_id(data))
         self._audit(f"Autokit #{rule_id} created ({kit}, {trigger})")
         return web.json_response({"ok": True, "id": rule_id})
+
+    @staticmethod
+    def _role_id(data: dict) -> int | None:
+        raw = str(data.get("required_role_id") or "").strip()
+        if raw and not raw.isdigit():
+            raise ApiError("Invalid role.")
+        return int(raw) if raw else None
+
+    async def autokit_role(self, request: web.Request) -> web.Response:
+        rule_id = int(request.match_info["rule_id"])
+        role_id = self._role_id(await self._json(request))
+        if not self.bot.db.set_kit_rule_role(rule_id, role_id):
+            raise ApiError("Rule not found.", 404)
+        self._audit(f"Autokit #{rule_id} – required role {role_id or 'removed'}")
+        return web.json_response({"ok": True})
 
     async def toggle_autokit(self, request: web.Request) -> web.Response:
         rule_id = int(request.match_info["rule_id"])

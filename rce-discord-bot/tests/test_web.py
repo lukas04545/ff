@@ -80,6 +80,10 @@ def test_custom_kits_autokits_knowledge(bot):
         rule_id = (await r.json())["id"]
         assert (await c.post("/api/autokits", json={"kit": "x", "trigger": "quickchat"}, headers=H)).status == 400
         assert (await c.post(f"/api/autokits/{rule_id}/toggle", json={"enabled": False}, headers=H)).status == 200
+        assert (await c.put(f"/api/autokits/{rule_id}/role", json={"required_role_id": "55"}, headers=H)).status == 200
+        assert bot.db.kit_rule(rule_id)["required_role_id"] == 55
+        assert (await c.put(f"/api/autokits/{rule_id}/role", json={"required_role_id": "x"}, headers=H)).status == 400
+        assert (await c.put("/api/autokits/999/role", json={"required_role_id": ""}, headers=H)).status == 404
         kits = await (await c.get("/api/kits")).json()
         assert kits["custom"][0]["items"][0]["shortname"] == "rifle.ak"
         assert kits["rules"][0]["enabled"] == 0 and kits["rules"][0]["kit"] == "Event"
