@@ -133,6 +133,23 @@ class Config:
     database_path: Path
 
 
+def required_intents(cfg: Config) -> dict[str, list[str]]:
+    """Privilegierte Discord-Intents -> Funktionen, die sie brauchen (nur aktivierte Funktionen)."""
+    message_content, members = [], []
+    if cfg.chat_channel_id and cfg.chat_bridge_to_game:
+        message_content.append("Chat-Bridge Discord → Spiel")
+    if cfg.ticket_category_id:
+        message_content.append("Support-Tickets")
+    if cfg.discord_log_channel_id:
+        message_content.append("Discord-Log")
+        members.append("Discord-Log (Beitritte/Austritte)")
+    if cfg.welcome_channel_id:
+        members.append("Willkommensnachricht")
+    if cfg.auto_role_id:
+        members.append("Auto-Rolle")
+    return {"message_content": message_content, "members": members}
+
+
 def load_config(env_file: str | os.PathLike = ".env") -> Config:
     # override=True: Änderungen aus dem Webinterface werden beim erneuten Laden übernommen
     load_dotenv(env_file, override=True)

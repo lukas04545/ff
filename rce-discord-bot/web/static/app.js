@@ -133,11 +133,16 @@ async function start() {
 // Wartet, bis der Bot nach einem Neustart wieder erreichbar ist, und lädt dann neu
 async function waitForBot(target) {
   await new Promise((r) => setTimeout(r, 3000));
+  const started = Date.now();
   for (let i = 0; i < 60; i++) {
     try {
       const r = await fetch("/api/me", { credentials: "same-origin" });
-      if (r.ok) { const me = await r.json(); if (!me.setup_mode) { location.hash = target; location.reload(); return; } }
-      else if (r.status === 401) { location.reload(); return; }
+      if (r.ok) {
+        const me = await r.json();
+        if (!me.setup_mode) { location.hash = target; location.reload(); return; }
+        // Wieder im Einrichtungsmodus -> Seite neu laden, damit der neue Grund angezeigt wird
+        if (Date.now() - started > 8000) { location.hash = "#settings"; location.reload(); return; }
+      } else if (r.status === 401) { location.reload(); return; }
     } catch { /* Bot startet noch */ }
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -572,8 +577,9 @@ views.settings = async (main) => {
 
   const showBanner = (kind, ...content) => banner.replaceChildren(h("div", { class: "banner " + kind }, ...content));
   if (data.setup_mode) {
-    showBanner("warn", h("strong", { text: "Der Bot ist noch nicht gestartet. " }), data.setup_error || "",
-      h("p", { class: "muted", style: "margin:.4rem 0 0", text: "Pflichtfelder (*) ausfüllen und speichern – der Bot startet dann automatisch." }));
+    showBanner("bad", h("strong", { text: "Der Bot ist noch nicht gestartet. " }), data.setup_error || "",
+      fixLink(data.setup_fix_url),
+      h("p", { class: "muted", style: "margin:.4rem 0 0", text: "Danach unten auf „Bot mit gespeicherten Einstellungen starten“ klicken (oder Pflichtfelder ausfüllen und speichern)." }));
   } else if (data.restart_required) {
     showBanner("warn", "Geänderte Einstellungen werden erst nach einem Neustart aktiv. ", restartButton());
   } else if (!opts.available) {
@@ -668,11 +674,16 @@ views.settings = async (main) => {
         rconResultBox.replaceChildren(h("p", { style: "margin:.5rem 0 0", text: "Automatischer Test der gespeicherten RCON-Daten:" }), renderSteps(r.rcon_test));
         if (!r.rcon_test.ok) toast("Gespeichert – aber RCON funktioniert damit noch nicht (siehe RCON-Bereich).", true);
       }
-      if (r.starting) {
+      if (r.preflight_error && data.setup_mode) {
+        showBanner("bad", h("strong", { text: "Gespeichert – aber der Bot kann so noch nicht starten: " }), r.preflight_error, fixLink(r.fix_url));
+        banner.scrollIntoView({ behavior: "smooth" });
+      } else if (r.starting) {
         showBanner("ok", h("strong", { text: "Gespeichert – der Bot startet jetzt …" }), " Diese Seite lädt automatisch neu.");
         waitForBot("#overview");
       } else if (r.config_error) {
         showBanner("warn", h("strong", { text: "Gespeichert. Es fehlt noch etwas: " }), r.config_error);
+      } else if (r.preflight_error) {
+        showBanner("bad", h("strong", { text: "Gespeichert – vor einem Neustart erst das beheben: " }), r.preflight_error, fixLink(r.fix_url));
       } else if (r.restart_required) {
         showBanner("warn", h("strong", { text: "Gespeichert. " }), "Damit die Änderungen gelten, den Bot neu starten: ", restartButton());
       } else {
@@ -693,8 +704,11 @@ views.settings = async (main) => {
     h("span", { class: "muted", text: "Gespeichert wird in der .env im Bot-Ordner." }));
   if (data.setup_mode) {
     bar.append(h("button", { text: "Bot mit gespeicherten Einstellungen starten", onclick: async () => {
-      try { await api("/api/setup/continue", { method: "POST" }); showBanner("ok", "Bot startet …"); waitForBot("#overview"); }
-      catch (e) { toast(e.message, true); }
+      try {
+        const r = await api("/api/setup/continue", { method: "POST" });
+        if (!r.ok) { showBanner("bad", h("strong", { text: "Noch nicht möglich: " }), r.preflight_error, fixLink(r.fix_url)); banner.scrollIntoView({ behavior: "smooth" }); return; }
+        showBanner("ok", "Bot startet …"); waitForBot("#overview");
+      } catch (e) { toast(e.message, true); }
     } }));
   }
   main.append(bar);
@@ -704,9 +718,22 @@ function restartButton() {
   return h("button", { class: "primary small", text: "Bot jetzt neu starten", onclick: async (ev) => {
     if (!confirm("Bot neu starten? Er ist dabei ein paar Sekunden offline.")) return;
     ev.target.disabled = true;
-    await act(() => api("/api/restart", { method: "POST" }), "Bot startet neu …");
+    const r = await act(() => api("/api/restart", { method: "POST" })).catch(() => null);
+    if (!r) { ev.target.disabled = false; return; }
+    if (!r.ok) {
+      ev.target.disabled = false;
+      alert("Neustart abgebrochen, der Bot würde sonst nicht starten:\n\n" + r.preflight_error + (r.fix_url ? "\n\nLink: " + r.fix_url : ""));
+      return;
+    }
+    toast("Bot startet neu …");
     waitForBot(location.hash || "#overview");
   } });
+}
+
+// Link zum Beheben (z. B. Developer Portal), öffnet in neuem Tab
+function fixLink(url) {
+  return url ? h("p", { style: "margin:.5rem 0 0" }, h("a", { href: url, target: "_blank", rel: "noopener" },
+    h("button", { class: "primary small", text: "🔧 Im Discord Developer Portal beheben ↗" }))) : null;
 }
 
 // Ergebnisliste eines RCON-Tests ({ok, steps})

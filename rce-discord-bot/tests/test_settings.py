@@ -3,6 +3,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dotenv import dotenv_values
@@ -10,12 +12,31 @@ from dotenv import dotenv_values
 import settings_schema
 from envfile import format_value, read_env, update_env
 from rce.diagnostics import diagnose_rcon
+from web import server
 from web.server import WebInterface, WebSettings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import mock_rcon_server  # noqa: E402
 
 H = {"X-Requested-With": "rce-web"}
+
+
+@pytest.fixture(autouse=True)
+def offline_discord(monkeypatch):
+    """Standard: Discord „nicht erreichbar“ -> Vorabprüfung blockiert nicht (Tests ohne Internet)."""
+    async def fake(token):
+        return {"reachable": False, "token_ok": None, "bot_name": None, "app_id": None, "intents": None,
+                "error": "offline"}
+    monkeypatch.setattr(server, "check_discord", fake)
+    return monkeypatch
+
+
+def _discord(monkeypatch, *, token_ok=True, message_content=True, members=True):
+    async def fake(token):
+        return {"reachable": True, "token_ok": token_ok, "bot_name": "Bot", "app_id": "42",
+                "intents": {"message_content": message_content, "members": members} if token_ok else None,
+                "error": None if token_ok else "Discord lehnt den Bot-Token ab."}
+    monkeypatch.setattr(server, "check_discord", fake)
 TRICKY = ['kick "{name}"', "<color=#5865F2>[Discord]</color>", "wert mit #kommentar", "a #b", " führend",
           "Zeile1\nZeile2", 'Pfad\\mit\\backslash', "'zitat'", '"doppelt"', "Willkommen {member}! – viel Spaß"]
 
@@ -199,3 +220,50 @@ def test_saving_rcon_settings_runs_test(tmp_path, monkeypatch):
             await runner.cleanup()
 
     asyncio.run(scenario())
+
+
+def test_preflight_blocks_start_until_intents_enabled(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    env = _env(tmp_path, DISCORD_TOKEN="tok", RCON_HOST="1.2.3.4", RCON_PORT="28016", RCON_PASSWORD="pw",
+               ADMIN_USER_IDS="1", TICKET_CATEGORY_ID="5")  # Tickets -> Message Content Intent nötig
+
+    async def scenario():
+        started = asyncio.Event()
+        w = WebInterface(None, web_settings=WebSettings(password="x"), env_path=env, secret_path=tmp_path / "k",
+                         on_config_saved=started.set, setup_error="Intent fehlt")
+        c = await _client(w)
+        try:
+            await c.post("/api/login", json={"password": "x"}, headers=H)
+            # Intent im Portal noch aus -> kein Start, klare Meldung mit Link
+            _discord(monkeypatch, message_content=False)
+            r = await (await c.post("/api/setup/continue", headers=H)).json()
+            assert r["ok"] is False and "Message Content Intent" in r["preflight_error"]
+            assert "Support-Tickets" in r["preflight_error"] and r["fix_url"].endswith("/applications/42/bot")
+            r = await (await c.put("/api/settings", json={"values": {"SERVER_DISPLAY_NAME": "X"}}, headers=H)).json()
+            assert "preflight_error" in r and not r.get("starting") and not started.is_set()
+            # Members-Intent wird nicht verlangt, weil keine Funktion ihn braucht
+            assert "Server Members" not in r["preflight_error"]
+
+            # Ungültiger Token
+            _discord(monkeypatch, token_ok=False)
+            r = await (await c.post("/api/setup/continue", headers=H)).json()
+            assert r["ok"] is False and "Token" in r["preflight_error"]
+
+            # Intent eingeschaltet -> Bot startet
+            _discord(monkeypatch)
+            r = await (await c.post("/api/setup/continue", headers=H)).json()
+            assert r["starting"] is True and started.is_set()
+        finally:
+            await c.close()
+
+    asyncio.run(scenario())
+
+
+def test_required_intents():
+    from config import required_intents
+    cfg = type("Cfg", (), dict(chat_channel_id=None, chat_bridge_to_game=True, ticket_category_id=None,
+                               discord_log_channel_id=None, welcome_channel_id=None, auto_role_id=None))()
+    assert required_intents(cfg) == {"message_content": [], "members": []}
+    cfg.ticket_category_id, cfg.auto_role_id = 5, 7
+    need = required_intents(cfg)
+    assert need["message_content"] == ["Support-Tickets"] and need["members"] == ["Auto-Rolle"]

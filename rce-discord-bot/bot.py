@@ -20,7 +20,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import Config, ConfigError, load_config
+from config import Config, ConfigError, load_config, required_intents
 from logbuffer import memory_log
 from rce import log_parser
 from rce.rcon_client import RconClient, RconError, RconMessage
@@ -54,14 +54,11 @@ EVENT_NAMES: dict[type, str] = {
 class RceBot(commands.Bot):
     def __init__(self, config: Config) -> None:
         intents = discord.Intents.default()
-        # Nachrichteninhalt (privilegierter Intent, im Developer Portal aktivieren) brauchen
-        # die Chat-Bridge Discord -> Spiel und die Support-Tickets (KI liest die Nachrichten).
-        # Discord-Log (bearbeitete/gelöschte Nachrichten) braucht ihn ebenfalls.
-        intents.message_content = bool(
-            (config.chat_channel_id and config.chat_bridge_to_game) or config.ticket_category_id
-            or config.discord_log_channel_id)
-        # Server-Mitglieder-Intent (privilegiert): Willkommensnachricht, Auto-Rolle, Join/Leave-Log
-        intents.members = bool(config.welcome_channel_id or config.auto_role_id or config.discord_log_channel_id)
+        # Privilegierte Intents nur anfordern, wenn eine Funktion sie braucht (siehe config.required_intents);
+        # sie müssen im Developer Portal unter Bot → Privileged Gateway Intents eingeschaltet sein.
+        needed = required_intents(config)
+        intents.message_content = bool(needed["message_content"])
+        intents.members = bool(needed["members"])
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
 
         self.config = config
@@ -253,12 +250,13 @@ def fatal(message: str) -> None:
     sys.exit(EXIT_FATAL)
 
 
-async def run_setup(error: str) -> None:
+async def run_setup(error: str, fix_url: str | None = None) -> None:
     """Einrichtungsmodus: nur das Webinterface läuft, bis eine gültige Konfiguration gespeichert ist."""
     from web.server import WebInterface, web_settings_from_env
 
     done = asyncio.Event()
-    web = WebInterface(None, web_settings=web_settings_from_env(), setup_error=error, on_config_saved=done.set)
+    web = WebInterface(None, web_settings=web_settings_from_env(), setup_error=error, setup_fix_url=fix_url,
+                       on_config_saved=done.set)
     if not await web.start():
         fatal("Einrichtung nicht möglich: Das Webinterface konnte nicht starten (Port belegt?). "
               "WEB_PORT in der .env ändern oder die .env von Hand ausfüllen.")
@@ -278,9 +276,10 @@ def main() -> None:
     # Doppelklick oder Autostart gefunden werden.
     os.chdir(BASE_DIR)
     setup_logging()
-    from web.server import web_settings_from_env
+    from web.server import discord_preflight, web_settings_from_env
 
     setup_error: str | None = None
+    setup_fix_url: str | None = None
     first_start = True
     while True:
         if setup_error is None:
@@ -293,9 +292,16 @@ def main() -> None:
             if not web_settings_from_env().enabled:
                 fatal(f"{setup_error} (Webinterface ist deaktiviert – bitte die .env von Hand korrigieren.)")
             log.warning(setup_error)
-            asyncio.run(run_setup(setup_error))
-            setup_error = None
+            asyncio.run(run_setup(setup_error, setup_fix_url))
+            setup_error = setup_fix_url = None
             first_start = False  # Browser ist schon offen
+            continue
+
+        # Vorab bei Discord prüfen (Token, Intents). Sonst hängt der Bot minutenlang in
+        # "session has been invalidated" und beantwortet keinen Befehl.
+        preflight = asyncio.run(discord_preflight(config))
+        if preflight:
+            setup_error, setup_fix_url = preflight["preflight_error"], preflight["fix_url"]
             continue
 
         bot = RceBot(config)

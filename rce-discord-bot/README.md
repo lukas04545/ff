@@ -587,6 +587,7 @@ Diese Funktionen stammen aus dem KRYVON-Bot und sind hier nachgebaut und erweite
 | Kick/Ban wirkt nicht | Befehlssyntax per `/rcon` testen und die `*_COMMAND_TEMPLATE` in der `.env` anpassen |
 | Kit kommt nicht an | `/rcon kit givetoplayer "Kit" "Spieler"` testen und die Antwort im Konsolen-Log prüfen. Bei abweichender Syntax `KIT_GIVE_TEMPLATE` anpassen. |
 | Custom Kit kommt nicht an | `/rcon inventory.giveto "DeinName" "wood" 100` testen. Bei abweichender Syntax `ITEM_GIVE_TEMPLATE` anpassen. Fehlt die `giving …`-Zeile im Admin-Log, stimmt meist der Shortname nicht. |
+| Bot ist online, aber **jeder Befehl „antwortet nicht“**, im Log `session has been invalidated` | Privilegierte Intents sind im Developer Portal aus. Der Bot prüft das jetzt vor dem Start und zeigt im Webinterface genau, welcher Schalter fehlt (mit Link). Developer Portal → Bot → *Privileged Gateway Intents* → einschalten → **Save Changes** → im Webinterface „Bot starten“. |
 | „privilegierter Intent … nicht aktiviert“ beim Start | Developer Portal → Bot → *Message Content Intent* und *Server Members Intent* einschalten |
 | Auto-Rolle/Gewinner-Rolle wird nicht vergeben | Bot-Rolle in den Servereinstellungen über diese Rolle ziehen, *Manage Roles* erlauben |
 | `/mod …`: „Rolle steht über der Bot-Rolle“ | Discord erlaubt Moderation nur unterhalb der eigenen höchsten Rolle – Bot-Rolle nach oben ziehen |

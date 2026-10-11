@@ -29,7 +29,7 @@ import discord
 from aiohttp import web
 
 import settings_schema
-from config import ConfigError, load_config
+from config import ConfigError, load_config, required_intents
 from envfile import read_env, update_env
 from rce.diagnostics import diagnose_rcon
 
@@ -77,6 +77,67 @@ INVITE_PERMISSIONS = discord.Permissions(
 ).value
 
 
+INTENT_LABELS = {"message_content": "Message Content Intent", "members": "Server Members Intent"}
+
+
+async def check_discord(token: str) -> dict:
+    """Prüft den Bot-Token direkt bei Discord und liest die eingeschalteten privilegierten Intents."""
+    result = {"reachable": False, "token_ok": None, "bot_name": None, "app_id": None, "intents": None, "error": None}
+    headers = {"Authorization": f"Bot {token}"}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.get(f"{DISCORD_API}/users/@me", headers=headers) as resp:
+                result["reachable"] = True
+                if resp.status == 401:
+                    result["token_ok"] = False
+                    result["error"] = ("Discord lehnt den Bot-Token ab. Im Developer Portal unter Bot → "
+                                       "Reset Token einen neuen erzeugen und hier eintragen.")
+                    return result
+                if resp.status != 200:
+                    result["error"] = f"Discord antwortet mit HTTP {resp.status}."
+                    return result
+                user = await resp.json()
+            async with session.get(f"{DISCORD_API}/applications/@me", headers=headers) as resp:
+                app_info = await resp.json() if resp.status == 200 else {}
+    except (aiohttp.ClientError, TimeoutError) as exc:
+        result["error"] = f"Discord nicht erreichbar: {exc}"
+        return result
+    flags = int(app_info.get("flags") or 0)
+    result.update(token_ok=True, bot_name=user.get("username"), app_id=app_info.get("id") or user.get("id"))
+    if app_info:
+        # Application-Flags: GATEWAY_GUILD_MEMBERS(_LIMITED) = 1<<14/1<<15, MESSAGE_CONTENT(_LIMITED) = 1<<18/1<<19
+        result["intents"] = {"members": bool(flags & (1 << 14 | 1 << 15)),
+                             "message_content": bool(flags & (1 << 18 | 1 << 19))}
+    return result
+
+
+async def discord_preflight(cfg) -> dict | None:
+    """Prüft vor dem Start, ob Discord den Bot mit dieser Konfiguration annimmt.
+
+    None = alles ok (oder Discord gerade nicht erreichbar), sonst {"preflight_error": Text, "fix_url": Link}.
+    """
+    info = await check_discord(cfg.discord_token)
+    if not info["reachable"]:
+        return None  # z. B. kein Internet: nicht blockieren, der Bot versucht es selbst erneut
+    if info["token_ok"] is False:
+        return {"preflight_error": info["error"], "fix_url": "https://discord.com/developers/applications"}
+    if not info["intents"]:
+        return None
+    missing = [(INTENT_LABELS[k], features) for k, features in required_intents(cfg).items()
+               if features and not info["intents"].get(k)]
+    if not missing:
+        return None
+    parts = [f"„{label}“ (gebraucht für: {', '.join(features)})" for label, features in missing]
+    return {
+        "preflight_error": (
+            "Discord weist den Bot ab: Im Developer Portal ist " + " und ".join(parts)
+            + " noch AUS. Öffne den Link, schalte unter „Privileged Gateway Intents“ den Schalter ein, "
+              "klicke „Save Changes“ und danach hier auf „Bot starten“. Alternativ die genannten "
+              "Funktionen in den Einstellungen leeren."),
+        "fix_url": f"https://discord.com/developers/applications/{info['app_id']}/bot",
+    }
+
+
 @dataclass
 class WebSettings:
     enabled: bool = True
@@ -107,11 +168,13 @@ class WebInterface:
     """bot=None startet den Einrichtungsmodus: nur Login und Einstellungen, ohne Discord/RCON."""
 
     def __init__(self, bot: "RceBot | None", *, web_settings: WebSettings | None = None,
-                 setup_error: str | None = None, on_config_saved: Callable[[], None] | None = None,
+                 setup_error: str | None = None, setup_fix_url: str | None = None,
+                 on_config_saved: Callable[[], None] | None = None,
                  env_path: Path = ENV_PATH, secret_path: Path = Path("data") / "web_secret.key") -> None:
         self.bot = bot
         self.setup_mode = bot is None
         self.setup_error = setup_error
+        self.setup_fix_url = setup_fix_url
         self.on_config_saved = on_config_saved
         self.env_path = env_path
         if web_settings is None:
@@ -388,6 +451,7 @@ class WebInterface:
         return web.json_response({
             "groups": [{"id": g, "label": label} for g, label in settings_schema.GROUPS],
             "fields": fields, "setup_mode": self.setup_mode, "setup_error": self.setup_error,
+            "setup_fix_url": self.setup_fix_url,
             "config_error": config_error, "restart_required": self.restart_required,
         })
 
@@ -436,15 +500,20 @@ class WebInterface:
             resp = web.json_response({"ok": True, "saved": sorted(updates), "config_error": str(exc),
                                       "rcon_test": rcon_test})
         else:
+            preflight = await self._preflight()
             if self.setup_mode:
-                resp = web.json_response({"ok": True, "saved": sorted(updates), "starting": True,
-                                          "rcon_test": rcon_test})
-                if self.on_config_saved:
-                    self.on_config_saved()
+                if preflight:
+                    resp = web.json_response({"ok": True, "saved": sorted(updates), "rcon_test": rcon_test,
+                                              **preflight})
+                else:
+                    resp = web.json_response({"ok": True, "saved": sorted(updates), "starting": True,
+                                              "rcon_test": rcon_test})
+                    if self.on_config_saved:
+                        self.on_config_saved()
             else:
                 self.restart_required = self.restart_required or bool(updates)
-                resp = web.json_response({"ok": True, "saved": sorted(updates),
-                                          "restart_required": self.restart_required, "rcon_test": rcon_test})
+                resp = web.json_response({"ok": True, "saved": sorted(updates), "rcon_test": rcon_test,
+                                          "restart_required": self.restart_required, **(preflight or {})})
         if "WEB_PASSWORD" in updates:
             self._set_session_cookie(resp)
         return resp
@@ -464,32 +533,27 @@ class WebInterface:
         token = str((await self._json(request)).get("token") or self._saved("DISCORD_TOKEN")).strip()
         if not token:
             raise ApiError("Kein Bot-Token eingetragen.")
-        headers = {"Authorization": f"Bot {token}"}
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
-                async with session.get(f"{DISCORD_API}/users/@me", headers=headers) as resp:
-                    if resp.status == 401:
-                        return web.json_response({"ok": False, "error": "Discord lehnt den Token ab – im Developer "
-                                                  "Portal unter Bot → Reset Token einen neuen erzeugen."})
-                    if resp.status != 200:
-                        return web.json_response({"ok": False, "error": f"Discord antwortet mit HTTP {resp.status}."})
-                    user = await resp.json()
-                async with session.get(f"{DISCORD_API}/applications/@me", headers=headers) as resp:
-                    app_info = await resp.json() if resp.status == 200 else {}
-        except (aiohttp.ClientError, TimeoutError) as exc:
-            return web.json_response({"ok": False, "error": f"Discord nicht erreichbar: {exc}"})
-        flags = int(app_info.get("flags") or 0)
-        app_id = app_info.get("id") or user.get("id")
+        info = await check_discord(token)
+        if not info["token_ok"]:
+            return web.json_response({"ok": False, "error": info["error"]})
+        app_id = info["app_id"]
         return web.json_response({
-            "ok": True,
-            "bot_name": user.get("username"),
-            "app_id": app_id,
-            # Application-Flags: GATEWAY_GUILD_MEMBERS(_LIMITED) = 1<<14/1<<15, MESSAGE_CONTENT(_LIMITED) = 1<<18/1<<19
-            "intents": {"members": bool(flags & (1 << 14 | 1 << 15)),
-                        "message_content": bool(flags & (1 << 18 | 1 << 19))} if app_info else None,
+            "ok": True, "bot_name": info["bot_name"], "app_id": app_id, "intents": info["intents"],
             "invite_url": (f"https://discord.com/oauth2/authorize?client_id={app_id}"
                            f"&scope=bot+applications.commands&permissions={INVITE_PERMISSIONS}") if app_id else None,
         })
+
+    async def _preflight(self) -> dict | None:
+        """Vor dem (Neu-)Start prüfen, ob Discord den Bot annimmt – sonst landet er in einer Start-Schleife.
+
+        Liefert None, wenn alles passt (oder Discord gerade nicht erreichbar ist), sonst
+        {"preflight_error": Text, "fix_url": Link}.
+        """
+        try:
+            cfg = load_config(self.env_path)
+        except ConfigError as exc:
+            return {"preflight_error": f"Noch nicht vollständig: {exc}", "fix_url": None}
+        return await discord_preflight(cfg)
 
     async def settings_discord_options(self, request: web.Request) -> web.Response:
         """Channels/Rollen/Server zur Auswahl – nur wenn der Bot mit Discord verbunden ist."""
@@ -512,16 +576,17 @@ class WebInterface:
         return web.json_response(result)
 
     async def restart(self, request: web.Request) -> web.Response:
+        if preflight := await self._preflight():
+            # Nicht neu starten – sonst fiele der Bot in den Einrichtungsmodus zurück
+            return web.json_response({"ok": False, **preflight})
         self._audit("Bot-Neustart angefordert")
         self.bot.request_restart()
         return web.json_response({"ok": True})
 
     async def setup_continue(self, request: web.Request) -> web.Response:
         """Einrichtung: Bot mit der gespeicherten Konfiguration starten (z. B. nach Intents-Freigabe)."""
-        try:
-            load_config(self.env_path)
-        except ConfigError as exc:
-            raise ApiError(f"Noch nicht vollständig: {exc}")
+        if preflight := await self._preflight():
+            return web.json_response({"ok": False, **preflight})
         if self.on_config_saved:
             self.on_config_saved()
         return web.json_response({"ok": True, "starting": True})
