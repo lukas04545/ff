@@ -1,1 +1,1 @@
-"""Support-Tickets: DeepSeek-Client und Prompt-Logik."""
+"""Support tickets: DeepSeek client and prompt logic."""

@@ -1,44 +1,44 @@
-# Wissensbasis für den Support-Assistenten
+# Knowledge base for the support assistant
 
 <!--
-  Diese Datei liest der KI-Assistent bei jeder Ticket-Antwort (Änderungen gelten sofort,
-  kein Neustart nötig). Schreib hier alles rein, was Spieler oft fragen.
-  Alles in eckigen Klammern [...] durch deine echten Angaben ersetzen oder löschen!
-  Nichts Geheimes eintragen (keine Passwörter, keine Custom-Kit-Inhalte, keine Admin-Befehle) –
-  die KI darf alles hier an Spieler weitergeben. Max. ca. 12.000 Zeichen.
+  The AI assistant reads this file for every ticket reply (changes apply immediately,
+  no restart needed). Put everything in here that players ask about often.
+  Replace everything in square brackets [...] with your real details, or delete it!
+  Do not add anything secret (no passwords, no custom kit contents, no admin commands) –
+  the AI may pass on everything here to players. Max. approx. 12,000 characters.
 -->
 
 ## Server
-- Name: [Servername]
-- Plattform: Rust Console Edition (Xbox & PlayStation, Crossplay)
-- Gruppenlimit: [z. B. Max 4er-Teams]
-- Wipe: [z. B. jeden Donnerstag um 18 Uhr (MEZ), Blueprint-Wipe monatlich]
-- So findest du uns: [Suchbegriff in der Community-Server-Liste]
+- Name: [server name]
+- Platform: Rust Console Edition (Xbox & PlayStation, crossplay)
+- Group limit: [e.g. max teams of 4]
+- Wipe: [e.g. every Thursday at 6 pm (CET), blueprint wipe monthly]
+- How to find us: [search term in the community server list]
 
-## Regeln (Kurzfassung)
-1. [Kein Cheaten, kein Ausnutzen von Bugs]
-2. [Kein Rassismus, keine Beleidigungen]
-3. [Kein Griefing in Safe Zones]
-4. [Max. Teamgröße einhalten – auch keine Allianzen über das Limit]
+## Rules (short version)
+1. [No cheating, no exploiting bugs]
+2. [No racism, no insults]
+3. [No griefing in safe zones]
+4. [Stick to the max team size – no alliances beyond the limit either]
 
-## Häufige Fragen
-**Wie bekomme ich das Starter-Kit?**
-[Z. B.: Automatisch nach jedem Respawn (Cooldown 30 Minuten).]
+## Frequently asked questions
+**How do I get the starter kit?**
+[E.g.: Automatically after every respawn (30-minute cooldown).]
 
-**Wie fordere ich ein Kit per Quick-Chat an?**
-[Z. B.: Sende im Spiel die Quick-Chat-Nachricht „Hier, nimm das!“ – einmal pro Wipe.]
+**How do I request a kit via quick chat?**
+[E.g.: Send the quick chat message "Here, take this!" in-game – once per wipe.]
 
-**Ich wurde gebannt – was nun?**
-Ban-Einsprüche bearbeitet nur das Team. Bitte schreibe deinen Ingame-Namen und den ungefähren Zeitpunkt ins Ticket.
+**I got banned – what now?**
+Only the team handles ban appeals. Please put your in-game name and the approximate time in the ticket.
 
-**Ich habe einen Cheater gesehen.**
-Bitte Ingame-Namen, Uhrzeit und wenn möglich ein Video/Clip ins Ticket. Das Team prüft das.
+**I saw a cheater.**
+Please put the in-game name, the time and, if possible, a video/clip in the ticket. The team will look into it.
 
-**Ich habe wegen eines Bugs Items verloren.**
-Erstattungen entscheidet nur das Team. Beschreibe, was passiert ist (Zeit, Ort, Items).
+**I lost items because of a bug.**
+Only the team decides on refunds. Describe what happened (time, location, items).
 
-**Der Server ist offline / ich komme nicht drauf.**
-Prüfe den Status im Status-Channel. Nach Wipes/Updates kann der Server einige Minuten neu starten.
+**The server is offline / I can't get on.**
+Check the status in the status channel. After wipes/updates the server may take a few minutes to restart.
 
-## VIP / Spenden
-[Z. B.: VIP gibt es unter ... – Zahlungsprobleme klärt nur das Team.]
+## VIP / donations
+[E.g.: VIP is available at ... – only the team handles payment issues.]

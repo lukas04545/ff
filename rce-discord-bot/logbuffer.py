@@ -1,7 +1,7 @@
-"""Hält die letzten Log-Zeilen im Speicher – das Webinterface zeigt sie unter „Bot-Log“.
+"""Keeps the latest log lines in memory – the web interface shows them under "Bot log".
 
-Eigenes Modul, weil bot.py als __main__ läuft und ein Import von „bot“ eine zweite,
-leere Kopie erzeugen würde.
+Separate module because bot.py runs as __main__ and importing "bot" would create a second,
+empty copy.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ class MemoryLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             self.records.append(self.format(record))
-        except Exception:  # Logging darf den Bot nie stoppen
+        except Exception:  # logging must never stop the bot
             pass
 
 

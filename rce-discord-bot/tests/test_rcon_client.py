@@ -1,4 +1,4 @@
-"""Testet den WebRCON-Client gegen den Mock-Server (inkl. Reconnect)."""
+"""Tests the WebRCON client against the mock server (incl. reconnect)."""
 import asyncio
 import json
 import sys
@@ -42,12 +42,12 @@ def test_commands_logs_and_reconnect():
         assert {p["DisplayName"] for p in players}
         info = json.loads(await client.command("serverinfo"))
         assert info["MaxPlayers"] == 50
-        assert await client.command("say hallo", expect_response=False) == ""
+        assert await client.command("say hello", expect_response=False) == ""
 
-        await asyncio.sleep(6)  # Mock sendet alle 2-5 s eine Logzeile
-        assert received, "keine Live-Konsolenzeilen empfangen"
+        await asyncio.sleep(6)  # mock sends a log line every 2-5 s
+        assert received, "no live console lines received"
 
-        # Server neu starten -> Client muss sich selbst neu verbinden
+        # Restart server -> client must reconnect on its own
         await runner.cleanup()
         await asyncio.sleep(0.3)
         assert not client.connected
@@ -67,7 +67,7 @@ def test_commands_logs_and_reconnect():
 def test_wrong_password_does_not_connect():
     async def scenario():
         runner, port = await _start_mock()
-        client = RconClient("127.0.0.1", port, "falsch", reconnect_min=0.2)
+        client = RconClient("127.0.0.1", port, "wrong", reconnect_min=0.2)
         await client.start()
         assert not await client.wait_until_connected(1.5)
         await client.close()

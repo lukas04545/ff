@@ -1,7 +1,7 @@
-"""SQLite-Speicher für Statistiken (Leaderboards) und Bot-Zustand.
+"""SQLite storage for statistics (leaderboards) and bot state.
 
-Da die Console Edition in Logs und Spielerliste nur Spielernamen (Gamertag/PSN)
-liefert, werden Statistiken pro Name gezählt. Namensänderungen = neuer Eintrag.
+Since Console Edition only provides player names (gamertag/PSN) in logs and the
+player list, stats are counted per name. Name change = new entry.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ LEADERBOARD_COLUMNS = {
 class Storage:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Kleine, schnelle Schreibzugriffe – für einen einzelnen Server reicht synchrones SQLite.
+        # Small, fast writes – synchronous SQLite is plenty for a single server.
         self._db = sqlite3.connect(path)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(
@@ -36,21 +36,21 @@ class Storage:
             );
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 
-            -- Kitmanager: Autokit-Regeln und Vergabe-Verlauf
+            -- Kit manager: autokit rules and claim history
             CREATE TABLE IF NOT EXISTS kit_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL,
-                trigger TEXT NOT NULL,              -- 'respawn' oder 'quickchat'
-                phrase TEXT,                        -- Quick-Chat-Bezeichner (nur bei 'quickchat')
+                trigger TEXT NOT NULL,              -- 'respawn' or 'quickchat'
+                phrase TEXT,                        -- quick chat identifier (only for 'quickchat')
                 cooldown_minutes INTEGER NOT NULL DEFAULT 0,
-                max_claims INTEGER NOT NULL DEFAULT 0,  -- 0 = unbegrenzt (pro Spieler)
+                max_claims INTEGER NOT NULL DEFAULT 0,  -- 0 = unlimited (per player)
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_by TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS kit_claims (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rule_id INTEGER,                    -- NULL = manuell per Discord vergeben
+                rule_id INTEGER,                    -- NULL = given manually via Discord
                 kit TEXT NOT NULL,
                 player TEXT NOT NULL COLLATE NOCASE,
                 source TEXT NOT NULL,
@@ -58,14 +58,14 @@ class Storage:
             );
             CREATE INDEX IF NOT EXISTS idx_kit_claims_rule_player ON kit_claims (rule_id, player);
 
-            -- Custom Kits: nur im Bot gespeichert, im Ingame-Kitmanager unsichtbar
+            -- Custom kits: stored only in the bot, invisible in the in-game kit manager
             CREATE TABLE IF NOT EXISTS custom_kits (
                 name TEXT PRIMARY KEY COLLATE NOCASE,
                 description TEXT,
                 created_by TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            -- Support-Tickets
+            -- Support tickets
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 channel_id INTEGER UNIQUE,
@@ -74,15 +74,15 @@ class Storage:
                 ingame_name TEXT,
                 status TEXT NOT NULL DEFAULT 'open',      -- 'open' / 'closed'
                 ai_enabled INTEGER NOT NULL DEFAULT 1,
-                escalated INTEGER NOT NULL DEFAULT 0,     -- Staff wurde gepingt
-                staff_joined INTEGER NOT NULL DEFAULT 0,  -- Staff hat geschrieben -> KI pausiert
+                escalated INTEGER NOT NULL DEFAULT 0,     -- staff was pinged
+                staff_joined INTEGER NOT NULL DEFAULT 0,  -- staff has written -> AI paused
                 ai_replies INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 closed_at TEXT,
                 closed_by TEXT,
                 close_reason TEXT
             );
-            -- Giveaways (überleben Neustarts)
+            -- Giveaways (survive restarts)
             CREATE TABLE IF NOT EXISTS giveaways (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 guild_id INTEGER NOT NULL,
@@ -91,9 +91,9 @@ class Storage:
                 prize TEXT NOT NULL,
                 winners INTEGER NOT NULL DEFAULT 1,
                 host_id INTEGER NOT NULL,
-                ends_at INTEGER NOT NULL,              -- Unix-Zeit
+                ends_at INTEGER NOT NULL,              -- Unix time
                 ended INTEGER NOT NULL DEFAULT 0,
-                winner_ids TEXT NOT NULL DEFAULT '',   -- kommagetrennt
+                winner_ids TEXT NOT NULL DEFAULT '',   -- comma-separated
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS giveaway_entries (
@@ -109,7 +109,7 @@ class Storage:
             );
             """
         )
-        # Migrationen: ältere Datenbanken kennen neuere Spalten noch nicht
+        # Migrations: older databases don't have newer columns yet
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_rules)")}
         if "kit_type" not in columns:
             self._db.execute("ALTER TABLE kit_rules ADD COLUMN kit_type TEXT NOT NULL DEFAULT 'ingame'")
@@ -175,7 +175,7 @@ class Storage:
         self._db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", (key, value))
         self._db.commit()
 
-    # ------------------------------------------------------------ Kitmanager
+    # ------------------------------------------------------------ Kit manager
 
     def add_kit_rule(self, kit: str, trigger: str, phrase: str | None, cooldown_minutes: int,
                      max_claims: int, created_by: str, kit_type: str = "ingame") -> int:
@@ -210,7 +210,7 @@ class Storage:
         return cur.rowcount > 0
 
     def kit_claim_state(self, rule_id: int, player: str) -> tuple[int, float | None]:
-        """(Anzahl Vergaben, Minuten seit der letzten Vergabe oder None)."""
+        """(number of claims, minutes since the last claim or None)."""
         row = self._db.execute(
             "SELECT COUNT(*) AS n, (julianday('now') - julianday(MAX(claimed_at))) * 1440 AS minutes "
             "FROM kit_claims WHERE rule_id = ? AND player = ?",
@@ -231,7 +231,7 @@ class Storage:
         self._db.commit()
 
     def reset_kit_claims(self, rule_id: int | None = None) -> int:
-        """Löscht den Autokit-Verlauf (z. B. nach einem Wipe); manuelle Vergaben bleiben."""
+        """Clears the autokit history (e.g. after a wipe); manual gives are kept."""
         if rule_id is None:
             cur = self._db.execute("DELETE FROM kit_claims WHERE rule_id IS NOT NULL")
         else:
@@ -266,7 +266,7 @@ class Storage:
         ).fetchall()
 
     def delete_custom_kit(self, name: str) -> int:
-        """Löscht Kit, Items und zugehörige Autokit-Regeln. Gibt die Zahl gelöschter Regeln zurück."""
+        """Deletes the kit, its items and related autokit rules. Returns the number of deleted rules."""
         rules = self._db.execute(
             "DELETE FROM kit_rules WHERE kit_type = 'custom' AND kit = ? COLLATE NOCASE", (name,)
         ).rowcount
@@ -319,7 +319,7 @@ class Storage:
     def update_ticket(self, ticket_id: int, **fields) -> None:
         unknown = set(fields) - self._TICKET_FIELDS
         if unknown:
-            raise ValueError(f"Unbekannte Ticket-Felder: {unknown}")
+            raise ValueError(f"Unknown ticket fields: {unknown}")
         assignments = ", ".join(f"{k} = ?" for k in fields)
         self._db.execute(f"UPDATE tickets SET {assignments} WHERE id = ?", (*fields.values(), ticket_id))
         self._db.commit()

@@ -5,7 +5,7 @@ from storage import Storage
 def test_parse_kit_list_skips_status_lines():
     raw = "[KITMANAGER] Active kits:\nstarter\n\"vip kit\"\nstarter\n"
     assert kits.parse_kit_list(raw) == ["starter", "vip kit"]
-    assert kits.parse_kit_list("starter\\nraid") == ["starter", "raid"]  # maskierte Umbrüche
+    assert kits.parse_kit_list("starter\\nraid") == ["starter", "raid"]  # escaped line breaks
 
 
 def test_parse_kit_info():
@@ -25,7 +25,7 @@ def test_parse_auth_groups_and_clean_arg():
 
 def test_quickchat_catalogue_roundtrip():
     phrases = quickchat.all_phrases()
-    assert phrases["d11_quick_chat_orders_slot_6"] == "Hier, nimm das!"
+    assert phrases["d11_quick_chat_orders_slot_6"] == "Here, take this!"
     assert all(quickchat.translate(raw) == text for raw, text in phrases.items())
 
 
@@ -36,7 +36,7 @@ def test_kit_rules_and_claims(tmp_path):
     assert db.kit_claim_state(rid, "Bob") == (0, None)
 
     claim = db.record_kit_claim(rid, "starter", "Bob", "respawn")
-    count, minutes = db.kit_claim_state(rid, "bob")  # Namen ohne Groß-/Kleinschreibung
+    count, minutes = db.kit_claim_state(rid, "bob")  # names are case-insensitive
     assert count == 1 and 0 <= minutes < 1
 
     db.delete_kit_claim(claim)
@@ -44,7 +44,7 @@ def test_kit_rules_and_claims(tmp_path):
 
     db.record_kit_claim(rid, "starter", "Bob", "respawn")
     db.record_kit_claim(None, "vip", "Bob", "discord:admin")
-    assert db.reset_kit_claims() == 1  # manuelle Vergaben bleiben im Verlauf
+    assert db.reset_kit_claims() == 1  # manual claims stay in the history
     assert len(db.kit_claim_history("Bob")) == 1
 
     assert db.set_kit_rule_enabled(rid, False)
@@ -55,26 +55,26 @@ def test_kit_rules_and_claims(tmp_path):
 
 def test_custom_kits_storage(tmp_path):
     db = Storage(tmp_path / "bot.db")
-    assert db.create_custom_kit("Geheim", "nur für Events", "admin")
-    assert not db.create_custom_kit("geheim", None, "admin")  # Name ohne Groß-/Kleinschreibung eindeutig
-    a = db.add_custom_kit_item("geheim", "rifle.ak", 1)
-    db.add_custom_kit_item("Geheim", "ammo.rifle", 128)
-    assert [r["shortname"] for r in db.custom_kit_items("GEHEIM")] == ["rifle.ak", "ammo.rifle"]
+    assert db.create_custom_kit("Secret", "events only", "admin")
+    assert not db.create_custom_kit("secret", None, "admin")  # name is unique case-insensitively
+    a = db.add_custom_kit_item("secret", "rifle.ak", 1)
+    db.add_custom_kit_item("Secret", "ammo.rifle", 128)
+    assert [r["shortname"] for r in db.custom_kit_items("SECRET")] == ["rifle.ak", "ammo.rifle"]
     assert db.custom_kits()[0]["item_count"] == 2
-    assert not db.remove_custom_kit_item("andereskit", a)
-    assert db.remove_custom_kit_item("Geheim", a)
+    assert not db.remove_custom_kit_item("otherkit", a)
+    assert db.remove_custom_kit_item("Secret", a)
 
-    db.add_kit_rule("Geheim", "respawn", None, 0, 1, "admin", kit_type="custom")
-    db.add_kit_rule("Geheim", "respawn", None, 0, 1, "admin")  # gleichnamiges Ingame-Kit bleibt
-    assert db.delete_custom_kit("Geheim") == 1
-    assert db.custom_kit("Geheim") is None and db.custom_kit_items("Geheim") == []
+    db.add_kit_rule("Secret", "respawn", None, 0, 1, "admin", kit_type="custom")
+    db.add_kit_rule("Secret", "respawn", None, 0, 1, "admin")  # in-game kit with the same name stays
+    assert db.delete_custom_kit("Secret") == 1
+    assert db.custom_kit("Secret") is None and db.custom_kit_items("Secret") == []
     assert [r["kit_type"] for r in db.kit_rules()] == ["ingame"]
     db.close()
 
 
 def test_migration_adds_kit_type(tmp_path):
     import sqlite3
-    path = tmp_path / "alt.db"
+    path = tmp_path / "old.db"
     con = sqlite3.connect(path)
     con.execute("CREATE TABLE kit_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, kit TEXT NOT NULL, "
                 "trigger TEXT NOT NULL, phrase TEXT, cooldown_minutes INTEGER NOT NULL DEFAULT 0, "

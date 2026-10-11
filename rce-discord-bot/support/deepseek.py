@@ -1,13 +1,13 @@
-"""Minimaler Client für die API der DeepSeek-Plattform (https://platform.deepseek.com).
+"""Minimal client for the DeepSeek platform API (https://platform.deepseek.com).
 
-API-Key anlegen: https://platform.deepseek.com/api_keys
-Verbrauch/Guthaben: https://platform.deepseek.com/usage
-Die Plattform-API selbst läuft unter https://api.deepseek.com (OpenAI-kompatibel):
-  * POST /chat/completions  – Antworten erzeugen
-  * GET  /user/balance      – Guthaben des Plattform-Kontos
-Auth jeweils per "Authorization: Bearer <Key>".
-Genutzt wird der JSON-Modus (response_format = json_object), damit die Antwort sicher als
-JSON mit "reply"/"escalate" ausgewertet werden kann.
+Create an API key: https://platform.deepseek.com/api_keys
+Usage/balance: https://platform.deepseek.com/usage
+The platform API itself runs at https://api.deepseek.com (OpenAI-compatible):
+  * POST /chat/completions  – generate replies
+  * GET  /user/balance      – balance of the platform account
+Auth via "Authorization: Bearer <key>" in both cases.
+JSON mode (response_format = json_object) is used so the reply can be reliably parsed
+as JSON with "reply"/"escalate".
 """
 from __future__ import annotations
 
@@ -22,18 +22,18 @@ PLATFORM_KEYS_URL = "https://platform.deepseek.com/api_keys"
 
 
 class DeepSeekError(Exception):
-    """Fehler der KI-Anfrage. Der Text ist für das Bot-Log/den Staff gedacht."""
+    """AI request error. The message is meant for the bot log/staff."""
 
 
-# Verständliche Meldungen für die dokumentierten HTTP-Fehlercodes der API
+# Readable messages for the API's documented HTTP error codes
 _HTTP_HINTS = {
-    400: "Ungültige Anfrage – stimmt DEEPSEEK_MODEL?",
-    401: "API-Key ungültig (DEEPSEEK_API_KEY prüfen).",
-    402: f"Guthaben des DeepSeek-Kontos aufgebraucht – aufladen unter {PLATFORM_USAGE_URL}",
-    422: "Ungültige Parameter – stimmt DEEPSEEK_MODEL?",
-    429: "Rate-Limit erreicht – zu viele Anfragen.",
-    500: "DeepSeek-Serverfehler.",
-    503: "DeepSeek ist überlastet.",
+    400: "Invalid request – is DEEPSEEK_MODEL correct?",
+    401: "Invalid API key (check DEEPSEEK_API_KEY).",
+    402: f"DeepSeek account balance used up – top up at {PLATFORM_USAGE_URL}",
+    422: "Invalid parameters – is DEEPSEEK_MODEL correct?",
+    429: "Rate limit reached – too many requests.",
+    500: "DeepSeek server error.",
+    503: "DeepSeek is overloaded.",
 }
 
 
@@ -56,7 +56,7 @@ class DeepSeekClient:
 
     async def _request(self, method: str, path: str, payload: dict | None = None) -> dict:
         if not self.enabled:
-            raise DeepSeekError(f"Kein DEEPSEEK_API_KEY konfiguriert (Key anlegen: {PLATFORM_KEYS_URL}).")
+            raise DeepSeekError(f"No DEEPSEEK_API_KEY configured (create a key: {PLATFORM_KEYS_URL}).")
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(timeout=self.timeout)
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -65,24 +65,24 @@ class DeepSeekClient:
                                              headers=headers) as resp:
                 if resp.status != 200:
                     body = (await resp.text())[:300]
-                    hint = _HTTP_HINTS.get(resp.status, "Unerwartete Antwort.")
+                    hint = _HTTP_HINTS.get(resp.status, "Unexpected response.")
                     log.warning("DeepSeek HTTP %s: %s", resp.status, body)
                     raise DeepSeekError(f"HTTP {resp.status}: {hint}")
                 return await resp.json(content_type=None)
         except aiohttp.ClientError as exc:
-            raise DeepSeekError(f"Verbindung zu DeepSeek fehlgeschlagen: {exc}") from exc
+            raise DeepSeekError(f"Connection to DeepSeek failed: {exc}") from exc
         except TimeoutError as exc:
-            raise DeepSeekError("DeepSeek hat nicht rechtzeitig geantwortet.") from exc
+            raise DeepSeekError("DeepSeek did not respond in time.") from exc
 
     async def balance(self) -> dict:
-        """Guthaben des Plattform-Kontos: {"is_available": bool, "balance_infos": [...]}."""
+        """Balance of the platform account: {"is_available": bool, "balance_infos": [...]}."""
         data = await self._request("GET", "/user/balance")
         if not isinstance(data, dict):
-            raise DeepSeekError("Unerwartetes Antwortformat von /user/balance.")
+            raise DeepSeekError("Unexpected response format from /user/balance.")
         return data
 
     async def chat_json(self, messages: list[dict], *, max_tokens: int = 1200, temperature: float = 0.4) -> str:
-        """Schickt den Chat und liefert den Antworttext (JSON-String) zurück."""
+        """Sends the chat and returns the reply text (a JSON string)."""
         payload = {
             "model": self.model,
             "messages": messages,
@@ -97,8 +97,8 @@ class DeepSeekClient:
             choice = data["choices"][0]
             content = choice["message"].get("content") or ""
         except (KeyError, IndexError, TypeError, AttributeError) as exc:
-            raise DeepSeekError("Unerwartetes Antwortformat von DeepSeek.") from exc
+            raise DeepSeekError("Unexpected response format from DeepSeek.") from exc
         if not content.strip():
-            # Laut Doku kann der JSON-Modus gelegentlich leeren Inhalt liefern
-            raise DeepSeekError(f"Leere Antwort (finish_reason={choice.get('finish_reason')}).")
+            # According to the docs, JSON mode can occasionally return empty content
+            raise DeepSeekError(f"Empty response (finish_reason={choice.get('finish_reason')}).")
         return content

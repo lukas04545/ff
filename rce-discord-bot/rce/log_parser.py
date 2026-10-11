@@ -1,10 +1,10 @@
-"""Erkennt Ereignisse in den Live-Konsolenzeilen der Rust Console Edition.
+"""Detects events in the live console lines of Rust Console Edition.
 
-ANNAHME: Die Muster unten entsprechen dem Log-Format, das RCE-Server über
-WebRCON ausgeben (abgeleitet aus der Community-Bibliothek rce.js, Stand 2025).
-Facepunch kann das Format mit Updates ändern. Dann hier die Regex anpassen –
-der restliche Bot muss nicht angefasst werden. Benannte Gruppen (?P<...>)
-müssen erhalten bleiben.
+ASSUMPTION: the patterns below match the log format RCE servers emit over
+WebRCON (derived from the community library rce.js, as of 2025).
+Facepunch may change the format with updates. If so, adjust the regexes here –
+the rest of the bot doesn't need to be touched. Named groups (?P<...>)
+must be kept.
 """
 from __future__ import annotations
 
@@ -15,21 +15,21 @@ from . import quickchat
 from .kill_sources import KillerType, classify
 
 # --------------------------------------------------------------------------
-# Muster – hier anpassen, falls sich das Log-Format ändert
+# Patterns – adjust here if the log format changes
 # --------------------------------------------------------------------------
 PATTERNS: dict[str, re.Pattern[str]] = {
-    # [CHAT LOCAL] Spieler : d11_quick_chat_responses_slot_5
+    # [CHAT LOCAL] Player : d11_quick_chat_responses_slot_5
     "chat": re.compile(r"\[CHAT (?P<channel>LOCAL|TEAM|SERVER|GLOBAL)\] (?P<player>.+?) : (?P<message>.+)$"),
-    # Opfer was killed by Täter
+    # Victim was killed by Killer
     "kill": re.compile(r"^(?P<victim>.+?) was killed by (?P<killer>.+?)$"),
-    # Spieler was suicide by Suicide
+    # Player was suicide by Suicide
     "suicide": re.compile(r"^(?P<player>.+?) was suicide by Suicide"),
-    # Spieler [SCARLETT] has entered the game   (SCARLETT = Xbox, sonst PlayStation)
+    # Player [SCARLETT] has entered the game   (SCARLETT = Xbox, otherwise PlayStation)
     "respawn": re.compile(r"^(?P<player>.+?) \[(?P<platform>[^\]]*)\] has entered the game"),
-    # [Admin] Added [Spieler] to [Banned]
+    # [Admin] Added [Player] to [Banned]
     "ban": re.compile(r"\[(?P<admin>[^\]]+)\] Added \[(?P<player>[^\]]+)\] to \[Banned\]"),
     "unban": re.compile(r"\[(?P<admin>[^\]]+)\] Removed \[(?P<player>[^\]]+)\] from \[Banned\]"),
-    # [Admin] Added [Spieler] to Group [Admin]
+    # [Admin] Added [Player] to Group [Admin]
     "role_add": re.compile(r"\[(?P<admin>[^\]]+)\] Added \[(?P<player>[^\]]+)\] to Group \[(?P<role>[^\]]+)\]"),
     "role_remove": re.compile(
         r"\[(?P<admin>[^\]]+)\] Removed \[(?P<player>[^\]]+)\] from Group \[(?P<role>[^\]]+)\]"
@@ -40,29 +40,29 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "team_promote": re.compile(
         r"\[(?P<player>[^\]]+)\] promoted \[(?P<target>[^\]]+)\] as their new leader of the team, ID: \[(?P<team>\d+)\]"
     ),
-    # [ServerVar] Admin giving Spieler kit starter
+    # [ServerVar] Admin giving Player kit starter
     "kit_give": re.compile(r"\[ServerVar\] (?P<admin>.+?) giving (?P<player>.+?) kit (?P<kit>\S+)"),
-    # giving Spieler 1000 x Wood
+    # giving Player 1000 x Wood
     "item_spawn": re.compile(r"\bgiving (?P<player>.+?) (?P<amount>[\d.]+) x (?P<item>.+)$"),
     # Executing console system command 'kick "x"'
     "command": re.compile(r"Executing console system command '(?P<command>[^']+)'"),
     "save": re.compile(r"^\[ SAVE \] Saved (?P<entities>\d+) ents"),
 }
 
-# Zeilen, die mit "[EVENT" beginnen und einen dieser Bezeichner enthalten
+# Lines that start with "[EVENT" and contain one of these identifiers
 EVENT_NAMES = {
     "event_airdrop": "📦 Airdrop",
     "event_cargoship": "🚢 Cargo Ship",
     "event_cargoheli": "🚁 Chinook",
-    "event_helicopter": "🚁 Patrouillen-Heli",
-    "event_halloween": "🎃 Halloween-Event",
-    "event_xmas": "🎄 Weihnachts-Event",
-    "event_easter": "🐣 Oster-Event",
+    "event_helicopter": "🚁 Patrol Helicopter",
+    "event_halloween": "🎃 Halloween Event",
+    "event_xmas": "🎄 Christmas Event",
+    "event_easter": "🐣 Easter Event",
 }
 
 
 # --------------------------------------------------------------------------
-# Ereignis-Typen
+# Event types
 # --------------------------------------------------------------------------
 @dataclass(slots=True)
 class ChatEvent:
@@ -142,7 +142,7 @@ Event = (
 
 
 def parse_line(line: str) -> Event | None:
-    """Wandelt eine Konsolenzeile in ein Ereignis um (oder None)."""
+    """Turn a console line into an event (or None)."""
     line = line.strip()
     if not line:
         return None
@@ -180,9 +180,9 @@ def parse_line(line: str) -> Event | None:
         return TeamEvent("promote", m["player"], int(m["team"]), m["target"])
 
     if m := PATTERNS["kit_give"].search(line):
-        return AdminActionEvent("kit", f"{m['admin']} gibt {m['player']} Kit `{m['kit']}`")
+        return AdminActionEvent("kit", f"{m['admin']} gives {m['player']} kit `{m['kit']}`")
     if m := PATTERNS["item_spawn"].search(line):
-        return AdminActionEvent("item", f"{m['player']} erhält {m['amount']} × {m['item']}")
+        return AdminActionEvent("item", f"{m['player']} receives {m['amount']} × {m['item']}")
     if m := PATTERNS["command"].search(line):
         return AdminActionEvent("command", m["command"])
 

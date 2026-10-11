@@ -1,15 +1,15 @@
-"""Kitmanager: Kits anzeigen, vergeben, bearbeiten und Autokits.
+"""Kit manager: list, give and edit kits, plus autokits.
 
-Grundlage sind die eingebauten Kit-Befehle der Console Edition (kein Plugin nötig):
-  kit list | kit info "Kit" | kit givetoplayer "Kit" "Spieler" | kit givetogroup "Kit" "Gruppe"
+Built on Console Edition's built-in kit commands (no plugin needed):
+  kit list | kit info "Kit" | kit givetoplayer "Kit" "Player" | kit givetogroup "Kit" "Group"
   kit giveall "Kit" | kit add ... | kit remove "Kit" "ID"
-Die Syntax der verändernden Befehle ist als Vorlage in der .env anpassbar (siehe README).
+The syntax of the modifying commands can be customized as templates in the .env (see README).
 
-Autokits (vom Bot gesteuert, Regeln in der SQLite-Datenbank):
-  * Auslöser "respawn":   Spieler spawnt ("<Name> [..] has entered the game") -> Kit
-  * Auslöser "quickchat": Spieler sendet eine bestimmte Quick-Chat-Phrase -> Kit
-  Je Regel: Cooldown pro Spieler und optionales Limit (z. B. 1x pro Wipe).
-Vergebene Kits sind auf RCE einmalig und gehen beim Tod verloren.
+Autokits (driven by the bot, rules stored in the SQLite database):
+  * Trigger "respawn":   player spawns ("<Name> [..] has entered the game") -> kit
+  * Trigger "quickchat": player sends a specific quick chat phrase -> kit
+  Per rule: cooldown per player and an optional limit (e.g. 1x per wipe).
+Kits given on RCE are one-off and are lost on death.
 """
 from __future__ import annotations
 
@@ -35,18 +35,18 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("rce.kits")
 
-TRIGGER_LABELS = {"respawn": "🔄 Respawn", "quickchat": "💬 Quick-Chat"}
-KIT_TYPE_LABELS = {"ingame": "Ingame-Kit", "custom": "🔒 Custom Kit (nur Bot)"}
-ANNOUNCE_THROTTLE_SECONDS = 30  # max. eine Cooldown-Meldung pro Spieler in diesem Zeitraum
+TRIGGER_LABELS = {"respawn": "🔄 Respawn", "quickchat": "💬 Quick chat"}
+KIT_TYPE_LABELS = {"ingame": "In-game kit", "custom": "🔒 Custom kit (bot only)"}
+ANNOUNCE_THROTTLE_SECONDS = 30  # max. one cooldown message per player within this period
 
 
 class _CachedList:
-    """Zwischenspeicher für RCON-Listen (Kits, Gruppen) – für schnelle Autovervollständigung."""
+    """Cache for RCON lists (kits, groups) – for fast autocomplete."""
 
     def __init__(self, bot: "RceBot", command: str, parser: Callable[[str], list[str]], ttl: float = 300):
         self.bot, self.command, self.parser, self.ttl = bot, command, parser, ttl
         self.items: list[str] = []
-        self._fetched_at: float | None = None  # None = noch nie geladen
+        self._fetched_at: float | None = None  # None = never loaded
         self._task: asyncio.Task | None = None
 
     def invalidate(self) -> None:
@@ -56,7 +56,7 @@ class _CachedList:
         try:
             raw = await self.bot.rcon.command(self.command)
         except RconError as exc:
-            log.debug("'%s' fehlgeschlagen: %s", self.command, exc)
+            log.debug("'%s' failed: %s", self.command, exc)
             return
         self.items = self.parser(raw)
         self._fetched_at = time.monotonic()
@@ -67,7 +67,7 @@ class _CachedList:
             self._task = asyncio.create_task(self._refresh())
         if self._task is not None and not self._task.done() and (force or not self.items):
             try:
-                # shield: läuft weiter, auch wenn wir nicht länger warten (Autocomplete hat < 3 s)
+                # shield: keeps running even if we stop waiting (autocomplete has < 3 s)
                 await asyncio.wait_for(asyncio.shield(self._task), max_wait)
             except asyncio.TimeoutError:
                 pass
@@ -83,21 +83,21 @@ class ConfirmView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return interaction.user.id == self.user_id
 
-    @discord.ui.button(label="Ja, an alle vergeben", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Yes, give to everyone", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         self.confirmed = True
-        await interaction.response.edit_message(content="⏳ Wird vergeben …", view=None)
+        await interaction.response.edit_message(content="⏳ Giving …", view=None)
         self.stop()
 
-    @discord.ui.button(label="Abbrechen", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         self.confirmed = False
-        await interaction.response.edit_message(content="Abgebrochen.", view=None)
+        await interaction.response.edit_message(content="Cancelled.", view=None)
         self.stop()
 
 
 class Kits(commands.Cog):
-    kit = app_commands.Group(name="kit", description="Kitmanager", guild_only=True)
+    kit = app_commands.Group(name="kit", description="Kit manager", guild_only=True)
 
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
@@ -106,7 +106,7 @@ class Kits(commands.Cog):
         self.phrases = quickchat.all_phrases()
         self._announced: dict[str, float] = {}
 
-    # ------------------------------------------------------------ Hilfen
+    # ------------------------------------------------------------ Helpers
 
     def _audit(self, text: str) -> None:
         feed = self.bot.feed(self.bot.config.admin_log_channel_id)
@@ -124,24 +124,24 @@ class Kits(commands.Cog):
 
     def _rule_text(self, rule) -> str:
         if rule["trigger"] == "quickchat":
-            trigger = f"Quick-Chat „{self.phrases.get(rule['phrase'], rule['phrase'])}“"
+            trigger = f"Quick chat \"{self.phrases.get(rule['phrase'], rule['phrase'])}\""
         else:
-            trigger = "bei jedem Respawn"
+            trigger = "on every respawn"
         lock = "🔒 " if rule["kit_type"] == "custom" else ""
         parts = [f"`#{rule['id']}` {lock}**{safe_md(rule['kit'])}** – {trigger}"]
         if rule["cooldown_minutes"]:
             parts.append(f"Cooldown {format_duration(rule['cooldown_minutes'] * 60)}")
         if rule["max_claims"]:
-            parts.append(f"max. {rule['max_claims']}× pro Spieler")
+            parts.append(f"max. {rule['max_claims']}× per player")
         if not rule["enabled"]:
-            parts.append("⏸️ pausiert")
+            parts.append("⏸️ paused")
         return " · ".join(parts)
 
     @staticmethod
     def _response_block(response: str) -> str:
         response = response.strip()
         if not response:
-            return "(Keine Ausgabe vom Server – bei RCE für Kit-Befehle normal.)"
+            return "(No output from the server – normal for kit commands on RCE.)"
         return f"```\n{response[:1500].replace('```', 'ˋˋˋ')}\n```"
 
     # ------------------------------------------------------------ Autocomplete
@@ -153,13 +153,13 @@ class Kits(commands.Cog):
 
     async def _rule_kit_ac(self, interaction: discord.Interaction, current: str
                            ) -> list[app_commands.Choice[str]]:
-        """Für /kit autokit-neu: Ingame-Kits und/oder Custom Kits, je nach gewählter Art."""
-        art = getattr(interaction.namespace, "art", None)
-        custom = [] if art == "ingame" else [
+        """For /kit autokit-add: in-game kits and/or custom kits, depending on the chosen type."""
+        chosen = getattr(interaction.namespace, "kit_type", None)
+        custom = [] if chosen == "ingame" else [
             app_commands.Choice(name=f"🔒 {r['name']}"[:100], value=r["name"][:100])
             for r in self.bot.db.custom_kits() if current.lower() in r["name"].lower()
         ]
-        ingame = [] if art == "custom" else await self._kit_ac(interaction, current)
+        ingame = [] if chosen == "custom" else await self._kit_ac(interaction, current)
         return (custom + ingame)[:25]
 
     async def _player_ac(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
@@ -183,16 +183,16 @@ class Kits(commands.Cog):
                 choices.append(app_commands.Choice(name=label[:100], value=int(rule["id"])))
         return choices[:25]
 
-    # ------------------------------------------------------------ Anzeigen (alle)
+    # ------------------------------------------------------------ Display (everyone)
 
-    @kit.command(name="liste", description="Zeigt alle Kits auf dem Server.")
+    @kit.command(name="list", description="Shows all kits on the server.")
     async def kit_list(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         names = await self.kit_names.get(force=True, max_wait=8)
         if not self.bot.rcon.connected and not names:
-            raise RconError("Keine RCON-Verbindung zum Rust-Server.")
+            raise RconError("No RCON connection to the Rust server.")
         if not names:
-            await interaction.followup.send("Auf dem Server sind keine Kits angelegt.")
+            await interaction.followup.send("No kits have been created on the server.")
             return
         auto = {r["kit"].lower() for r in self.bot.db.kit_rules(enabled_only=True) if r["kit_type"] == "ingame"}
         lines = [f"• **{safe_md(n)}**" + (" · 🤖 Autokit" if n.lower() in auto else "") for n in names]
@@ -201,8 +201,8 @@ class Kits(commands.Cog):
         embed.set_footer(text="Details: /kit info · Autokits: /kit autokits")
         await interaction.followup.send(embed=embed)
 
-    @kit.command(name="info", description="Zeigt den Inhalt eines Kits.")
-    @app_commands.describe(kit="Name des Kits")
+    @kit.command(name="info", description="Shows the contents of a kit.")
+    @app_commands.describe(kit="Kit name")
     @app_commands.autocomplete(kit=_kit_ac)
     async def kit_info(self, interaction: discord.Interaction, kit: str) -> None:
         name = kitparse.clean_arg(kit)
@@ -211,7 +211,7 @@ class Kits(commands.Cog):
         items = kitparse.parse_kit_info(raw)
         embed = discord.Embed(title=f"🎒 Kit: {name}", colour=discord.Colour.dark_green())
         if not items:
-            embed.description = "Keine Items erkannt. Antwort des Servers:\n" + self._response_block(raw)
+            embed.description = "No items recognized. Server response:\n" + self._response_block(raw)
         for container in kitparse.CONTAINERS:
             lines = [
                 f"`{i.short_name}` × {i.amount}" + (f" ({i.condition} %)" if i.condition != 100 else "")
@@ -230,96 +230,96 @@ class Kits(commands.Cog):
                             inline=False)
         await interaction.followup.send(embed=embed)
 
-    @kit.command(name="autokits", description="Zeigt, welche Kits automatisch vergeben werden.")
+    @kit.command(name="autokits", description="Shows which kits are given out automatically.")
     async def autokit_list(self, interaction: discord.Interaction) -> None:
         rules = self.bot.db.kit_rules()
         if not rules:
-            await interaction.response.send_message("Es sind keine Autokits eingerichtet.", ephemeral=True)
+            await interaction.response.send_message("No autokits are set up.", ephemeral=True)
             return
         embed = discord.Embed(title="🤖 Autokits", description="\n".join(self._rule_text(r) for r in rules)[:4000],
                               colour=discord.Colour.dark_green())
-        embed.set_footer(text="Quick-Chat-Kits: Phrase ingame senden · Kits gehen beim Tod verloren")
+        embed.set_footer(text="Quick chat kits: send the phrase in game · kits are lost on death")
         await interaction.response.send_message(embed=embed)
 
-    # ------------------------------------------------------------ Vergeben (Admins)
+    # ------------------------------------------------------------ Giving (admins)
 
-    @kit.command(name="geben", description="Gibt einem Spieler ein Kit.")
-    @app_commands.describe(kit="Name des Kits", spieler="Ingame-Name")
-    @app_commands.autocomplete(kit=_kit_ac, spieler=_player_ac)
+    @kit.command(name="give", description="Gives a kit to a player.")
+    @app_commands.describe(kit="Kit name", player="In-game name")
+    @app_commands.autocomplete(kit=_kit_ac, player=_player_ac)
     @admin_only()
-    async def kit_give(self, interaction: discord.Interaction, kit: str, spieler: str) -> None:
-        name, player = kitparse.clean_arg(kit), sanitize_player_name(spieler)
+    async def kit_give(self, interaction: discord.Interaction, kit: str, player: str) -> None:
+        name, player = kitparse.clean_arg(kit), sanitize_player_name(player)
         await interaction.response.defer(ephemeral=True)
         response = await self.bot.rcon.command(
             self.bot.config.kit_give_template.format(kit=name, name=player), expect_response=False)
         self.bot.db.record_kit_claim(None, name, player, f"discord:{interaction.user}")
-        self._audit(f"🎒 {self._who(interaction)}: Kit **{safe_md(name)}** an **{safe_md(player)}**")
-        hint = "" if player in self.bot.online_players else "\n⚠️ Spieler ist laut Spielerliste nicht online."
-        await interaction.followup.send(f"🎒 Kit **{safe_md(name)}** an **{safe_md(player)}** gesendet.{hint}\n"
+        self._audit(f"🎒 {self._who(interaction)}: Kit **{safe_md(name)}** to **{safe_md(player)}**")
+        hint = "" if player in self.bot.online_players else "\n⚠️ Player is not online according to the player list."
+        await interaction.followup.send(f"🎒 Kit **{safe_md(name)}** sent to **{safe_md(player)}**.{hint}\n"
                                         f"{self._response_block(response)}", ephemeral=True)
 
-    @kit.command(name="gruppe", description="Gibt allen Mitgliedern einer Auth-Gruppe ein Kit.")
-    @app_commands.describe(kit="Name des Kits", gruppe="Auth-Gruppe (z. B. VIP, Admin)")
-    @app_commands.autocomplete(kit=_kit_ac, gruppe=_group_ac)
+    @kit.command(name="group", description="Gives a kit to all members of an auth group.")
+    @app_commands.describe(kit="Kit name", group="Auth group (e.g. VIP, Admin)")
+    @app_commands.autocomplete(kit=_kit_ac, group=_group_ac)
     @admin_only()
-    async def kit_give_group(self, interaction: discord.Interaction, kit: str, gruppe: str) -> None:
-        name, group = kitparse.clean_arg(kit), kitparse.clean_arg(gruppe)
+    async def kit_give_group(self, interaction: discord.Interaction, kit: str, group: str) -> None:
+        name, group = kitparse.clean_arg(kit), kitparse.clean_arg(group)
         await interaction.response.defer(ephemeral=True)
         response = await self.bot.rcon.command(
             self.bot.config.kit_give_group_template.format(kit=name, group=group), expect_response=False)
-        self._audit(f"🎒 {self._who(interaction)}: Kit **{safe_md(name)}** an Gruppe `{group}`")
-        await interaction.followup.send(f"🎒 Kit **{safe_md(name)}** an Gruppe `{group}` gesendet.\n"
+        self._audit(f"🎒 {self._who(interaction)}: Kit **{safe_md(name)}** to group `{group}`")
+        await interaction.followup.send(f"🎒 Kit **{safe_md(name)}** sent to group `{group}`.\n"
                                         f"{self._response_block(response)}", ephemeral=True)
 
-    @kit.command(name="alle", description="Gibt ALLEN Spielern auf dem Server ein Kit.")
-    @app_commands.describe(kit="Name des Kits")
+    @kit.command(name="all", description="Gives a kit to ALL players on the server.")
+    @app_commands.describe(kit="Kit name")
     @app_commands.autocomplete(kit=_kit_ac)
     @admin_only()
     async def kit_give_all(self, interaction: discord.Interaction, kit: str) -> None:
         name = kitparse.clean_arg(kit)
         view = ConfirmView(interaction.user.id)
         await interaction.response.send_message(
-            f"Kit **{safe_md(name)}** wirklich an **alle {len(self.bot.online_players)} Online-Spieler** vergeben?",
+            f"Really give kit **{safe_md(name)}** to **all {len(self.bot.online_players)} online players**?",
             view=view, ephemeral=True)
         await view.wait()
         if not view.confirmed:
             if view.confirmed is None:
-                await interaction.edit_original_response(content="Zeit abgelaufen – abgebrochen.", view=None)
+                await interaction.edit_original_response(content="Timed out – cancelled.", view=None)
             return
         response = await self.bot.rcon.command(
             self.bot.config.kit_give_all_template.format(kit=name), expect_response=False)
-        self._audit(f"🎒 {self._who(interaction)}: Kit **{safe_md(name)}** an **alle Spieler**")
+        self._audit(f"🎒 {self._who(interaction)}: Kit **{safe_md(name)}** to **all players**")
         await interaction.edit_original_response(
-            content=f"🎒 Kit **{safe_md(name)}** an alle gesendet.\n{self._response_block(response)}")
+            content=f"🎒 Kit **{safe_md(name)}** sent to everyone.\n{self._response_block(response)}")
 
-    # ------------------------------------------------------------ Bearbeiten (Admins)
+    # ------------------------------------------------------------ Editing (admins)
 
-    @kit.command(name="item-hinzufuegen", description="Fügt einem Kit ein Item hinzu (legt das Kit ggf. neu an).")
-    @app_commands.describe(kit="Kit-Name (neuer Name = neues Kit)", item="Item-Shortname, z. B. rifle.ak",
-                           menge="Anzahl", zustand="Zustand in Prozent", platz="Wohin das Item kommt")
-    @app_commands.choices(platz=[app_commands.Choice(name=kitparse.CONTAINER_LABELS[c.lower()], value=c)
+    @kit.command(name="add-item", description="Adds an item to a kit (creates the kit if needed).")
+    @app_commands.describe(kit="Kit name (new name = new kit)", item="Item shortname, e.g. rifle.ak",
+                           amount="Amount", condition="Condition in percent", container="Where the item goes")
+    @app_commands.choices(container=[app_commands.Choice(name=kitparse.CONTAINER_LABELS[c.lower()], value=c)
                                  for c in kitparse.CONTAINERS])
     @app_commands.autocomplete(kit=_kit_ac)
     @admin_only()
     async def kit_add_item(self, interaction: discord.Interaction, kit: str, item: str,
-                           menge: app_commands.Range[int, 1, 100000] = 1,
-                           zustand: app_commands.Range[int, 1, 100] = 100,
-                           platz: app_commands.Choice[str] | None = None) -> None:
+                           amount: app_commands.Range[int, 1, 100000] = 1,
+                           condition: app_commands.Range[int, 1, 100] = 100,
+                           container: app_commands.Choice[str] | None = None) -> None:
         name, short = kitparse.clean_arg(kit), kitparse.clean_arg(item)
-        container = platz.value if platz else "Main"
+        slot = container.value if container else "Main"
         await interaction.response.defer(ephemeral=True)
         response = await self.bot.rcon.command(
-            self.bot.config.kit_add_template.format(kit=name, item=short, amount=menge, condition=zustand,
-                                                    container=container),
+            self.bot.config.kit_add_template.format(kit=name, item=short, amount=amount, condition=condition,
+                                                    container=slot),
             expect_response=False)
         self.kit_names.invalidate()
-        self._audit(f"🛠️ {self._who(interaction)}: Kit **{safe_md(name)}** + `{short}` × {menge} ({container})")
+        self._audit(f"🛠️ {self._who(interaction)}: Kit **{safe_md(name)}** + `{short}` × {amount} ({slot})")
         await interaction.followup.send(
-            f"➕ `{short}` × {menge} zu **{safe_md(name)}** hinzugefügt (Prüfen mit `/kit info`).\n"
+            f"➕ Added `{short}` × {amount} to **{safe_md(name)}** (check with `/kit info`).\n"
             f"{self._response_block(response)}", ephemeral=True)
 
-    @kit.command(name="item-entfernen", description="Entfernt ein Item aus einem Kit (ID siehe /kit info).")
-    @app_commands.describe(kit="Name des Kits", item_id="Item-ID aus der Ausgabe von /kit info")
+    @kit.command(name="remove-item", description="Removes an item from a kit (see /kit info for the ID).")
+    @app_commands.describe(kit="Kit name", item_id="Item ID from the /kit info output")
     @app_commands.autocomplete(kit=_kit_ac)
     @admin_only()
     async def kit_remove_item(self, interaction: discord.Interaction, kit: str,
@@ -328,132 +328,132 @@ class Kits(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         response = await self.bot.rcon.command(
             self.bot.config.kit_remove_template.format(kit=name, id=item_id), expect_response=False)
-        self._audit(f"🛠️ {self._who(interaction)}: Kit **{safe_md(name)}** – Item-ID {item_id} entfernt")
-        await interaction.followup.send(f"➖ Item {item_id} aus **{safe_md(name)}** entfernt.\n"
+        self._audit(f"🛠️ {self._who(interaction)}: Kit **{safe_md(name)}** – removed item ID {item_id}")
+        await interaction.followup.send(f"➖ Removed item {item_id} from **{safe_md(name)}**.\n"
                                         f"{self._response_block(response)}", ephemeral=True)
 
-    # ------------------------------------------------------------ Autokit-Regeln (Admins)
+    # ------------------------------------------------------------ Autokit rules (admins)
 
-    @kit.command(name="autokit-neu", description="Richtet ein Autokit ein (Respawn oder Quick-Chat-Phrase).")
+    @kit.command(name="autokit-add", description="Sets up an autokit (respawn or quick chat phrase).")
     @app_commands.describe(
-        kit="Name des Kits",
-        ausloeser="Wann das Kit vergeben wird",
-        art="Ingame-Kit (Standard) oder Custom Kit aus /customkit",
-        phrase="Nur bei Quick-Chat: welche Phrase das Kit auslöst",
-        cooldown_minuten="Wartezeit pro Spieler bis zur nächsten Vergabe (0 = keine)",
-        max_pro_spieler="Höchstzahl Vergaben pro Spieler bis zum Reset (0 = unbegrenzt)",
+        kit="Kit name",
+        trigger="When the kit is given",
+        kit_type="In-game kit (default) or custom kit from /customkit",
+        phrase="Quick chat only: which phrase triggers the kit",
+        cooldown_minutes="Wait time per player until the next claim (0 = none)",
+        max_per_player="Max. claims per player until reset (0 = unlimited)",
     )
-    @app_commands.choices(ausloeser=[app_commands.Choice(name=v, value=k) for k, v in TRIGGER_LABELS.items()],
-                          art=[app_commands.Choice(name=v, value=k) for k, v in KIT_TYPE_LABELS.items()])
+    @app_commands.choices(trigger=[app_commands.Choice(name=v, value=k) for k, v in TRIGGER_LABELS.items()],
+                          kit_type=[app_commands.Choice(name=v, value=k) for k, v in KIT_TYPE_LABELS.items()])
     @app_commands.autocomplete(kit=_rule_kit_ac, phrase=_phrase_ac)
     @admin_only()
-    async def autokit_add(self, interaction: discord.Interaction, kit: str, ausloeser: app_commands.Choice[str],
+    async def autokit_add(self, interaction: discord.Interaction, kit: str, trigger: app_commands.Choice[str],
                           phrase: str | None = None,
-                          cooldown_minuten: app_commands.Range[int, 0, 525600] = 0,
-                          max_pro_spieler: app_commands.Range[int, 0, 10000] = 0,
-                          art: app_commands.Choice[str] | None = None) -> None:
+                          cooldown_minutes: app_commands.Range[int, 0, 525600] = 0,
+                          max_per_player: app_commands.Range[int, 0, 10000] = 0,
+                          kit_type: app_commands.Choice[str] | None = None) -> None:
         name = kitparse.clean_arg(kit)
-        trigger = ausloeser.value
-        if art is not None:
-            kit_type = art.value
+        trigger_key = trigger.value
+        if kit_type is not None:
+            ktype = kit_type.value
         else:
-            # Art nicht gewählt: Custom Kit, wenn es nur als Custom Kit existiert
+            # No type chosen: custom kit if it only exists as a custom kit
             ingame_names = {k.lower() for k in await self.kit_names.get(max_wait=3)}
             is_custom = self.bot.db.custom_kit(name) is not None and name.lower() not in ingame_names
-            kit_type = "custom" if is_custom else "ingame"
-        if kit_type == "custom":
+            ktype = "custom" if is_custom else "ingame"
+        if ktype == "custom":
             custom = self.bot.db.custom_kit(name)
             if custom is None:
                 await interaction.response.send_message(
-                    f"Custom Kit **{safe_md(name)}** gibt es nicht (`/customkit liste`).", ephemeral=True)
+                    f"Custom kit **{safe_md(name)}** does not exist (`/customkit list`).", ephemeral=True)
                 return
             name = custom["name"]
         notes = []
-        if trigger == "quickchat":
+        if trigger_key == "quickchat":
             if not phrase:
                 await interaction.response.send_message(
-                    "Für den Auslöser Quick-Chat bitte eine `phrase` auswählen.", ephemeral=True)
+                    "Please pick a `phrase` for the quick chat trigger.", ephemeral=True)
                 return
             phrase = phrase.strip()
             if phrase not in self.phrases:
-                notes.append("⚠️ Unbekannte Phrase – sie muss exakt so im Konsolen-Log stehen.")
+                notes.append("⚠️ Unknown phrase – it must appear exactly like this in the console log.")
             clash = [r for r in self.bot.db.kit_rules(trigger="quickchat") if r["phrase"] == phrase]
             if clash:
-                notes.append(f"ℹ️ Diese Phrase löst bereits Regel #{clash[0]['id']} aus – beide Kits werden vergeben.")
+                notes.append(f"ℹ️ This phrase already triggers rule #{clash[0]['id']} – both kits will be given.")
         else:
             phrase = None
-            if cooldown_minuten == 0 and max_pro_spieler == 0:
-                notes.append("ℹ️ Ohne Cooldown gibt es das Kit bei **jedem** Respawn.")
+            if cooldown_minutes == 0 and max_per_player == 0:
+                notes.append("ℹ️ Without a cooldown the kit is given on **every** respawn.")
 
-        if kit_type == "ingame":
+        if ktype == "ingame":
             known = await self.kit_names.get(max_wait=3)
             if known and name.lower() not in (k.lower() for k in known):
-                notes.append(f"⚠️ Kit **{safe_md(name)}** wurde in `kit list` nicht gefunden.")
+                notes.append(f"⚠️ Kit **{safe_md(name)}** was not found in `kit list`.")
         elif not self.bot.db.custom_kit_items(name):
-            notes.append("⚠️ Das Custom Kit ist noch leer.")
+            notes.append("⚠️ The custom kit is still empty.")
 
-        rule_id = self.bot.db.add_kit_rule(name, trigger, phrase, cooldown_minuten, max_pro_spieler,
-                                           str(interaction.user), kit_type)
+        rule_id = self.bot.db.add_kit_rule(name, trigger_key, phrase, cooldown_minutes, max_per_player,
+                                           str(interaction.user), ktype)
         rule = self.bot.db.kit_rule(rule_id)
-        self._audit(f"🤖 {self._who(interaction)}: Autokit angelegt – {self._rule_text(rule)}")
-        text = f"✅ Autokit angelegt:\n{self._rule_text(rule)}"
+        self._audit(f"🤖 {self._who(interaction)}: Autokit created – {self._rule_text(rule)}")
+        text = f"✅ Autokit created:\n{self._rule_text(rule)}"
         if notes:
             text += "\n\n" + "\n".join(notes)
         await interaction.response.send_message(text, ephemeral=True)
 
-    @kit.command(name="autokit-status", description="Pausiert oder aktiviert ein Autokit.")
-    @app_commands.describe(regel="Autokit-Regel", aktiv="An oder aus")
-    @app_commands.autocomplete(regel=_rule_ac)
+    @kit.command(name="autokit-toggle", description="Pauses or enables an autokit.")
+    @app_commands.describe(rule="Autokit rule", enabled="On or off")
+    @app_commands.autocomplete(rule=_rule_ac)
     @admin_only()
-    async def autokit_toggle(self, interaction: discord.Interaction, regel: int, aktiv: bool) -> None:
-        if not self.bot.db.set_kit_rule_enabled(regel, aktiv):
-            await interaction.response.send_message(f"Regel #{regel} gibt es nicht.", ephemeral=True)
+    async def autokit_toggle(self, interaction: discord.Interaction, rule: int, enabled: bool) -> None:
+        if not self.bot.db.set_kit_rule_enabled(rule, enabled):
+            await interaction.response.send_message(f"Rule #{rule} does not exist.", ephemeral=True)
             return
-        state = "aktiviert" if aktiv else "pausiert"
-        self._audit(f"🤖 {self._who(interaction)}: Autokit #{regel} {state}")
-        await interaction.response.send_message(f"Autokit #{regel} {state}.", ephemeral=True)
+        state = "enabled" if enabled else "paused"
+        self._audit(f"🤖 {self._who(interaction)}: Autokit #{rule} {state}")
+        await interaction.response.send_message(f"Autokit #{rule} {state}.", ephemeral=True)
 
-    @kit.command(name="autokit-loeschen", description="Löscht ein Autokit.")
-    @app_commands.describe(regel="Autokit-Regel")
-    @app_commands.autocomplete(regel=_rule_ac)
+    @kit.command(name="autokit-delete", description="Deletes an autokit.")
+    @app_commands.describe(rule="Autokit rule")
+    @app_commands.autocomplete(rule=_rule_ac)
     @admin_only()
-    async def autokit_delete(self, interaction: discord.Interaction, regel: int) -> None:
-        rule = self.bot.db.kit_rule(regel)
-        if rule is None or not self.bot.db.delete_kit_rule(regel):
-            await interaction.response.send_message(f"Regel #{regel} gibt es nicht.", ephemeral=True)
+    async def autokit_delete(self, interaction: discord.Interaction, rule: int) -> None:
+        row = self.bot.db.kit_rule(rule)
+        if row is None or not self.bot.db.delete_kit_rule(rule):
+            await interaction.response.send_message(f"Rule #{rule} does not exist.", ephemeral=True)
             return
-        self._audit(f"🗑️ {self._who(interaction)}: Autokit gelöscht – {self._rule_text(rule)}")
-        await interaction.response.send_message(f"🗑️ Autokit #{regel} gelöscht.", ephemeral=True)
+        self._audit(f"🗑️ {self._who(interaction)}: Autokit deleted – {self._rule_text(row)}")
+        await interaction.response.send_message(f"🗑️ Autokit #{rule} deleted.", ephemeral=True)
 
-    @kit.command(name="wipe-reset", description="Setzt Cooldowns/Limits der Autokits zurück (z. B. nach Wipe).")
-    @app_commands.describe(regel="Nur diese Regel zurücksetzen (leer = alle)")
-    @app_commands.autocomplete(regel=_rule_ac)
+    @kit.command(name="wipe-reset", description="Resets autokit cooldowns/limits (e.g. after a wipe).")
+    @app_commands.describe(rule="Only reset this rule (empty = all)")
+    @app_commands.autocomplete(rule=_rule_ac)
     @admin_only()
-    async def autokit_reset(self, interaction: discord.Interaction, regel: int | None = None) -> None:
-        count = self.bot.db.reset_kit_claims(regel)
-        scope = f"Regel #{regel}" if regel is not None else "alle Autokits"
-        self._audit(f"♻️ {self._who(interaction)}: Autokit-Verlauf zurückgesetzt ({scope}, {count} Einträge)")
-        await interaction.response.send_message(f"♻️ {count} Vergaben für {scope} zurückgesetzt.", ephemeral=True)
+    async def autokit_reset(self, interaction: discord.Interaction, rule: int | None = None) -> None:
+        count = self.bot.db.reset_kit_claims(rule)
+        scope = f"rule #{rule}" if rule is not None else "all autokits"
+        self._audit(f"♻️ {self._who(interaction)}: Autokit history reset ({scope}, {count} entries)")
+        await interaction.response.send_message(f"♻️ Reset {count} claims for {scope}.", ephemeral=True)
 
-    @kit.command(name="verlauf", description="Zeigt die letzten Kit-Vergaben.")
-    @app_commands.describe(spieler="Nur Vergaben an diesen Spieler")
-    @app_commands.autocomplete(spieler=_player_ac)
+    @kit.command(name="history", description="Shows the latest kit claims.")
+    @app_commands.describe(player="Only claims by this player")
+    @app_commands.autocomplete(player=_player_ac)
     @admin_only()
-    async def kit_history(self, interaction: discord.Interaction, spieler: str | None = None) -> None:
-        rows = self.bot.db.kit_claim_history(spieler.strip() if spieler else None, limit=20)
+    async def kit_history(self, interaction: discord.Interaction, player: str | None = None) -> None:
+        rows = self.bot.db.kit_claim_history(player.strip() if player else None, limit=20)
         if not rows:
-            await interaction.response.send_message("Keine Kit-Vergaben gefunden.", ephemeral=True)
+            await interaction.response.send_message("No kit claims found.", ephemeral=True)
             return
         lines = []
         for r in rows:
             source = f"Autokit #{r['rule_id']} ({r['source']})" if r["rule_id"] is not None else r["source"]
             lines.append(f"`{r['claimed_at']}` **{safe_md(r['kit'])}** → {safe_md(r['player'])} · {safe_md(source)}")
-        embed = discord.Embed(title="📜 Kit-Verlauf", description="\n".join(lines)[:4000],
+        embed = discord.Embed(title="📜 Kit history", description="\n".join(lines)[:4000],
                               colour=discord.Colour.dark_green())
-        embed.set_footer(text="Zeiten in UTC")
+        embed.set_footer(text="Times in UTC")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # ------------------------------------------------------------ Autokit-Logik
+    # ------------------------------------------------------------ Autokit logic
 
     @commands.Cog.listener()
     async def on_rce_respawn(self, ev: lp.RespawnEvent) -> None:
@@ -473,44 +473,44 @@ class Kits(commands.Cog):
         count, minutes_since = self.bot.db.kit_claim_state(rule["id"], player)
 
         if rule["max_claims"] and count >= rule["max_claims"]:
-            await self._announce_denied(player, f"Limit für Kit <b>{sanitize_ingame_text(kit, 40)}</b> erreicht.",
+            await self._announce_denied(player, f"Limit reached for kit <b>{sanitize_ingame_text(kit, 40)}</b>.",
                                         source)
             return
         if rule["cooldown_minutes"] and minutes_since is not None and minutes_since < rule["cooldown_minutes"]:
             remaining = max(1, math.ceil(rule["cooldown_minutes"] - minutes_since))
             await self._announce_denied(
-                player, f"Kit <b>{sanitize_ingame_text(kit, 40)}</b> wieder in {format_duration(remaining * 60)}.",
+                player, f"Kit <b>{sanitize_ingame_text(kit, 40)}</b> available again in {format_duration(remaining * 60)}.",
                 source)
             return
 
-        # Erst eintragen, dann senden: verhindert Doppelvergabe bei schnell aufeinanderfolgenden Zeilen
+        # Record first, then send: prevents double claims from log lines in quick succession
         claim_id = self.bot.db.record_kit_claim(rule["id"], kit, player, source)
         if source == "respawn" and self.bot.config.autokit_delay:
-            await asyncio.sleep(self.bot.config.autokit_delay)  # Spieler erst vollständig spawnen lassen
+            await asyncio.sleep(self.bot.config.autokit_delay)  # let the player finish spawning first
         try:
             if rule["kit_type"] == "custom":
                 custom = self.bot.get_cog("CustomKits")
                 if custom is None:
-                    raise RconError("Custom-Kit-Modul ist nicht geladen.")
+                    raise RconError("Custom kit module is not loaded.")
                 sent, total = await custom.deliver(kit, player)
                 if total == 0:
-                    raise RconError("Custom Kit ist leer oder wurde gelöscht.")
+                    raise RconError("Custom kit is empty or was deleted.")
             else:
                 await self.bot.rcon.command(self.bot.config.kit_give_template.format(kit=kit, name=player),
                                             expect_response=False)
         except RconError as exc:
             self.bot.db.delete_kit_claim(claim_id)
-            self._audit(f"⚠️ Autokit **{safe_md(kit)}** an **{safe_md(player)}** fehlgeschlagen: {exc}")
+            self._audit(f"⚠️ Autokit **{safe_md(kit)}** for **{safe_md(player)}** failed: {exc}")
             return
 
-        self._audit(f"🤖 Autokit **{safe_md(kit)}** an **{safe_md(player)}** "
-                    f"({TRIGGER_LABELS.get(source, source)}, Regel #{rule['id']})")
+        self._audit(f"🤖 Autokit **{safe_md(kit)}** to **{safe_md(player)}** "
+                    f"({TRIGGER_LABELS.get(source, source)}, rule #{rule['id']})")
         if source == "quickchat" and self.bot.config.kit_claim_announce:
-            await self._say(f"<color=#7CFC00>{sanitize_ingame_text(player, 32)}</color> hat das Kit "
-                            f"<b>{sanitize_ingame_text(kit, 40)}</b> erhalten.")
+            await self._say(f"<color=#7CFC00>{sanitize_ingame_text(player, 32)}</color> received the kit "
+                            f"<b>{sanitize_ingame_text(kit, 40)}</b>.")
 
     async def _announce_denied(self, player: str, text: str, source: str) -> None:
-        # Nur bei Quick-Chat (der Spieler hat aktiv angefragt) und gedrosselt – sonst Spam im Chat
+        # Only for quick chat (the player actively asked) and throttled – otherwise chat spam
         if source != "quickchat" or not self.bot.config.kit_claim_announce:
             return
         now = time.monotonic()

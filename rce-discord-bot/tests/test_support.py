@@ -1,4 +1,4 @@
-"""Tests für Prompt-Logik und DeepSeek-Client (gegen einen lokalen Fake-Server)."""
+"""Tests for the prompt logic and the DeepSeek client (against a local fake server)."""
 import asyncio
 
 import pytest
@@ -10,22 +10,22 @@ from support.prompt import build_messages, build_system_prompt, parse_answer
 
 
 def test_parse_answer_variants():
-    a = parse_answer('{"reply": "Wipe ist donnerstags.", "escalate": false, "reason": ""}')
-    assert (a.reply, a.escalate) == ("Wipe ist donnerstags.", False)
-    b = parse_answer('{"reply": "Ich hole das Team.", "escalate": "true", "reason": "Ban-Einspruch"}')
-    assert b.escalate and b.reason == "Ban-Einspruch"
-    # Leere Antwort -> immer Staff
+    a = parse_answer('{"reply": "Wipe is on Thursdays.", "escalate": false, "reason": ""}')
+    assert (a.reply, a.escalate) == ("Wipe is on Thursdays.", False)
+    b = parse_answer('{"reply": "Getting the team.", "escalate": "true", "reason": "Ban appeal"}')
+    assert b.escalate and b.reason == "Ban appeal"
+    # Empty reply -> always staff
     c = parse_answer('{"reply": "", "escalate": false}')
     assert c.escalate and c.reason
-    # Kein JSON -> Text wird genutzt, ohne Eskalation
-    d = parse_answer("Einfach Text")
-    assert d.reply == "Einfach Text" and not d.escalate
+    # Not JSON -> text is used, without escalation
+    d = parse_answer("Just text")
+    assert d.reply == "Just text" and not d.escalate
     assert parse_answer("[1, 2]").escalate
 
 
 def test_build_messages_merges_and_ends_with_user():
-    system = build_system_prompt(server_name="Test", topic="Hilfe", ingame_name=None, status="", knowledge="")
-    assert "json" in system.lower()  # DeepSeek-JSON-Modus verlangt das Wort "json" im Prompt
+    system = build_system_prompt(server_name="Test", topic="Help", ingame_name=None, status="", knowledge="")
+    assert "json" in system.lower()  # DeepSeek JSON mode requires the word "json" in the prompt
     msgs = build_messages(system, [("user", "a"), ("user", "b"), ("assistant", "c")])
     assert [m["role"] for m in msgs] == ["system", "user", "assistant", "user"]
     assert msgs[1]["content"] == "a\nb"
@@ -64,7 +64,7 @@ def test_deepseek_client_success_and_errors():
         runner, url = await _fake_api(ok, balance)
         client = DeepSeekClient("sk-test", model="deepseek-flash", base_url=url)
         assert (await client.balance())["balance_infos"][0]["total_balance"] == "4.20"
-        assert parse_answer(await client.chat_json([{"role": "user", "content": "json bitte"}])).reply == "Hi"
+        assert parse_answer(await client.chat_json([{"role": "user", "content": "json please"}])).reply == "Hi"
         assert seen["auth"] == "Bearer sk-test"
         assert seen["body"]["response_format"] == {"type": "json_object"}
         assert seen["body"]["model"] == "deepseek-flash"
@@ -86,14 +86,14 @@ def test_deepseek_client_success_and_errors():
 
 def test_ticket_storage(tmp_path):
     db = Storage(tmp_path / "bot.db")
-    tid = db.create_ticket(42, "Ich komme nicht auf den Server", "Bob")
-    assert db.open_ticket_of_user(42) is None  # noch kein Channel
+    tid = db.create_ticket(42, "I can't connect to the server", "Bob")
+    assert db.open_ticket_of_user(42) is None  # no channel yet
     db.update_ticket(tid, channel_id=1000)
     assert db.ticket_by_channel(1000)["id"] == tid
     assert db.open_ticket_of_user(42)["id"] == tid
     assert db.increment_ticket_ai_replies(tid) == 1
     with pytest.raises(ValueError):
-        db.update_ticket(tid, status="closed")  # nur erlaubte Felder
-    db.close_ticket(tid, "Staff#1", "gelöst")
-    assert db.ticket_by_channel(1000) is None and db.ticket(tid)["close_reason"] == "gelöst"
+        db.update_ticket(tid, status="closed")  # only allowed fields
+    db.close_ticket(tid, "Staff#1", "solved")
+    assert db.ticket_by_channel(1000) is None and db.ticket(tid)["close_reason"] == "solved"
     db.close()
