@@ -172,9 +172,15 @@ views.overview = (main) => {
       h("a", { href: "#settings" }, h("button", { text: "⚙️ RCON-Einstellungen öffnen" }))),
     rconTestOut);
 
+  // Gelbe Karte: Bot läuft, aber im eingeschränkten Modus (Privileged Intent im Developer Portal aus)
+  const intentInfo = h("div");
+  const intentCard = h("div", { class: "card hidden", style: "border-left:4px solid var(--warn)" },
+    h("h2", { text: "⚠️ Eingeschränkter Modus" }), intentInfo);
+
   main.append(
     h("h1", { text: "Übersicht" }),
     rconCard,
+    intentCard,
     stats,
     h("div", { class: "card" },
       h("h2", { text: "📢 Nachricht ins Spiel" }),
@@ -197,6 +203,11 @@ views.overview = (main) => {
   every(5000, async () => {
     await refreshConnection();
     if (!status) return;
+    intentCard.classList.toggle("hidden", !status.intent_warning);
+    if (status.intent_warning && !intentInfo.dataset.shown) {
+      intentInfo.dataset.shown = "1";
+      intentInfo.replaceChildren(h("p", { style: "margin:0", text: status.intent_warning }), fixLink(status.intent_fix_url));
+    }
     rconCard.classList.toggle("hidden", !!status.rcon_connected);
     if (!status.rcon_connected) {
       const d = status.rcon_diagnosis;
@@ -582,6 +593,9 @@ views.settings = async (main) => {
       h("p", { class: "muted", style: "margin:.4rem 0 0", text: "Danach unten auf „Bot mit gespeicherten Einstellungen starten“ klicken (oder Pflichtfelder ausfüllen und speichern)." }));
   } else if (data.restart_required) {
     showBanner("warn", "Geänderte Einstellungen werden erst nach einem Neustart aktiv. ", restartButton());
+  } else if (status?.intent_warning) {
+    showBanner("warn", h("strong", { text: "Eingeschränkter Modus: " }), status.intent_warning, fixLink(status.intent_fix_url),
+      h("p", { class: "muted", style: "margin:.4rem 0 0" }, "Nach dem Einschalten im Developer Portal („Save Changes“ nicht vergessen): ", restartButton()));
   } else if (!opts.available) {
     showBanner("", h("span", { class: "muted", text: "Tipp: Sobald der Bot mit Discord verbunden ist, kannst du Channels und Rollen hier direkt auswählen." }));
   }
@@ -678,7 +692,8 @@ views.settings = async (main) => {
         showBanner("bad", h("strong", { text: "Gespeichert – aber der Bot kann so noch nicht starten: " }), r.preflight_error, fixLink(r.fix_url));
         banner.scrollIntoView({ behavior: "smooth" });
       } else if (r.starting) {
-        showBanner("ok", h("strong", { text: "Gespeichert – der Bot startet jetzt …" }), " Diese Seite lädt automatisch neu.");
+        showBanner(r.intent_warning ? "warn" : "ok", h("strong", { text: "Gespeichert – der Bot startet jetzt …" }), " Diese Seite lädt automatisch neu.",
+          r.intent_warning ? h("p", { style: "margin:.4rem 0 0", text: "Hinweis: " + r.intent_warning }) : null);
         waitForBot("#overview");
       } else if (r.config_error) {
         showBanner("warn", h("strong", { text: "Gespeichert. Es fehlt noch etwas: " }), r.config_error);
@@ -707,7 +722,9 @@ views.settings = async (main) => {
       try {
         const r = await api("/api/setup/continue", { method: "POST" });
         if (!r.ok) { showBanner("bad", h("strong", { text: "Noch nicht möglich: " }), r.preflight_error, fixLink(r.fix_url)); banner.scrollIntoView({ behavior: "smooth" }); return; }
-        showBanner("ok", "Bot startet …"); waitForBot("#overview");
+        showBanner(r.intent_warning ? "warn" : "ok", "Bot startet …",
+          r.intent_warning ? h("p", { style: "margin:.4rem 0 0", text: "Hinweis: " + r.intent_warning }) : null);
+        waitForBot("#overview");
       } catch (e) { toast(e.message, true); }
     } }));
   }
@@ -725,7 +742,7 @@ function restartButton() {
       alert("Neustart abgebrochen, der Bot würde sonst nicht starten:\n\n" + r.preflight_error + (r.fix_url ? "\n\nLink: " + r.fix_url : ""));
       return;
     }
-    toast("Bot startet neu …");
+    toast(r.intent_warning ? "Bot startet neu – im eingeschränkten Modus (Intent fehlt noch)" : "Bot startet neu …", !!r.intent_warning);
     waitForBot(location.hash || "#overview");
   } });
 }

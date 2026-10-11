@@ -222,7 +222,7 @@ def test_saving_rcon_settings_runs_test(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_preflight_blocks_start_until_intents_enabled(tmp_path, monkeypatch):
+def test_preflight_only_blocks_invalid_token(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     env = _env(tmp_path, DISCORD_TOKEN="tok", RCON_HOST="1.2.3.4", RCON_PORT="28016", RCON_PASSWORD="pw",
                ADMIN_USER_IDS="1", TICKET_CATEGORY_ID="5")  # Tickets -> Message Content Intent nötig
@@ -230,29 +230,32 @@ def test_preflight_blocks_start_until_intents_enabled(tmp_path, monkeypatch):
     async def scenario():
         started = asyncio.Event()
         w = WebInterface(None, web_settings=WebSettings(password="x"), env_path=env, secret_path=tmp_path / "k",
-                         on_config_saved=started.set, setup_error="Intent fehlt")
+                         on_config_saved=started.set, setup_error="Token ungültig")
         c = await _client(w)
         try:
             await c.post("/api/login", json={"password": "x"}, headers=H)
-            # Intent im Portal noch aus -> kein Start, klare Meldung mit Link
-            _discord(monkeypatch, message_content=False)
-            r = await (await c.post("/api/setup/continue", headers=H)).json()
-            assert r["ok"] is False and "Message Content Intent" in r["preflight_error"]
-            assert "Support-Tickets" in r["preflight_error"] and r["fix_url"].endswith("/applications/42/bot")
-            r = await (await c.put("/api/settings", json={"values": {"SERVER_DISPLAY_NAME": "X"}}, headers=H)).json()
-            assert "preflight_error" in r and not r.get("starting") and not started.is_set()
-            # Members-Intent wird nicht verlangt, weil keine Funktion ihn braucht
-            assert "Server Members" not in r["preflight_error"]
-
-            # Ungültiger Token
+            # Ungültiger Token -> kein Start
             _discord(monkeypatch, token_ok=False)
             r = await (await c.post("/api/setup/continue", headers=H)).json()
-            assert r["ok"] is False and "Token" in r["preflight_error"]
+            assert r["ok"] is False and "Token" in r["preflight_error"] and not started.is_set()
+            r = await (await c.put("/api/settings", json={"values": {"SERVER_DISPLAY_NAME": "X"}}, headers=H)).json()
+            assert r["preflight_error"] and not r.get("starting") and not started.is_set()
 
-            # Intent eingeschaltet -> Bot startet
-            _discord(monkeypatch)
+            # Intent im Portal aus -> Bot startet trotzdem (eingeschränkt), mit Hinweis und Link
+            _discord(monkeypatch, message_content=False)
             r = await (await c.post("/api/setup/continue", headers=H)).json()
-            assert r["starting"] is True and started.is_set()
+            assert r["ok"] is True and r["starting"] is True and started.is_set()
+            assert r["preflight_error"] is None and r["missing_intents"] == ["message_content"]
+            assert "Message Content Intent" in r["intent_warning"] and "Support-Tickets" in r["intent_warning"]
+            assert r["fix_url"].endswith("/applications/42/bot")
+            # Members-Intent wird nicht verlangt, weil keine Funktion ihn braucht
+            assert "Server Members" not in r["intent_warning"]
+
+            # Alles eingeschaltet -> keine Warnung
+            started.clear()
+            _discord(monkeypatch)
+            r = await (await c.put("/api/settings", json={"values": {"SERVER_DISPLAY_NAME": "Y"}}, headers=H)).json()
+            assert r["starting"] is True and started.is_set() and "intent_warning" not in r
         finally:
             await c.close()
 

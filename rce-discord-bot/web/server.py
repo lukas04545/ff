@@ -111,31 +111,42 @@ async def check_discord(token: str) -> dict:
     return result
 
 
-async def discord_preflight(cfg) -> dict | None:
-    """Prüft vor dem Start, ob Discord den Bot mit dieser Konfiguration annimmt.
+def intent_warning(cfg, missing: list[str]) -> str:
+    """Erklärt, welche Intents fehlen und welche Funktionen deshalb pausieren."""
+    needed = required_intents(cfg)
+    parts = [f"„{INTENT_LABELS[k]}“ (betroffen: {', '.join(needed[k]) or '–'})" for k in missing]
+    return ("Eingeschränkter Betrieb: Im Discord Developer Portal ist " + " und ".join(parts)
+            + " ausgeschaltet. Alle Befehle, RCON, Kits und Feeds laufen normal – nur die genannten "
+              "Funktionen pausieren. Beheben: Developer Portal → Bot → „Privileged Gateway Intents“ einschalten → "
+              "„Save Changes“ → Bot neu starten.")
 
-    None = alles ok (oder Discord gerade nicht erreichbar), sonst {"preflight_error": Text, "fix_url": Link}.
+
+def intents_fix_url(app_id: str | None) -> str:
+    return (f"https://discord.com/developers/applications/{app_id}/bot" if app_id
+            else "https://discord.com/developers/applications")
+
+
+async def discord_preflight(cfg) -> dict | None:
+    """Prüft vor dem Start, wie Discord den Bot mit dieser Konfiguration annimmt.
+
+    None = alles ok (oder Discord gerade nicht erreichbar). Sonst ein Dict mit
+      preflight_error  – blockierend (z. B. ungültiger Token), Bot kann nicht starten
+      missing_intents  – fehlende privilegierte Intents: Bot startet trotzdem, nur ohne diese
+      intent_warning, fix_url
     """
     info = await check_discord(cfg.discord_token)
     if not info["reachable"]:
         return None  # z. B. kein Internet: nicht blockieren, der Bot versucht es selbst erneut
     if info["token_ok"] is False:
-        return {"preflight_error": info["error"], "fix_url": "https://discord.com/developers/applications"}
+        return {"preflight_error": info["error"], "missing_intents": [],
+                "fix_url": "https://discord.com/developers/applications"}
     if not info["intents"]:
         return None
-    missing = [(INTENT_LABELS[k], features) for k, features in required_intents(cfg).items()
-               if features and not info["intents"].get(k)]
+    missing = [k for k, features in required_intents(cfg).items() if features and not info["intents"].get(k)]
     if not missing:
         return None
-    parts = [f"„{label}“ (gebraucht für: {', '.join(features)})" for label, features in missing]
-    return {
-        "preflight_error": (
-            "Discord weist den Bot ab: Im Developer Portal ist " + " und ".join(parts)
-            + " noch AUS. Öffne den Link, schalte unter „Privileged Gateway Intents“ den Schalter ein, "
-              "klicke „Save Changes“ und danach hier auf „Bot starten“. Alternativ die genannten "
-              "Funktionen in den Einstellungen leeren."),
-        "fix_url": f"https://discord.com/developers/applications/{info['app_id']}/bot",
-    }
+    return {"preflight_error": None, "missing_intents": missing,
+            "intent_warning": intent_warning(cfg, missing), "fix_url": intents_fix_url(info["app_id"])}
 
 
 @dataclass
@@ -502,12 +513,12 @@ class WebInterface:
         else:
             preflight = await self._preflight()
             if self.setup_mode:
-                if preflight:
+                if preflight and preflight.get("preflight_error"):
                     resp = web.json_response({"ok": True, "saved": sorted(updates), "rcon_test": rcon_test,
                                               **preflight})
                 else:
                     resp = web.json_response({"ok": True, "saved": sorted(updates), "starting": True,
-                                              "rcon_test": rcon_test})
+                                              "rcon_test": rcon_test, **(preflight or {})})
                     if self.on_config_saved:
                         self.on_config_saved()
             else:
@@ -546,8 +557,8 @@ class WebInterface:
     async def _preflight(self) -> dict | None:
         """Vor dem (Neu-)Start prüfen, ob Discord den Bot annimmt – sonst landet er in einer Start-Schleife.
 
-        Liefert None, wenn alles passt (oder Discord gerade nicht erreichbar ist), sonst
-        {"preflight_error": Text, "fix_url": Link}.
+        Liefert None, wenn Discord gerade nicht erreichbar ist, sonst das Ergebnis von
+        discord_preflight(); nur "preflight_error" blockiert den Start.
         """
         try:
             cfg = load_config(self.env_path)
@@ -576,20 +587,22 @@ class WebInterface:
         return web.json_response(result)
 
     async def restart(self, request: web.Request) -> web.Response:
-        if preflight := await self._preflight():
+        preflight = await self._preflight()
+        if preflight and preflight.get("preflight_error"):
             # Nicht neu starten – sonst fiele der Bot in den Einrichtungsmodus zurück
             return web.json_response({"ok": False, **preflight})
         self._audit("Bot-Neustart angefordert")
         self.bot.request_restart()
-        return web.json_response({"ok": True})
+        return web.json_response({"ok": True, **(preflight or {})})
 
     async def setup_continue(self, request: web.Request) -> web.Response:
         """Einrichtung: Bot mit der gespeicherten Konfiguration starten (z. B. nach Intents-Freigabe)."""
-        if preflight := await self._preflight():
+        preflight = await self._preflight()
+        if preflight and preflight.get("preflight_error"):
             return web.json_response({"ok": False, **preflight})
         if self.on_config_saved:
             self.on_config_saved()
-        return web.json_response({"ok": True, "starting": True})
+        return web.json_response({"ok": True, "starting": True, **(preflight or {})})
 
     # ------------------------------------------------------------ Status & Konsole
 
@@ -608,6 +621,8 @@ class WebInterface:
             "restart_required": self.restart_required,
             "rcon_connected": bot.rcon.connected,
             "rcon_last_error": bot.rcon.last_error,
+            "intent_warning": bot.intent_warning,
+            "intent_fix_url": bot.intent_fix_url,
             "rcon_diagnosis": bot.rcon_diagnosis,
             "rcon_target": f"{cfg.rcon_host}:{cfg.rcon_port}",
             "discord_ready": bot.is_ready(),

@@ -52,16 +52,20 @@ EVENT_NAMES: dict[type, str] = {
 
 
 class RceBot(commands.Bot):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, *, disabled_intents: set[str] | frozenset[str] = frozenset(),
+                 intent_warning: str | None = None, intent_fix_url: str | None = None) -> None:
         intents = discord.Intents.default()
         # Privilegierte Intents nur anfordern, wenn eine Funktion sie braucht (siehe config.required_intents);
         # sie müssen im Developer Portal unter Bot → Privileged Gateway Intents eingeschaltet sein.
+        # Fehlen sie dort, läuft der Bot ohne sie weiter (eingeschränkter Betrieb) statt gar nicht.
         needed = required_intents(config)
-        intents.message_content = bool(needed["message_content"])
-        intents.members = bool(needed["members"])
+        intents.message_content = bool(needed["message_content"]) and "message_content" not in disabled_intents
+        intents.members = bool(needed["members"]) and "members" not in disabled_intents
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
 
         self.config = config
+        self.intent_warning = intent_warning
+        self.intent_fix_url = intent_fix_url
         self.db = Storage(config.database_path)
         self.rcon = RconClient(config.rcon_host, config.rcon_port, config.rcon_password)
 
@@ -276,11 +280,12 @@ def main() -> None:
     # Doppelklick oder Autostart gefunden werden.
     os.chdir(BASE_DIR)
     setup_logging()
-    from web.server import discord_preflight, web_settings_from_env
+    from web.server import discord_preflight, intent_warning, intents_fix_url, web_settings_from_env
 
     setup_error: str | None = None
     setup_fix_url: str | None = None
     first_start = True
+    forced_off: set[str] = set()  # Intents, die Discord trotz Prüfung abgelehnt hat
     while True:
         if setup_error is None:
             try:
@@ -299,12 +304,18 @@ def main() -> None:
 
         # Vorab bei Discord prüfen (Token, Intents). Sonst hängt der Bot minutenlang in
         # "session has been invalidated" und beantwortet keinen Befehl.
-        preflight = asyncio.run(discord_preflight(config))
-        if preflight:
+        preflight = asyncio.run(discord_preflight(config)) or {}
+        if preflight.get("preflight_error"):
             setup_error, setup_fix_url = preflight["preflight_error"], preflight["fix_url"]
             continue
+        disabled = set(preflight.get("missing_intents") or []) | forced_off
+        warning = intent_warning(config, sorted(disabled)) if disabled else None
+        fix_url = preflight.get("fix_url") or (intents_fix_url(None) if disabled else None)
+        if warning:
+            log.warning(warning)
+            log.warning("Beheben: %s", fix_url)
 
-        bot = RceBot(config)
+        bot = RceBot(config, disabled_intents=disabled, intent_warning=warning, intent_fix_url=fix_url)
         bot._first_start = first_start
         first_start = False
         try:
@@ -313,7 +324,12 @@ def main() -> None:
             setup_error = "Discord hat den Bot-Token abgelehnt – bitte einen neuen Token eintragen."
             continue
         except discord.PrivilegedIntentsRequired:
-            setup_error = PRIVILEGED_INTENTS_HELP
+            if forced_off >= {"message_content", "members"}:
+                setup_error = PRIVILEGED_INTENTS_HELP  # sollte nicht vorkommen: ohne Intents gibt es nichts abzulehnen
+                continue
+            # Discord lehnt die Intents ab, obwohl die Prüfung nichts fand -> ohne sie neu starten
+            log.warning("Discord lehnt die privilegierten Intents ab – starte im eingeschränkten Betrieb ohne sie.")
+            forced_off = {"message_content", "members"}
             continue
         except (aiohttp.ClientError, OSError) as exc:
             # z. B. PC gerade gestartet und noch ohne Internet – einfach später erneut versuchen

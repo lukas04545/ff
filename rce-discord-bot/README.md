@@ -581,14 +581,14 @@ Diese Funktionen stammen aus dem KRYVON-Bot und sind hier nachgebaut und erweite
 | Einstellungen ändern ohne Editor | Webinterface → ⚙️ Einstellungen → Speichern → „Bot jetzt neu starten“ |
 | RCON verbindet nicht | Der Bot testet das **automatisch** und zeigt die Ursache im Bot-Fenster und im Webinterface (rote Karte in der Übersicht). Beim Speichern neuer RCON-Daten unter ⚙️ Einstellungen läuft der Test ebenfalls sofort. |
 | RCON verbindet nicht – Ursache unklar | **`rcon_test.bat`** (Windows) bzw. `python tools/rcon_test.py` ausführen: prüft Einstellungen, Port, WebSocket, Passwort und Antwort Schritt für Schritt und nennt die Ursache |
-| `Message Content Intent … nicht aktiviert` | Developer Portal → Bot → Message Content Intent einschalten, oder `CHAT_BRIDGE_TO_GAME=false` |
+| `Message Content Intent … ausgeschaltet` | Developer Portal → Bot → Message Content Intent einschalten → Save Changes → Bot neu starten |
 | Slash-Commands fehlen | `GUILD_ID` setzen und Bot mit Scope `applications.commands` einladen |
 | Killfeed oder Chat bleiben leer | `CONSOLE_LOG_CHANNEL_ID` setzen und die echten Logzeilen mit `rce/log_parser.py` vergleichen |
 | Kick/Ban wirkt nicht | Befehlssyntax per `/rcon` testen und die `*_COMMAND_TEMPLATE` in der `.env` anpassen |
 | Kit kommt nicht an | `/rcon kit givetoplayer "Kit" "Spieler"` testen und die Antwort im Konsolen-Log prüfen. Bei abweichender Syntax `KIT_GIVE_TEMPLATE` anpassen. |
 | Custom Kit kommt nicht an | `/rcon inventory.giveto "DeinName" "wood" 100` testen. Bei abweichender Syntax `ITEM_GIVE_TEMPLATE` anpassen. Fehlt die `giving …`-Zeile im Admin-Log, stimmt meist der Shortname nicht. |
-| Bot ist online, aber **jeder Befehl „antwortet nicht“**, im Log `session has been invalidated` | Privilegierte Intents sind im Developer Portal aus. Der Bot prüft das jetzt vor dem Start und zeigt im Webinterface genau, welcher Schalter fehlt (mit Link). Developer Portal → Bot → *Privileged Gateway Intents* → einschalten → **Save Changes** → im Webinterface „Bot starten“. |
-| „privilegierter Intent … nicht aktiviert“ beim Start | Developer Portal → Bot → *Message Content Intent* und *Server Members Intent* einschalten |
+| Bot ist online, aber **jeder Befehl „antwortet nicht“**, im Log `session has been invalidated` | Privilegierte Intents sind im Developer Portal aus. Der Bot startet dann **trotzdem im eingeschränkten Betrieb** ohne diese Intents – alle Befehle, RCON, Kits und Feeds funktionieren, nur die betroffenen Funktionen (z. B. Tickets, Willkommensnachricht) pausieren. Eine gelbe Karte im Webinterface nennt den fehlenden Schalter (mit Link). Beheben: Developer Portal → **dieselbe Application wie der Token** (Webinterface → „Bot-Token prüfen“ zeigt Name und Intents) → Bot → *Privileged Gateway Intents* → einschalten → **Save Changes** → „Bot jetzt neu starten“. |
+| „Eingeschränkter Betrieb“ im Bot-Fenster | Siehe Zeile oben – ein oder beide privilegierten Intents sind aus. |
 | Auto-Rolle/Gewinner-Rolle wird nicht vergeben | Bot-Rolle in den Servereinstellungen über diese Rolle ziehen, *Manage Roles* erlauben |
 | `/mod …`: „Rolle steht über der Bot-Rolle“ | Discord erlaubt Moderation nur unterhalb der eigenen höchsten Rolle – Bot-Rolle nach oben ziehen |
 | `start.bat`: „Python wurde nicht gefunden“ | Python von python.org installieren, Haken bei „Add Python to PATH“, PC neu anmelden |
