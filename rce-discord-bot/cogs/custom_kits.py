@@ -40,7 +40,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("rce.customkits")
 
-MAX_ITEMS_PER_KIT = 30
+MAX_ITEMS_PER_KIT = 60
+MAX_IMPORT_BYTES = 200_000
 MAX_COOLDOWN_MINUTES = 365 * 1440
 VERIFY_SECONDS = 300                       # time to send the verification quick chats in-game
 VERIFY_SKIP_CATEGORIES = ("_responses_",)  # "Yes", "Hello", ... are sent too often to prove anything
@@ -58,6 +59,71 @@ class PendingLink:
 def _category(raw: str) -> str:
     """'d11_quick_chat_orders_slot_6' -> 'Orders' (menu where players find the phrase)."""
     return raw.removeprefix("d11_quick_chat_").rsplit("_slot_", 1)[0].replace("_", " ").title()
+
+
+def import_kit_commands(db, text: str, *, kit_name: str | None, replace: bool, created_by: str) -> dict:
+    """Creates/fills custom kits from kit builder output ('kit add "Kit" "item" amount ...').
+
+    kit_name: put all items into this kit instead of the names in the commands.
+    replace:  existing items of the kit are removed first (the builder output is the whole kit).
+    Returns a summary: {"kits": [{name, created, replaced, added, skipped}], "errors": [...]}.
+    """
+    lines, errors = kitparse.parse_kit_add_commands(text)
+    override = kitparse.clean_arg(kit_name or "", limit=40)
+    by_kit: dict[str, list] = {}
+    for line in lines:
+        name = override or line.kit
+        key = next((k for k in by_kit if k.lower() == name.lower()), name)  # kit names are case-insensitive
+        by_kit.setdefault(key, []).append(line)
+
+    kits = []
+    for name, items in by_kit.items():
+        created = db.create_custom_kit(name, None, created_by)
+        name = db.custom_kit(name)["name"]
+        replaced = db.clear_custom_kit_items(name) if replace and not created else 0
+        room = MAX_ITEMS_PER_KIT - len(db.custom_kit_items(name))
+        for line in items[:max(room, 0)]:
+            db.add_custom_kit_item(name, line.item, line.amount)
+        added = min(len(items), max(room, 0))
+        unknown = sorted({i.item for i in items[:added] if i.item not in itemlist.COMMON_ITEMS})
+        kits.append({"name": name, "created": created, "replaced": replaced, "added": added,
+                     "skipped": len(items) - added, "unknown": unknown})
+    return {"kits": kits, "errors": errors}
+
+
+def import_summary(result: dict) -> str:
+    """Discord text for the result of import_kit_commands()."""
+    if not result["kits"]:
+        return ("⚠️ No `kit add` commands found. Expected lines like\n"
+                '`kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main`')
+    lines = []
+    for k in result["kits"]:
+        status = "new kit" if k["created"] else (f"replaced {k['replaced']} old items" if k["replaced"]
+                                                 else "added to the existing kit")
+        lines.append(f"📥 **{safe_md(k['name'])}**: {k['added']} items ({status})")
+        if k["skipped"]:
+            lines.append(f"   ⚠️ {k['skipped']} items skipped – max. {MAX_ITEMS_PER_KIT} items per kit")
+        if k["unknown"]:
+            lines.append("   ℹ️ Unknown shortnames (check by testing): "
+                         + ", ".join(f"`{u}`" for u in k["unknown"][:15]))
+    if result["errors"]:
+        lines.append(f"⚠️ {len(result['errors'])} commands could not be read, e.g. `{result['errors'][0][:100]}`")
+    lines.append("Container and condition from the builder are ignored – custom kit items go into the inventory.")
+    return "\n".join(lines)[:1990]
+
+
+class ImportModal(discord.ui.Modal, title="Import from kit builder"):
+    commands_text = discord.ui.TextInput(
+        label="Kit builder commands", style=discord.TextStyle.paragraph, max_length=4000,
+        placeholder='kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main\n'
+                    'kit add "Custom kit 1" "rifle.ak" 1 100 belt')
+
+    def __init__(self, cog: "CustomKits", kit_name: str | None, replace: bool) -> None:
+        super().__init__()
+        self.cog, self.kit_name, self.replace = cog, kit_name, replace
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.cog.run_import(interaction, str(self.commands_text.value), self.kit_name, self.replace)
 
 
 class CustomKits(commands.Cog):
@@ -205,6 +271,40 @@ class CustomKits(commands.Cog):
         self._audit(interaction, f"Custom kit **{safe_md(row['name'])}** + `{short}` × {amount}")
         await interaction.response.send_message(
             f"➕ Added `{short}` × {amount} to **{safe_md(row['name'])}**.{hint}", ephemeral=True)
+
+    @customkit.command(name="import", description="Creates/fills custom kits from kit builder commands (kit add ...).")
+    @app_commands.describe(
+        file="Optional: .txt file with the commands (otherwise a text box opens)",
+        kit="Optional: put everything into this kit instead of the names in the commands",
+        replace="Replace the existing items of the kit (default: yes)")
+    @admin_only()
+    async def import_cmd(self, interaction: discord.Interaction, file: discord.Attachment | None = None,
+                         kit: str | None = None, replace: bool = True) -> None:
+        if file is None:
+            await interaction.response.send_modal(ImportModal(self, kit, replace))
+            return
+        if file.size > MAX_IMPORT_BYTES:
+            await interaction.response.send_message("The file is too big (max. 200 KB).", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            text = (await file.read()).decode("utf-8-sig")
+        except UnicodeDecodeError:
+            await interaction.followup.send("Please upload a plain text file (.txt).", ephemeral=True)
+            return
+        await self.run_import(interaction, text, kit, replace)
+
+    async def run_import(self, interaction: discord.Interaction, text: str, kit: str | None, replace: bool) -> None:
+        result = import_kit_commands(self.bot.db, text, kit_name=kit, replace=replace,
+                                     created_by=str(interaction.user))
+        for k in result["kits"]:
+            self._audit(interaction, f"Custom kit **{safe_md(k['name'])}** imported from kit builder "
+                                     f"({k['added']} items{', replaced' if k['replaced'] else ''})")
+        text = import_summary(result)
+        if interaction.response.is_done():
+            await interaction.followup.send(text, ephemeral=True)
+        else:
+            await interaction.response.send_message(text, ephemeral=True)
 
     @customkit.command(name="remove-item", description="Removes an item from a custom kit.")
     @app_commands.describe(kit="Custom kit", item="Item in the kit")

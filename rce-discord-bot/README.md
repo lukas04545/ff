@@ -388,6 +388,7 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/kit add-item`, `/kit remove-item` | Admins | Edit kits |
 | `/kit autokit-add`, `/kit autokit-toggle`, `/kit autokit-delete`, `/kit wipe-reset`, `/kit history` | Admins | Manage autokits (also with custom kits) |
 | `/customkit create`, `add-item`, `remove-item`, `delete` | Admins | Create and edit custom kits |
+| `/customkit import` | Admins | Create/fill custom kits from kit builder `kit add` commands (text box or .txt file) |
 | `/customkit list`, `/customkit info` | Admins | Show custom kits (visible to admins only) |
 | `/customkit give`, `/customkit all` | Admins | Give a custom kit to one player or to all online players |
 | `/customkit link` | Everyone | Link your Discord account to your in-game player (verified via quick chat) |
@@ -488,6 +489,19 @@ autocomplete marks custom kits with 🔒. If you don't choose a `kit_type` and t
 custom kit, this is detected automatically. Cooldown, limit, quick-chat trigger and
 `/kit wipe-reset` work exactly as with in-game kits.
 
+**Import from a kit builder:** paste the `kit add` commands a kit builder generates – the bot strips
+`kit add`, creates the kit if needed and adds every item:
+```
+/customkit import                                   ← opens a text box; paste the commands
+/customkit import file:kit.txt                      ← or upload them as a .txt file (big kits)
+/customkit import kit:VIP replace:False             ← optional: other kit name / append instead of replace
+```
+Example line: `kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main` → kit "Custom kit 1",
+item `ammo.grenadelauncher.buckshot`, amount 1. Condition and container are ignored (custom kit items go
+into the inventory). Several kits in one paste are fine. By default a re-import **replaces** the kit's
+items; its claim roles and cooldown stay. Max. 60 items per kit. Same in the web interface:
+Kits → Custom kits → "📥 Import from kit builder".
+
 **Members claim it themselves (by role):** give one or more roles access to a kit and set a cooldown.
 Each member links their in-game player once; after that `/customkit claim` always sends the kit to
 **their own** player – nobody can claim for someone else.
@@ -518,7 +532,7 @@ Each member links their in-game player once; after that `/customkit claim` alway
 | Visible in the in-game kit manager | yes | **no** |
 | Container (hotbar/clothing) and condition can be set | yes | no: everything goes into the inventory, condition 100 % |
 | Full inventory | server behaviour | Surplus items may drop on the ground |
-| Giving | 1 command | 1 command per item (max. 30 items per kit) |
+| Giving | 1 command | 1 command per item (max. 60 items per kit) |
 
 The bot can't check whether an item shortname exists, because RCON doesn't provide an item list.
 The autocomplete suggests known shortnames. Test new kits on yourself once. In the admin log you

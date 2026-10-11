@@ -304,6 +304,11 @@ class Storage:
         self._db.commit()
         return int(cur.lastrowid)
 
+    def clear_custom_kit_items(self, kit: str) -> int:
+        cur = self._db.execute("DELETE FROM custom_kit_items WHERE kit = ?", (kit,))
+        self._db.commit()
+        return cur.rowcount
+
     def remove_custom_kit_item(self, kit: str, item_id: int) -> bool:
         cur = self._db.execute("DELETE FROM custom_kit_items WHERE id = ? AND kit = ?", (item_id, kit))
         self._db.commit()

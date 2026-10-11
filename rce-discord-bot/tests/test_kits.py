@@ -86,3 +86,45 @@ def test_migration_adds_kit_type(tmp_path):
     db = Storage(path)
     assert db.kit_rules()[0]["kit_type"] == "ingame"
     db.close()
+
+
+def test_parse_kit_builder_commands():
+    text = ('kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main\n'
+            'kit add "Custom kit 1" "rifle.ak" 1 100 belt kit add "Custom kit 1" wood 5000\n'  # two on one line
+            'kit create "Custom kit 1"\n'                                                    # not a kit add
+            'kit add "Custom kit 1" "Not An Item" 1\n'
+            'KIT ADD Starter "stones" 200')
+    lines, errors = kits.parse_kit_add_commands(text)
+    assert [(x.kit, x.item, x.amount) for x in lines] == [
+        ("Custom kit 1", "ammo.grenadelauncher.buckshot", 1), ("Custom kit 1", "rifle.ak", 1),
+        ("Custom kit 1", "wood", 5000), ("Starter", "stones", 200)]
+    assert lines[0].condition == 1 and lines[0].container == "Main" and lines[1].container == "Belt"
+    assert errors == ['kit add "Custom kit 1" "Not An Item" 1']
+
+
+def test_import_kit_builder_into_custom_kits(tmp_path):
+    from cogs.custom_kits import MAX_ITEMS_PER_KIT, import_kit_commands, import_summary
+    db = Storage(tmp_path / "bot.db")
+    text = 'kit add "Custom kit 1" "rifle.ak" 1 100 belt\nkit add "custom kit 1" "ammo.rifle" 128 100 main'
+    result = import_kit_commands(db, text, kit_name=None, replace=True, created_by="admin")
+    assert [(k["name"], k["created"], k["added"]) for k in result["kits"]] == [("Custom kit 1", True, 2)]
+    assert [(i["shortname"], i["amount"]) for i in db.custom_kit_items("Custom kit 1")] == [
+        ("rifle.ak", 1), ("ammo.rifle", 128)]
+    assert "Custom kit 1" in import_summary(result)
+
+    # Re-import replaces the items (builder output = whole kit); replace=False appends
+    db.set_custom_kit_cooldown("Custom kit 1", 90)
+    result = import_kit_commands(db, 'kit add "Custom kit 1" "wood" 1000 100 main', kit_name=None,
+                                 replace=True, created_by="admin")
+    assert result["kits"][0]["replaced"] == 2 and len(db.custom_kit_items("Custom kit 1")) == 1
+    assert db.custom_kit("Custom kit 1")["cooldown_minutes"] == 90  # kit settings are kept
+    import_kit_commands(db, 'kit add "X" "stones" 5', kit_name="Custom kit 1", replace=False, created_by="admin")
+    assert db.custom_kit("X") is None and len(db.custom_kit_items("Custom kit 1")) == 2
+
+    # Item limit per kit
+    many = "\n".join(f'kit add "Big" "wood" {i + 1}' for i in range(MAX_ITEMS_PER_KIT + 5))
+    big = import_kit_commands(db, many, kit_name=None, replace=True, created_by="admin")["kits"][0]
+    assert big["added"] == MAX_ITEMS_PER_KIT and big["skipped"] == 5
+    assert "No `kit add`" in import_summary(import_kit_commands(db, "hello", kit_name=None, replace=True,
+                                                                created_by="admin"))
+    db.close()

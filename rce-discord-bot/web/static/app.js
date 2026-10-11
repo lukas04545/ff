@@ -418,6 +418,31 @@ function linkedPlayersCard(data, reload) {
         } }))))))) : h("p", { class: "muted", text: "Nobody linked yet." }));
 }
 
+// Kit builder output ("kit add "Kit" "item" 1 100 main") -> custom kits
+function importBox(reload) {
+  const text = h("textarea", { rows: 6, placeholder: 'kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main\nkit add "Custom kit 1" "rifle.ak" 1 100 belt' });
+  const kit = h("input", { placeholder: "Optional: import everything into this kit", maxlength: 40 });
+  const replace = h("input", { type: "checkbox" });
+  replace.checked = true;
+  const out = h("div");
+  return h("details", { style: "margin:.75rem 0" }, h("summary", { text: "📥 Import from kit builder" }),
+    h("p", { class: "muted", text: "Paste the kit add commands from a kit builder. \"kit add\" is stripped; kit name, item and amount are used (container/condition are ignored – custom kit items go into the inventory). Missing kits are created." }),
+    text,
+    h("div", { class: "row", style: "margin-top:.5rem" }, kit,
+      h("label", { class: "row", style: "gap:.3rem" }, replace, "Replace existing items"),
+      h("button", { class: "primary", text: "Import", onclick: async () => {
+        const r = await act(() => api("/api/custom-kits/import", { method: "POST", body: { text: text.value, kit: kit.value, replace: replace.checked } }));
+        if (!r) return;
+        out.replaceChildren(h("ul", { class: "steps" }, [
+          ...r.kits.map((k) => h("li", { class: k.skipped ? "warn" : "ok", text: `${k.name}: ${k.added} items ${k.created ? "(new kit)" : k.replaced ? `(replaced ${k.replaced} old items)` : "(added)"}${k.skipped ? ` – ${k.skipped} skipped (item limit)` : ""}${k.unknown.length ? ` – unknown shortnames: ${k.unknown.join(", ")}` : ""}` })),
+          ...r.errors.map((e) => h("li", { class: "fail", text: "Could not read: " + e })),
+        ]));
+        toast("Imported");
+        setTimeout(reload, 2500);
+      } })),
+    out);
+}
+
 function customKitsCard(data, reload, opts) {
   const name = h("input", { placeholder: "Name of the new custom kit", maxlength: 40 });
   const desc = h("input", { placeholder: "Note (optional)", maxlength: 300 });
@@ -427,7 +452,8 @@ function customKitsCard(data, reload, opts) {
       e.preventDefault();
       await act(() => api("/api/custom-kits", { method: "POST", body: { name: name.value, description: desc.value } }), "Custom kit created");
       reload();
-    } }, name, desc, h("button", { class: "primary", text: "Create" })));
+    } }, name, desc, h("button", { class: "primary", text: "Create" })),
+    importBox(reload));
 
   for (const kit of data.custom) {
     const item = h("input", { placeholder: "Item shortname", list: "dl-items" });

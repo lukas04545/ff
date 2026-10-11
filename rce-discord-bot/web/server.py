@@ -256,6 +256,7 @@ class WebInterface:
         r.add_get("/api/kits/ingame/{name}", self.ingame_kit_info)
         r.add_post("/api/kits/give", self.give_kit)
         r.add_post("/api/custom-kits", self.create_custom_kit)
+        r.add_post("/api/custom-kits/import", self.import_custom_kits)
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
         r.add_put("/api/custom-kits/{name}/claim", self.custom_kit_claim_settings)
         r.add_delete("/api/linked-players/{user_id:\\d+}", self.unlink_player)
@@ -750,6 +751,20 @@ class WebInterface:
             raise ApiError("A custom kit with this name already exists.", 409)
         self._audit(f"Custom kit **{name}** created")
         return web.json_response({"ok": True})
+
+    async def import_custom_kits(self, request: web.Request) -> web.Response:
+        """Kit builder output ('kit add "Kit" "item" amount ...') -> custom kits."""
+        from cogs.custom_kits import MAX_IMPORT_BYTES, import_kit_commands
+        data = await self._json(request)
+        text = self._text(data, "text", limit=MAX_IMPORT_BYTES)
+        kit = self._text(data, "kit", required=False, limit=40) or None
+        result = import_kit_commands(self.bot.db, text, kit_name=kit, replace=data.get("replace", True) is not False,
+                                     created_by="Web interface")
+        if not result["kits"]:
+            raise ApiError('No "kit add" commands found.')
+        for k in result["kits"]:
+            self._audit(f"Custom kit **{k['name']}** imported from kit builder ({k['added']} items)")
+        return web.json_response({"ok": True, **result})
 
     async def delete_custom_kit(self, request: web.Request) -> web.Response:
         name = request.match_info["name"]
