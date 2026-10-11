@@ -1,260 +1,268 @@
-# RCE Discord-Bot – Rust Console Edition (G-Portal) über WebRCON
+# RCE Discord Bot – Rust Console Edition (G-Portal) via WebRCON
 
-Ein selbst gehosteter Discord-Bot für **Rust Console Edition**. Er verbindet sich nur über
-**IP, RCON-Port und RCON-Passwort** mit deinem G-Portal-Server, ähnlich wie Kaosbot oder Helios.
+A self-hosted Discord bot for **Rust Console Edition**. It connects to your G-Portal server using
+nothing but **IP, RCON port and RCON password**, similar to Kaosbot or Helios.
 
-> **Status: Quick Prototype.** Der Code ist vollständig lauffähig und gegen einen simulierten
-> RCE-Server getestet (`tools/mock_rcon_server.py`, `tests/`). Gegen einen **echten**
-> G-Portal-Server wurde er nicht getestet. Was dafür angenommen wird, steht im Abschnitt
-> [Annahmen](#annahmen).
+> **Language:** The whole bot is in English: slash commands, Discord messages, the in-game chat
+> prefix and the web interface.
 
----
-
-## Warum Python + discord.py?
-
-- **discord.py 2.x** ist die ausgereifteste Python-Bibliothek für Discord. Slash-Commands,
-  Autovervollständigung, Embeds und Hintergrund-Tasks sind eingebaut.
-- discord.py bringt **aiohttp** mit. Darin steckt bereits ein WebSocket-Client, also genau das,
-  was WebRCON braucht. Es ist keine weitere RCON-Bibliothek nötig.
-- Python ist leicht zu lesen und anzupassen. Das ist wichtig, weil sich das Log-Format der
-  Console Edition mit Updates ändern kann.
+> **Status: quick prototype.** The code is fully functional and has been tested against a
+> simulated RCE server (`tools/mock_rcon_server.py`, `tests/`). It has **not** been tested against
+> a **real** G-Portal server. What it assumes about one is listed in the section
+> [Assumptions](#assumptions).
 
 ---
 
-## Was ist auf der Console Edition bei G-Portal technisch möglich?
+## Why Python + discord.py?
 
-| Schnittstelle | Verfügbar? | Nutzung im Bot |
+- **discord.py 2.x** is the most mature Python library for Discord. Slash commands,
+  autocomplete, embeds and background tasks are built in.
+- discord.py ships with **aiohttp**, which already contains a WebSocket client – exactly what
+  WebRCON needs. No extra RCON library required.
+- Python is easy to read and adapt. That matters, because the Console Edition log format can
+  change with game updates.
+
+---
+
+## What is technically possible on Console Edition at G-Portal?
+
+| Interface | Available? | Use in the bot |
 |---|---|---|
-| **WebRCON** (WebSocket, `ws://IP:PORT/PASSWORT`, JSON) | ✅ Ja. G-Portal verweist selbst auf den WebRCON-Client von Facepunch. | Einzige Verbindung des Bots |
-| Konsolenbefehle über RCON (`serverinfo`, `playerlist`, `say`, `kick`, …) | ✅ Ja | Status, Spielerliste, Admin-Befehle |
-| **Live-Konsolenausgabe** über dieselbe WebSocket-Verbindung | ✅ Ja | Killfeed, Quick-Chat, Bans, Teams, Events |
-| Oxide/uMod-Plugins, eigene Server-Hooks | ❌ Nein, auf Konsole gibt es kein Modding | – |
-| Log-Dateien per FTP | ❌ Bei RCE-Servern nicht vorgesehen | – |
-| G-Portal-Web-API | ⚠️ Inoffiziell, Login mit Kontodaten nötig, kann sich jederzeit ändern | bewusst **nicht** genutzt |
-| Freier Text-Chat ingame | ❌ RCE hat **nur Quick-Chat** (vorgefertigte Phrasen) | Phrasen werden übersetzt |
+| **WebRCON** (WebSocket, `ws://IP:PORT/PASSWORD`, JSON) | ✅ Yes. G-Portal itself points to Facepunch's WebRCON client. | The bot's only connection |
+| Console commands via RCON (`serverinfo`, `playerlist`, `say`, `kick`, …) | ✅ Yes | Status, player list, admin commands |
+| **Live console output** over the same WebSocket connection | ✅ Yes | Killfeed, quick chat, bans, teams, events |
+| Oxide/uMod plugins, custom server hooks | ❌ No, there is no modding on console | – |
+| Log files via FTP | ❌ Not available for RCE servers | – |
+| G-Portal web API | ⚠️ Unofficial, needs your account login, can change at any time | deliberately **not** used |
+| Free-text chat in-game | ❌ RCE has **only quick chat** (preset phrases) | Phrases are translated into readable text |
 
-Grundlage der Recherche: der Quellcode der Community-Bibliothek
-[rce.js](https://www.npmjs.com/package/rce.js) (v4.6.1, Nov. 2025). Kaosbot, Helios und andere
-RCE-Tools nutzen genau diese WebRCON-Schnittstelle. Dazu kommen G-Portals Wiki-Artikel
-[„So verbindest du dich über RCON mit deinem Rust CE Server“](https://www.g-portal.com/wiki/de/so-verbindest-du-dich-ueber-rcon-mit-deinem-rust-ce-server/)
-und das [öffentliche Helios-Listing](https://top.gg/bot/1327703273410658324).
-
----
-
-## Funktionsumfang
-
-### ✅ Umgesetzt (Prototyp)
-
-| Feature | Wie | Hinweise |
-|---|---|---|
-| **Status-Embed**, wird live bearbeitet | `serverinfo` + `playerlist` | Eine Nachricht im Status-Channel, alle `STATUS_INTERVAL` s aktualisiert. Die Nachrichten-ID wird gespeichert und bleibt nach einem Neustart erhalten. |
-| **Bot-Aktivität** „Schaut 12/50 Spieler“ | `serverinfo` | Bei Verbindungsverlust: „Server offline“ (Status „Bitte nicht stören“) |
-| `/status`, `/spieler` | wie oben | Spielerliste mit Online-Zeit und Ping |
-| **Joins/Leaves** | Zwei aufeinanderfolgende `playerlist`-Abfragen werden verglichen | Verzögerung = `PLAYERLIST_INTERVAL`. Nach einem (Re-)Connect wird still synchronisiert, damit keine Flut an Join-Meldungen entsteht. |
-| **Chat-Bridge Spiel → Discord** | Logzeilen `[CHAT LOCAL/TEAM] Name : Phrase` | Quick-Chat-Bezeichner werden ins Deutsche übersetzt („Ich brauche Scrap.“) |
-| **Chat-Bridge Discord → Spiel** | `say` | Mit Präfix, Cooldown von 3 s pro Nutzer. Rich-Text-Tags werden entfernt, damit niemand Formatierungen einschleusen kann. |
-| **Killfeed** | Logzeile `Opfer was killed by Täter` | Unterscheidet PvP, Natur (Hunger, Sturz …), NPCs (Wolf, Scientist, Heli …) und Fallen/Turrets |
-| **Server-Events** | `[EVENT …]`-Zeilen | Airdrop, Cargo Ship, Chinook, Patrouillen-Heli, Saison-Events |
-| **Team-Events** | Team-Logzeilen | Gründen, Beitreten, Verlassen, Leiter-Wechsel |
-| **Admin-Log** | Logzeilen + Bot-Audit | Bans/Unbans, Gruppenänderungen, Kits/Items, Konsolenbefehle, *wer* im Discord welchen Admin-Befehl genutzt hat, RCON-Verbindungsstatus |
-| **Konsolen-Log** | alle Live-Zeilen | Gebündelt als Codeblock. Die Abfragen des Bots selbst werden herausgefiltert. |
-| **Admin-Befehle** | `/kick`, `/ban`, `/unban`, `/say`, `/rcon` | Nur für `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Autovervollständigung der Spielernamen. Lange `/rcon`-Ausgaben kommen als Datei. |
-| **Leaderboard & Stats** | eigene SQLite-Datenbank | `/leaderboard` (Kills, Tode, K/D, Spielzeit), `/stats <spieler>` inkl. Plattform (Xbox/PlayStation aus der Respawn-Zeile) |
-| **Kitmanager** | eingebaute Kit-Befehle der Console Edition | Kits anzeigen, an Spieler, Auth-Gruppen oder alle vergeben (mit Bestätigung), Items hinzufügen/entfernen, Verlauf. Details siehe [Kitmanager](#kitmanager). |
-| **Custom Kits** | Bot-Datenbank → `inventory.giveto` pro Item | Kits, die **nur im Bot** existieren und im Ingame-Kitmanager unsichtbar sind. Details siehe [Custom Kits](#custom-kits). |
-| **Autokits** | Respawn-Logzeile bzw. Quick-Chat-Phrase → `kit givetoplayer` bzw. Custom Kit | Pro Regel Cooldown und Limit pro Spieler, Wipe-Reset. Quick-Chat-Kits melden sich ingame per `say`. |
-| **Support-Tickets mit KI** | Discord + [DeepSeek-Plattform](https://platform.deepseek.com) | Private Ticket-Channels, KI antwortet aus deiner Wissensbasis und pingt Staff bei Bedarf. Details siehe [Support-Tickets](#support-tickets-mit-ki-deepseek). |
-| **Community** | Discord | Willkommensnachricht, Auto-Rolle, `/ping`, `/rust`, `/regeln` (Regeln aus `rules.md`). Details siehe [Community & Moderation](#community--moderation). |
-| **Discord-Moderation** | Discord | `/mod timeout/untimeout/kick/ban/unban/purge` mit Rechte- und Rollen-Hierarchie-Prüfung |
-| **Discord-Log** | Discord | Beitritte/Austritte, gelöschte und bearbeitete Nachrichten, Moderation, Giveaways |
-| **Giveaways** | Discord + Datenbank | Teilnahme per Button, automatische Auslosung, mehrere Gewinner, Gewinner-Rolle, Reroll; **überleben Neustarts** |
-| **Auto-Reconnect** | exponentielles Backoff 5 s → 120 s | Eine tote Verbindung wird nach 3 unbeantworteten Befehlen erkannt. Laufende Befehle bekommen eine verständliche Fehlermeldung. |
-
-### 🔜 Technisch machbar, aber nicht in diesem Prototyp
-
-Helios und Kaosbot bieten diese Funktionen laut ihren Listings. Sie laufen ebenfalls über
-RCE-Konsolenbefehle und Logzeilen. Die genaue Befehlssyntax ließ sich für diesen Prototyp aber
-nicht verlässlich prüfen, deshalb ist sie nicht eingebaut:
-
-- **Weitere Ingame-„Befehle“ per Quick-Chat** (z. B. TP-Home): Das Prinzip ist mit den
-  Quick-Chat-Autokits bereits umgesetzt und lässt sich auf andere Befehle übertragen.
-- **Shop/Economy, Teleports, Zonen**: über Befehle wie `teleport…` oder `zones.…`. Mit `/rcon`
-  ausprobieren und dann als eigenen Slash-Command ergänzen.
-- **Geplante Nachrichten/Events**: einfacher `tasks.loop` mit `say` bzw. Event-Befehlen.
-- **Spielerzahl im Channel-Namen**: Discord erlaubt nur 2 Umbenennungen pro 10 Minuten, daher
-  ist das Status-Embed hier die bessere Lösung.
-
-### ❌ Auf der Console Edition nicht umsetzbar (mit nächstbester Alternative)
-
-| Kaosbot/Helios-artige Funktion bzw. PC-Feature | Warum nicht | Alternative im Bot |
-|---|---|---|
-| Freitext-Chat ingame ↔ Discord | RCE hat keinen freien Chat | Quick-Chat-Phrasen werden übersetzt. Discord → Spiel per `say` funktioniert. |
-| Waffe, Distanz, Trefferzone im Killfeed | Steht nicht in der Kill-Zeile | Täter-Typ (Spieler/NPC/Falle/Natur) wird angezeigt |
-| Plugins (Oxide/uMod/Carbon), eigene Hooks, eigene UI | Kein Modding auf Konsole | Nur eingebaute Konsolenbefehle und Logzeilen |
-| Stabile Spieler-IDs (SteamID/XUID/PSN-ID) | Logs und `playerlist` liefern nur den Anzeigenamen | Statistiken pro Name. Bei einer Namensänderung entsteht ein neuer Eintrag. |
-| Join/Leave-Meldungen in Echtzeit aus dem Log | Keine verlässliche Logzeile | Abgleich der Spielerlisten (Verzögerung ≤ `PLAYERLIST_INTERVAL`) |
-| Statistiken aus der Zeit vor dem Bot-Start | RCON hat keine Historie | Zählung ab Bot-Start |
-| Live-Karte, Spielerpositionen, Raid-Erkennung über Server-Hooks | Kein Map- bzw. Hook-API über RCON | – (Raid-Alarme bei Helios: Datenquelle nicht verifizierbar, daher **nicht** nachgebaut) |
-| Wipe, Neustart, Server-Einstellungen | Laufen über das G-Portal-Panel, nicht über RCON | G-Portal-Webinterface verwenden |
+Research basis: the source code of the community library
+[rce.js](https://www.npmjs.com/package/rce.js) (v4.6.1, Nov 2025). Kaosbot, Helios and other
+RCE tools use exactly this WebRCON interface. Also G-Portal's wiki article
+["How to connect to your Rust CE server via RCON"](https://www.g-portal.com/wiki/de/so-verbindest-du-dich-ueber-rcon-mit-deinem-rust-ce-server/)
+(in German) and the [public Helios listing](https://top.gg/bot/1327703273410658324).
 
 ---
 
-## Annahmen
+## Features
 
-Alle Annahmen lassen sich ohne Eingriff in den restlichen Code anpassen:
+### ✅ Implemented (prototype)
 
-1. **Verbindung:** `ws://<RCON_HOST>:<RCON_PORT>/<RCON_PASSWORD>`. Das ist das Standard-Format
-   von Rust-WebRCON und wird von rce.js genauso genutzt.
-2. **Log-Format** (Datei `rce/log_parser.py`, Dictionary `PATTERNS`), z. B.:
-   - `Opfer was killed by Täter` / `Name was suicide by Suicide`
+| Feature | How | Notes |
+|---|---|---|
+| **Status embed**, edited live | `serverinfo` + `playerlist` | One message in the status channel, refreshed every `STATUS_INTERVAL` s. The message ID is stored and survives a restart. |
+| **Bot activity** "Watching 12/50 players" | `serverinfo` | When the connection drops: "Server offline" (status "Do Not Disturb") |
+| `/status`, `/players` | as above | Player list with time online and ping |
+| **Joins/leaves** | Two consecutive `playerlist` queries are compared | Delay = `PLAYERLIST_INTERVAL`. After a (re)connect the list is synced silently, so there is no flood of join messages. |
+| **Chat bridge game → Discord** | Log lines `[CHAT LOCAL/TEAM] Name : Phrase` | Quick-chat identifiers are turned into readable text ("I need scrap.") |
+| **Chat bridge Discord → game** | `say` | With prefix, 3 s cooldown per user. Rich-text tags are stripped so nobody can inject formatting. |
+| **Killfeed** | Log line `Victim was killed by Killer` | Distinguishes PvP, natural causes (hunger, fall …), NPCs (wolf, scientist, heli …) and traps/turrets |
+| **Server events** | `[EVENT …]` lines | Airdrop, cargo ship, Chinook, patrol heli, seasonal events |
+| **Team events** | Team log lines | Created, joined, left, leader changed |
+| **Admin log** | Log lines + bot audit | Bans/unbans, group changes, kits/items, console commands, *who* used which admin command in Discord, RCON connection status |
+| **Console log** | all live lines | Batched as a code block. The bot's own queries are filtered out. |
+| **Admin commands** | `/kick`, `/ban`, `/unban`, `/say`, `/rcon` | Only for `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Player name autocomplete. Long `/rcon` output is sent as a file. |
+| **Leaderboard & stats** | own SQLite database | `/leaderboard` (kills, deaths, K/D, playtime), `/stats <player>` incl. platform (Xbox/PlayStation from the respawn line) |
+| **Kit manager** | Console Edition's built-in kit commands | List kits, give them to players, auth groups or everyone (with confirmation), add/remove items, history. See [Kit manager](#kit-manager). |
+| **Custom kits** | Bot database → `inventory.giveto` per item | Kits that exist **only in the bot** and are invisible in the in-game kit manager. See [Custom kits](#custom-kits). |
+| **Autokits** | Respawn log line or quick-chat phrase → `kit givetoplayer` or custom kit | Per-rule cooldown and per-player limit, wipe reset. Quick-chat kits confirm in-game via `say`. |
+| **Support tickets with AI** | Discord + [DeepSeek platform](https://platform.deepseek.com) | Private ticket channels, the AI answers from your knowledge base and pings staff when needed. See [Support tickets](#support-tickets-with-ai-deepseek). |
+| **Community** | Discord | Welcome message, auto role, `/ping`, `/rust`, `/rules` (rules from `rules.md`). See [Community & moderation](#community--moderation). |
+| **Discord moderation** | Discord | `/mod timeout/untimeout/kick/ban/unban/purge` with permission and role-hierarchy checks |
+| **Discord log** | Discord | Joins/leaves, deleted and edited messages, moderation, giveaways |
+| **Giveaways** | Discord + database | Enter via button, automatic draw, multiple winners, winner role, reroll; **survive restarts** |
+| **Auto-reconnect** | exponential backoff 5 s → 120 s | A dead connection is detected after 3 unanswered commands. Pending commands get a clear error message. |
+
+### 🔜 Technically possible, but not in this prototype
+
+According to their listings, Helios and Kaosbot offer these features. They also run on RCE
+console commands and log lines. The exact command syntax could not be verified reliably for this
+prototype, so they are not built in:
+
+- **More in-game "commands" via quick chat** (e.g. TP home): the principle is already in place
+  with the quick-chat autokits and can be applied to other commands.
+- **Shop/economy, teleports, zones**: via commands such as `teleport…` or `zones.…`. Try them with
+  `/rcon` first, then add them as your own slash command.
+- **Scheduled messages/events**: a simple `tasks.loop` with `say` or event commands.
+- **Player count in the channel name**: Discord only allows 2 renames per 10 minutes, so the
+  status embed is the better solution here.
+
+### ❌ Not possible on Console Edition (with the next best alternative)
+
+| Kaosbot/Helios-style feature or PC feature | Why not | Alternative in the bot |
+|---|---|---|
+| Free-text chat in-game ↔ Discord | RCE has no free chat | Quick-chat phrases are translated. Discord → game via `say` works. |
+| Weapon, distance, hit zone in the killfeed | Not in the kill line | The killer type (player/NPC/trap/nature) is shown |
+| Plugins (Oxide/uMod/Carbon), custom hooks, custom UI | No modding on console | Only built-in console commands and log lines |
+| Stable player IDs (SteamID/XUID/PSN ID) | Logs and `playerlist` only provide the display name | Stats per name. A name change creates a new entry. |
+| Real-time join/leave messages from the log | No reliable log line | Comparing player lists (delay ≤ `PLAYERLIST_INTERVAL`) |
+| Stats from before the bot was started | RCON has no history | Counting starts when the bot starts |
+| Live map, player positions, raid detection via server hooks | No map or hook API over RCON | – (Helios' raid alerts: data source can't be verified, so **not** rebuilt) |
+| Wipe, restart, server settings | Done in the G-Portal panel, not via RCON | Use the G-Portal web interface |
+
+---
+
+## Assumptions
+
+Every assumption can be adjusted without touching the rest of the code:
+
+1. **Connection:** `ws://<RCON_HOST>:<RCON_PORT>/<RCON_PASSWORD>`. This is the standard Rust
+   WebRCON format and is used the same way by rce.js.
+2. **Log format** (file `rce/log_parser.py`, dictionary `PATTERNS`), e.g.:
+   - `Victim was killed by Killer` / `Name was suicide by Suicide`
    - `[CHAT LOCAL] Name : d11_quick_chat_responses_slot_5`
    - `Name [SCARLETT] has entered the game` (SCARLETT = Xbox)
-   - `[Admin] Added [Name] to [Banned]`, `[Admin] Added [Name] to Group [Rolle]`
-   - `[Name] has joined [Leiter]s team, ID: [123]`
+   - `[Admin] Added [Name] to [Banned]`, `[Admin] Added [Name] to Group [Role]`
+   - `[Name] has joined [Leader]s team, ID: [123]`
    - `[EVENT] … event_cargoship …`
 
-   Diese Muster stammen aus rce.js, Stand November 2025. Ändert Facepunch das Format, passt du nur
-   die betroffene Regex an. Mit `CONSOLE_LOG_CHANNEL_ID` siehst du die echten Zeilen deines Servers.
-3. **`playerlist` und `serverinfo` antworten mit JSON** (Felder `DisplayName`, `Ping`,
-   `ConnectedSeconds` bzw. `Hostname`, `Players`, `MaxPlayers`, `Queued`, …).
-4. **Kick/Ban/Unban-Syntax ist NICHT verifiziert.** Voreingestellt sind `kick "{name}"`,
-   `banid "{name}"` und `unbanid "{name}"`. Prüfe die Befehle einmal per `/rcon` oder in der
-   G-Portal-Konsole und passe bei Bedarf `KICK_/BAN_/UNBAN_COMMAND_TEMPLATE` in der `.env` an.
-   Ob ein Ban gegriffen hat, zeigt die Logzeile `Added [Name] to [Banned]` im Admin-Log.
-5. **Kit-Befehle:** `kit list` und `kit info` samt Ausgabeformat stammen aus rce.js.
-   `kit givetogroup`, `kit giveall` und `kit remove "Kit" "ID"` stehen in der offiziellen
-   [RCE-Community-Server-Doku](https://rust-console-edition.gitbook.io/community-servers/feature-guides/kit-management).
-   `kit givetoplayer "Kit" "Spieler"` und die genaue Argumentreihenfolge von `kit add` kommen aus
-   einem Drittanbieter-Guide und sind **nicht verifiziert**. Alle verändernden Kit-Befehle sind
-   deshalb als `KIT_*_TEMPLATE` in der `.env` anpassbar. Ob die Item-ID für `kit remove` in der
-   Ausgabe von `kit info` steht, ist unklar; der Bot zeigt sie an, wenn er sie findet, sonst die
-   Rohausgabe.
-6. **Item-Vergabe für Custom Kits:** `inventory.giveto` steht in der RCE-Community-Doku. Die
-   Argumentreihenfolge `"Spieler" "shortname" Menge` ist nur von Rust PC übernommen und **nicht
-   verifiziert**. Anpassbar über `ITEM_GIVE_TEMPLATE`. Die Logzeile `giving Spieler 1 x item`
-   (durch rce.js belegt) erscheint im Admin-Log und bestätigt jede Vergabe.
-7. Manche Befehle (`say`, `kick`, …) geben auf RCE keine Antwort zurück. Der Bot wertet das
-   nicht als Fehler.
-8. Quick-Chat-Bezeichner und deutsche Übersetzungen stehen in `rce/quickchat.py`, die Namen von
-   Todesursachen in `rce/kill_sources.py`. Beides lässt sich beliebig erweitern.
+   These patterns come from rce.js as of November 2025. If Facepunch changes the format, you only
+   need to adjust the affected regex. With `CONSOLE_LOG_CHANNEL_ID` you can see the real lines of
+   your server.
+3. **`playerlist` and `serverinfo` answer with JSON** (fields `DisplayName`, `Ping`,
+   `ConnectedSeconds` and `Hostname`, `Players`, `MaxPlayers`, `Queued`, …).
+4. **The kick/ban/unban syntax is NOT verified.** The defaults are `kick "{name}"`,
+   `banid "{name}"` and `unbanid "{name}"`. Check the commands once via `/rcon` or in the
+   G-Portal console and adjust `KICK_/BAN_/UNBAN_COMMAND_TEMPLATE` in the `.env` if needed.
+   Whether a ban worked is shown by the log line `Added [Name] to [Banned]` in the admin log.
+5. **Kit commands:** `kit list` and `kit info` and their output format come from rce.js.
+   `kit givetogroup`, `kit giveall` and `kit remove "Kit" "ID"` are documented in the official
+   [RCE community server docs](https://rust-console-edition.gitbook.io/community-servers/feature-guides/kit-management).
+   `kit givetoplayer "Kit" "Player"` and the exact argument order of `kit add` come from a
+   third-party guide and are **not verified**. That's why every kit command that changes something
+   is configurable as `KIT_*_TEMPLATE` in the `.env`. It's unclear whether the item ID needed for
+   `kit remove` appears in the output of `kit info`; the bot shows it if it finds it, otherwise the
+   raw output.
+6. **Item giving for custom kits:** `inventory.giveto` is listed in the RCE community docs. The
+   argument order `"Player" "shortname" amount` is only taken from Rust PC and is **not
+   verified**. Configurable via `ITEM_GIVE_TEMPLATE`. The log line `giving Player 1 x item`
+   (confirmed by rce.js) shows up in the admin log and confirms every item given.
+7. Some commands (`say`, `kick`, …) return no response on RCE. The bot does not treat that as an
+   error.
+8. Quick-chat identifiers and their readable texts live in `rce/quickchat.py`, the names of
+   causes of death in `rce/kill_sources.py`. Both can be extended freely.
 
 ---
 
-## Projektstruktur
+## Project structure
 
 ```
 rce-discord-bot/
-├── bot.py                 # Einstiegspunkt: Bot, Event-Verteilung, Fehlerbehandlung
-├── config.py              # Lädt und prüft die .env
-├── storage.py             # SQLite: Leaderboard, Spielzeit, Status-Nachrichten-ID
-├── utils.py               # Rechteprüfung, Text-Bereinigung, gebündeltes Senden
+├── bot.py                 # Entry point: bot, event dispatch, error handling
+├── config.py              # Loads and validates the .env
+├── storage.py             # SQLite: leaderboard, playtime, status message ID
+├── utils.py               # Permission checks, text sanitizing, batched sending
 ├── rce/
-│   ├── rcon_client.py     # WebRCON-Client mit Auto-Reconnect
-│   ├── log_parser.py      # Regex für Konsolenzeilen  ← hier Log-Format anpassen
-│   ├── kill_sources.py    # Todesursachen (Natur/NPC/Falle)
-│   ├── kits.py            # Auswertung von kit list / kit info / getauthlevels
-│   ├── items.py           # Häufige Item-Shortnames (Autovervollständigung)
-│   ├── diagnostics.py     # RCON-Verbindungstest (Webinterface + rcon_test.bat)
-│   └── quickchat.py       # Quick-Chat-Übersetzung
+│   ├── rcon_client.py     # WebRCON client with auto-reconnect
+│   ├── log_parser.py      # Regexes for console lines  ← adjust the log format here
+│   ├── kill_sources.py    # Causes of death (nature/NPC/trap)
+│   ├── kits.py            # Parsing of kit list / kit info / getauthlevels
+│   ├── items.py           # Common item shortnames (autocomplete)
+│   ├── diagnostics.py     # RCON connection test (web interface + rcon_test.bat)
+│   └── quickchat.py       # Quick-chat translation
 ├── cogs/
-│   ├── status.py          # Status-Embed, Aktivität, /status, /spieler, Join/Leave
-│   ├── feeds.py           # Chat-Bridge, Killfeed, Events, Admin-/Konsolen-Log
+│   ├── status.py          # Status embed, activity, /status, /players, join/leave
+│   ├── feeds.py           # Chat bridge, killfeed, events, admin/console log
 │   ├── admin.py           # /kick /ban /unban /say /rcon
 │   ├── stats.py           # /leaderboard /stats
-│   ├── kits.py            # Kitmanager: /kit … und Autokits
-│   ├── custom_kits.py     # Custom Kits: /customkit … (nur im Bot)
-│   ├── tickets.py         # Support-Tickets mit KI: /ticket …
-│   ├── community.py       # /ping /rust /regeln, Willkommen, Auto-Rolle, Discord-Log
-│   ├── moderation.py      # /mod timeout/kick/ban/unban/purge (Discord-Mitglieder)
-│   └── giveaways.py       # /giveaway … (dauerhaft in der Datenbank)
+│   ├── kits.py            # Kit manager: /kit … and autokits
+│   ├── custom_kits.py     # Custom kits: /customkit … (bot only)
+│   ├── tickets.py         # Support tickets with AI: /ticket …
+│   ├── community.py       # /ping /rust /rules, welcome, auto role, Discord log
+│   ├── moderation.py      # /mod timeout/kick/ban/unban/purge (Discord members)
+│   └── giveaways.py       # /giveaway … (persisted in the database)
 ├── support/
-│   ├── deepseek.py        # Client für die DeepSeek-Plattform-API
-│   └── prompt.py          # System-Prompt, Verlauf, Auswertung der KI-Antwort
-├── support_knowledge.md   # Wissensbasis für die KI  ← selbst ausfüllen
-├── rules.md               # Regeln für /regeln  ← anpassen
+│   ├── deepseek.py        # Client for the DeepSeek platform API
+│   └── prompt.py          # System prompt, history, parsing the AI reply
+├── support_knowledge.md   # Knowledge base for the AI  ← fill in yourself
+├── rules.md               # Rules for /rules  ← adjust
 ├── web/
-│   ├── server.py          # Webinterface: Login + JSON-API (läuft im Bot-Prozess)
-│   └── static/            # Oberfläche (HTML/CSS/JS, keine externen Dateien)
-├── logbuffer.py           # Letzte Log-Zeilen für das Webinterface
-├── settings_schema.py     # Alle Einstellungen fürs Formular (Bezeichnung, Typ, Hilfe, Prüfung)
-├── envfile.py             # .env lesen/schreiben (Kommentare bleiben erhalten)
-├── start.bat              # Windows: Doppelklick = einrichten + starten + Auto-Neustart
-├── start.sh               # Linux/macOS: dasselbe
-├── rcon_test.bat          # Windows: RCON-Verbindung Schritt für Schritt testen (tools/rcon_test.py)
-├── tools/mock_rcon_server.py  # Simulierter RCE-Server zum Testen
-├── tests/                 # pytest: Parser, RCON-Client, Kits, Tickets, Webinterface
-├── logs/bot.log           # Log-Datei (wird automatisch angelegt)
+│   ├── server.py          # Web interface: login + JSON API (runs inside the bot process)
+│   └── static/            # Frontend (HTML/CSS/JS, no external files)
+├── logbuffer.py           # Recent log lines for the web interface
+├── settings_schema.py     # All settings for the form (label, type, help, validation)
+├── envfile.py             # Read/write .env (comments are preserved)
+├── start.bat              # Windows: double-click = set up + start + auto-restart
+├── start.sh               # Linux/macOS: the same
+├── rcon_test.bat          # Windows: test the RCON connection step by step (tools/rcon_test.py)
+├── tools/mock_rcon_server.py  # Simulated RCE server for testing
+├── tests/                 # pytest: parser, RCON client, kits, tickets, web interface
+├── logs/bot.log           # Log file (created automatically)
 ├── requirements.txt
 └── .env.example
 ```
 
 ---
 
-## Installation & Start
+## Installation & startup
 
-### 1. Voraussetzungen
+### 1. Requirements
 
-- **Python 3.10 oder neuer** ([python.org](https://www.python.org/downloads/), unter Windows bei
-  der Installation „Add Python to PATH“ anhaken)
-- Ein Rechner, der läuft, solange der Bot laufen soll – z. B. **dein eigener PC** (siehe
-  [Auf deinem PC hosten](#auf-deinem-pc-hosten)) oder ein VPS. Der Bot verbindet sich nur
-  **ausgehend** zu Discord, zum G-Portal-Server und zu DeepSeek – du musst **keine Ports im
-  Router freigeben**.
+- **Python 3.10 or newer** ([python.org](https://www.python.org/downloads/); on Windows, tick
+  "Add Python to PATH" during installation)
+- A computer that stays on for as long as the bot should run – e.g. **your own PC** (see
+  [Hosting on your PC](#hosting-on-your-pc)) or a VPS. The bot only makes **outgoing**
+  connections to Discord, the G-Portal server and DeepSeek – you do **not** need to forward any
+  ports on your router.
 
-### 2. Discord-Bot im Developer Portal anlegen
+### 2. Create the Discord bot in the Developer Portal
 
-1. Öffne <https://discord.com/developers/applications> → **New Application** → Namen vergeben.
-2. Links auf **Bot**:
-   - **Reset Token** → Token kopieren. Das ist `DISCORD_TOKEN`. Gib es niemals weiter!
-   - Unter **Privileged Gateway Intents**:
-     - **Message Content Intent** – für Chat-Bridge, KI-Tickets und Nachrichten-Log.
-     - **Server Members Intent** – für Willkommensnachricht, Auto-Rolle und Join/Leave-Log.
-     Werden die Features nicht genutzt (Channels in der `.env` leer), fragt der Bot die Intents
-     auch nicht an.
-3. Links **OAuth2 → URL Generator**:
-   - Scopes: `bot` und `applications.commands`
-   - Bot-Berechtigungen: *View Channels*, *Send Messages*, *Embed Links*, *Attach Files*,
-     *Read Message History*, *Add Reactions*, *Manage Channels* (Tickets), *Manage Roles*
-     (Auto-Rolle, Gewinner-Rolle), *Moderate Members* (Timeout), *Kick Members*, *Ban Members*,
-     *Manage Messages* (Purge), *Mention @everyone, @here and All Roles* (Staff-Ping)
-   - Die **Bot-Rolle** in den Servereinstellungen über die Rollen ziehen, die er vergeben oder
-     moderieren soll.
-   - Erzeugte URL öffnen und den Bot auf deinen Discord-Server einladen.
-4. IDs kopieren: Discord → Einstellungen → Erweitert → **Entwicklermodus** an. Danach
-   Rechtsklick auf Server, Channel oder Rolle → „ID kopieren“.
+1. Open <https://discord.com/developers/applications> → **New Application** → give it a name.
+2. Click **Bot** on the left:
+   - **Reset Token** → copy the token. This is your `DISCORD_TOKEN`. Never share it!
+   - Under **Privileged Gateway Intents**, enable:
+     - **Message Content Intent** – for the chat bridge, AI tickets and the message log.
+     - **Server Members Intent** – for the welcome message, auto role and join/leave log.
+     - Click **Save Changes**.
 
-### 3. RCON-Daten bei G-Portal finden
+     If you don't use these features (channels left empty in the `.env`), the bot doesn't
+     request the intents either.
+3. Click **OAuth2 → URL Generator** on the left:
+   - Scopes: `bot` and `applications.commands`
+   - Bot permissions: *View Channels*, *Send Messages*, *Embed Links*, *Attach Files*,
+     *Read Message History*, *Add Reactions*, *Manage Channels* (tickets), *Manage Roles*
+     (auto role, winner role), *Timeout Members* (timeout), *Kick Members*, *Ban Members*,
+     *Manage Messages* (purge), *Mention @everyone, @here and All Roles* (staff ping).
+     All of these together are the permission integer **`1099780320342`** – the invite link the
+     web interface generates (⚙️ Settings → "Check bot token") uses exactly this value.
+   - In your server settings, drag the **bot role** above the roles it should assign or
+     moderate.
+   - Open the generated URL and invite the bot to your Discord server.
+4. Copying IDs: Discord → User Settings → Advanced → turn on **Developer Mode**. Then
+   right-click a server, channel or role → "Copy ID".
 
-1. Bei [g-portal.com](https://www.g-portal.com) einloggen → **Meine Server** → deinen
-   Rust-Console-Server öffnen.
-2. **IP und RCON-Port** stehen in der Serverübersicht bzw. bei den Verbindungs- und
-   Port-Informationen. Der RCON-Port ist **nicht** der Spielport.
-3. Das **RCON-Passwort** findest du unter **Einstellungen → Grundeinstellungen** (Feld
-   „RCON-Passwort“). Ändern, speichern und den Server neu starten, damit es greift. Verwende am
-   besten nur Buchstaben und Zahlen, weil das Passwort Teil der URL ist.
-4. **Verbindung testen:** Laut G-Portal-Wiki funktioniert bei RCE nur ein WebRCON-Client. Mit dem
-   [Facepunch-WebRCON-Client](http://facepunch.github.io/webrcon/) kannst du `IP:Port` und das
-   Passwort prüfen. Klappt das dort, klappt es auch mit dem Bot.
+### 3. Find your RCON details at G-Portal
 
-> Die Menünamen im G-Portal-Panel können sich leicht ändern. Gesucht sind immer: IP, RCON-Port, RCON-Passwort.
+1. Log in at [g-portal.com](https://www.g-portal.com) → **My servers** → open your Rust Console
+   server.
+2. **IP and RCON port** are shown in the server overview or in the connection/port information.
+   The RCON port is **not** the game port.
+3. The **RCON password** is under **Settings → Basic settings** (field "RCON password"). Change
+   it, save, and restart the server for it to take effect. Ideally use only letters and digits,
+   because the password is part of the URL.
+4. **Test the connection:** According to the G-Portal wiki, only a WebRCON client works with
+   RCE. With the [Facepunch WebRCON client](http://facepunch.github.io/webrcon/) you can check
+   `IP:port` and the password. If it works there, it works with the bot.
 
-### 4. Bot einrichten
+> The menu names in the G-Portal panel may change slightly. You're always looking for: IP, RCON port, RCON password.
 
-**Windows (einfachster Weg):** Doppelklick auf **`start.bat`**. Beim ersten Start legt das Skript
-die Python-Umgebung an und installiert alles. Danach öffnet sich der **Browser mit der
-Einrichtung**: Bot-Token, Server-IP, RCON-Port, RCON-Passwort und deine Discord-ID eintragen,
-„RCON-Verbindung testen“ klicken, dann **„Speichern & Bot starten“**. Fertig – kein Editor nötig.
+### 4. Set up the bot
 
-Öffnet sich kein Browser, steht im Bot-Fenster ein Link der Form
-`http://localhost:8080/auth?token=…` – einfach im Browser öffnen.
+**Windows (easiest way):** Double-click **`start.bat`**. On first start the script creates the
+Python environment and installs everything. Then your **browser opens with the setup page**:
+enter the bot token, server IP, RCON port, RCON password and your Discord ID, click
+"Test RCON", then **"Save & start bot"**. Done – no text editor needed.
 
-**Linux/macOS:** `./start.sh` ausführen und den Link aus dem Fenster im Browser öffnen.
+If no browser opens, the bot window shows a link like
+`http://localhost:8080/auth?token=…` – just open it in your browser.
 
-> Fehlen Pflichtangaben oder ist der Discord-Token ungültig, beendet sich der Bot nicht mehr,
-> sondern startet im **Einrichtungsmodus** (nur die Einstellungsseite). Die `.env` kannst du
-> weiterhin auch von Hand bearbeiten – das Webinterface schreibt in dieselbe Datei.
+**Linux/macOS:** Run `./start.sh` and open the link from the window in your browser.
 
-**Manuell (alle Systeme):**
+> If required settings are missing or the Discord token is invalid, the bot no longer exits.
+> Instead it starts in **setup mode** (settings page only). You can still edit the `.env` by
+> hand – the web interface writes to the same file.
+
+**Manual (all systems):**
 
 ```bash
 cd rce-discord-bot
@@ -264,92 +272,92 @@ python -m venv .venv
 pip install -r requirements.txt
 
 cp .env.example .env      # Windows: copy .env.example .env
-# .env öffnen und ausfüllen: DISCORD_TOKEN, GUILD_ID, RCON_*, ADMIN_ROLE_IDS, Channel-IDs
+# open .env and fill in: DISCORD_TOKEN, GUILD_ID, RCON_*, ADMIN_ROLE_IDS, channel IDs
 ```
 
-Pflichtangaben: `DISCORD_TOKEN`, `RCON_HOST`, `RCON_PORT`, `RCON_PASSWORD` und mindestens eines
-von `ADMIN_ROLE_IDS` oder `ADMIN_USER_IDS`. Jeder Channel ist optional. Ist er leer, ist das
-zugehörige Feature aus. Empfohlen: `CONSOLE_LOG_CHANNEL_ID` und `ADMIN_LOG_CHANNEL_ID` als
-**private** Channels anlegen.
+Required: `DISCORD_TOKEN`, `RCON_HOST`, `RCON_PORT`, `RCON_PASSWORD` and at least one of
+`ADMIN_ROLE_IDS` or `ADMIN_USER_IDS`. Every channel is optional. If it's empty, the matching
+feature is off. Recommended: create `CONSOLE_LOG_CHANNEL_ID` and `ADMIN_LOG_CHANNEL_ID` as
+**private** channels.
 
-### 5. Starten
+### 5. Start
 
-`start.bat` (Windows) bzw. `./start.sh` (Linux/macOS) – oder manuell `python bot.py`.
+`start.bat` (Windows) or `./start.sh` (Linux/macOS) – or manually `python bot.py`.
 
-Im Fenster sollte `RCON verbunden.`, `Eingeloggt als …` und `Webinterface läuft:
-http://localhost:8080` erscheinen; der Browser öffnet das Webinterface automatisch. Mit gesetzter
-`GUILD_ID` sind die Slash-Commands sofort da. Ohne `GUILD_ID` werden sie global registriert, das
-kann bis zu einer Stunde dauern.
+The window should show `RCON connected.`, `Logged in as …` and `Web interface running:
+http://localhost:8080`; the browser opens the web interface automatically. With `GUILD_ID` set,
+the slash commands are available immediately. Without `GUILD_ID` they are registered globally,
+which can take up to an hour.
 
-Die Start-Skripte starten den Bot nach einem Absturz nach 10 Sekunden neu. Bei
-Konfigurationsfehlern (falscher Token, fehlende Angaben) halten sie stattdessen an und zeigen
-die Meldung – erst `.env` korrigieren, dann neu starten.
-
----
-
-## Auf deinem PC hosten
-
-Der Bot läuft problemlos auf einem normalen Windows-, Linux- oder Mac-PC:
-
-- **Keine Portfreigabe nötig.** Der Bot baut nur ausgehende Verbindungen auf (Discord,
-  G-Portal-RCON, DeepSeek). Das Webinterface ist standardmäßig nur auf diesem PC erreichbar.
-- **Der PC muss an bleiben.** Ist er aus oder im **Energiesparmodus/Ruhezustand**, ist der Bot
-  offline. Unter Windows: *Einstellungen → System → Netzbetrieb & Energiesparen → Energiesparmodus
-  „Nie“* (zumindest bei Netzbetrieb). Bildschirm-Aus ist dagegen egal.
-- **Fenster offen lassen.** Das schwarze `start.bat`-Fenster ist der Bot. Schließen = Bot aus.
-  Minimieren ist okay.
-- **Automatisch mit Windows starten:** `Win + R` → `shell:startup` → Enter. In den geöffneten
-  Ordner eine **Verknüpfung** zu `start.bat` legen (Rechtsklick auf `start.bat` → *Verknüpfung
-  erstellen* → Verknüpfung dorthin verschieben). Der Bot startet dann bei jeder Anmeldung.
-  (Ohne Anmeldung: *Aufgabenplanung* → *Einfache Aufgabe* → Trigger „Beim Start des Computers“ →
-  Programm `start.bat`, „Starten in“ = Bot-Ordner.)
-- **Linux:** `./start.sh` in einer `tmux`/`screen`-Sitzung oder als systemd-Dienst
-  (`ExecStart=/pfad/rce-discord-bot/start.sh`, `Restart=always`).
-- **Ressourcen:** Der Bot braucht nur ca. 100–150 MB RAM und kaum CPU – er läuft gut nebenbei.
-- **Logs:** alles landet zusätzlich in `logs/bot.log` (rotiert automatisch, max. ~8 MB).
-- **Daten sichern:** wichtig sind nur `.env`, `data/bot.db` (Statistiken, Kits, Tickets) und
-  `support_knowledge.md`. Diese drei Dateien kopieren = komplettes Backup; damit kannst du auch
-  auf einen anderen PC umziehen.
+The start scripts restart the bot 10 seconds after a crash. On configuration errors (wrong
+token, missing settings) they stop instead and show the message – fix the `.env` first, then
+start again.
 
 ---
 
-## Webinterface
+## Hosting on your PC
 
-Das Webinterface läuft **im Bot mit** – kein zusätzliches Programm, keine Zusatzpakete. Nach dem
-Start öffnet sich der Browser automatisch, sonst **<http://localhost:8080>** aufrufen.
+The bot runs fine on a normal Windows, Linux or Mac PC:
 
-| Seite | Funktionen |
+- **No port forwarding needed.** The bot only makes outgoing connections (Discord, G-Portal
+  RCON, DeepSeek). By default the web interface is only reachable on this PC.
+- **The PC has to stay on.** If it's off or in **sleep/hibernate**, the bot is offline. On
+  Windows: *Settings → System → Power & battery → Screen and sleep → put the device to sleep
+  "Never"* (at least when plugged in). Turning the screen off is fine.
+- **Keep the window open.** The black `start.bat` window *is* the bot. Close it = bot off.
+  Minimizing is fine.
+- **Start automatically with Windows:** `Win + R` → `shell:startup` → Enter. Put a **shortcut**
+  to `start.bat` into the folder that opens (right-click `start.bat` → *Create shortcut* → move
+  the shortcut there). The bot then starts every time you sign in.
+  (Without signing in: *Task Scheduler* → *Create Basic Task* → trigger "When the computer
+  starts" → program `start.bat`, "Start in" = bot folder.)
+- **Linux:** `./start.sh` in a `tmux`/`screen` session or as a systemd service
+  (`ExecStart=/path/rce-discord-bot/start.sh`, `Restart=always`).
+- **Resources:** The bot only needs about 100–150 MB RAM and hardly any CPU – it runs fine in
+  the background.
+- **Logs:** everything is also written to `logs/bot.log` (rotated automatically, max. ~8 MB).
+- **Backups:** only `.env`, `data/bot.db` (stats, kits, tickets) and `support_knowledge.md`
+  matter. Copy these three files = full backup; you can also use them to move to another PC.
+
+---
+
+## Web interface
+
+The web interface runs **inside the bot** – no extra program, no extra packages. After startup
+your browser opens automatically; otherwise go to **<http://localhost:8080>**.
+
+| Page | Features |
 |---|---|
-| 📊 Übersicht | Serverstatus (Spieler, Map, Uptime, FPS), Online-Spieler mit **Kick/Ban**, Entbannen, Nachricht ins Spiel |
-| ⌨️ Konsole | **Live-Serverkonsole** und Eingabe beliebiger RCON-Befehle (wenn `ALLOW_RAW_RCON=true`) |
-| 🎒 Kits | Kits vergeben (Spieler/alle), Ingame-Kits ansehen, **Custom Kits** anlegen/bearbeiten, **Autokits** anlegen/pausieren/löschen, Wipe-Reset, Vergabe-Verlauf |
-| 🎫 Tickets | Alle Tickets mit Status, **Transkripte geschlossener Tickets**, DeepSeek-Guthaben |
-| 🏆 Statistiken | Leaderboard (Kills, Tode, K/D, Spielzeit), Plattform, zuletzt gesehen |
-| 🎉 Community | Giveaways (vorzeitig auslosen, neu auslosen), **Regeln bearbeiten**, Übersicht der Community-Einstellungen |
-| 📚 Wissensbasis | `support_knowledge.md` direkt im Browser bearbeiten (gilt sofort) |
-| 🧾 Bot-Log | Die letzten 500 Log-Zeilen des Bots |
-| ⚙️ Einstellungen | **Alle Einstellungen** der `.env` als Formular: Channels und Rollen per Auswahlliste (sobald der Bot verbunden ist), **RCON-Verbindung testen**, **Bot-Token prüfen** (inkl. Intents-Status und Einladungslink), danach **Bot neu starten** per Knopf |
+| 📊 Overview | Server status (players, map, uptime, FPS), online players with **kick/ban**, unban, message to the game |
+| ⌨️ Console | **Live server console** and running any RCON command (if `ALLOW_RAW_RCON=true`) |
+| 🎒 Kits | Give kits (player/everyone), view in-game kits, create/edit **custom kits**, create/pause/delete **autokits**, wipe reset, give history |
+| 🎫 Tickets | All tickets with status, **transcripts of closed tickets**, DeepSeek balance |
+| 🏆 Stats | Leaderboard (kills, deaths, K/D, playtime), platform, last seen |
+| 🎉 Community | Giveaways (end early, reroll), **edit rules**, overview of the community settings |
+| 📚 Knowledge base | Edit `support_knowledge.md` right in the browser (applies immediately) |
+| 🧾 Bot log | The bot's last 500 log lines |
+| ⚙️ Settings | **All settings** from the `.env` as a form: channels and roles as dropdowns (once the bot is connected), **Test RCON**, **Check bot token** (incl. intent status and invite link), then **Restart bot now** with one click |
 
-Alles, was du im Webinterface tust, steht im Admin-Log-Channel in Discord („🌐 Webinterface: …“).
-Die Oberfläche funktioniert auch auf dem Handy.
+Everything you do in the web interface is posted to the admin log channel in Discord
+("🌐 Web interface: …"). The interface also works on your phone.
 
-**Einstellungen in der `.env`:**
+**Settings in the `.env`:**
 
-| Variable | Standard | Bedeutung |
+| Variable | Default | Meaning |
 |---|---|---|
-| `WEB_PASSWORD` | leer | Login-Passwort. **Leer = Anmeldung über den Link im Bot-Fenster** (oder das dort angezeigte Zufallspasswort). Setz am besten ein eigenes – geht auch unter ⚙️ Einstellungen. |
-| `WEB_HOST` | `127.0.0.1` | `127.0.0.1` = nur dieser PC. `0.0.0.0` = auch Handy/Laptop im **selben Heimnetz** über `http://<IP-deines-PCs>:8080` (Windows fragt dann einmal nach Firewall-Freigabe → „Private Netzwerke“ erlauben). |
-| `WEB_PORT` | `8080` | Port, falls 8080 schon belegt ist |
-| `WEB_OPEN_BROWSER` | `true` | Browser beim Start automatisch öffnen |
-| `WEB_ENABLED` | `true` | Webinterface ganz abschalten |
+| `WEB_PASSWORD` | empty | Login password. **Empty = sign in via the link in the bot window** (or the random password shown there). Best to set your own – you can also do that under ⚙️ Settings. |
+| `WEB_HOST` | `127.0.0.1` | `127.0.0.1` = this PC only. `0.0.0.0` = also phone/laptop on the **same home network** via `http://<your-PC-IP>:8080` (Windows then asks once for firewall access → allow "Private networks"). |
+| `WEB_PORT` | `8080` | Port, in case 8080 is already in use |
+| `WEB_OPEN_BROWSER` | `true` | Open the browser automatically on startup |
+| `WEB_ENABLED` | `true` | Turn the web interface off completely |
 
-**Sicherheit:** Login mit Passwort (max. 5 Versuche pro Minute), Sitzung läuft nach 12 Stunden ab,
-Schutz gegen fremde Webseiten (CSRF), alle Spieler- und Konsolentexte werden nur als Text
-angezeigt. Das Webinterface hat aber **kein HTTPS** – stelle es **niemals per Portfreigabe im
-Router ins Internet**. Für Zugriff von unterwegs nutze lieber ein VPN wie Tailscale oder
-WireGuard zu deinem Heimnetz.
+**Security:** Password login (max. 5 attempts per minute), sessions expire after 12 hours,
+protection against other websites (CSRF), all player and console texts are displayed as plain
+text only. However, the web interface has **no HTTPS** – **never expose it to the internet via
+port forwarding on your router**. For access on the go, use a VPN such as Tailscale or WireGuard
+into your home network instead.
 
-### Ohne echten Server testen
+### Testing without a real server
 
 ```bash
 python tools/mock_rcon_server.py --port 28016 --password test123
@@ -357,258 +365,255 @@ python tools/mock_rcon_server.py --port 28016 --password test123
 python bot.py
 ```
 
-Der Mock-Server erzeugt alle paar Sekunden Beispiel-Kills, Quick-Chats, Events und Joins/Leaves.
-Die automatischen Tests startest du mit `pip install pytest && pytest`.
+The mock server generates sample kills, quick chats, events and joins/leaves every few seconds.
+Run the automated tests with `pip install pytest && pytest`.
 
 ---
 
-## Befehle
+## Commands
 
-| Befehl | Wer | Funktion |
+| Command | Who | What it does |
 |---|---|---|
-| `/status` | alle | Serverstatus als Embed |
-| `/spieler` | alle | Online-Spieler mit Online-Zeit und Ping |
-| `/leaderboard [kategorie]` | alle | Top 10 nach Kills, Toden, K/D oder Spielzeit |
-| `/stats <spieler>` | alle | Statistiken eines Spielers |
-| `/kick <spieler> [grund]` | Admins | Spieler kicken |
-| `/ban <spieler> [grund]` | Admins | Spieler bannen |
-| `/unban <spieler>` | Admins | Bann aufheben |
-| `/say <nachricht>` | Admins | Servernachricht ingame. Rich-Text erlaubt, z. B. `<color=red>Wipe heute!</color>` |
-| `/rcon <befehl>` | Admins | Beliebiger Konsolenbefehl. Mit `ALLOW_RAW_RCON=false` abschaltbar. |
-| `/kit liste`, `/kit info <kit>`, `/kit autokits` | alle | Kits und Autokits anzeigen |
-| `/kit geben`, `/kit gruppe`, `/kit alle` | Admins | Kit an Spieler, Auth-Gruppe oder alle vergeben |
-| `/kit item-hinzufuegen`, `/kit item-entfernen` | Admins | Kits bearbeiten |
-| `/kit autokit-neu`, `/kit autokit-status`, `/kit autokit-loeschen`, `/kit wipe-reset`, `/kit verlauf` | Admins | Autokits verwalten (auch mit Custom Kits) |
-| `/customkit erstellen`, `item-hinzufuegen`, `item-entfernen`, `loeschen` | Admins | Custom Kits anlegen und bearbeiten |
-| `/customkit liste`, `/customkit info` | Admins | Custom Kits anzeigen (nur für Admins sichtbar) |
-| `/customkit geben`, `/customkit alle` | Admins | Custom Kit an einen Spieler bzw. alle Online-Spieler |
-| `/ticket oeffnen`, `/ticket schliessen` | alle | Ticket öffnen bzw. eigenes Ticket schließen |
-| `/ticket ki`, `/ticket hinzufuegen` | Staff | KI im Ticket an/aus, Mitglied hinzufügen |
-| `/ticket panel`, `/ticket ki-status`, `/ticket ki-test` | Admins | Ticket-Panel posten, DeepSeek-Guthaben anzeigen, KI testen |
-| `/ping`, `/rust`, `/regeln` | alle | Bot-/RCON-Latenz, Serverinfos (Plattform, Wipe, Live-Status), Regeln |
-| `/mod timeout`, `/mod untimeout` | „Mitglieder timeouten“ | Discord-Mitglied stummschalten (max. 28 Tage) bzw. aufheben |
-| `/mod kick`, `/mod ban`, `/mod unban` | „Kicken“/„Bannen“ | Discord-Mitglied kicken/bannen (mit DM an den Nutzer), Bann per User-ID aufheben |
-| `/mod purge` | „Nachrichten verwalten“ | 1–100 Nachrichten löschen, optional nur von einem Nutzer |
-| `/giveaway start/ende/neu/liste` | „Server verwalten“ | Giveaways starten, vorzeitig auslosen, neu auslosen, auflisten |
+| `/status` | everyone | Server status as an embed |
+| `/players` | everyone | Online players with time online and ping |
+| `/leaderboard [category]` | everyone | Top 10 by kills, deaths, K/D or playtime |
+| `/stats <player>` | everyone | A player's stats |
+| `/kick <player> [reason]` | Admins | Kick a player |
+| `/ban <player> [reason]` | Admins | Ban a player |
+| `/unban <player>` | Admins | Lift a ban |
+| `/say <message>` | Admins | In-game server message. Rich text allowed, e.g. `<color=red>Wipe today!</color>` |
+| `/rcon <command>` | Admins | Any console command. Can be disabled with `ALLOW_RAW_RCON=false`. |
+| `/kit list`, `/kit info <kit>`, `/kit autokits` | everyone | Show kits and autokits |
+| `/kit give`, `/kit group`, `/kit all` | Admins | Give a kit to a player, an auth group or everyone |
+| `/kit add-item`, `/kit remove-item` | Admins | Edit kits |
+| `/kit autokit-add`, `/kit autokit-toggle`, `/kit autokit-delete`, `/kit wipe-reset`, `/kit history` | Admins | Manage autokits (also with custom kits) |
+| `/customkit create`, `add-item`, `remove-item`, `delete` | Admins | Create and edit custom kits |
+| `/customkit list`, `/customkit info` | Admins | Show custom kits (visible to admins only) |
+| `/customkit give`, `/customkit all` | Admins | Give a custom kit to one player or to all online players |
+| `/ticket open`, `/ticket close` | everyone | Open a ticket or close your own ticket |
+| `/ticket ai`, `/ticket add` | Staff | Turn the AI on/off in a ticket, add a member |
+| `/ticket panel`, `/ticket ai-status`, `/ticket ai-test` | Admins | Post the ticket panel, show DeepSeek balance, test the AI |
+| `/ping`, `/rust`, `/rules` | everyone | Bot/RCON latency, server info (platform, wipe, live status), rules |
+| `/mod timeout`, `/mod untimeout` | "Timeout Members" | Time out a Discord member (max. 28 days) or remove the timeout |
+| `/mod kick`, `/mod ban`, `/mod unban` | "Kick Members"/"Ban Members" | Kick/ban a Discord member (with a DM to the user), unban by user ID |
+| `/mod purge` | "Manage Messages" | Delete 1–100 messages, optionally only from one user |
+| `/giveaway start/end/reroll/list` | "Manage Server" | Start, end early, reroll and list giveaways |
 
-Admin-Rechte für **Server-Befehle** (RCON, Kits, Tickets-Verwaltung) bekommen nur die Rollen bzw.
-User aus `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Discords eigene Rechte wie „Administrator“ zählen dort
-bewusst **nicht** automatisch. `/mod` und `/giveaway` betreffen dagegen nur Discord und nutzen
-deshalb die normalen **Discord-Berechtigungen** (wie Discord selbst).
+Admin rights for **server commands** (RCON, kits, ticket management) are given only to the
+roles or users in `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Discord's own permissions such as
+"Administrator" deliberately do **not** count automatically there. `/mod` and `/giveaway`, on the
+other hand, only affect Discord and therefore use the normal **Discord permissions** (just like
+Discord itself).
 
-> **Achtung, zwei Arten von Kick/Ban:** `/kick` und `/ban` wirken auf **Ingame-Spieler** (RCON).
-> `/mod kick` und `/mod ban` wirken auf **Discord-Mitglieder**. Jede Admin-Aktion wird mit
-dem ausführenden Discord-Nutzer im Admin-Log protokolliert.
+> **Heads-up, two kinds of kick/ban:** `/kick` and `/ban` act on **in-game players** (RCON).
+> `/mod kick` and `/mod ban` act on **Discord members**. Every admin action is logged in the
+> admin log together with the Discord user who ran it.
 
 ---
 
-## Kitmanager
+## Kit manager
 
-Der Kitmanager nutzt das **eingebaute Kit-System** der Console Edition. Plugins sind dafür nicht
-nötig. Kits, die du in der Kit-Oberfläche im Spiel oder per Konsole angelegt hast, erscheinen
-direkt im Bot.
+The kit manager uses Console Edition's **built-in kit system**. No plugins needed. Kits you
+created in the in-game kit UI or via the console show up in the bot right away.
 
-**Kits verwalten**
+**Managing kits**
 
-- `/kit liste` und `/kit info <kit>` zeigen Kits und Inhalt, getrennt nach Hotbar, Inventar und
-  Kleidung.
-- `/kit geben <kit> <spieler>` vergibt ein Kit an einen Spieler, `/kit gruppe <kit> <gruppe>` an
-  eine Auth-Gruppe (Gruppen kommen aus `getauthlevels`). `/kit alle <kit>` fragt vorher per Button
-  nach.
-- `/kit item-hinzufuegen <kit> <item> [menge] [zustand] [platz]` fügt ein Item hinzu. Ein neuer
-  Kit-Name legt dabei ein neues Kit an. `/kit item-entfernen <kit> <item_id>` entfernt ein Item.
-- Kits zu löschen ist auf der Console Edition per Befehl nicht dokumentiert. Dafür die
-  Kit-Oberfläche im Spiel nutzen.
+- `/kit list` and `/kit info <kit>` show kits and their contents, split into hotbar, inventory
+  and clothing.
+- `/kit give <kit> <player>` gives a kit to a player, `/kit group <kit> <group>` to an auth group
+  (groups come from `getauthlevels`). `/kit all <kit>` asks for confirmation via a button first.
+- `/kit add-item <kit> <item> [amount] [condition] [container]` adds an item. A new kit name
+  creates a new kit. `/kit remove-item <kit> <item_id>` removes an item.
+- Deleting kits by command is not documented for Console Edition. Use the in-game kit UI for
+  that.
 
 **Autokits**
 
-Autokits vergibt der Bot selbst. Die Regeln liegen in der Bot-Datenbank:
+Autokits are given out by the bot itself. The rules are stored in the bot database:
 
-| Auslöser | Erkennung | Typischer Einsatz |
+| Trigger | Detection | Typical use |
 |---|---|---|
-| 🔄 Respawn | Logzeile `Name [..] has entered the game` | Starter-Kit nach jedem Tod, z. B. mit 30 min Cooldown |
-| 💬 Quick-Chat | Der Spieler sendet die gewählte Phrase, z. B. „Hier, nimm das!“ | Kit auf Anfrage, z. B. 1× pro Wipe (`max_pro_spieler=1`) |
+| 🔄 Respawn | Log line `Name [..] has entered the game` | Starter kit after every death, e.g. with a 30 min cooldown |
+| 💬 Quick chat | The player sends the chosen phrase, e.g. "Here, take this!" | Kit on request, e.g. once per wipe (`max_per_player=1`) |
 
-Beispiele:
+Examples:
 
 ```
-/kit autokit-neu kit:starter ausloeser:Respawn cooldown_minuten:30
-/kit autokit-neu kit:raid ausloeser:Quick-Chat phrase:"Hier, nimm das!" max_pro_spieler:1
-/kit wipe-reset          ← nach dem Wipe: Cooldowns und Limits zurücksetzen
+/kit autokit-add kit:starter trigger:"🔄 Respawn" cooldown_minutes:30
+/kit autokit-add kit:raid trigger:"💬 Quick chat" phrase:"Here, take this!" max_per_player:1
+/kit wipe-reset          ← after the wipe: reset cooldowns and limits
 ```
 
-- Weil die Console Edition keinen freien Chat hat, ist Quick-Chat die einzige Möglichkeit, dass
-  ein Spieler ingame etwas anfordert. Der Spielername kommt dabei aus dem Server-Log, ist also
-  nicht fälschbar.
-- Bei Quick-Chat-Kits meldet der Bot ingame per `say`, ob das Kit vergeben wurde oder wie lange
-  der Cooldown noch läuft (höchstens alle 30 s pro Spieler). Abschalten mit
+- Since Console Edition has no free chat, quick chat is the only way for a player to request
+  something in-game. The player name comes from the server log, so it can't be spoofed.
+- For quick-chat kits the bot reports in-game via `say` whether the kit was given or how long the
+  cooldown still runs (at most every 30 s per player). Turn this off with
   `KIT_CLAIM_ANNOUNCE=false`.
-- Kits, die per Befehl vergeben werden, sind auf RCE **einmalig** und gehen beim Tod verloren.
-  Für dauerhafte Kits pro Gruppe gibt es die Kit-Gruppen im Spiel.
-- Jede Vergabe landet im Admin-Log und in `/kit verlauf`. Schlägt sie fehl (z. B. weil die
-  Verbindung weg ist), wird sie nicht als Vergabe gezählt.
+- On RCE, kits given by command are **one-off** and are lost on death. For permanent kits per
+  group, use the in-game kit groups.
+- Every kit given ends up in the admin log and in `/kit history`. If giving fails (e.g. because
+  the connection is down), it doesn't count as given.
 
 ---
 
-## Custom Kits
+## Custom kits
 
-Custom Kits sind Kits, die **nur in der Datenbank des Bots** liegen. Sie werden nicht im
-Kit-System des Servers angelegt, sondern Item für Item per `inventory.giveto` verteilt.
-Deshalb gilt:
+Custom kits are kits that live **only in the bot's database**. They are not created in the
+server's kit system; instead they are handed out item by item via `inventory.giveto`.
+That means:
 
-- Im **Ingame-Kitmanager tauchen sie nicht auf**. Spieler und Ingame-Admins können sie dort
-  weder sehen noch beanspruchen oder bearbeiten.
-- `kit list` auf dem Server kennt sie nicht. Auch `/kit liste` im Discord zeigt sie nicht.
-  Übersicht und Inhalt gibt es nur über `/customkit liste` und `/customkit info`, und beides ist
-  auf Admins beschränkt und nur für dich sichtbar (ephemeral).
-- Es gibt kein serverseitiges Limit von 128 Kits, denn diese Kits belegen keinen Platz im
-  Ingame-Kitmanager.
+- They **don't show up in the in-game kit manager**. Players and in-game admins can't see,
+  claim or edit them there.
+- `kit list` on the server doesn't know them. `/kit list` in Discord doesn't show them either.
+  The overview and contents are only available via `/customkit list` and `/customkit info`, and
+  both are restricted to admins and only visible to you (ephemeral).
+- There is no server-side limit of 128 kits, because these kits take up no space in the
+  in-game kit manager.
 
-**Anlegen und vergeben**
+**Creating and giving**
 
 ```
-/customkit erstellen name:Eventkit beschreibung:"Turnier-Loadout"
-/customkit item-hinzufuegen kit:Eventkit item:rifle.ak menge:1
-/customkit item-hinzufuegen kit:Eventkit item:ammo.rifle menge:128
-/customkit geben kit:Eventkit spieler:DeinName      ← erst an dich selbst testen
-/customkit alle kit:Eventkit                       ← mit Bestätigungs-Button
+/customkit create name:Eventkit description:"Tournament loadout"
+/customkit add-item kit:Eventkit item:rifle.ak amount:1
+/customkit add-item kit:Eventkit item:ammo.rifle amount:128
+/customkit give kit:Eventkit player:YourName      ← test on yourself first
+/customkit all kit:Eventkit                       ← with confirmation button
 ```
 
-**Als Autokit:** `/kit autokit-neu kit:Eventkit ausloeser:Respawn art:"Custom Kit"`. Die
-Autovervollständigung zeigt Custom Kits mit 🔒. Wählst du keine `art` und das Kit existiert nur
-als Custom Kit, wird das automatisch erkannt. Cooldown, Limit, Quick-Chat-Auslöser und
-`/kit wipe-reset` funktionieren genauso wie bei Ingame-Kits.
+**As an autokit:** `/kit autokit-add kit:Eventkit trigger:"🔄 Respawn" kit_type:"🔒 Custom kit (bot only)"`. The
+autocomplete marks custom kits with 🔒. If you don't choose a `type` and the kit only exists as a
+custom kit, this is detected automatically. Cooldown, limit, quick-chat trigger and
+`/kit wipe-reset` work exactly as with in-game kits.
 
-**Unterschiede zu Ingame-Kits (Einschränkungen von `inventory.giveto`)**
+**Differences from in-game kits (limitations of `inventory.giveto`)**
 
-| | Ingame-Kit | Custom Kit |
+| | In-game kit | Custom kit |
 |---|---|---|
-| Sichtbar im Ingame-Kitmanager | ja | **nein** |
-| Platz (Hotbar/Kleidung) und Zustand festlegbar | ja | nein: alles landet im Inventar, Zustand 100 % |
-| Volles Inventar | Server-Verhalten | Überzählige Items fallen ggf. auf den Boden |
-| Vergabe | 1 Befehl | 1 Befehl pro Item (max. 30 Items pro Kit) |
+| Visible in the in-game kit manager | yes | **no** |
+| Container (hotbar/clothing) and condition can be set | yes | no: everything goes into the inventory, condition 100 % |
+| Full inventory | server behaviour | Surplus items may drop on the ground |
+| Giving | 1 command | 1 command per item (max. 30 items per kit) |
 
-Der Bot kann nicht prüfen, ob ein Item-Shortname existiert, weil RCON keine Itemliste liefert.
-Die Autovervollständigung schlägt bekannte Shortnames vor. Teste neue Kits einmal an dir selbst.
-Im Admin-Log siehst du pro Item die Bestätigungszeile des Servers (`🎁 Name erhält 1 × rifle.ak`).
-
----
-
-## Support-Tickets mit KI (DeepSeek)
-
-Spieler öffnen über einen Button ein Ticket. Der Bot legt dafür einen **privaten Channel** an,
-den nur der Spieler, die Support-Rollen und der Bot sehen. Ein KI-Assistent (DeepSeek) antwortet
-sofort aus deiner Wissensbasis. Kann er nicht helfen, **pingt er die Support-Rollen**.
-
-**Wann wird Staff gepingt?** (pro Ticket einmal; danach nur über den Button, frühestens alle 10 min)
-
-- Die KI entscheidet, dass ein Mensch nötig ist: Ban-Einspruch, Cheater-Meldung, Zahlung,
-  verlorene Items, Frage nicht in der Wissensbasis, Nutzer will einen Menschen …
-- Der Nutzer klickt auf **🔔 Staff rufen**.
-- Die KI ist nicht erreichbar (z. B. kein Guthaben) oder das Antwortlimit pro Ticket ist erreicht.
-- Ohne `DEEPSEEK_API_KEY` geht jedes neue Ticket direkt an den Staff.
-
-Schreibt ein Staff-Mitglied im Ticket, **pausiert die KI automatisch**. Mit `/ticket ki aktiv:true`
-schaltest du sie wieder ein. Beim Schließen landet ein **Transkript** als Textdatei im
-`TICKET_LOG_CHANNEL_ID`, der Nutzer bekommt eine DM, und der Channel wird gelöscht.
-
-**Sicherheit:** Die KI kann nur antworten und Staff rufen. Sie hat **keinen Zugriff auf RCON**,
-kann also keine Kits geben, niemanden entbannen und keine Befehle ausführen, egal was im Ticket
-steht. Sie bekommt nur die Wissensbasis und den Live-Status (online/offline, Spielerzahl), keine
-Spielerliste und keine Custom Kits. Antworten werden ohne @-Erwähnungen gesendet.
-
-### Einrichtung
-
-1. **DeepSeek-Plattform:** Konto auf [platform.deepseek.com](https://platform.deepseek.com)
-   anlegen, unter [Usage/Billing](https://platform.deepseek.com/usage) Guthaben aufladen (die API
-   ist kostenpflichtig, abgerechnet pro Token), dann unter
-   [API Keys](https://platform.deepseek.com/api_keys) einen Key erstellen → `DEEPSEEK_API_KEY`.
-2. **Modell:** Voreingestellt ist `DEEPSEEK_MODEL=deepseek-flash`. Die alten Namen
-   `deepseek-chat`/`deepseek-reasoner` hat DeepSeek im Juli 2026 abgeschaltet. Bekommst du
-   „HTTP 400/422 – stimmt DEEPSEEK_MODEL?“, trage den aktuellen Modellnamen aus den
-   [API-Docs](https://api-docs.deepseek.com) ein.
-3. **Discord:** eine Kategorie für Tickets anlegen → `TICKET_CATEGORY_ID`. Einen privaten
-   Log-Channel → `TICKET_LOG_CHANNEL_ID`. Die Support-Rolle(n) → `SUPPORT_ROLE_IDS`.
-4. **Bot-Rechte:** In der Ticket-Kategorie braucht der Bot **Kanäle verwalten** und
-   **Berechtigungen verwalten**. Damit der Ping ankommt, muss die Support-Rolle „erwähnbar“ sein,
-   oder der Bot bekommt **@everyone, @here und alle Rollen erwähnen**. Der
-   **Message Content Intent** muss aktiv sein (siehe Installation).
-5. **Wissensbasis:** `support_knowledge.md` mit deinen Regeln, Wipe-Zeiten und FAQ füllen.
-   Änderungen gelten ohne Neustart. Nichts Geheimes eintragen, denn die KI darf alles daraus
-   weitergeben.
-6. Bot starten, dann `/ticket ki-status` (zeigt Guthaben und Modell) und
-   `/ticket ki-test frage:"Wann ist Wipe?"` ausprobieren. Zum Schluss im gewünschten Channel
-   `/ticket panel` ausführen.
-
-**Datenschutz:** Ticket-Nachrichten werden zur Beantwortung an DeepSeek übermittelt. Das Panel
-weist darauf hin. Prüfe, ob das für deine Community passt (DSGVO, Datenschutzhinweis im
-Discord). Ohne API-Key funktioniert das Ticketsystem auch ganz ohne KI.
+The bot can't check whether an item shortname exists, because RCON doesn't provide an item list.
+The autocomplete suggests known shortnames. Test new kits on yourself once. In the admin log you
+can see the server's confirmation line for each item (`🎁 Name receives 1 × rifle.ak`).
 
 ---
 
-## Community & Moderation
+## Support tickets with AI (DeepSeek)
 
-Diese Funktionen stammen aus dem KRYVON-Bot und sind hier nachgebaut und erweitert:
+Players open a ticket with a button. The bot creates a **private channel** for it that only the
+player, the support roles and the bot can see. An AI assistant (DeepSeek) answers right away
+from your knowledge base. If it can't help, it **pings the support roles**.
 
-| KRYVON-Bot | Hier |
+**When is staff pinged?** (once per ticket; after that only via the button, at most every 10 min)
+
+- The AI decides a human is needed: ban appeal, cheater report, payment, lost items, question
+  not covered by the knowledge base, user wants a human …
+- The user clicks **🔔 Call staff**.
+- The AI is unreachable (e.g. no balance left) or the reply limit per ticket has been reached.
+- Without a `DEEPSEEK_API_KEY`, every new ticket goes straight to staff.
+
+When a staff member writes in the ticket, **the AI pauses automatically**. Use
+`/ticket ai enabled:true` to turn it back on. On close, a **transcript** is posted as a text
+file to `TICKET_LOG_CHANNEL_ID`, the user gets a DM, and the channel is deleted.
+
+**Security:** The AI can only reply and call staff. It has **no access to RCON**, so it can't
+give kits, unban anyone or run commands, no matter what's written in the ticket. It only gets the
+knowledge base and the live status (online/offline, player count) – no player list and no custom
+kits. Replies are sent without @mentions.
+
+### Setup
+
+1. **DeepSeek platform:** Create an account at [platform.deepseek.com](https://platform.deepseek.com),
+   top up your balance under [Usage/Billing](https://platform.deepseek.com/usage) (the API is
+   paid, billed per token), then create a key under
+   [API Keys](https://platform.deepseek.com/api_keys) → `DEEPSEEK_API_KEY`.
+2. **Model:** The default is `DEEPSEEK_MODEL=deepseek-flash`. DeepSeek retired the old names
+   `deepseek-chat`/`deepseek-reasoner` in July 2026. If you get
+   "HTTP 400/422 – is DEEPSEEK_MODEL correct?", enter the current model name from the
+   [API docs](https://api-docs.deepseek.com).
+3. **Discord:** create a category for tickets → `TICKET_CATEGORY_ID`. A private log channel →
+   `TICKET_LOG_CHANNEL_ID`. The support role(s) → `SUPPORT_ROLE_IDS`.
+4. **Bot permissions:** In the ticket category the bot needs **Manage Channels** and
+   **Manage Permissions**. For the ping to arrive, the support role must be "mentionable", or the
+   bot gets **Mention @everyone, @here and All Roles**. The **Message Content Intent** must be
+   enabled (see Installation).
+5. **Knowledge base:** fill `support_knowledge.md` with your rules, wipe times and FAQ. Changes
+   apply without a restart. Don't put anything secret in it, because the AI may share all of it.
+6. Start the bot, then try `/ticket ai-status` (shows balance and model) and
+   `/ticket ai-test question:"When is wipe?"`. Finally run `/ticket panel` in the channel of your
+   choice.
+
+**Privacy:** Ticket messages are sent to DeepSeek to generate replies. The panel points this
+out. Check whether that's OK for your community (GDPR, privacy notice in your Discord). Without
+an API key, the ticket system works entirely without AI.
+
+---
+
+## Community & moderation
+
+These features come from the KRYVON bot and have been rebuilt and extended here:
+
+| KRYVON bot | Here |
 |---|---|
-| Willkommensnachricht | `WELCOME_CHANNEL_ID` + frei formulierbare `WELCOME_MESSAGE` mit Platzhaltern `{member}`, `{server}`, `{count}`, `{rules}` |
-| Auto-Rolle | `AUTO_ROLE_ID` (mit Prüfung, ob die Bot-Rolle hoch genug steht) |
-| Logs (Join/Leave, gelöschte/bearbeitete Nachrichten, Moderation) | `DISCORD_LOG_CHANNEL_ID`, zusätzlich Giveaways |
-| `/timeout`, `/kick`, `/ban`, `/purge` | `/mod …`, zusätzlich `untimeout`, `unban`, Purge nach Nutzer, DM an Betroffene |
-| `/giveaway` (nur im Speicher) | `/giveaway …` in der **Datenbank** – übersteht Neustarts; mehrere Gewinner, Reroll, Gewinner-Rolle, im Webinterface steuerbar |
-| `/ping`, `/rust`, `/rules` | `/ping` (inkl. RCON-Latenz), `/rust` (inkl. Live-Status), `/regeln` (aus `rules.md`, im Webinterface bearbeitbar) |
-| `/ticket`, `/setup-ticket`, `/close` | `/ticket oeffnen`, `/ticket panel`, `/ticket schliessen` – mit KI, Transkripten, Staff-Ping |
-| `/kit` (nur Info) | `/kit …` vergibt echte Kits, dazu Custom Kits und Autokits |
-| `/helios-status` | entfällt – dieser Bot spricht direkt per RCON mit dem Server und braucht Helios nicht |
+| Welcome message | `WELCOME_CHANNEL_ID` + a freely worded `WELCOME_MESSAGE` with the placeholders `{member}`, `{server}`, `{count}`, `{rules}` |
+| Auto role | `AUTO_ROLE_ID` (with a check that the bot role is high enough) |
+| Logs (join/leave, deleted/edited messages, moderation) | `DISCORD_LOG_CHANNEL_ID`, plus giveaways |
+| `/timeout`, `/kick`, `/ban`, `/purge` | `/mod …`, plus `untimeout`, `unban`, purge by user, DM to the affected member |
+| `/giveaway` (in memory only) | `/giveaway …` in the **database** – survives restarts; multiple winners, reroll, winner role, controllable from the web interface |
+| `/ping`, `/rust`, `/rules` | `/ping` (incl. RCON latency), `/rust` (incl. live status), `/rules` (from `rules.md`, editable in the web interface) |
+| `/ticket`, `/setup-ticket`, `/close` | `/ticket open`, `/ticket panel`, `/ticket close` – with AI, transcripts, staff ping |
+| `/kit` (info only) | `/kit …` gives real kits, plus custom kits and autokits |
+| `/helios-status` | dropped – this bot talks to the server directly via RCON and doesn't need Helios |
 
-**Hinweise**
+**Notes**
 
-- Der Nachrichten-Log zeigt gelöschte/bearbeitete Nachrichten nur, wenn der Bot sie seit seinem
-  letzten Start gesehen hat (Discord liefert ältere Inhalte nicht mit).
-- Informiere deine Community darüber, was geloggt wird (z. B. in den Regeln) – Datenschutz.
-- Giveaway-Gewinne werden **nicht** automatisch ingame vergeben (Discord-Nutzer und Ingame-Name
-  sind nicht verknüpft). Gib Preise z. B. per `/customkit geben` oder `/kit geben` aus.
+- The message log only shows deleted/edited messages if the bot has seen them since its last
+  start (Discord doesn't send older content).
+- Let your community know what gets logged (e.g. in the rules) – privacy.
+- Giveaway prizes are **not** given out in-game automatically (Discord users and in-game names
+  are not linked). Hand out prizes e.g. with `/customkit give` or `/kit give`.
 
 ---
 
-## Fehlersuche
+## Troubleshooting
 
-| Meldung / Problem | Lösung |
+| Message / problem | Fix |
 |---|---|
-| `RCON-Handshake abgelehnt` oder `direkt nach dem Aufbau getrennt` | RCON-Passwort oder -Port falsch. Server nach einer Passwortänderung neu gestartet? |
-| `RCON-Verbindung fehlgeschlagen: … timeout` | IP/Port falsch, Server offline oder Firewall blockiert ausgehende Verbindungen |
-| Einstellungen ändern ohne Editor | Webinterface → ⚙️ Einstellungen → Speichern → „Bot jetzt neu starten“ |
-| RCON verbindet nicht | Der Bot testet das **automatisch** und zeigt die Ursache im Bot-Fenster und im Webinterface (rote Karte in der Übersicht). Beim Speichern neuer RCON-Daten unter ⚙️ Einstellungen läuft der Test ebenfalls sofort. |
-| RCON verbindet nicht – Ursache unklar | **`rcon_test.bat`** (Windows) bzw. `python tools/rcon_test.py` ausführen: prüft Einstellungen, Port, WebSocket, Passwort und Antwort Schritt für Schritt und nennt die Ursache |
-| `Message Content Intent … ausgeschaltet` | Developer Portal → Bot → Message Content Intent einschalten → Save Changes → Bot neu starten |
-| Slash-Commands fehlen | `GUILD_ID` setzen und Bot mit Scope `applications.commands` einladen |
-| Killfeed oder Chat bleiben leer | `CONSOLE_LOG_CHANNEL_ID` setzen und die echten Logzeilen mit `rce/log_parser.py` vergleichen |
-| Kick/Ban wirkt nicht | Befehlssyntax per `/rcon` testen und die `*_COMMAND_TEMPLATE` in der `.env` anpassen |
-| Kit kommt nicht an | `/rcon kit givetoplayer "Kit" "Spieler"` testen und die Antwort im Konsolen-Log prüfen. Bei abweichender Syntax `KIT_GIVE_TEMPLATE` anpassen. |
-| Custom Kit kommt nicht an | `/rcon inventory.giveto "DeinName" "wood" 100` testen. Bei abweichender Syntax `ITEM_GIVE_TEMPLATE` anpassen. Fehlt die `giving …`-Zeile im Admin-Log, stimmt meist der Shortname nicht. |
-| Bot ist online, aber **jeder Befehl „antwortet nicht“**, im Log `session has been invalidated` | Privilegierte Intents sind im Developer Portal aus. Der Bot startet dann **trotzdem im eingeschränkten Betrieb** ohne diese Intents – alle Befehle, RCON, Kits und Feeds funktionieren, nur die betroffenen Funktionen (z. B. Tickets, Willkommensnachricht) pausieren. Eine gelbe Karte im Webinterface nennt den fehlenden Schalter (mit Link). Beheben: Developer Portal → **dieselbe Application wie der Token** (Webinterface → „Bot-Token prüfen“ zeigt Name und Intents) → Bot → *Privileged Gateway Intents* → einschalten → **Save Changes** → „Bot jetzt neu starten“. |
-| „Eingeschränkter Betrieb“ im Bot-Fenster | Siehe Zeile oben – ein oder beide privilegierten Intents sind aus. |
-| „Discord hat … verweigert“ bei einem Befehl | Die Meldung nennt jetzt **welche Aktion**, **in welchem Channel** und **welches Recht** fehlt. Beim Start prüft der Bot außerdem alle eingestellten Channels/Rollen: Liste im Bot-Fenster und als Karte „Dem Bot fehlen Discord-Rechte“ in der Webinterface-Übersicht. Beheben: Servereinstellungen → Rollen → Bot-Rolle → Rechte einschalten und Rolle nach oben ziehen; bei Channels/Kategorien mit eigenen Berechtigungen die Bot-Rolle dort erlauben – oder über den Knopf „Bot mit allen Rechten neu einladen“. |
-| Auto-Rolle/Gewinner-Rolle wird nicht vergeben | Bot-Rolle in den Servereinstellungen über diese Rolle ziehen, *Manage Roles* erlauben |
-| `/mod …`: „Rolle steht über der Bot-Rolle“ | Discord erlaubt Moderation nur unterhalb der eigenen höchsten Rolle – Bot-Rolle nach oben ziehen |
-| `start.bat`: „Python wurde nicht gefunden“ | Python von python.org installieren, Haken bei „Add Python to PATH“, PC neu anmelden |
-| Webinterface: „Port … nicht öffnen“ | Ein anderes Programm nutzt den Port → `WEB_PORT=8090` o. ä. setzen |
-| Webinterface-Passwort vergessen | `WEB_PASSWORD` in der `.env` setzen und Bot neu starten |
-| Webinterface vom Handy nicht erreichbar | `WEB_HOST=0.0.0.0`, Windows-Firewall für private Netzwerke erlauben, PC-IP mit `ipconfig` nachsehen |
-| Ticket: „Kanäle verwalten“ fehlt | Dem Bot in der Ticket-Kategorie „Kanäle verwalten“ und „Berechtigungen verwalten“ geben |
-| Ticket: Staff-Ping kommt nicht an | Support-Rolle „erwähnbar“ machen oder dem Bot „Alle Rollen erwähnen“ erlauben; `SUPPORT_ROLE_IDS` prüfen |
-| `HTTP 402` / KI antwortet nicht | DeepSeek-Guthaben leer → [platform.deepseek.com/usage](https://platform.deepseek.com/usage), Status mit `/ticket ki-status` |
-| `HTTP 401` | `DEEPSEEK_API_KEY` falsch → neuen Key unter [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys) |
-| `/kit info` zeigt nur Rohdaten | Das Ausgabeformat weicht ab. Die Regex in `rce/kits.py` anpassen. |
+| `Handshake rejected` or `dropped the connection immediately` | Wrong RCON password or port. Did you restart the server after changing the password? |
+| `RCON Connection failed: … timeout` | Wrong IP/port, server offline, or a firewall is blocking outgoing connections |
+| Changing settings without an editor | Web interface → ⚙️ Settings → Save → "Restart bot now" |
+| RCON won't connect | The bot tests this **automatically** and shows the cause in the bot window and in the web interface (red card on the Overview page). Saving new RCON details under ⚙️ Settings also runs the test right away. |
+| RCON won't connect – cause unclear | Run **`rcon_test.bat`** (Windows) or `python tools/rcon_test.py`: checks settings, port, WebSocket, password and response step by step and names the cause |
+| `Message Content Intent … disabled` | Developer Portal → Bot → enable Message Content Intent → Save Changes → restart the bot |
+| Slash commands missing | Set `GUILD_ID` and invite the bot with the `applications.commands` scope |
+| Killfeed or chat stays empty | Set `CONSOLE_LOG_CHANNEL_ID` and compare the real log lines with `rce/log_parser.py` |
+| Kick/ban has no effect | Test the command syntax via `/rcon` and adjust the `*_COMMAND_TEMPLATE` in the `.env` |
+| Kit doesn't arrive | Test `/rcon kit givetoplayer "Kit" "Player"` and check the response in the console log. If the syntax differs, adjust `KIT_GIVE_TEMPLATE`. |
+| Custom kit doesn't arrive | Test `/rcon inventory.giveto "YourName" "wood" 100`. If the syntax differs, adjust `ITEM_GIVE_TEMPLATE`. If the `giving …` line is missing from the admin log, the shortname is usually wrong. |
+| Bot is online, but **every command shows "The application did not respond"**, `session has been invalidated` in the log | Privileged intents are off in the Developer Portal. The bot then **still starts, in limited mode** without those intents – all commands, RCON, kits and feeds work, only the affected features (e.g. tickets, welcome message) are paused. A yellow card in the web interface names the missing toggle (with a link). Fix: Developer Portal → **the same application as the token** (web interface → "Check bot token" shows name and intents) → Bot → *Privileged Gateway Intents* → enable → **Save Changes** → "Restart bot now". |
+| "Limited mode" in the bot window | See the row above – one or both privileged intents are off. |
+| "Discord denied …" on a command | The message now says **which action**, **in which channel** and **which permission** is missing. On startup the bot also checks all configured channels/roles: list in the bot window and as a "The bot is missing Discord permissions" card on the web interface Overview page. Fix: Server Settings → Roles → bot role → enable the permissions and drag the role up; for channels/categories with their own permissions, allow the bot role there – or use the "Re-invite bot with all permissions" button. |
+| Auto role/winner role isn't assigned | Drag the bot role above that role in the server settings, allow *Manage Roles* |
+| `/mod …`: "role is above the bot role" | Discord only allows moderation below your own highest role – drag the bot role up |
+| `start.bat`: "Python was not found" | Install Python from python.org, tick "Add Python to PATH", sign out of Windows and back in |
+| Web interface: "could not open port …" | Another program is using the port → set `WEB_PORT=8090` or similar |
+| Forgot the web interface password | Set `WEB_PASSWORD` in the `.env` and restart the bot |
+| Web interface not reachable from your phone | `WEB_HOST=0.0.0.0`, allow the Windows firewall for private networks, look up the PC's IP with `ipconfig` |
+| Ticket: "Manage Channels" missing | Give the bot "Manage Channels" and "Manage Permissions" in the ticket category |
+| Ticket: staff ping doesn't arrive | Make the support role "mentionable" or allow the bot to "Mention @everyone, @here and All Roles"; check `SUPPORT_ROLE_IDS` |
+| `HTTP 402` / AI doesn't reply | DeepSeek balance is empty → [platform.deepseek.com/usage](https://platform.deepseek.com/usage), check status with `/ticket ai-status` |
+| `HTTP 401` | Wrong `DEEPSEEK_API_KEY` → create a new key at [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys) |
+| `/kit info` only shows raw data | The output format differs. Adjust the regex in `rce/kits.py`. |
 
 ---
 
-## Sicherheit
+## Security
 
-- `.env` steht in `.gitignore`. Token und RCON-Passwort gehören niemals in Git oder in Screenshots.
-- `/rcon` erlaubt vollen Serverzugriff. Gib die Admin-Rollen nur vertrauenswürdigen Personen oder
-  setze `ALLOW_RAW_RCON=false`.
-- Texte aus Discord werden vor dem Senden ins Spiel bereinigt (keine Rich-Text-Tags, keine
-  Anführungszeichen, keine Zeilenumbrüche). Spielernamen werden in Discord ohne Markdown und ohne
-  @-Erwähnungen ausgegeben.
+- `.env` is listed in `.gitignore`. The token and RCON password never belong in Git or in
+  screenshots.
+- `/rcon` grants full server access. Only give the admin roles to people you trust, or set
+  `ALLOW_RAW_RCON=false`.
+- Text from Discord is sanitized before it's sent to the game (no rich-text tags, no quotes, no
+  line breaks). Player names are shown in Discord without Markdown and without @mentions.

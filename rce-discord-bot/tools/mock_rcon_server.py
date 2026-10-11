@@ -1,9 +1,9 @@
-"""Test-Server, der einen RCE-WebRCON-Server simuliert (ohne echten Rust-Server testen).
+"""Test server that simulates an RCE WebRCON server (test without a real Rust server).
 
-Start:   python tools/mock_rcon_server.py --port 28016 --password test123
+Run:     python tools/mock_rcon_server.py --port 28016 --password test123
 In .env: RCON_HOST=127.0.0.1  RCON_PORT=28016  RCON_PASSWORD=test123
 
-Die Beispielzeilen entsprechen dem angenommenen RCE-Log-Format (siehe rce/log_parser.py).
+The sample lines follow the assumed RCE log format (see rce/log_parser.py).
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ async def handler(request: web.Request) -> web.WebSocketResponse:
     async def spam() -> None:
         while not ws.closed:
             await asyncio.sleep(random.uniform(2, 5))
-            # Spieler kommen und gehen, damit Join/Leave sichtbar wird
+            # Players come and go so join/leave shows up
             if random.random() < 0.3:
                 online.symmetric_difference_update({random.choice(PLAYERS)})
             await send(random.choice(SAMPLE_LINES))
@@ -95,7 +95,7 @@ async def handler(request: web.Request) -> web.WebSocketResponse:
                 await send(f"[CHAT SERVER] SERVER : {cmd[4:]}")
             else:
                 await send(f"Executing console system command '{cmd}'")
-                await send(f"(Mock) Befehl ausgeführt: {cmd}", ident)
+                await send(f"(Mock) Command executed: {cmd}", ident)
     finally:
         task.cancel()
         request.app["sockets"].discard(ws)

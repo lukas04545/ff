@@ -1,11 +1,11 @@
-"""Server-Status: Live-Embed, Bot-Aktivität, Spielerliste, Join/Leave-Erkennung.
+"""Server status: live embed, bot activity, player list, join/leave detection.
 
-Datenquellen (beide liefern auf RCE JSON):
-  * "serverinfo"  -> Hostname, Spielerzahlen, Map, FPS, Uptime, ...
-  * "playerlist"  -> DisplayName, Ping, ConnectedSeconds, Health (keine IDs!)
+Data sources (both return JSON on RCE):
+  * "serverinfo"  -> hostname, player counts, map, FPS, uptime, ...
+  * "playerlist"  -> DisplayName, Ping, ConnectedSeconds, Health (no IDs!)
 
-Joins/Leaves stehen auf der Console Edition nicht zuverlässig im Log. Sie werden
-deshalb durch Vergleich zweier Spielerlisten erkannt (Verzögerung = Poll-Intervall).
+Joins/leaves are not reliably logged on Console Edition, so they are detected
+by comparing two consecutive player lists (delay = poll interval).
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ STATUS_MSG_KEY = "status_message_id"
 
 
 def _parse_json(raw: str):
-    # Manche Server-Antworten enthalten maskierte Zeilenumbrüche
+    # Some server responses contain escaped line breaks
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -41,11 +41,11 @@ def _parse_json(raw: str):
 class Status(commands.Cog):
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
-        self._synced = False           # erste Spielerliste nach (Re-)Connect: still übernehmen
+        self._synced = False           # first player list after (re)connect: adopt silently
         self._last_poll: float | None = None
         self._status_message: discord.Message | None = None
         self._parse_warned = False
-        self._poll_lock = asyncio.Lock()  # verhindert doppelte Join/Leave-Meldungen
+        self._poll_lock = asyncio.Lock()  # prevents duplicate join/leave messages
 
     async def cog_load(self) -> None:
         self.poll_players.change_interval(seconds=self.bot.config.playerlist_interval)
@@ -64,7 +64,7 @@ class Status(commands.Cog):
         if connected:
             self._synced = False
             self._last_poll = None
-            # Sofort aktualisieren statt auf das nächste Intervall zu warten
+            # Refresh immediately instead of waiting for the next interval
             self.bot.loop.create_task(self._refresh_now())
         else:
             self.bot.server_info = None
@@ -75,7 +75,7 @@ class Status(commands.Cog):
         await self._poll_players_once()
         await self._update_status_once()
 
-    # ------------------------------------------------------------ Spielerliste
+    # ------------------------------------------------------------ Player list
 
     @tasks.loop(seconds=30)
     async def poll_players(self) -> None:
@@ -92,11 +92,11 @@ class Status(commands.Cog):
             raw = await self.bot.rcon.command("playerlist")
             players = _parse_json(raw) if raw else []
         except RconError as exc:
-            log.debug("playerlist fehlgeschlagen: %s", exc)
+            log.debug("playerlist failed: %s", exc)
             return
         except json.JSONDecodeError:
             if not self._parse_warned:
-                log.warning("Antwort auf 'playerlist' ist kein JSON: %r", raw[:200])
+                log.warning("Response to 'playerlist' is not JSON: %r", raw[:200])
                 self._parse_warned = True
             return
 
@@ -112,7 +112,7 @@ class Status(commands.Cog):
                 self.bot.dispatch("rce_player_join", name)
             for name in previous.keys() - current.keys():
                 self.bot.dispatch("rce_player_leave", name)
-            # Spielzeit: vergangene Zeit seit dem letzten Poll gutschreiben (max. 2 Intervalle)
+            # Playtime: credit the time elapsed since the last poll (max. 2 intervals)
             if self._last_poll is not None and current:
                 elapsed = min(now - self._last_poll, self.bot.config.playerlist_interval * 2)
                 stayed = [n for n in current if n in previous]
@@ -127,7 +127,7 @@ class Status(commands.Cog):
     async def _before_poll(self) -> None:
         await self.bot.wait_until_ready()
 
-    # ------------------------------------------------------------ Status-Embed
+    # ------------------------------------------------------------ Status embed
 
     @tasks.loop(seconds=60)
     async def update_status(self) -> None:
@@ -143,7 +143,7 @@ class Status(commands.Cog):
                 raw = await self.bot.rcon.command("serverinfo")
                 self.bot.server_info = _parse_json(raw)
             except (RconError, json.JSONDecodeError) as exc:
-                log.debug("serverinfo fehlgeschlagen: %s", exc)
+                log.debug("serverinfo failed: %s", exc)
         await self._update_presence()
         await self._update_status_message()
 
@@ -155,9 +155,9 @@ class Status(commands.Cog):
             activity = discord.Activity(type=discord.ActivityType.watching, name="Server offline")
             status = discord.Status.dnd
         else:
-            text = f"{info.get('Players', len(self.bot.online_players))}/{info.get('MaxPlayers', '?')} Spieler"
+            text = f"{info.get('Players', len(self.bot.online_players))}/{info.get('MaxPlayers', '?')} players"
             if info.get("Queued"):
-                text += f" (+{info['Queued']} Warteschlange)"
+                text += f" (+{info['Queued']} queued)"
             activity = discord.Activity(type=discord.ActivityType.watching, name=text)
             status = discord.Status.online
         try:
@@ -177,15 +177,15 @@ class Status(commands.Cog):
             colour=discord.Colour.green() if online else discord.Colour.red(),
             timestamp=discord.utils.utcnow(),
         )
-        embed.add_field(name="Status", value="🟢 Online" if online else "🔴 Offline / keine RCON-Verbindung")
+        embed.add_field(name="Status", value="🟢 Online" if online else "🔴 Offline / no RCON connection")
         if online and info:
             players = f"**{info.get('Players', '?')}** / {info.get('MaxPlayers', '?')}"
-            extra = [f"{info[k]} {label}" for k, label in (("Queued", "Warteschlange"), ("Joining", "verbinden"))
+            extra = [f"{info[k]} {label}" for k, label in (("Queued", "queued"), ("Joining", "joining"))
                      if info.get(k)]
-            embed.add_field(name="Spieler", value=players + (f"\n({', '.join(extra)})" if extra else ""))
+            embed.add_field(name="Players", value=players + (f"\n({', '.join(extra)})" if extra else ""))
             embed.add_field(name="Map", value=str(info.get("Map", "?")))
             if "GameTime" in info:
-                embed.add_field(name="Ingame-Zeit", value=str(info["GameTime"]))
+                embed.add_field(name="In-game time", value=str(info["GameTime"]))
             if "Uptime" in info:
                 embed.add_field(name="Uptime", value=format_duration(float(info["Uptime"])))
             if "Framerate" in info:
@@ -197,7 +197,7 @@ class Status(commands.Cog):
                 if len(listing) > 1000:
                     listing = listing[:1000].rsplit(",", 1)[0] + " …"
                 embed.add_field(name=f"Online ({len(names)})", value=listing, inline=False)
-        embed.set_footer(text="Zuletzt aktualisiert")
+        embed.set_footer(text="Last updated")
         return embed
 
     async def _update_status_message(self) -> None:
@@ -222,38 +222,38 @@ class Status(commands.Cog):
             self._status_message = await channel.send(embed=embed)
             self.bot.db.set_value(STATUS_MSG_KEY, str(self._status_message.id))
         except discord.NotFound:
-            self._status_message = None  # Nachricht wurde gelöscht -> nächstes Mal neu senden
+            self._status_message = None  # message was deleted -> send a new one next time
         except discord.HTTPException as exc:
-            log.warning("Status-Nachricht konnte nicht aktualisiert werden: %s", exc)
+            log.warning("Could not update status message: %s", exc)
 
-    # ------------------------------------------------------------ Slash-Commands
+    # ------------------------------------------------------------ Slash commands
 
-    @app_commands.command(name="status", description="Zeigt den aktuellen Serverstatus.")
+    @app_commands.command(name="status", description="Shows the current server status.")
     async def status_cmd(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         await self._update_status_once()
         await interaction.followup.send(embed=self.build_status_embed())
 
-    @app_commands.command(name="spieler", description="Listet alle Spieler, die gerade online sind.")
+    @app_commands.command(name="players", description="Lists all players currently online.")
     async def players_cmd(self, interaction: discord.Interaction) -> None:
         if not self.bot.rcon.connected:
-            await interaction.response.send_message("⚠️ Keine RCON-Verbindung zum Server.", ephemeral=True)
+            await interaction.response.send_message("⚠️ No RCON connection to the server.", ephemeral=True)
             return
         await interaction.response.defer()
         await self._poll_players_once()
         players = self.bot.online_players
         if not players:
-            await interaction.followup.send("Niemand online.")
+            await interaction.followup.send("Nobody online.")
             return
         lines = []
         for name, data in sorted(players.items(), key=lambda kv: kv[0].lower()):
             connected = format_duration(float(data.get("ConnectedSeconds", 0) or 0))
             ping = data.get("Ping", "?")
-            lines.append(f"• **{safe_md(name)}** – online seit {connected}, Ping {ping} ms")
+            lines.append(f"• **{safe_md(name)}** – online for {connected}, ping {ping} ms")
         text = "\n".join(lines)
         if len(text) > 4000:
             text = text[:4000].rsplit("\n", 1)[0] + "\n…"
-        embed = discord.Embed(title=f"Online-Spieler ({len(players)})", description=text,
+        embed = discord.Embed(title=f"Online players ({len(players)})", description=text,
                               colour=discord.Colour.blurple())
         await interaction.followup.send(embed=embed)
 

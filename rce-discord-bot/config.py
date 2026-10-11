@@ -1,7 +1,7 @@
-"""Lädt und prüft die Konfiguration aus der .env-Datei.
+"""Loads and validates the configuration from the .env file.
 
-Alle Zugangsdaten (Discord-Token, RCON-IP/Port/Passwort) kommen ausschließlich
-aus Umgebungsvariablen bzw. der .env-Datei – niemals aus dem Code.
+All credentials (Discord token, RCON IP/port/password) come exclusively
+from environment variables or the .env file – never from the code.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 
 class ConfigError(Exception):
-    """Fehlende oder ungültige Konfiguration."""
+    """Missing or invalid configuration."""
 
 
 def _get(name: str, default: str = "") -> str:
@@ -23,7 +23,7 @@ def _get(name: str, default: str = "") -> str:
 def _required(name: str) -> str:
     value = _get(name)
     if not value:
-        raise ConfigError(f"Pflichtwert '{name}' fehlt in der .env-Datei.")
+        raise ConfigError(f"Required value '{name}' is missing from the .env file.")
     return value
 
 
@@ -34,7 +34,7 @@ def _int(name: str, default: int | None = None) -> int | None:
     try:
         return int(raw)
     except ValueError:
-        raise ConfigError(f"'{name}' muss eine Zahl sein, ist aber '{raw}'.") from None
+        raise ConfigError(f"'{name}' must be a number, but is '{raw}'.") from None
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -51,7 +51,7 @@ def _id_set(name: str) -> frozenset[int]:
     try:
         return frozenset(int(part) for part in raw.replace(" ", "").split(",") if part)
     except ValueError:
-        raise ConfigError(f"'{name}' muss eine kommagetrennte Liste von IDs sein.") from None
+        raise ConfigError(f"'{name}' must be a comma-separated list of IDs.") from None
 
 
 @dataclass(frozen=True)
@@ -65,12 +65,12 @@ class Config:
     rcon_port: int
     rcon_password: str
 
-    # Berechtigungen
+    # Permissions
     admin_role_ids: frozenset[int]
     admin_user_ids: frozenset[int]
     allow_raw_rcon: bool
 
-    # Channels (None = Feature deaktiviert)
+    # Channels (None = feature disabled)
     status_channel_id: int | None
     chat_channel_id: int | None
     killfeed_channel_id: int | None
@@ -78,7 +78,7 @@ class Config:
     admin_log_channel_id: int | None
     console_log_channel_id: int | None
 
-    # Verhalten
+    # Behaviour
     status_interval: int
     playerlist_interval: int
     chat_bridge_to_game: bool
@@ -87,12 +87,12 @@ class Config:
     say_prefix: str
     server_display_name: str
 
-    # Befehls-Vorlagen (Annahme über die RCE-Syntax, siehe README)
+    # Command templates (assumption about the RCE syntax, see README)
     kick_template: str
     ban_template: str
     unban_template: str
 
-    # Kitmanager (Annahme über die RCE-Syntax, siehe README)
+    # Kit manager (assumption about the RCE syntax, see README)
     kit_give_template: str
     kit_give_group_template: str
     kit_give_all_template: str
@@ -102,7 +102,7 @@ class Config:
     autokit_delay: int
     kit_claim_announce: bool
 
-    # Support-Tickets mit DeepSeek-KI
+    # Support tickets with DeepSeek AI
     ticket_category_id: int | None
     ticket_log_channel_id: int | None
     support_role_ids: frozenset[int]
@@ -112,7 +112,7 @@ class Config:
     support_knowledge_file: Path
     ticket_ai_max_replies: int
 
-    # Community (Willkommen, Auto-Rolle, Discord-Logs, Regeln, Giveaways)
+    # Community (welcome, auto role, Discord logs, rules, giveaways)
     welcome_channel_id: int | None
     welcome_message: str
     auto_role_id: int | None
@@ -123,7 +123,7 @@ class Config:
     rust_server_wipe: str
     giveaway_winner_role_id: int | None
 
-    # Webinterface
+    # Web interface
     web_enabled: bool
     web_host: str
     web_port: int
@@ -134,29 +134,29 @@ class Config:
 
 
 def required_intents(cfg: Config) -> dict[str, list[str]]:
-    """Privilegierte Discord-Intents -> Funktionen, die sie brauchen (nur aktivierte Funktionen)."""
+    """Privileged Discord intents -> features that need them (enabled features only)."""
     message_content, members = [], []
     if cfg.chat_channel_id and cfg.chat_bridge_to_game:
-        message_content.append("Chat-Bridge Discord → Spiel")
+        message_content.append("Chat bridge")
     if cfg.ticket_category_id:
-        message_content.append("Support-Tickets")
+        message_content.append("Support tickets")
     if cfg.discord_log_channel_id:
-        message_content.append("Discord-Log")
-        members.append("Discord-Log (Beitritte/Austritte)")
+        message_content.append("Discord log")
+        members.append("Discord log (joins/leaves)")
     if cfg.welcome_channel_id:
-        members.append("Willkommensnachricht")
+        members.append("Welcome message")
     if cfg.auto_role_id:
-        members.append("Auto-Rolle")
+        members.append("Auto role")
     return {"message_content": message_content, "members": members}
 
 
 def load_config(env_file: str | os.PathLike = ".env") -> Config:
-    # override=True: Änderungen aus dem Webinterface werden beim erneuten Laden übernommen
+    # override=True: changes from the web interface are picked up when reloading
     load_dotenv(env_file, override=True)
 
     port = _int("RCON_PORT")
     if port is None:
-        raise ConfigError("Pflichtwert 'RCON_PORT' fehlt in der .env-Datei.")
+        raise ConfigError("Required value 'RCON_PORT' is missing from the .env file.")
 
     cfg = Config(
         discord_token=_required("DISCORD_TOKEN"),
@@ -194,7 +194,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         kit_claim_announce=_bool("KIT_CLAIM_ANNOUNCE", True),
         ticket_category_id=_int("TICKET_CATEGORY_ID"),
         ticket_log_channel_id=_int("TICKET_LOG_CHANNEL_ID"),
-        # Ohne eigene Support-Rollen übernehmen die Admin-Rollen den Support
+        # Without dedicated support roles, the admin roles handle support
         support_role_ids=_id_set("SUPPORT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),
         deepseek_api_key=_get("DEEPSEEK_API_KEY"),
         deepseek_model=_get("DEEPSEEK_MODEL", "deepseek-flash"),
@@ -203,13 +203,13 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         ticket_ai_max_replies=max(1, _int("TICKET_AI_MAX_REPLIES", 20)),
         welcome_channel_id=_int("WELCOME_CHANNEL_ID"),
         welcome_message=_get("WELCOME_MESSAGE",
-                             "Willkommen {member} auf **{server}**! Lies dir die Regeln durch{rules} – viel Spaß!"),
+                             "Welcome {member} to **{server}**! Please read the rules{rules} – have fun!"),
         auto_role_id=_int("AUTO_ROLE_ID"),
         discord_log_channel_id=_int("DISCORD_LOG_CHANNEL_ID"),
         rules_channel_id=_int("RULES_CHANNEL_ID"),
         rules_file=Path(_get("RULES_FILE", "rules.md")),
         rust_server_platform=_get("RUST_SERVER_PLATFORM", "Rust Console Edition (Xbox & PlayStation)"),
-        rust_server_wipe=_get("RUST_SERVER_WIPE", "Siehe Ankündigungen im Discord"),
+        rust_server_wipe=_get("RUST_SERVER_WIPE", "See the announcements on Discord"),
         giveaway_winner_role_id=_int("GIVEAWAY_WINNER_ROLE_ID"),
         web_enabled=_bool("WEB_ENABLED", True),
         web_host=_get("WEB_HOST", "127.0.0.1"),
@@ -221,8 +221,8 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
 
     if not cfg.admin_role_ids and not cfg.admin_user_ids:
         raise ConfigError(
-            "Weder ADMIN_ROLE_IDS noch ADMIN_USER_IDS gesetzt – ohne diese Angabe "
-            "könnte niemand (oder jeder) Admin-Befehle nutzen. Bitte mindestens eins eintragen."
+            "Neither ADMIN_ROLE_IDS nor ADMIN_USER_IDS is set – without them nobody "
+            "(or everybody) could use admin commands. Please set at least one."
         )
     for env_name, value in (
         ("KICK_COMMAND_TEMPLATE", cfg.kick_template),
@@ -230,8 +230,8 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         ("UNBAN_COMMAND_TEMPLATE", cfg.unban_template),
     ):
         if "{name}" not in value:
-            raise ConfigError(f"Die Vorlage {env_name} muss den Platzhalter {{name}} enthalten.")
-    # Kit-Vorlagen: Pflicht-Platzhalter vorhanden, keine unbekannten Platzhalter
+            raise ConfigError(f"The template {env_name} must contain the placeholder {{name}}.")
+    # Kit templates: required placeholders present, no unknown placeholders
     dummy = {"kit": "k", "name": "n", "group": "g", "item": "i", "amount": 1,
              "condition": 100, "container": "Main", "id": 1}
     for env_name, value, required in (
@@ -244,9 +244,9 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
     ):
         missing = [p for p in required if p not in value]
         if missing:
-            raise ConfigError(f"Die Vorlage {env_name} braucht die Platzhalter {', '.join(missing)}.")
+            raise ConfigError(f"The template {env_name} needs the placeholders {', '.join(missing)}.")
         try:
             value.format(**dummy)
         except (KeyError, IndexError, ValueError) as exc:
-            raise ConfigError(f"Die Vorlage {env_name} enthält einen unbekannten Platzhalter: {exc}") from None
+            raise ConfigError(f"The template {env_name} contains an unknown placeholder: {exc}") from None
     return cfg

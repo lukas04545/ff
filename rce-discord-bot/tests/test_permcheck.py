@@ -37,20 +37,20 @@ def test_explain_forbidden_names_action_and_missing_permission():
     send_only = discord.Permissions(view_channel=True, send_messages=True)
     bot = _bot({10: send_only})
     text = explain_forbidden(_forbidden("POST", "/channels/10/messages"), bot)
-    assert "Nachricht senden" in text and "<#10>" in text and "50013" in text
-    assert "„Links einbetten“" in text and "„Nachrichten senden“" not in text.split("fehlt")[1]
+    assert "send message" in text and "<#10>" in text and "50013" in text
+    assert '"Embed Links"' in text and '"Send Messages"' not in text.split("missing")[1]
 
     text = explain_forbidden(_forbidden("POST", "/guilds/1/channels"), _bot(guild_perms=send_only))
-    assert "Kanal erstellen" in text and "„Kanäle verwalten“" in text
+    assert "create channel" in text and '"Manage Channels"' in text
 
-    # Rechte vorhanden, aber Rolle zu tief -> Hinweis auf Rollen-Reihenfolge
+    # Permissions present, but role too low -> hint about role order
     text = explain_forbidden(_forbidden("PUT", "/guilds/1/members/2/roles/7"), _bot())
-    assert "Rolle vergeben" in text and "über" in text and "fehlt" not in text
+    assert "assign role" in text and "above" in text and "missing" not in text
 
-    assert "Kanal nicht sehen" in explain_forbidden(_forbidden("POST", "/channels/10/messages", 50001,
+    assert "can't see the channel" in explain_forbidden(_forbidden("POST", "/channels/10/messages", 50001,
                                                                "Missing Access"), _bot())
-    assert "Direktnachricht" in explain_forbidden(_forbidden("POST", "/channels/9/messages", 50007, "x"))
-    # Unbekannter Endpunkt -> trotzdem Methode, Pfad und Fehlercode
+    assert "direct message" in explain_forbidden(_forbidden("POST", "/channels/9/messages", 50007, "x"))
+    # Unknown endpoint -> still method, path and error code
     assert "GET /guilds/1/audit-logs" in explain_forbidden(_forbidden("GET", "/guilds/1/audit-logs"))
 
 
@@ -60,11 +60,11 @@ def test_check_permissions_lists_problems():
     bot = _bot({10: ok, 11: no_embed}, killfeed_channel_id=10, status_channel_id=11, events_channel_id=12,
                auto_role_id=7)
     problems = check_permissions(bot)
-    assert any("Status-Channel #c11" in p and "Links einbetten" in p for p in problems)
-    assert any("Event-Channel (ID 12) nicht gefunden" in p for p in problems)
-    assert any("Auto-Rolle @VIP steht über der Bot-Rolle" in p for p in problems)
+    assert any("Status channel #c11" in p and "Embed Links" in p for p in problems)
+    assert any("Event channel (ID 12) not found" in p for p in problems)
+    assert any("Auto role @VIP is above the bot role" in p for p in problems)
     assert not any("Killfeed" in p for p in problems)
 
     assert check_permissions(_bot({10: ok}, killfeed_channel_id=10)) == []
     weak = _bot(guild_perms=discord.Permissions(view_channel=True))
-    assert any("/mod" in p and "Mitglieder bannen" in p for p in check_permissions(weak))
+    assert any("/mod" in p and "Ban Members" in p for p in check_permissions(weak))

@@ -1,1 +1,1 @@
-"""Webinterface des Bots."""
+"""Web interface for the bot."""

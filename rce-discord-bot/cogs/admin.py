@@ -1,7 +1,7 @@
-"""Admin-Befehle: Kick, Ban, Unban, Say, beliebiger RCON-Befehl.
+"""Admin commands: kick, ban, unban, say, arbitrary RCON command.
 
-Alle Befehle sind auf ADMIN_ROLE_IDS / ADMIN_USER_IDS beschränkt und werden im
-Admin-Log-Channel protokolliert (wer hat was ausgeführt).
+All commands are restricted to ADMIN_ROLE_IDS / ADMIN_USER_IDS and are logged in
+the admin log channel (who ran what).
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class Admin(commands.Cog):
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
 
-    # ------------------------------------------------------------ Hilfen
+    # ------------------------------------------------------------ Helpers
 
     def _audit(self, interaction: discord.Interaction, action: str) -> None:
         feed = self.bot.feed(self.bot.config.admin_log_channel_id)
@@ -37,82 +37,82 @@ class Admin(commands.Cog):
     def _format_response(response: str) -> str:
         response = response.strip()
         if not response:
-            return "(Server hat keine Ausgabe zurückgegeben – bei RCE für viele Befehle normal.)"
+            return "(Server returned no output – normal for many commands on RCE.)"
         return f"```\n{response[:1800].replace('```', 'ˋˋˋ')}\n```"
 
-    # ------------------------------------------------------------ Befehle
+    # ------------------------------------------------------------ Commands
 
-    @app_commands.command(name="kick", description="Kickt einen Spieler vom Server.")
-    @app_commands.describe(spieler="Ingame-Name (Gamertag/PSN)", grund="Optionaler Grund (nur fürs Log)")
-    @app_commands.autocomplete(spieler=_player_autocomplete)
+    @app_commands.command(name="kick", description="Kicks a player from the server.")
+    @app_commands.describe(player="In-game name (Gamertag/PSN)", reason="Optional reason (log only)")
+    @app_commands.autocomplete(player=_player_autocomplete)
     @app_commands.guild_only()
     @admin_only()
-    async def kick(self, interaction: discord.Interaction, spieler: str, grund: str | None = None) -> None:
-        name = sanitize_player_name(spieler)
+    async def kick(self, interaction: discord.Interaction, player: str, reason: str | None = None) -> None:
+        name = sanitize_player_name(player)
         await interaction.response.defer(ephemeral=True)
         response = await self.bot.rcon.command(self.bot.config.kick_template.format(name=name),
                                                expect_response=False)
-        self._audit(interaction, f"**Kick** `{name}`" + (f" – Grund: {safe_md(grund)}" if grund else ""))
-        await interaction.followup.send(f"👢 Kick für **{safe_md(name)}** gesendet.\n"
+        self._audit(interaction, f"**Kick** `{name}`" + (f" – Reason: {safe_md(reason)}" if reason else ""))
+        await interaction.followup.send(f"👢 Kick sent for **{safe_md(name)}**.\n"
                                         f"{self._format_response(response)}", ephemeral=True)
 
-    @app_commands.command(name="ban", description="Bannt einen Spieler dauerhaft.")
-    @app_commands.describe(spieler="Ingame-Name (Gamertag/PSN)", grund="Optionaler Grund (nur fürs Log)")
-    @app_commands.autocomplete(spieler=_player_autocomplete)
+    @app_commands.command(name="ban", description="Permanently bans a player.")
+    @app_commands.describe(player="In-game name (Gamertag/PSN)", reason="Optional reason (log only)")
+    @app_commands.autocomplete(player=_player_autocomplete)
     @app_commands.guild_only()
     @admin_only()
-    async def ban(self, interaction: discord.Interaction, spieler: str, grund: str | None = None) -> None:
-        name = sanitize_player_name(spieler)
+    async def ban(self, interaction: discord.Interaction, player: str, reason: str | None = None) -> None:
+        name = sanitize_player_name(player)
         await interaction.response.defer(ephemeral=True)
         response = await self.bot.rcon.command(self.bot.config.ban_template.format(name=name),
                                                expect_response=False)
-        self._audit(interaction, f"**Ban** `{name}`" + (f" – Grund: {safe_md(grund)}" if grund else ""))
-        await interaction.followup.send(f"🔨 Ban für **{safe_md(name)}** gesendet.\n"
+        self._audit(interaction, f"**Ban** `{name}`" + (f" – Reason: {safe_md(reason)}" if reason else ""))
+        await interaction.followup.send(f"🔨 Ban sent for **{safe_md(name)}**.\n"
                                         f"{self._format_response(response)}", ephemeral=True)
 
-    @app_commands.command(name="unban", description="Hebt einen Bann auf.")
-    @app_commands.describe(spieler="Ingame-Name (Gamertag/PSN)")
-    @app_commands.autocomplete(spieler=_player_autocomplete)
+    @app_commands.command(name="unban", description="Lifts a ban.")
+    @app_commands.describe(player="In-game name (Gamertag/PSN)")
+    @app_commands.autocomplete(player=_player_autocomplete)
     @app_commands.guild_only()
     @admin_only()
-    async def unban(self, interaction: discord.Interaction, spieler: str) -> None:
-        name = sanitize_player_name(spieler)
+    async def unban(self, interaction: discord.Interaction, player: str) -> None:
+        name = sanitize_player_name(player)
         await interaction.response.defer(ephemeral=True)
         response = await self.bot.rcon.command(self.bot.config.unban_template.format(name=name),
                                                expect_response=False)
         self._audit(interaction, f"**Unban** `{name}`")
-        await interaction.followup.send(f"🕊️ Unban für **{safe_md(name)}** gesendet.\n"
+        await interaction.followup.send(f"🕊️ Unban sent for **{safe_md(name)}**.\n"
                                         f"{self._format_response(response)}", ephemeral=True)
 
-    @app_commands.command(name="say", description="Sendet eine Nachricht an alle Spieler im Spiel.")
-    @app_commands.describe(nachricht="Text, der ingame als SERVER-Nachricht erscheint")
+    @app_commands.command(name="say", description="Sends a message to all players in game.")
+    @app_commands.describe(message="Text shown in game as a SERVER message")
     @app_commands.guild_only()
     @admin_only()
-    async def say(self, interaction: discord.Interaction, nachricht: str) -> None:
-        # Admins dürfen Rich-Text (<color=...>, <b>) bewusst nutzen -> nur Zeilenumbrüche entfernen
-        text = " ".join(nachricht.splitlines()).strip()[:400]
+    async def say(self, interaction: discord.Interaction, message: str) -> None:
+        # Admins may deliberately use rich text (<color=...>, <b>) -> only strip line breaks
+        text = " ".join(message.splitlines()).strip()[:400]
         await interaction.response.defer(ephemeral=True)
         await self.bot.rcon.command(f"say {text}", expect_response=False)
         self._audit(interaction, f"**Say**: {safe_md(sanitize_ingame_text(text, 300))}")
-        await interaction.followup.send("📢 Nachricht gesendet.", ephemeral=True)
+        await interaction.followup.send("📢 Message sent.", ephemeral=True)
 
-    @app_commands.command(name="rcon", description="Führt einen beliebigen Konsolenbefehl aus.")
-    @app_commands.describe(befehl="z. B. serverinfo, playerlist, env.time 12")
+    @app_commands.command(name="rcon", description="Runs any console command.")
+    @app_commands.describe(command="e.g. serverinfo, playerlist, env.time 12")
     @app_commands.guild_only()
     @admin_only()
-    async def rcon(self, interaction: discord.Interaction, befehl: str) -> None:
+    async def rcon(self, interaction: discord.Interaction, command: str) -> None:
         await interaction.response.defer(ephemeral=True)
-        response = await self.bot.rcon.command(befehl.strip(), timeout=10, expect_response=False)
-        self._audit(interaction, f"**RCON** `{befehl[:300]}`")
+        response = await self.bot.rcon.command(command.strip(), timeout=10, expect_response=False)
+        self._audit(interaction, f"**RCON** `{command[:300]}`")
         if len(response) > 1800:
-            file = discord.File(io.BytesIO(response.encode()), filename="rcon-ausgabe.txt")
-            await interaction.followup.send(f"Ausgabe von `{befehl[:100]}`:", file=file, ephemeral=True)
+            file = discord.File(io.BytesIO(response.encode()), filename="rcon-output.txt")
+            await interaction.followup.send(f"Output of `{command[:100]}`:", file=file, ephemeral=True)
         else:
-            await interaction.followup.send(f"Ausgabe von `{befehl[:100]}`:\n{self._format_response(response)}",
+            await interaction.followup.send(f"Output of `{command[:100]}`:\n{self._format_response(response)}",
                                             ephemeral=True)
 
 
 async def setup(bot: "RceBot") -> None:
     await bot.add_cog(Admin(bot))
     if not bot.config.allow_raw_rcon:
-        bot.tree.remove_command("rcon")  # ALLOW_RAW_RCON=false -> /rcon gar nicht registrieren
+        bot.tree.remove_command("rcon")  # ALLOW_RAW_RCON=false -> don't register /rcon at all

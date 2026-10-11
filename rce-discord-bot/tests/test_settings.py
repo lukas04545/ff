@@ -1,4 +1,4 @@
-"""Tests für Einstellungen im Webinterface: .env schreiben, Validierung, Einrichtungsmodus, Sessions, RCON-Test."""
+"""Tests for web interface settings: writing .env, validation, setup mode, sessions, RCON test."""
 import asyncio
 import sys
 from pathlib import Path
@@ -23,7 +23,7 @@ H = {"X-Requested-With": "rce-web"}
 
 @pytest.fixture(autouse=True)
 def offline_discord(monkeypatch):
-    """Standard: Discord „nicht erreichbar“ -> Vorabprüfung blockiert nicht (Tests ohne Internet)."""
+    """Default: Discord "unreachable" -> preflight does not block (tests run without internet)."""
     async def fake(token):
         return {"reachable": False, "token_ok": None, "bot_name": None, "app_id": None, "intents": None,
                 "error": "offline"}
@@ -35,29 +35,29 @@ def _discord(monkeypatch, *, token_ok=True, message_content=True, members=True):
     async def fake(token):
         return {"reachable": True, "token_ok": token_ok, "bot_name": "Bot", "app_id": "42",
                 "intents": {"message_content": message_content, "members": members} if token_ok else None,
-                "error": None if token_ok else "Discord lehnt den Bot-Token ab."}
+                "error": None if token_ok else "Discord rejected the bot token."}
     monkeypatch.setattr(server, "check_discord", fake)
-TRICKY = ['kick "{name}"', "<color=#5865F2>[Discord]</color>", "wert mit #kommentar", "a #b", " führend",
-          "Zeile1\nZeile2", 'Pfad\\mit\\backslash', "'zitat'", '"doppelt"', "Willkommen {member}! – viel Spaß"]
+TRICKY = ['kick "{name}"', "<color=#5865F2>[Discord]</color>", "value with #comment", "a #b", " leading space",
+          "Line1\nLine2", 'path\\with\\backslash', "'single'", '"double"', "Welcome {member}! – have fun 🎉"]
 
 
 def test_env_roundtrip_keeps_comments(tmp_path):
     env = tmp_path / ".env"
-    env.write_text("# Kommentar oben\nDISCORD_TOKEN=alt\n\n# RCON\nRCON_PORT=1\n", encoding="utf-8")
+    env.write_text("# Comment on top\nDISCORD_TOKEN=old\n\n# RCON\nRCON_PORT=1\n", encoding="utf-8")
     updates = {f"K{i}": v for i, v in enumerate(TRICKY)}
     updates["RCON_PORT"] = "28016"
     update_env(env, updates)
     text = env.read_text(encoding="utf-8")
-    assert text.startswith("# Kommentar oben\nDISCORD_TOKEN=alt\n\n# RCON\nRCON_PORT=28016\n")
+    assert text.startswith("# Comment on top\nDISCORD_TOKEN=old\n\n# RCON\nRCON_PORT=28016\n")
     values = dotenv_values(env)
     for i, v in enumerate(TRICKY):
         assert values[f"K{i}"] == v, (v, format_value(v))
-    assert read_env(tmp_path / "fehlt.env") == {}
+    assert read_env(tmp_path / "missing.env") == {}
 
 
 def test_update_env_creates_from_template(tmp_path):
     template = tmp_path / ".env.example"
-    template.write_text("# Vorlage\nRCON_HOST=\nWEB_PORT=8080\n", encoding="utf-8")
+    template.write_text("# Template\nRCON_HOST=\nWEB_PORT=8080\n", encoding="utf-8")
     env = tmp_path / ".env"
     update_env(env, {"RCON_HOST": "1.2.3.4"}, template=template)
     assert read_env(env) == {"RCON_HOST": "1.2.3.4", "WEB_PORT": "8080"}
@@ -67,13 +67,13 @@ def test_validate():
     v = settings_schema.validate
     assert v("RCON_PORT", "abc") and v("RCON_PORT", "28016") is None
     assert v("RCON_HOST", "1.2.3.4:28016") and v("RCON_HOST", "1.2.3.4") is None
-    assert v("DISCORD_TOKEN", "")  # Pflichtfeld
+    assert v("DISCORD_TOKEN", "")  # required field
     assert v("GUILD_ID", "") is None and v("GUILD_ID", "12x")
     assert v("ADMIN_ROLE_IDS", "1, 2,3") is None and v("ADMIN_ROLE_IDS", "1,x")
-    assert v("ALLOW_RAW_RCON", "vielleicht") and v("ALLOW_RAW_RCON", "true") is None
+    assert v("ALLOW_RAW_RCON", "maybe") and v("ALLOW_RAW_RCON", "true") is None
     assert v("WEB_HOST", "8.8.8.8") and v("WEB_HOST", "0.0.0.0") is None
     assert v("SAY_PREFIX", "a\nb") and v("WELCOME_MESSAGE", "a\nb") is None
-    # Jede Einstellung aus .env.example ist im Formular vorhanden
+    # Every setting from .env.example is in the form
     example = dotenv_values(Path(__file__).resolve().parents[1] / ".env.example")
     assert set(example) <= set(settings_schema.FIELDS_BY_KEY)
 
@@ -98,32 +98,32 @@ def test_setup_mode_flow(tmp_path, monkeypatch):
 
     async def scenario():
         started = asyncio.Event()
-        w = WebInterface(None, web_settings=WebSettings(password="pw"), setup_error="RCON_PORT fehlt",
+        w = WebInterface(None, web_settings=WebSettings(password="pw"), setup_error="RCON_PORT missing",
                          on_config_saved=started.set, env_path=env, secret_path=tmp_path / "s.key")
         c = await _client(w)
         try:
-            # Einmal-Link meldet an und führt zu den Einstellungen
+            # One-time link logs in and leads to the settings
             r = await c.get(f"/auth?token={w.login_token}", allow_redirects=False)
             assert r.status == 302 and r.headers["Location"] == "/#settings"
             assert (await (await c.get("/api/me")).json())["setup_mode"] is True
-            assert (await c.get("/api/kits")).status == 404  # im Einrichtungsmodus nur Einstellungen
+            assert (await c.get("/api/kits")).status == 404  # setup mode only serves settings
 
             data = await (await c.get("/api/settings")).json()
             token = next(f for f in data["fields"] if f["key"] == "DISCORD_TOKEN")
-            assert token["is_set"] is True and "value" not in token  # Geheimnisse werden nie ausgeliefert
+            assert token["is_set"] is True and "value" not in token  # secrets are never sent out
             assert "RCON_PORT" in data["config_error"]
 
-            # Ungültige Werte -> Fehler pro Feld, nichts gespeichert
+            # Invalid values -> error per field, nothing saved
             r = await c.put("/api/settings", json={"values": {"RCON_PORT": "abc"}}, headers=H)
             assert r.status == 400 and "RCON_PORT" in (await r.json())["errors"]
 
-            # Noch unvollständig -> gespeichert, aber Hinweis
+            # Still incomplete -> saved, but with a notice
             r = await (await c.put("/api/settings", json={"values": {"RCON_PORT": "28016"}}, headers=H)).json()
             assert r["config_error"] and not started.is_set()
 
-            # Vollständig -> Bot startet; leeres Geheimnis bleibt unverändert
+            # Complete -> bot starts; empty secret stays unchanged
             r = await (await c.put("/api/settings", json={"values": {
-                "RCON_PASSWORD": "geheim", "ADMIN_USER_IDS": "123, 456", "DISCORD_TOKEN": ""}}, headers=H)).json()
+                "RCON_PASSWORD": "secret", "ADMIN_USER_IDS": "123, 456", "DISCORD_TOKEN": ""}}, headers=H)).json()
             assert r["starting"] is True and started.is_set()
             saved = read_env(env)
             assert saved["DISCORD_TOKEN"] == "tok" and saved["ADMIN_USER_IDS"] == "123,456"
@@ -142,14 +142,14 @@ def test_host_check_and_persistent_sessions(tmp_path, monkeypatch):
         w1 = WebInterface(None, web_settings=WebSettings(password="pw"), env_path=env, secret_path=key)
         c1 = await _client(w1)
         try:
-            # Fremder Host-Header (DNS-Rebinding) wird abgewiesen
+            # Foreign Host header (DNS rebinding) is rejected
             assert (await c1.get("/api/me", headers={"Host": "evil.example:8080"})).status == 403
             await c1.post("/api/login", json={"password": "pw"}, headers=H)
             cookie = c1.session.cookie_jar.filter_cookies(c1.make_url("/"))["rce_session"].value
         finally:
             await c1.close()
 
-        # "Neustart": neue Instanz mit gleichem Schlüssel -> Sitzung gilt weiter
+        # "Restart": new instance with the same key -> session stays valid
         w2 = WebInterface(None, web_settings=WebSettings(password="pw"), env_path=env, secret_path=key)
         c2 = await _client(w2)
         try:
@@ -157,8 +157,8 @@ def test_host_check_and_persistent_sessions(tmp_path, monkeypatch):
         finally:
             await c2.close()
 
-        # Anderes Passwort -> alte Sitzungen ungültig
-        w3 = WebInterface(None, web_settings=WebSettings(password="neu"), env_path=env, secret_path=key)
+        # Different password -> old sessions invalid
+        w3 = WebInterface(None, web_settings=WebSettings(password="new"), env_path=env, secret_path=key)
         c3 = await _client(w3)
         try:
             assert (await c3.get("/api/me", cookies={"rce_session": cookie})).status == 401
@@ -178,8 +178,8 @@ def test_rcon_diagnostics_against_mock():
         try:
             ok = await diagnose_rcon("127.0.0.1", port, "pw")
             assert ok.ok and "3/50" in ok.steps[-1]["text"]
-            wrong = await diagnose_rcon("127.0.0.1", port, "falsch")
-            assert not wrong.ok and "Passwort" in wrong.steps[-1]["text"]
+            wrong = await diagnose_rcon("127.0.0.1", port, "wrong")
+            assert not wrong.ok and "password" in wrong.steps[-1]["text"].lower()
             special = await diagnose_rcon("127.0.0.1", port, "p#w")
             assert any(s["level"] == "warn" for s in special.steps)
             bad_host = await diagnose_rcon("127.0.0.1:1", port, "pw")
@@ -210,9 +210,9 @@ def test_saving_rcon_settings_runs_test(tmp_path, monkeypatch):
             await c.post("/api/login", json={"password": "x"}, headers=H)
             r = await (await c.put("/api/settings", json={"values": {"RCON_PORT": str(port)}}, headers=H)).json()
             assert r["rcon_test"]["ok"] is True
-            r = await (await c.put("/api/settings", json={"values": {"RCON_PASSWORD": "falsch"}}, headers=H)).json()
+            r = await (await c.put("/api/settings", json={"values": {"RCON_PASSWORD": "wrong"}}, headers=H)).json()
             assert r["rcon_test"]["ok"] is False
-            # Ohne RCON-Änderung kein Test
+            # No RCON change -> no test
             r = await (await c.put("/api/settings", json={"values": {"SERVER_DISPLAY_NAME": "X"}}, headers=H)).json()
             assert r["rcon_test"] is None
         finally:
@@ -225,33 +225,33 @@ def test_saving_rcon_settings_runs_test(tmp_path, monkeypatch):
 def test_preflight_only_blocks_invalid_token(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     env = _env(tmp_path, DISCORD_TOKEN="tok", RCON_HOST="1.2.3.4", RCON_PORT="28016", RCON_PASSWORD="pw",
-               ADMIN_USER_IDS="1", TICKET_CATEGORY_ID="5")  # Tickets -> Message Content Intent nötig
+               ADMIN_USER_IDS="1", TICKET_CATEGORY_ID="5")  # tickets -> Message Content Intent needed
 
     async def scenario():
         started = asyncio.Event()
         w = WebInterface(None, web_settings=WebSettings(password="x"), env_path=env, secret_path=tmp_path / "k",
-                         on_config_saved=started.set, setup_error="Token ungültig")
+                         on_config_saved=started.set, setup_error="Invalid token")
         c = await _client(w)
         try:
             await c.post("/api/login", json={"password": "x"}, headers=H)
-            # Ungültiger Token -> kein Start
+            # Invalid token -> no start
             _discord(monkeypatch, token_ok=False)
             r = await (await c.post("/api/setup/continue", headers=H)).json()
-            assert r["ok"] is False and "Token" in r["preflight_error"] and not started.is_set()
+            assert r["ok"] is False and "token" in r["preflight_error"].lower() and not started.is_set()
             r = await (await c.put("/api/settings", json={"values": {"SERVER_DISPLAY_NAME": "X"}}, headers=H)).json()
             assert r["preflight_error"] and not r.get("starting") and not started.is_set()
 
-            # Intent im Portal aus -> Bot startet trotzdem (eingeschränkt), mit Hinweis und Link
+            # Intent off in the portal -> bot starts anyway (limited), with a notice and link
             _discord(monkeypatch, message_content=False)
             r = await (await c.post("/api/setup/continue", headers=H)).json()
             assert r["ok"] is True and r["starting"] is True and started.is_set()
             assert r["preflight_error"] is None and r["missing_intents"] == ["message_content"]
-            assert "Message Content Intent" in r["intent_warning"] and "Support-Tickets" in r["intent_warning"]
+            assert "Message Content Intent" in r["intent_warning"] and "Support tickets" in r["intent_warning"]
             assert r["fix_url"].endswith("/applications/42/bot")
-            # Members-Intent wird nicht verlangt, weil keine Funktion ihn braucht
+            # Members intent is not required because no feature needs it
             assert "Server Members" not in r["intent_warning"]
 
-            # Alles eingeschaltet -> keine Warnung
+            # Everything enabled -> no warning
             started.clear()
             _discord(monkeypatch)
             r = await (await c.put("/api/settings", json={"values": {"SERVER_DISPLAY_NAME": "Y"}}, headers=H)).json()
@@ -269,4 +269,4 @@ def test_required_intents():
     assert required_intents(cfg) == {"message_content": [], "members": []}
     cfg.ticket_category_id, cfg.auto_role_id = 5, 7
     need = required_intents(cfg)
-    assert need["message_content"] == ["Support-Tickets"] and need["members"] == ["Auto-Rolle"]
+    assert need["message_content"] == ["Support tickets"] and need["members"] == ["Auto role"]

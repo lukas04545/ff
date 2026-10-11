@@ -1,4 +1,4 @@
-"""Feeds: Chat-Bridge, Killfeed, Join/Leave & Server-Events, Admin-Log, Konsolen-Log."""
+"""Feeds: chat bridge, killfeed, join/leave & server events, admin log, console log."""
 from __future__ import annotations
 
 import logging
@@ -18,10 +18,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("rce.feeds")
 
-# Befehle, die der Bot selbst regelmäßig sendet – nicht ins Log spammen
+# Commands the bot sends itself on a schedule – don't spam them into the log
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 CHAT_COOLDOWN_SECONDS = 3.0
-CHANNEL_LABELS = {"LOCAL": "Lokal", "TEAM": "Team", "SERVER": "Server", "GLOBAL": "Global"}
+CHANNEL_LABELS = {"LOCAL": "Local", "TEAM": "Team", "SERVER": "Server", "GLOBAL": "Global"}
 
 
 class Feeds(commands.Cog):
@@ -35,14 +35,14 @@ class Feeds(commands.Cog):
         self.console = bot.feed(cfg.console_log_channel_id, code_block=True)
         self._chat_cooldowns: dict[int, float] = {}
 
-    # ------------------------------------------------------------ Chat-Bridge
+    # ------------------------------------------------------------ Chat bridge
 
     @commands.Cog.listener()
     async def on_rce_chat(self, ev: lp.ChatEvent) -> None:
         if not self.chat:
             return
         if ev.channel == "SERVER" and not self.bot.config.chat_show_server_messages:
-            return  # u. a. die eigenen /say- und Bridge-Nachrichten -> kein Echo
+            return  # e.g. our own /say and bridge messages -> no echo
         label = CHANNEL_LABELS.get(ev.channel, ev.channel)
         icon = "👥" if ev.channel == "TEAM" else "💬"
         self.chat.add_line(f"{icon} `[{label}]` **{safe_md(ev.player)}**: {safe_md(ev.text)}")
@@ -81,14 +81,14 @@ class Feeds(commands.Cog):
         victim_is_player = ev.victim_type is KillerType.PLAYER
         if ev.is_pvp:
             self.bot.db.record_kill(ev.killer, ev.victim)
-            line = f"⚔️ **{safe_md(ev.killer)}** hat **{safe_md(ev.victim)}** getötet"
+            line = f"⚔️ **{safe_md(ev.killer)}** killed **{safe_md(ev.victim)}**"
         elif victim_is_player:
             self.bot.db.record_kill(None, ev.victim)
             icon = {"natural": "☠️", "npc": "🐺", "entity": "🪤"}.get(ev.killer_type.value, "💀")
-            line = f"{icon} **{safe_md(ev.victim)}** starb durch {safe_md(ev.killer)}"
+            line = f"{icon} **{safe_md(ev.victim)}** was killed by {safe_md(ev.killer)}"
         else:
-            # Spieler tötet NPC/Scientist o. Ä. – nicht in der PvP-Statistik
-            line = f"🎯 **{safe_md(ev.killer)}** hat {safe_md(ev.victim)} getötet"
+            # Player kills an NPC/scientist etc. – not counted in PvP stats
+            line = f"🎯 **{safe_md(ev.killer)}** killed {safe_md(ev.victim)}"
         if self.killfeed:
             self.killfeed.add_line(line)
 
@@ -96,30 +96,30 @@ class Feeds(commands.Cog):
     async def on_rce_suicide(self, ev: lp.SuicideEvent) -> None:
         self.bot.db.record_suicide(ev.player)
         if self.killfeed:
-            self.killfeed.add_line(f"🪦 **{safe_md(ev.player)}** hat Selbstmord begangen")
+            self.killfeed.add_line(f"🪦 **{safe_md(ev.player)}** committed suicide")
 
     # ------------------------------------------------------------ Events / Joins
 
     @commands.Cog.listener()
     async def on_rce_player_join(self, name: str) -> None:
         if self.events:
-            self.events.add_line(f"📥 **{safe_md(name)}** hat den Server betreten")
+            self.events.add_line(f"📥 **{safe_md(name)}** joined the server")
 
     @commands.Cog.listener()
     async def on_rce_player_leave(self, name: str) -> None:
         if self.events:
-            self.events.add_line(f"📤 **{safe_md(name)}** hat den Server verlassen")
+            self.events.add_line(f"📤 **{safe_md(name)}** left the server")
 
     @commands.Cog.listener()
     async def on_rce_respawn(self, ev: lp.RespawnEvent) -> None:
         self.bot.db.set_platform(ev.player, ev.platform)
         if self.events and self.bot.config.show_respawns:
-            self.events.add_line(f"🔄 **{safe_md(ev.player)}** ist gespawnt ({ev.platform})")
+            self.events.add_line(f"🔄 **{safe_md(ev.player)}** spawned ({ev.platform})")
 
     @commands.Cog.listener()
     async def on_rce_server_event(self, ev: lp.ServerEvent) -> None:
         if self.events:
-            self.events.add_line(f"**{ev.name}** ist gestartet!")
+            self.events.add_line(f"**{ev.name}** has started!")
 
     @commands.Cog.listener()
     async def on_rce_team(self, ev: lp.TeamEvent) -> None:
@@ -127,28 +127,28 @@ class Feeds(commands.Cog):
             return
         p, other = safe_md(ev.player), safe_md(ev.other or "?")
         text = {
-            "create": f"🤝 **{p}** hat ein Team erstellt (ID {ev.team_id})",
-            "join": f"🤝 **{p}** ist dem Team von **{other}** beigetreten",
-            "leave": f"👋 **{p}** hat das Team von **{other}** verlassen",
-            "promote": f"👑 **{p}** hat **{other}** zum Teamleiter gemacht",
+            "create": f"🤝 **{p}** created a team (ID {ev.team_id})",
+            "join": f"🤝 **{p}** joined **{other}**'s team",
+            "leave": f"👋 **{p}** left **{other}**'s team",
+            "promote": f"👑 **{p}** made **{other}** team leader",
         }.get(ev.kind)
         if text:
             self.events.add_line(text)
 
-    # ------------------------------------------------------------ Admin-Log
+    # ------------------------------------------------------------ Admin log
 
     @commands.Cog.listener()
     async def on_rce_ban(self, ev: lp.BanEvent) -> None:
         if self.admin_log:
-            verb = "🔨 gebannt" if ev.banned else "🕊️ entbannt"
-            self.admin_log.add_line(f"**{safe_md(ev.player)}** wurde {verb} (von {safe_md(ev.admin)})")
+            verb = "🔨 banned" if ev.banned else "🕊️ unbanned"
+            self.admin_log.add_line(f"**{safe_md(ev.player)}** was {verb} (by {safe_md(ev.admin)})")
 
     @commands.Cog.listener()
     async def on_rce_role(self, ev: lp.RoleEvent) -> None:
         if self.admin_log:
-            action = "zur Gruppe hinzugefügt" if ev.added else "aus Gruppe entfernt"
+            action = "added to group" if ev.added else "removed from group"
             self.admin_log.add_line(
-                f"🛡️ **{safe_md(ev.player)}** {action}: `{ev.role}` (von {safe_md(ev.admin)})")
+                f"🛡️ **{safe_md(ev.player)}** {action}: `{ev.role}` (by {safe_md(ev.admin)})")
 
     @commands.Cog.listener()
     async def on_rce_admin_action(self, ev: lp.AdminActionEvent) -> None:
@@ -157,17 +157,17 @@ class Feeds(commands.Cog):
         if ev.kind == "command":
             if ev.text.split(" ")[0].lower() in POLLING_COMMANDS:
                 return
-            self.admin_log.add_line(f"⌨️ Konsolenbefehl: `{ev.text}`")
+            self.admin_log.add_line(f"⌨️ Console command: `{ev.text}`")
         else:
             self.admin_log.add_line(f"🎁 {safe_md(ev.text)}")
 
     @commands.Cog.listener()
     async def on_rce_connection(self, connected: bool) -> None:
         if self.admin_log:
-            self.admin_log.add_line("🟢 RCON-Verbindung hergestellt" if connected
-                                    else "🔴 RCON-Verbindung verloren – automatischer Reconnect läuft")
+            self.admin_log.add_line("🟢 RCON connection established" if connected
+                                    else "🔴 RCON connection lost – reconnecting automatically")
 
-    # ------------------------------------------------------------ Konsolen-Log
+    # ------------------------------------------------------------ Console log
 
     @commands.Cog.listener()
     async def on_rce_console(self, msg: RconMessage) -> None:

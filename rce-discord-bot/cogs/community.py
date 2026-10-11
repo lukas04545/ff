@@ -1,8 +1,8 @@
-"""Community-Funktionen: /ping, /rust, /regeln, Willkommensnachricht, Auto-Rolle, Discord-Log.
+"""Community features: /ping, /rust, /rules, welcome message, auto role, Discord log.
 
-Discord-Log (DISCORD_LOG_CHANNEL_ID): Beitritte/Austritte, gelöschte und bearbeitete
-Nachrichten. Hinweis: Discord meldet gelöschte/bearbeitete Nachrichten nur mit Inhalt,
-wenn der Bot sie seit seinem Start gesehen hat (Nachrichten-Cache).
+Discord log (DISCORD_LOG_CHANNEL_ID): joins/leaves, deleted and edited messages.
+Note: Discord only reports deleted/edited messages with their content if the bot
+has seen them since it started (message cache).
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ COLOR_MESSAGE = discord.Colour.orange()
 
 
 def load_rules(path: Path) -> list[str]:
-    """Regeln aus der Datei: eine Regel pro Zeile, '#' = Kommentar, Nummerierung wird ignoriert."""
+    """Rules from the file: one rule per line, '#' = comment, numbering is ignored."""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
@@ -55,7 +55,7 @@ class Community(commands.Cog):
         self.bot = bot
         self._role_warned = False
 
-    # ------------------------------------------------------------ Hilfen
+    # ------------------------------------------------------------ Helpers
 
     def _server_name(self, guild: discord.Guild | None = None) -> str:
         info = self.bot.server_info or {}
@@ -65,9 +65,9 @@ class Community(commands.Cog):
     def discord_log(self, embed: discord.Embed) -> None:
         self.bot.discord_log(embed)
 
-    # ------------------------------------------------------------ Befehle
+    # ------------------------------------------------------------ Commands
 
-    @app_commands.command(name="ping", description="Prüft, ob der Bot und die Server-Verbindung laufen.")
+    @app_commands.command(name="ping", description="Checks whether the bot and the server connection are working.")
     async def ping(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         lines = [f"🏓 Discord: **{round(self.bot.latency * 1000)} ms**"]
@@ -79,43 +79,43 @@ class Community(commands.Cog):
             except RconError as exc:
                 lines.append(f"🛢️ RCON: ⚠️ {exc}")
         else:
-            lines.append("🛢️ RCON: 🔴 nicht verbunden")
+            lines.append("🛢️ RCON: 🔴 not connected")
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
-    @app_commands.command(name="rust", description="Infos zum Rust-Server (Plattform, Wipe, Status).")
+    @app_commands.command(name="rust", description="Info about the Rust server (platform, wipe, status).")
     async def rust(self, interaction: discord.Interaction) -> None:
         cfg = self.bot.config
         info = self.bot.server_info
         embed = discord.Embed(title=self._server_name(interaction.guild)[:256], colour=discord.Colour(0xCE422B))
-        embed.add_field(name="Plattform", value=cfg.rust_server_platform[:1024])
+        embed.add_field(name="Platform", value=cfg.rust_server_platform[:1024])
         embed.add_field(name="Wipe", value=cfg.rust_server_wipe[:1024])
         if self.bot.rcon.connected and info:
-            status = f"🟢 Online – {info.get('Players', '?')}/{info.get('MaxPlayers', '?')} Spieler"
+            status = f"🟢 Online – {info.get('Players', '?')}/{info.get('MaxPlayers', '?')} players"
             if info.get("Queued"):
-                status += f" (+{info['Queued']} in der Warteschlange)"
+                status += f" (+{info['Queued']} in queue)"
         else:
-            status = "🔴 Offline / keine Verbindung"
+            status = "🔴 Offline / no connection"
         embed.add_field(name="Status", value=status, inline=False)
-        rules = f"<#{cfg.rules_channel_id}>" if cfg.rules_channel_id else "`/regeln`"
-        embed.add_field(name="Regeln", value=rules)
-        embed.add_field(name="Hilfe", value="`/ticket oeffnen`")
+        rules = f"<#{cfg.rules_channel_id}>" if cfg.rules_channel_id else "`/rules`"
+        embed.add_field(name="Rules", value=rules)
+        embed.add_field(name="Help", value="`/ticket open`")
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="regeln", description="Zeigt die Serverregeln.")
+    @app_commands.command(name="rules", description="Shows the server rules.")
     async def rules(self, interaction: discord.Interaction) -> None:
         rules = load_rules(self.bot.config.rules_file)
         if not rules:
             await interaction.response.send_message(
-                "Es sind noch keine Regeln hinterlegt (Datei `rules.md` bzw. Webinterface → Regeln).", ephemeral=True)
+                "No rules have been set yet (file `rules.md` or web interface → Rules).", ephemeral=True)
             return
         text = "\n".join(f"**{i}.** {r}" for i, r in enumerate(rules, 1))
-        embed = discord.Embed(title=f"📜 Regeln – {self._server_name(interaction.guild)}"[:256],
+        embed = discord.Embed(title=f"📜 Rules – {self._server_name(interaction.guild)}"[:256],
                               description=text[:4000], colour=discord.Colour(0xCE422B))
         if self.bot.config.rules_channel_id:
-            embed.set_footer(text="Ausführlich im Regel-Channel")
+            embed.set_footer(text="Full details in the rules channel")
         await interaction.response.send_message(embed=embed)
 
-    # ------------------------------------------------------------ Beitritt / Austritt
+    # ------------------------------------------------------------ Join / leave
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
@@ -132,11 +132,11 @@ class Community(commands.Cog):
                 try:
                     await channel.send(text, allowed_mentions=discord.AllowedMentions(users=[member]))
                 except discord.HTTPException as exc:
-                    log.warning("Willkommensnachricht fehlgeschlagen: %s", exc)
+                    log.warning("Welcome message failed: %s", exc)
 
-        embed = discord.Embed(title="📥 Mitglied beigetreten", colour=COLOR_JOIN,
+        embed = discord.Embed(title="📥 Member joined", colour=COLOR_JOIN,
                               description=f"{member.mention} ({safe_md(str(member))}, ID {member.id})")
-        embed.add_field(name="Account erstellt", value=discord.utils.format_dt(member.created_at, "R"))
+        embed.add_field(name="Account created", value=discord.utils.format_dt(member.created_at, "R"))
         embed.set_thumbnail(url=member.display_avatar.url)
         self.discord_log(embed)
 
@@ -144,29 +144,29 @@ class Community(commands.Cog):
         role = member.guild.get_role(self.bot.config.auto_role_id)
         if role is None:
             if not self._role_warned:
-                log.error("AUTO_ROLE_ID %s gibt es auf diesem Server nicht.", self.bot.config.auto_role_id)
+                log.error("AUTO_ROLE_ID %s does not exist on this server.", self.bot.config.auto_role_id)
                 self._role_warned = True
             return
         if role >= member.guild.me.top_role:
             if not self._role_warned:
-                log.error("Auto-Rolle '%s' steht über der höchsten Bot-Rolle – Bot-Rolle in den Servereinstellungen "
-                          "nach oben ziehen.", role.name)
+                log.error("Auto role '%s' is above the bot's highest role – drag the bot role higher in the server "
+                          "settings.", role.name)
                 self._role_warned = True
             return
         try:
-            await member.add_roles(role, reason="Auto-Rolle für neue Mitglieder")
+            await member.add_roles(role, reason="Auto role for new members")
         except discord.HTTPException as exc:
-            log.warning("Auto-Rolle für %s fehlgeschlagen: %s", member, exc)
+            log.warning("Auto role for %s failed: %s", member, exc)
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
-        embed = discord.Embed(title="📤 Mitglied hat den Server verlassen", colour=COLOR_LEAVE,
+        embed = discord.Embed(title="📤 Member left the server", colour=COLOR_LEAVE,
                               description=f"{safe_md(str(member))} (ID {member.id})")
         if member.joined_at:
-            embed.add_field(name="Beigetreten", value=discord.utils.format_dt(member.joined_at, "R"))
+            embed.add_field(name="Joined", value=discord.utils.format_dt(member.joined_at, "R"))
         self.discord_log(embed)
 
-    # ------------------------------------------------------------ Nachrichten-Log
+    # ------------------------------------------------------------ Message log
 
     def _skip_message(self, message: discord.Message) -> bool:
         return (message.guild is None or message.author.bot
@@ -176,11 +176,11 @@ class Community(commands.Cog):
     async def on_message_delete(self, message: discord.Message) -> None:
         if self._skip_message(message) or not self.bot.config.discord_log_channel_id:
             return
-        content = message.content or "*(kein Text)*"
+        content = message.content or "*(no text)*"
         if message.attachments:
             content += "\n" + "\n".join(f"📎 {a.filename}" for a in message.attachments)
-        embed = discord.Embed(title="🗑️ Nachricht gelöscht", colour=COLOR_MESSAGE, description=content[:3500])
-        embed.add_field(name="Autor", value=f"{message.author.mention} ({safe_md(str(message.author))})")
+        embed = discord.Embed(title="🗑️ Message deleted", colour=COLOR_MESSAGE, description=content[:3500])
+        embed.add_field(name="Author", value=f"{message.author.mention} ({safe_md(str(message.author))})")
         embed.add_field(name="Channel", value=message.channel.mention)
         self.discord_log(embed)
 
@@ -188,10 +188,10 @@ class Community(commands.Cog):
     async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
         if self._skip_message(after) or before.content == after.content or not self.bot.config.discord_log_channel_id:
             return
-        embed = discord.Embed(title="✏️ Nachricht bearbeitet", colour=COLOR_MESSAGE, url=after.jump_url)
-        embed.add_field(name="Vorher", value=(before.content or "*(leer)*")[:1000], inline=False)
-        embed.add_field(name="Nachher", value=(after.content or "*(leer)*")[:1000], inline=False)
-        embed.add_field(name="Autor", value=f"{after.author.mention} ({safe_md(str(after.author))})")
+        embed = discord.Embed(title="✏️ Message edited", colour=COLOR_MESSAGE, url=after.jump_url)
+        embed.add_field(name="Before", value=(before.content or "*(empty)*")[:1000], inline=False)
+        embed.add_field(name="After", value=(after.content or "*(empty)*")[:1000], inline=False)
+        embed.add_field(name="Author", value=f"{after.author.mention} ({safe_md(str(after.author))})")
         embed.add_field(name="Channel", value=after.channel.mention)
         self.discord_log(embed)
 

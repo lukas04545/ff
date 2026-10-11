@@ -1,8 +1,8 @@
-# Serverregeln für /regeln – eine Regel pro Zeile.
-# Zeilen mit # werden ignoriert. Bearbeiten auch im Webinterface unter „Community“.
-Respektiere andere Spieler und das Team.
-Kein Cheaten, kein Ausnutzen von Bugs oder Glitches.
-Keine Belästigung, Hassrede oder Drohungen.
-Keine Werbung für andere Server ohne Erlaubnis.
-Folge den Anweisungen des Teams und melde Probleme über Tickets.
-Missbrauche keine Kits, Giveaways oder Serversysteme.
+# Server rules for /rules – one rule per line.
+# Lines starting with # are ignored. You can also edit them in the web interface under "Community".
+Respect other players and the team.
+No cheating, no exploiting bugs or glitches.
+No harassment, hate speech or threats.
+No advertising other servers without permission.
+Follow the team's instructions and report problems via tickets.
+Do not abuse kits, giveaways or server systems.

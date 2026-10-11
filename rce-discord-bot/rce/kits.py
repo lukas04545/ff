@@ -1,11 +1,11 @@
-"""Auswertung der Kit-Befehle der Console Edition.
+"""Parsing of the Console Edition kit commands.
 
-ANNAHME (Format aus rce.js, Stand 2025):
-  * "kit list"          -> ein Kit-Name pro Zeile, Statuszeilen beginnen mit "[KITMANAGER]"
-  * "kit info \"Name\"" -> pro Item eine Zeile wie
+ASSUMPTION (format from rce.js, as of 2025):
+  * "kit list"          -> one kit name per line, status lines start with "[KITMANAGER]"
+  * "kit info \"Name\"" -> one line per item, like
         Shortname: rifle.ak Amount: [1] Condition: [100] Container: [Belt]
-  * "getauthlevels"     -> Gruppenname (z. B. "Admin") als eigene Zeile, darunter die Mitglieder
-Ändert sich das Format, nur die Regex/Funktionen in dieser Datei anpassen.
+  * "getauthlevels"     -> group name (e.g. "Admin") on its own line, followed by its members
+If the format changes, only adjust the regexes/functions in this file.
 """
 from __future__ import annotations
 
@@ -17,11 +17,11 @@ ITEM_PATTERN = re.compile(
     r"Condition:\s*\[?(?P<condition>\d+)\]?\s+Container:\s*\[?(?P<container>Main|Belt|Wear)\]?",
     re.IGNORECASE,
 )
-# Item-ID (für "kit remove"), falls der Server sie in derselben Zeile ausgibt – unverifiziert
+# Item ID (for "kit remove"), if the server prints it on the same line – unverified
 ITEM_ID_PATTERN = re.compile(r"\bID:\s*\[?(?P<id>\d+)\]?", re.IGNORECASE)
 
 CONTAINERS = ("Main", "Belt", "Wear")
-CONTAINER_LABELS = {"main": "Inventar", "belt": "Hotbar", "wear": "Kleidung"}
+CONTAINER_LABELS = {"main": "Inventory", "belt": "Hotbar", "wear": "Clothing"}
 
 
 @dataclass(slots=True)
@@ -66,7 +66,7 @@ def parse_kit_info(raw: str) -> list[KitItem]:
 
 
 def parse_auth_groups(raw: str) -> list[str]:
-    """Gruppennamen aus "getauthlevels" (Zeilen aus einem einzelnen Wort mit Großbuchstaben)."""
+    """Group names from "getauthlevels" (lines consisting of a single capitalized word)."""
     groups: list[str] = []
     for line in _lines(raw):
         if re.fullmatch(r"[A-Z][A-Za-z]*", line) and line not in groups:
@@ -75,5 +75,5 @@ def parse_auth_groups(raw: str) -> list[str]:
 
 
 def clean_arg(value: str, limit: int = 64) -> str:
-    """Argument für Kit-Befehle: keine Anführungszeichen/Zeilenumbrüche."""
+    """Argument for kit commands: no quotes/line breaks."""
     return re.sub(r"[\"\r\n]", "", value).strip()[:limit]

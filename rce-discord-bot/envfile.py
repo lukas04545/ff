@@ -1,4 +1,4 @@
-"""Lesen und gezieltes Ändern der .env-Datei (Kommentare und Reihenfolge bleiben erhalten)."""
+"""Reading and targeted editing of the .env file (comments and order are preserved)."""
 from __future__ import annotations
 
 import os
@@ -18,7 +18,7 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def format_value(value: str) -> str:
-    """Schreibt Werte so, dass python-dotenv sie exakt wieder einliest."""
+    """Writes values so that python-dotenv reads them back exactly."""
     needs_quotes = (
         value != value.strip() or "\n" in value or " #" in value or "\t#" in value
         or value[:1] in ("'", '"') or "\\" in value
@@ -30,7 +30,7 @@ def format_value(value: str) -> str:
 
 
 def update_env(path: Path, updates: dict[str, str], *, template: Path | None = None) -> None:
-    """Setzt die übergebenen Schlüssel. Fehlende Datei wird aus template (.env.example) angelegt."""
+    """Sets the given keys. A missing file is created from template (.env.example)."""
     if not path.exists():
         if template is not None and template.exists():
             shutil.copyfile(template, path)
@@ -48,8 +48,8 @@ def update_env(path: Path, updates: dict[str, str], *, template: Path | None = N
             out.append(line)
     if remaining:
         out.append("")
-        out.append("# ---------- Über das Webinterface hinzugefügt ----------")
+        out.append("# ---------- Added via the web interface ----------")
         out.extend(f"{k}={format_value(v)}" for k, v in remaining.items())
     tmp = path.with_suffix(".tmp")
     tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
-    os.replace(tmp, path)  # atomar: nie eine halb geschriebene .env
+    os.replace(tmp, path)  # atomic: never a half-written .env

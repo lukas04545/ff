@@ -1,1 +1,1 @@
-"""Discord-Cogs (Funktionsmodule) des Bots."""
+"""Discord cogs (feature modules) of the bot."""

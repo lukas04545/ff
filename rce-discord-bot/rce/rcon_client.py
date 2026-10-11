@@ -1,14 +1,14 @@
-"""WebRCON-Client für Rust Console Edition (G-Portal).
+"""WebRCON client for Rust Console Edition (G-Portal).
 
-Protokoll (gleich wie bei Rust PC "WebRCON"):
-  * WebSocket-Verbindung zu  ws://<IP>:<RCON-Port>/<RCON-Passwort>
-  * Senden:     {"Identifier": <int>, "Message": "<befehl>", "Name": "..."}
-  * Empfangen:  {"Identifier": <int>, "Message": "<text>", "Type": "Generic|Chat|..."}
-    - Antworten auf eigene Befehle tragen die gesendete Identifier-Nummer.
-    - Live-Konsolenausgaben (Kills, Chat, Bans, ...) kommen mit Identifier 0/-1.
+Protocol (same as Rust PC "WebRCON"):
+  * WebSocket connection to  ws://<IP>:<RCON port>/<RCON password>
+  * Send:       {"Identifier": <int>, "Message": "<command>", "Name": "..."}
+  * Receive:    {"Identifier": <int>, "Message": "<text>", "Type": "Generic|Chat|..."}
+    - Replies to our own commands carry the Identifier we sent.
+    - Live console output (kills, chat, bans, ...) arrives with Identifier 0/-1.
 
-Der Client verbindet sich automatisch neu (exponentielles Backoff) und erkennt
-"tote" Verbindungen über wiederholte Befehls-Timeouts.
+The client reconnects automatically (exponential backoff) and detects
+"dead" connections via repeated command timeouts.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ log = logging.getLogger("rce.rcon")
 
 
 class RconError(Exception):
-    """Basisklasse für RCON-Fehler (Text ist für Discord-Nutzer gedacht)."""
+    """Base class for RCON errors (the text is meant for Discord users)."""
 
 
 class RconNotConnected(RconError):
@@ -78,8 +78,8 @@ class RconClient:
         self._ids = itertools.count(1000)
         self._pending: dict[int, asyncio.Future[str]] = {}
         self._timeouts = 0
-        self.last_error: str | None = None   # letzter Verbindungsfehler (fürs Webinterface)
-        self.failed_attempts = 0              # Fehlversuche seit der letzten erfolgreichen Verbindung
+        self.last_error: str | None = None   # last connection error (for the web interface)
+        self.failed_attempts = 0              # failed attempts since the last successful connection
         self._message_listeners: list[MessageListener] = []
         self._state_listeners: list[StateListener] = []
 
@@ -91,7 +91,7 @@ class RconClient:
 
     @property
     def _url(self) -> str:
-        # Das Passwort ist Teil des Pfads – so erwartet es der Rust-WebRCON-Server.
+        # The password is part of the path – that's what the Rust WebRCON server expects.
         return f"ws://{self.host}:{self.port}/{self._password}"
 
     def add_message_listener(self, listener: MessageListener) -> None:
@@ -103,8 +103,8 @@ class RconClient:
     async def start(self) -> None:
         bad = sorted(set(self._password) & set("/?#%&@!+ :\\\"'<>"))
         if bad:
-            log.warning("Das RCON-Passwort enthält Sonderzeichen (%s), die in der WebRCON-URL kaputtgehen können. "
-                        "Setze in G-Portal ein Passwort nur aus Buchstaben und Zahlen.", " ".join(bad))
+            log.warning("The RCON password contains special characters (%s) that can break the WebRCON URL. "
+                        "Set a password in G-Portal using only letters and digits.", " ".join(bad))
         if self._task is None:
             self._session = aiohttp.ClientSession()
             self._task = asyncio.create_task(self._run_forever(), name="rcon-connection")
@@ -132,14 +132,14 @@ class RconClient:
     async def command(
         self, cmd: str, *, timeout: float | None = None, expect_response: bool = True
     ) -> str:
-        """Führt einen Konsolenbefehl aus und liefert die Textantwort.
+        """Run a console command and return the text reply.
 
-        expect_response=False: Für Befehle, die auf der Console Edition evtl. keine
-        Antwort senden (say, kick, ...). Ein Timeout gilt dann nicht als Fehler.
+        expect_response=False: for commands that may not send a reply on Console
+        Edition (say, kick, ...). A timeout is then not treated as an error.
         """
         ws = self._ws
         if ws is None or ws.closed or not self.connected:
-            raise RconNotConnected("Keine RCON-Verbindung zum Rust-Server (Verbindungsaufbau läuft).")
+            raise RconNotConnected("No RCON connection to the Rust server (connecting...).")
 
         ident = next(self._ids)
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
@@ -150,10 +150,10 @@ class RconClient:
                 async with self._send_lock:
                     await ws.send_str(payload)
             except (ConnectionResetError, aiohttp.ClientError, RuntimeError) as exc:
-                raise RconNotConnected(f"Senden fehlgeschlagen: {exc}") from exc
+                raise RconNotConnected(f"Send failed: {exc}") from exc
 
             log.debug("-> [%s] %s", ident, cmd)
-            # Ohne erwartete Antwort nur kurz warten – sonst dauert z. B. jede Item-Vergabe Sekunden
+            # Without an expected reply only wait briefly – otherwise e.g. every item give would take seconds
             wait = timeout or (self.command_timeout if expect_response else 1.5)
             try:
                 result = await asyncio.wait_for(future, wait)
@@ -162,20 +162,20 @@ class RconClient:
                     return ""
                 self._register_timeout(ws)
                 raise RconTimeout(
-                    f"Der Server hat nicht rechtzeitig auf '{cmd.split(' ')[0]}' geantwortet."
+                    f"The server did not respond to '{cmd.split(' ')[0]}' in time."
                 ) from None
             self._timeouts = 0
             return result
         finally:
             self._pending.pop(ident, None)
 
-    # ------------------------------------------------------------- intern
+    # ----------------------------------------------------------- internal
 
     def _register_timeout(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         self._timeouts += 1
         if self._timeouts >= self.max_consecutive_timeouts and not ws.closed:
             log.warning(
-                "%s Befehle in Folge ohne Antwort – Verbindung gilt als tot, baue neu auf.",
+                "%s commands in a row without a reply – connection considered dead, reconnecting.",
                 self._timeouts,
             )
             self._timeouts = 0
@@ -187,7 +187,7 @@ class RconClient:
         while not self._closing:
             opened_at: float | None = None
             try:
-                log.info("Verbinde mit WebRCON %s:%s ...", self.host, self.port)
+                log.info("Connecting to WebRCON %s:%s ...", self.host, self.port)
                 ws = await asyncio.wait_for(
                     self._session.ws_connect(self._url, autoping=True, max_msg_size=0), 20
                 )
@@ -197,48 +197,48 @@ class RconClient:
                 self.failed_attempts = 0
                 opened_at = asyncio.get_running_loop().time()
                 self._connected.set()
-                log.info("RCON verbunden.")
+                log.info("RCON connected.")
                 await self._notify_state(True)
 
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         await self._handle_raw(msg.data)
                     elif msg.type == aiohttp.WSMsgType.ERROR:
-                        log.warning("WebSocket-Fehler: %s", ws.exception())
+                        log.warning("WebSocket error: %s", ws.exception())
                         break
-                log.warning("RCON-Verbindung geschlossen (Code %s).", ws.close_code)
+                log.warning("RCON connection closed (code %s).", ws.close_code)
             except aiohttp.WSServerHandshakeError as exc:
-                self.last_error = f"Handshake abgelehnt (HTTP {exc.status}) – RCON-Passwort oder Port falsch?"
+                self.last_error = f"Handshake rejected (HTTP {exc.status}) – wrong RCON password or port?"
                 self.failed_attempts += 1
-                log.error("RCON-%s", self.last_error)
+                log.error("RCON %s", self.last_error)
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-                self.last_error = f"Verbindung fehlgeschlagen: {exc or type(exc).__name__}"
+                self.last_error = f"Connection failed: {exc or type(exc).__name__}"
                 self.failed_attempts += 1
-                log.warning("RCON-%s", self.last_error)
+                log.warning("RCON %s", self.last_error)
             finally:
                 was_connected = self._connected.is_set()
                 self._connected.clear()
                 self._ws = None
                 for fut in self._pending.values():
                     if not fut.done():
-                        fut.set_exception(RconNotConnected("RCON-Verbindung wurde getrennt."))
+                        fut.set_exception(RconNotConnected("RCON connection was lost."))
                 if was_connected:
                     await self._notify_state(False)
 
             if self._closing:
                 break
 
-            # Sofortiges Schließen direkt nach dem Öffnen deutet auf ein falsches Passwort hin.
+            # Closing right after opening usually means a wrong password.
             if opened_at is not None:
                 lived = asyncio.get_running_loop().time() - opened_at
                 if lived < 2:
-                    self.last_error = "Server hat die Verbindung sofort getrennt – RCON-Passwort falsch?"
+                    self.last_error = "Server dropped the connection immediately – wrong RCON password?"
                     self.failed_attempts += 1
                     log.error("RCON: %s", self.last_error)
                 else:
-                    delay = self.reconnect_min  # war stabil verbunden -> Backoff zurücksetzen
+                    delay = self.reconnect_min  # was connected stably -> reset backoff
 
-            log.info("Neuer Verbindungsversuch in %.0f s.", delay)
+            log.info("Retrying connection in %.0f s.", delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, self.reconnect_max)
 
@@ -246,7 +246,7 @@ class RconClient:
         try:
             obj = json.loads(data)
         except json.JSONDecodeError:
-            log.debug("Kein JSON vom Server: %r", data[:200])
+            log.debug("Non-JSON from server: %r", data[:200])
             return
 
         text = str(obj.get("Message", "")).replace("\x00", "").strip()
@@ -255,7 +255,7 @@ class RconClient:
         except (TypeError, ValueError):
             ident = 0
 
-        # Antwort auf einen eigenen Befehl -> wartenden Aufrufer bedienen
+        # Reply to one of our commands -> resolve the waiting caller
         future = self._pending.get(ident)
         if future is not None:
             if not future.done():
@@ -268,12 +268,12 @@ class RconClient:
         for listener in self._message_listeners:
             try:
                 await listener(message)
-            except Exception:  # Ein fehlerhafter Listener darf die Verbindung nicht beenden
-                log.exception("Fehler in RCON-Listener")
+            except Exception:  # A faulty listener must not kill the connection
+                log.exception("Error in RCON listener")
 
     async def _notify_state(self, connected: bool) -> None:
         for listener in self._state_listeners:
             try:
                 await listener(connected)
             except Exception:
-                log.exception("Fehler in RCON-State-Listener")
+                log.exception("Error in RCON state listener")

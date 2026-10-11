@@ -27,11 +27,11 @@ def test_suicide_is_not_a_kill():
 def test_quick_chat_translation():
     ev = lp.parse_line("[CHAT LOCAL] PSN_Lena : d11_quick_chat_responses_slot_5")
     assert isinstance(ev, lp.ChatEvent)
-    assert ev.channel == "LOCAL" and ev.player == "PSN_Lena" and ev.text == "Hallo"
+    assert ev.channel == "LOCAL" and ev.player == "PSN_Lena" and ev.text == "Hello"
     ev = lp.parse_line("[CHAT TEAM] Bob : d11_quick_chat_i_need_phrase_format d11_Scrap")
-    assert ev.text == "Ich brauche Scrap."
-    # Unbekannte Phrasen bleiben erhalten
-    assert lp.parse_line("[CHAT SERVER] SERVER : Hallo Welt").text == "Hallo Welt"
+    assert ev.text == "I need Scrap."
+    # Unknown phrases are kept as-is
+    assert lp.parse_line("[CHAT SERVER] SERVER : Hello world").text == "Hello world"
 
 
 def test_respawn_platform():
@@ -65,4 +65,4 @@ def test_server_events_and_misc():
     assert isinstance(kit, lp.AdminActionEvent) and kit.kind == "kit"
     cmd = lp.parse_line("Executing console system command 'kick \"x\"'")
     assert cmd.kind == "command"
-    assert lp.parse_line("irgendeine andere Zeile") is None
+    assert lp.parse_line("some other line") is None

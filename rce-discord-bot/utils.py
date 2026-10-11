@@ -1,4 +1,4 @@
-"""Hilfsfunktionen: Berechtigungen, Text-Bereinigung, gepufferte Channel-Ausgabe."""
+"""Helpers: permissions, text sanitizing, buffered channel output."""
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +19,7 @@ _RICH_TEXT_TAG = re.compile(r"<[^>]{1,40}>")
 
 
 # --------------------------------------------------------------------------
-# Berechtigungen
+# Permissions
 # --------------------------------------------------------------------------
 class NotAdmin(app_commands.CheckFailure):
     pass
@@ -29,12 +29,12 @@ def is_admin(bot: "RceBot", user: discord.abc.User) -> bool:
     cfg = bot.config
     if user.id in cfg.admin_user_ids:
         return True
-    roles = getattr(user, "roles", [])  # nur Member (im Server) haben Rollen
+    roles = getattr(user, "roles", [])  # only members (in the server) have roles
     return any(role.id in cfg.admin_role_ids for role in roles)
 
 
 def admin_only():
-    """Decorator für Slash-Commands: nur konfigurierte Rollen/User."""
+    """Decorator for slash commands: configured roles/users only."""
 
     async def predicate(interaction: discord.Interaction) -> bool:
         if not is_admin(interaction.client, interaction.user):  # type: ignore[arg-type]
@@ -45,7 +45,7 @@ def admin_only():
 
 
 def player_choices(bot: "RceBot", current: str) -> list[app_commands.Choice[str]]:
-    """Autovervollständigung: Online-Spieler zuerst, dann bekannte Spieler aus der DB."""
+    """Autocomplete: online players first, then known players from the DB."""
     current_l = current.lower()
     names = [n for n in bot.online_players if current_l in n.lower()]
     for n in bot.db.search_names(current):
@@ -55,25 +55,25 @@ def player_choices(bot: "RceBot", current: str) -> list[app_commands.Choice[str]
 
 
 # --------------------------------------------------------------------------
-# Text-Bereinigung
+# Text sanitizing
 # --------------------------------------------------------------------------
 def strip_rich_text(text: str) -> str:
-    """Entfernt Rust-Rich-Text-Tags wie <color=red> aus Servernamen o. Ä."""
+    """Strips Rust rich text tags like <color=red> from server names etc."""
     return _RICH_TEXT_TAG.sub("", text)
 
 
 def safe_md(text: str) -> str:
-    """Spielertext sicher für Discord (keine Formatierung, keine @-Pings)."""
+    """Makes player text safe for Discord (no formatting, no @ pings)."""
     return discord.utils.escape_mentions(discord.utils.escape_markdown(text))
 
 
 def sanitize_player_name(name: str) -> str:
-    """Spielername für RCON-Befehle: keine Anführungszeichen/Zeilenumbrüche."""
+    """Player name for RCON commands: no quotes/line breaks."""
     return name.replace('"', "").replace("\n", " ").replace("\r", " ").strip()
 
 
 def sanitize_ingame_text(text: str, limit: int = 180) -> str:
-    """Text für 'say': keine Rich-Text-Injection, keine Zeilenumbrüche."""
+    """Text for 'say': no rich text injection, no line breaks."""
     cleaned = re.sub(r"[<>\"\r\n]", " ", text)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned[:limit]
@@ -85,20 +85,20 @@ def format_duration(seconds: float) -> str:
     hours, rest = divmod(rest, 3600)
     minutes = rest // 60
     if days:
-        return f"{days} T {hours} Std"
+        return f"{days}d {hours}h"
     if hours:
-        return f"{hours} Std {minutes} Min"
-    return f"{minutes} Min"
+        return f"{hours}h {minutes}m"
+    return f"{minutes} min"
 
 
 # --------------------------------------------------------------------------
-# Gepufferte Channel-Ausgabe (schont Discords Rate-Limits)
+# Buffered channel output (spares Discord's rate limits)
 # --------------------------------------------------------------------------
 class ChannelBuffer:
-    """Sammelt Zeilen/Embeds und sendet sie gebündelt alle paar Sekunden.
+    """Collects lines/embeds and sends them in batches every few seconds.
 
-    Ohne Bündelung würde ein voller Server mit vielen Kills schnell in Discords
-    Rate-Limit (ca. 5 Nachrichten / 5 s pro Channel) laufen.
+    Without batching, a full server with lots of kills would quickly hit Discord's
+    rate limit (about 5 messages / 5 s per channel).
     """
 
     def __init__(self, bot: "RceBot", channel_id: int, *, interval: float = 2.0,
@@ -127,7 +127,7 @@ class ChannelBuffer:
     async def _run(self) -> None:
         await self.bot.wait_until_ready()
         while True:
-            await asyncio.sleep(self.interval)  # erst sammeln, dann gebündelt senden
+            await asyncio.sleep(self.interval)  # collect first, then send as a batch
             await self.flush()
             if not (self._lines or self._embeds):
                 return
@@ -152,7 +152,7 @@ class ChannelBuffer:
         channel = self.bot.get_channel(self.channel_id)
         if not isinstance(channel, discord.abc.Messageable):
             if not self._warned:
-                log.error("Channel %s nicht gefunden oder kein Textchannel – Feed wird verworfen.",
+                log.error("Channel %s not found or not a text channel – discarding feed.",
                           self.channel_id)
                 self._warned = True
             self._lines.clear()
@@ -166,7 +166,7 @@ class ChannelBuffer:
                 await channel.send(embeds=batch, allowed_mentions=discord.AllowedMentions.none())
         except discord.Forbidden:
             if not self._warned:
-                log.error("Keine Schreibrechte in Channel %s.", self.channel_id)
+                log.error("No permission to write in channel %s.", self.channel_id)
                 self._warned = True
         except discord.HTTPException as exc:
-            log.warning("Senden in Channel %s fehlgeschlagen: %s", self.channel_id, exc)
+            log.warning("Sending to channel %s failed: %s", self.channel_id, exc)

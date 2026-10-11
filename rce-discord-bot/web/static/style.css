@@ -28,7 +28,7 @@ nav a.active { background: var(--accent); color: var(--accent-text); }
 .sidebar-footer { margin-top: auto; display: grid; gap: .4rem; }
 main { padding: 1.5rem; max-width: 1200px; width: 100%; }
 
-/* Bausteine */
+/* Building blocks */
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem; }
 .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); margin-bottom: 1rem; }
 .stat { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: .8rem 1rem; }
@@ -65,7 +65,7 @@ tr.clickable:hover { background: var(--bg); }
 .console .resp { color: #8fd18f; }
 pre.transcript { background: var(--code-bg); color: var(--code-text); padding: .75rem; border-radius: var(--radius); max-height: 60vh; overflow: auto; white-space: pre-wrap; font: 13px/1.5 ui-monospace, Consolas, monospace; }
 
-/* Einstellungen */
+/* Settings */
 .banner { border-radius: var(--radius); padding: .75rem 1rem; margin-bottom: 1rem; border: 1px solid var(--border); background: var(--panel); }
 .banner.warn { border-left: 4px solid var(--warn); }
 .banner.bad { border-left: 4px solid var(--bad); }
@@ -99,7 +99,7 @@ pre.transcript { background: var(--code-bg); color: var(--code-text); padding: .
 .toast { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--ok); border-radius: 8px; padding: .6rem .9rem; box-shadow: 0 4px 14px rgba(0,0,0,.15); max-width: 360px; }
 .toast.bad { border-left-color: var(--bad); }
 
-/* Handy / schmale Fenster */
+/* Phones / narrow windows */
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; flex-direction: column; padding: .5rem 1rem; border-right: 0; border-bottom: 1px solid var(--border); }

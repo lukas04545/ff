@@ -1,14 +1,14 @@
-"""Beschreibung aller Einstellungen für die Einstellungsseite im Webinterface.
+"""Description of every setting for the settings page in the web interface.
 
-Gespeichert wird weiterhin in der .env (siehe envfile.py) – das Webinterface ist nur
-eine bequemere Oberfläche dafür. Standardwerte stehen in config.py.
+Values are still stored in .env (see envfile.py) – the web interface is just a more
+convenient front end for it. Defaults live in config.py.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# Feldarten: text, secret, int, bool, textarea, id (eine Discord-ID), ids (mehrere IDs)
-# pick: Auswahl aus Discord, wenn der Bot verbunden ist: guild, text_channel, category, role
+# Field kinds: text, secret, int, bool, textarea, id (one Discord ID), ids (several IDs)
+# pick: choose from Discord when the bot is connected: guild, text_channel, category, role
 
 
 @dataclass(frozen=True)
@@ -27,109 +27,110 @@ class Field:
 
 GROUPS = [
     ("discord", "🤖 Discord"),
-    ("rcon", "🛢️ Rust-Server (RCON)"),
-    ("rights", "🛡️ Berechtigungen"),
+    ("rcon", "🛢️ Rust server (RCON)"),
+    ("rights", "🛡️ Permissions"),
     ("channels", "📺 Channels"),
-    ("behaviour", "⚙️ Verhalten"),
+    ("behaviour", "⚙️ Behaviour"),
     ("kits", "🎒 Kits"),
-    ("tickets", "🎫 Tickets & KI"),
+    ("tickets", "🎫 Tickets & AI"),
     ("community", "🎉 Community"),
-    ("web", "🌐 Webinterface"),
-    ("templates", "🧩 Befehls-Vorlagen (Experten)"),
+    ("web", "🌐 Web interface"),
+    ("templates", "🧩 Command templates (experts)"),
 ]
 
 FIELDS: list[Field] = [
     # Discord
-    Field("DISCORD_TOKEN", "Bot-Token", "discord", "secret", required=True,
-          help="Developer Portal → deine Anwendung → Bot → Reset Token. Niemals weitergeben!"),
-    Field("GUILD_ID", "Discord-Server", "discord", "id", pick="guild",
-          help="Mit gesetztem Server erscheinen die Slash-Commands sofort."),
+    Field("DISCORD_TOKEN", "Bot token", "discord", "secret", required=True,
+          help="Developer Portal → your application → Bot → Reset Token. Never share it!"),
+    Field("GUILD_ID", "Discord server", "discord", "id", pick="guild",
+          help="With a server set, slash commands show up instantly."),
     # RCON
-    Field("RCON_HOST", "Server-IP", "rcon", required=True, placeholder="z. B. 147.93.162.77",
-          help="Nur die IP, ohne Port. G-Portal-Panel → Status/Netzwerk."),
-    Field("RCON_PORT", "RCON-Port", "rcon", "int", required=True,
-          help="Der RCON-Port aus dem G-Portal-Panel – NICHT der Spielport."),
-    Field("RCON_PASSWORD", "RCON-Passwort", "rcon", "secret", required=True,
-          help="G-Portal → Einstellungen → Grundeinstellungen. Nur Buchstaben und Zahlen; danach Server neu starten."),
-    # Rechte
-    Field("ADMIN_ROLE_IDS", "Admin-Rollen", "rights", "ids", pick="role",
-          help="Diese Rollen dürfen Server-Befehle (RCON, Kits, Kick/Ban ingame) nutzen."),
-    Field("ADMIN_USER_IDS", "Admin-Nutzer (IDs)", "rights", "ids",
-          help="Zusätzlich einzelne Nutzer per ID (Rechtsklick auf Nutzer → ID kopieren)."),
-    Field("ALLOW_RAW_RCON", "Beliebige RCON-Befehle erlauben (/rcon, Konsole)", "rights", "bool"),
+    Field("RCON_HOST", "Server IP", "rcon", required=True, placeholder="e.g. 147.93.162.77",
+          help="Just the IP, no port. G-Portal panel → Status/Network."),
+    Field("RCON_PORT", "RCON port", "rcon", "int", required=True,
+          help="The RCON port from the G-Portal panel – NOT the game port."),
+    Field("RCON_PASSWORD", "RCON password", "rcon", "secret", required=True,
+          help="G-Portal → Settings → Basic settings. Letters and numbers only; restart the server afterwards."),
+    # Permissions
+    Field("ADMIN_ROLE_IDS", "Admin roles", "rights", "ids", pick="role",
+          help="These roles may use server commands (RCON, kits, in-game kick/ban)."),
+    Field("ADMIN_USER_IDS", "Admin users (IDs)", "rights", "ids",
+          help="Additional individual users by ID (right-click a user → Copy User ID)."),
+    Field("ALLOW_RAW_RCON", "Allow arbitrary RCON commands (/rcon, console)", "rights", "bool"),
     # Channels
-    Field("STATUS_CHANNEL_ID", "Status-Channel", "channels", "id", pick="text_channel",
-          help="Live-Status-Nachricht des Servers."),
-    Field("CHAT_CHANNEL_ID", "Chat-Bridge", "channels", "id", pick="text_channel",
-          help="Quick-Chat ingame ↔ Discord."),
+    Field("STATUS_CHANNEL_ID", "Status channel", "channels", "id", pick="text_channel",
+          help="Live server status message."),
+    Field("CHAT_CHANNEL_ID", "Chat bridge", "channels", "id", pick="text_channel",
+          help="Quick chat in-game ↔ Discord."),
     Field("KILLFEED_CHANNEL_ID", "Killfeed", "channels", "id", pick="text_channel"),
-    Field("EVENTS_CHANNEL_ID", "Events (Joins, Heli, Cargo …)", "channels", "id", pick="text_channel"),
-    Field("ADMIN_LOG_CHANNEL_ID", "Admin-Log", "channels", "id", pick="text_channel",
-          help="Bans, Kits, Bot-Aktionen. Privat halten!"),
-    Field("CONSOLE_LOG_CHANNEL_ID", "Server-Konsole", "channels", "id", pick="text_channel",
-          help="Sehr viele Nachrichten – eigener privater Channel."),
-    # Verhalten
-    Field("SERVER_DISPLAY_NAME", "Anzeigename des Servers", "behaviour",
-          help="Leer = Name vom Server übernehmen."),
-    Field("STATUS_INTERVAL", "Status aktualisieren alle … Sekunden", "behaviour", "int", placeholder="60"),
-    Field("PLAYERLIST_INTERVAL", "Spielerliste abfragen alle … Sekunden", "behaviour", "int", placeholder="30"),
-    Field("CHAT_BRIDGE_TO_GAME", "Discord-Nachrichten ins Spiel senden", "behaviour", "bool"),
-    Field("CHAT_SHOW_SERVER_MESSAGES", "[CHAT SERVER]-Zeilen in Discord zeigen", "behaviour", "bool"),
-    Field("SHOW_RESPAWNS", "Respawns im Events-Channel zeigen", "behaviour", "bool"),
-    Field("SAY_PREFIX", "Präfix für Discord-Nachrichten im Spiel", "behaviour",
+    Field("EVENTS_CHANNEL_ID", "Events (joins, heli, cargo …)", "channels", "id", pick="text_channel"),
+    Field("ADMIN_LOG_CHANNEL_ID", "Admin log", "channels", "id", pick="text_channel",
+          help="Bans, kits, bot actions. Keep it private!"),
+    Field("CONSOLE_LOG_CHANNEL_ID", "Server console", "channels", "id", pick="text_channel",
+          help="Lots of messages – use a separate private channel."),
+    # Behaviour
+    Field("SERVER_DISPLAY_NAME", "Server display name", "behaviour",
+          help="Empty = use the name from the server."),
+    Field("STATUS_INTERVAL", "Update status every … seconds", "behaviour", "int", placeholder="60"),
+    Field("PLAYERLIST_INTERVAL", "Poll player list every … seconds", "behaviour", "int", placeholder="30"),
+    Field("CHAT_BRIDGE_TO_GAME", "Send Discord messages into the game", "behaviour", "bool"),
+    Field("CHAT_SHOW_SERVER_MESSAGES", "Show [CHAT SERVER] lines in Discord", "behaviour", "bool"),
+    Field("SHOW_RESPAWNS", "Show respawns in the events channel", "behaviour", "bool"),
+    Field("SAY_PREFIX", "Prefix for Discord messages in-game", "behaviour",
           placeholder="<color=#5865F2>[Discord]</color>"),
     # Kits
-    Field("AUTOKIT_DELAY", "Autokit-Verzögerung nach Respawn (Sekunden)", "kits", "int", placeholder="3"),
-    Field("KIT_CLAIM_ANNOUNCE", "Quick-Chat-Kits ingame bestätigen", "kits", "bool"),
+    Field("AUTOKIT_DELAY", "Autokit delay after respawn (seconds)", "kits", "int", placeholder="3"),
+    Field("KIT_CLAIM_ANNOUNCE", "Confirm quick chat kits in-game", "kits", "bool"),
     # Tickets
-    Field("TICKET_CATEGORY_ID", "Ticket-Kategorie", "tickets", "id", pick="category",
-          help="Leer = Tickets aus."),
-    Field("TICKET_LOG_CHANNEL_ID", "Ticket-Log (Transkripte)", "tickets", "id", pick="text_channel"),
-    Field("SUPPORT_ROLE_IDS", "Support-Rollen", "tickets", "ids", pick="role",
-          help="Sehen Tickets und werden gepingt. Leer = Admin-Rollen."),
-    Field("DEEPSEEK_API_KEY", "DeepSeek-API-Key", "tickets", "secret",
-          help="platform.deepseek.com → API Keys. Leer = Tickets ohne KI."),
-    Field("DEEPSEEK_MODEL", "DeepSeek-Modell", "tickets", placeholder="deepseek-flash"),
-    Field("TICKET_AI_MAX_REPLIES", "Max. KI-Antworten pro Ticket", "tickets", "int", placeholder="20"),
-    Field("DEEPSEEK_BASE_URL", "DeepSeek-API-Adresse", "tickets", advanced=True,
+    Field("TICKET_CATEGORY_ID", "Ticket category", "tickets", "id", pick="category",
+          help="Empty = tickets off."),
+    Field("TICKET_LOG_CHANNEL_ID", "Ticket log (transcripts)", "tickets", "id", pick="text_channel"),
+    Field("SUPPORT_ROLE_IDS", "Support roles", "tickets", "ids", pick="role",
+          help="Can see tickets and get pinged. Empty = admin roles."),
+    Field("DEEPSEEK_API_KEY", "DeepSeek API key", "tickets", "secret",
+          help="platform.deepseek.com → API Keys. Empty = tickets without AI."),
+    Field("DEEPSEEK_MODEL", "DeepSeek model", "tickets", placeholder="deepseek-flash"),
+    Field("TICKET_AI_MAX_REPLIES", "Max. AI replies per ticket", "tickets", "int", placeholder="20"),
+    Field("DEEPSEEK_BASE_URL", "DeepSeek API URL", "tickets", advanced=True,
           placeholder="https://api.deepseek.com"),
-    Field("SUPPORT_KNOWLEDGE_FILE", "Datei der Wissensbasis", "tickets", advanced=True,
+    Field("SUPPORT_KNOWLEDGE_FILE", "Knowledge base file", "tickets", advanced=True,
           placeholder="support_knowledge.md"),
     # Community
-    Field("WELCOME_CHANNEL_ID", "Willkommens-Channel", "community", "id", pick="text_channel"),
-    Field("WELCOME_MESSAGE", "Willkommensnachricht", "community", "textarea",
-          help="Platzhalter: {member} {server} {count} {rules}"),
-    Field("AUTO_ROLE_ID", "Auto-Rolle für neue Mitglieder", "community", "id", pick="role"),
-    Field("DISCORD_LOG_CHANNEL_ID", "Discord-Log (Joins, Nachrichten, Moderation)", "community", "id",
+    Field("WELCOME_CHANNEL_ID", "Welcome channel", "community", "id", pick="text_channel"),
+    Field("WELCOME_MESSAGE", "Welcome message", "community", "textarea",
+          help="Placeholders: {member} {server} {count} {rules}"),
+    Field("AUTO_ROLE_ID", "Auto role for new members", "community", "id", pick="role"),
+    Field("DISCORD_LOG_CHANNEL_ID", "Discord log (joins, messages, moderation)", "community", "id",
           pick="text_channel"),
-    Field("RULES_CHANNEL_ID", "Regel-Channel", "community", "id", pick="text_channel"),
-    Field("GIVEAWAY_WINNER_ROLE_ID", "Rolle für Giveaway-Gewinner", "community", "id", pick="role"),
-    Field("RUST_SERVER_PLATFORM", "Plattform (für /rust)", "community",
+    Field("RULES_CHANNEL_ID", "Rules channel", "community", "id", pick="text_channel"),
+    Field("GIVEAWAY_WINNER_ROLE_ID", "Role for giveaway winners", "community", "id", pick="role"),
+    Field("RUST_SERVER_PLATFORM", "Platform (for /rust)", "community",
           placeholder="Rust Console Edition (Xbox & PlayStation)"),
-    Field("RUST_SERVER_WIPE", "Wipe-Zeiten (für /rust)", "community", placeholder="z. B. Donnerstags 18 Uhr"),
-    Field("RULES_FILE", "Datei mit den Regeln", "community", advanced=True, placeholder="rules.md"),
+    Field("RUST_SERVER_WIPE", "Wipe schedule (for /rust)", "community", placeholder="e.g. Thursdays 6 pm"),
+    Field("RULES_FILE", "Rules file", "community", advanced=True, placeholder="rules.md"),
     # Web
-    Field("WEB_PASSWORD", "Passwort für dieses Webinterface", "web", "secret",
-          help="Leer = bei jedem Start ein Login-Link im Bot-Fenster."),
-    Field("WEB_HOST", "Erreichbar für", "web", choices=("127.0.0.1", "0.0.0.0"),
-          help="127.0.0.1 = nur dieser PC, 0.0.0.0 = auch Handy/Laptop im Heimnetz. Nie ins Internet freigeben!"),
+    Field("WEB_PASSWORD", "Password for this web interface", "web", "secret",
+          help="Empty = a login link in the bot window on every start."),
+    Field("WEB_HOST", "Reachable from", "web", choices=("127.0.0.1", "0.0.0.0"),
+          help="127.0.0.1 = this PC only, 0.0.0.0 = also phone/laptop on your home network. "
+               "Never expose it to the internet!"),
     Field("WEB_PORT", "Port", "web", "int", placeholder="8080"),
-    Field("WEB_OPEN_BROWSER", "Browser beim Start öffnen", "web", "bool"),
-    Field("WEB_ENABLED", "Webinterface aktiv", "web", "bool",
-          help="Achtung: ausschalten sperrt dich aus dem Webinterface aus (dann nur noch über die .env)."),
-    # Vorlagen
-    Field("KICK_COMMAND_TEMPLATE", "Kick-Befehl", "templates", placeholder='kick "{name}"'),
-    Field("BAN_COMMAND_TEMPLATE", "Ban-Befehl", "templates", placeholder='banid "{name}"'),
-    Field("UNBAN_COMMAND_TEMPLATE", "Unban-Befehl", "templates", placeholder='unbanid "{name}"'),
-    Field("KIT_GIVE_TEMPLATE", "Kit an Spieler", "templates", placeholder='kit givetoplayer "{kit}" "{name}"'),
-    Field("KIT_GIVE_GROUP_TEMPLATE", "Kit an Gruppe", "templates", placeholder='kit givetogroup "{kit}" "{group}"'),
-    Field("KIT_GIVE_ALL_TEMPLATE", "Kit an alle", "templates", placeholder='kit giveall "{kit}"'),
-    Field("KIT_ADD_TEMPLATE", "Item zu Kit hinzufügen", "templates",
+    Field("WEB_OPEN_BROWSER", "Open browser on start", "web", "bool"),
+    Field("WEB_ENABLED", "Web interface enabled", "web", "bool",
+          help="Careful: turning this off locks you out of the web interface (then only via .env)."),
+    # Templates
+    Field("KICK_COMMAND_TEMPLATE", "Kick command", "templates", placeholder='kick "{name}"'),
+    Field("BAN_COMMAND_TEMPLATE", "Ban command", "templates", placeholder='banid "{name}"'),
+    Field("UNBAN_COMMAND_TEMPLATE", "Unban command", "templates", placeholder='unbanid "{name}"'),
+    Field("KIT_GIVE_TEMPLATE", "Kit to player", "templates", placeholder='kit givetoplayer "{kit}" "{name}"'),
+    Field("KIT_GIVE_GROUP_TEMPLATE", "Kit to group", "templates", placeholder='kit givetogroup "{kit}" "{group}"'),
+    Field("KIT_GIVE_ALL_TEMPLATE", "Kit to everyone", "templates", placeholder='kit giveall "{kit}"'),
+    Field("KIT_ADD_TEMPLATE", "Add item to kit", "templates",
           placeholder='kit add "{kit}" "{item}" "{amount}" "{condition}" "{container}"'),
-    Field("KIT_REMOVE_TEMPLATE", "Item aus Kit entfernen", "templates", placeholder='kit remove "{kit}" "{id}"'),
-    Field("ITEM_GIVE_TEMPLATE", "Item an Spieler (Custom Kits)", "templates",
+    Field("KIT_REMOVE_TEMPLATE", "Remove item from kit", "templates", placeholder='kit remove "{kit}" "{id}"'),
+    Field("ITEM_GIVE_TEMPLATE", "Item to player (custom kits)", "templates",
           placeholder='inventory.giveto "{name}" "{item}" {amount}'),
-    Field("DATABASE_PATH", "Datenbank-Datei", "templates", placeholder="data/bot.db"),
+    Field("DATABASE_PATH", "Database file", "templates", placeholder="data/bot.db"),
 ]
 
 FIELDS_BY_KEY = {f.key: f for f in FIELDS}
@@ -137,25 +138,25 @@ SECRET_KEYS = {f.key for f in FIELDS if f.kind == "secret"}
 
 
 def validate(key: str, value: str) -> str | None:
-    """Fehlermeldung für einen Wert oder None, wenn er passt."""
+    """Error message for a value, or None if it is valid."""
     f = FIELDS_BY_KEY.get(key)
     if f is None:
-        return "Unbekannte Einstellung."
+        return "Unknown setting."
     value = value.strip()
     if not value:
-        return f"„{f.label}“ ist ein Pflichtfeld." if f.required else None
+        return f'"{f.label}" is required.' if f.required else None
     if f.kind in ("int",) and not value.isdigit():
-        return f"„{f.label}“ muss eine Zahl sein."
+        return f'"{f.label}" must be a number.'
     if f.kind == "id" and not value.isdigit():
-        return f"„{f.label}“ muss eine Discord-ID (nur Ziffern) sein."
+        return f'"{f.label}" must be a Discord ID (digits only).'
     if f.kind == "ids" and not all(p.strip().isdigit() for p in value.split(",") if p.strip()):
-        return f"„{f.label}“ muss eine kommagetrennte Liste von IDs sein."
+        return f'"{f.label}" must be a comma-separated list of IDs.'
     if f.kind == "bool" and value.lower() not in ("true", "false"):
-        return f"„{f.label}“ muss true oder false sein."
+        return f'"{f.label}" must be true or false.'
     if f.choices and value not in f.choices:
-        return f"„{f.label}“: erlaubt sind {', '.join(f.choices)}."
+        return f'"{f.label}": allowed values are {", ".join(f.choices)}.'
     if key == "RCON_HOST" and (":" in value or "/" in value):
-        return "Server-IP bitte ohne Port und ohne „/“ eintragen."
+        return 'Enter the server IP without a port and without "/".'
     if "\n" in value and f.kind != "textarea":
-        return f"„{f.label}“ darf keine Zeilenumbrüche enthalten."
+        return f'"{f.label}" must not contain line breaks.'
     return None

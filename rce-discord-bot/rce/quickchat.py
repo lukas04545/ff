@@ -1,46 +1,46 @@
-"""Übersetzung der Quick-Chat-Phrasen der Console Edition.
+"""Translation of Console Edition quick chat phrases.
 
-WICHTIG: Rust Console Edition hat keinen freien Text-Chat. Spieler können nur
-vorgefertigte Quick-Chat-Phrasen senden; in der Konsole erscheinen diese als
-Bezeichner wie "d11_quick_chat_combat_slot_0". Diese Datei macht daraus Text.
-Unbekannte Bezeichner werden unverändert durchgereicht.
+IMPORTANT: Rust Console Edition has no free-text chat. Players can only send
+predefined quick chat phrases; in the console these show up as identifiers
+like "d11_quick_chat_combat_slot_0". This file turns them into text.
+Unknown identifiers are passed through unchanged.
 """
 from __future__ import annotations
 
 _SLOTS: dict[str, list[str]] = {
     "combat": [
-        "Wir werden angegriffen!", "Rückzug!", "Los geht's!", "Nicht schießen!",
-        "Sei vorsichtig!", "Die sind besser bewaffnet!", "Ich habe keine Munition mehr!", "Ich bin verletzt!",
+        "We're under attack!", "Retreat!", "Go, go, go!", "Don't shoot!",
+        "Be careful!", "They're better armed!", "I'm out of ammo!", "I'm hurt!",
     ],
     "building": [
-        "Wände aufwerten!", "Wir brauchen Betten!", "Ich brauche Bauberechtigung!", "Wie ist der Türcode?",
-        "Kann ich einen Schlüssel haben?", "Wir brauchen eine bessere Tür!", "Upkeep wird knapp!",
-        "Welche Kiste ist frei?",
+        "Upgrade the walls!", "We need beds!", "I need building privilege!", "What's the door code?",
+        "Can I have a key?", "We need a better door!", "Upkeep is running low!",
+        "Which box is free?",
     ],
     "questions": [
-        "Bist du freundlich?", "Darf ich hier bauen?", "Willst du ein Team bilden?", "Brauchst du etwas?",
-        "Kannst du mir helfen?", "Willst du handeln?", "Wer ist da?", "Darf ich reinkommen?",
+        "Are you friendly?", "Can I build here?", "Want to team up?", "Do you need anything?",
+        "Can you help me?", "Want to trade?", "Who's there?", "Can I come in?",
     ],
-    "responses": ["Ja", "Nein", "OK", "Danke", "Kein Problem", "Hallo", "Tschüss", "Tut mir leid"],
+    "responses": ["Yes", "No", "OK", "Thanks", "No problem", "Hello", "Bye", "Sorry"],
     "orders": [
-        "Folge mir!", "Verschwinde!", "Repariere das!", "Warte hier!",
-        "Komm rein!", "Lass uns gehen!", "Hier, nimm das!", "Beeil dich!",
+        "Follow me!", "Go away!", "Repair this!", "Wait here!",
+        "Come in!", "Let's go!", "Here, take this!", "Hurry up!",
     ],
-    "location": ["Norden", "Nordosten", "Osten", "Südosten", "Süden", "Südwesten", "Westen", "Nordwesten"],
+    "location": ["North", "Northeast", "East", "Southeast", "South", "Southwest", "West", "Northwest"],
 }
 
 _ITEMS = {
-    "d11_stone": "Stein", "stones": "Stein", "d11_wood": "Holz", "d11_metal": "Metall",
-    "d11_food": "Essen", "d11_water": "Wasser", "d11_scrap": "Scrap",
-    "d11_metal_fragments": "Metallfragmente", "d11_medicine": "Medizin",
-    "lowgradefuel": "Low Grade Fuel", "metal.refined": "HQ-Metall",
-    "bow.hunting": "Jagdbogen", "pickaxe": "Spitzhacke", "hatchet": "Beil",
+    "d11_stone": "Stone", "stones": "Stone", "d11_wood": "Wood", "d11_metal": "Metal",
+    "d11_food": "Food", "d11_water": "Water", "d11_scrap": "Scrap",
+    "d11_metal_fragments": "Metal Fragments", "d11_medicine": "Medicine",
+    "lowgradefuel": "Low Grade Fuel", "metal.refined": "HQ Metal",
+    "bow.hunting": "Hunting Bow", "pickaxe": "Pickaxe", "hatchet": "Hatchet",
 }
 
 _FORMATS = {
-    "d11_quick_chat_activities_phrase_format": "Ich gehe {item} farmen.",
-    "d11_quick_chat_i_need_phrase_format": "Ich brauche {item}.",
-    "d11_quick_chat_i_have_phrase_format": "Ich habe {item}.",
+    "d11_quick_chat_activities_phrase_format": "I'm going to farm {item}.",
+    "d11_quick_chat_i_need_phrase_format": "I need {item}.",
+    "d11_quick_chat_i_have_phrase_format": "I have {item}.",
 }
 
 
@@ -60,7 +60,7 @@ def translate(raw: str) -> str:
     return text
 
 
-# Gültige Kombinationen der Format-Phrasen (Original-Schreibweise wie im Log)
+# Valid combinations of the format phrases (original spelling as in the log)
 _FORMAT_ITEMS = {
     "d11_quick_chat_activities_phrase_format": [
         "d11_Stone", "d11_Wood", "d11_Metal", "d11_Food", "d11_Water", "d11_Scrap",
@@ -78,7 +78,7 @@ _FORMAT_ITEMS = {
 
 
 def all_phrases() -> dict[str, str]:
-    """Alle bekannten Quick-Chat-Bezeichner -> deutscher Text (z. B. für Autokit-Auslöser)."""
+    """All known quick chat identifiers -> English text (e.g. for autokit triggers)."""
     phrases: dict[str, str] = {}
     for category, texts in _SLOTS.items():
         for slot in range(len(texts)):

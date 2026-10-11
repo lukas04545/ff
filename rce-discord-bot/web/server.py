@@ -1,14 +1,14 @@
-"""Webinterface: läuft im selben Prozess wie der Bot (aiohttp, keine Zusatzpakete).
+"""Web interface: runs in the same process as the bot (aiohttp, no extra packages).
 
-Sicherheit:
-  * Standardmäßig nur auf 127.0.0.1 erreichbar (nur dieser PC). Für Zugriff aus dem
-    Heimnetz WEB_HOST=0.0.0.0 setzen – dann unbedingt ein starkes WEB_PASSWORD wählen.
-    NICHT per Portfreigabe ins Internet stellen (kein HTTPS).
-  * Login per Passwort oder Einmal-Link aus dem Bot-Fenster; signiertes Session-Cookie
-    (HttpOnly, SameSite=Strict) – übersteht Bot-Neustarts, wird bei Passwortwechsel ungültig.
-  * Login-Bremse, Host-Prüfung gegen DNS-Rebinding (bei Betrieb nur auf diesem PC).
-  * Schreibende Anfragen brauchen den Header X-Requested-With (Schutz gegen CSRF).
-  * Jede Aktion wird im Admin-Log-Channel protokolliert.
+Security:
+  * By default only reachable on 127.0.0.1 (this PC only). For access from your home
+    network set WEB_HOST=0.0.0.0 – and then be sure to pick a strong WEB_PASSWORD.
+    Do NOT expose it to the internet via port forwarding (no HTTPS).
+  * Login by password or one-time link from the bot window; signed session cookie
+    (HttpOnly, SameSite=Strict) – survives bot restarts, invalidated when the password changes.
+  * Login rate limit, host check against DNS rebinding (when running on this PC only).
+  * Write requests need the X-Requested-With header (CSRF protection).
+  * Every action is logged to the admin log channel.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 ENV_PATH = Path(".env")
 ENV_TEMPLATE = Path(".env.example")
 DISCORD_API = "https://discord.com/api/v10"
-# Bot-Rechte für den Einladungslink (alle Funktionen dieses Bots)
+# Bot permissions for the invite link (every feature of this bot)
 INVITE_PERMISSIONS = discord.Permissions(
     view_channel=True, send_messages=True, embed_links=True, attach_files=True, read_message_history=True,
     add_reactions=True, manage_channels=True, manage_roles=True, moderate_members=True, kick_members=True,
@@ -79,7 +79,7 @@ INVITE_PERMISSIONS = discord.Permissions(
 
 
 def invite_url(app_id) -> str | None:
-    """Einladungslink mit allen nötigen Rechten. Erneut benutzt, aktualisiert er die Rechte der Bot-Rolle."""
+    """Invite link with all required permissions. Using it again updates the bot role's permissions."""
     return (f"https://discord.com/oauth2/authorize?client_id={app_id}"
             f"&scope=bot+applications.commands&permissions={INVITE_PERMISSIONS}") if app_id else None
 
@@ -88,7 +88,7 @@ INTENT_LABELS = {"message_content": "Message Content Intent", "members": "Server
 
 
 async def check_discord(token: str) -> dict:
-    """Prüft den Bot-Token direkt bei Discord und liest die eingeschalteten privilegierten Intents."""
+    """Checks the bot token directly with Discord and reads which privileged intents are enabled."""
     result = {"reachable": False, "token_ok": None, "bot_name": None, "app_id": None, "intents": None, "error": None}
     headers = {"Authorization": f"Bot {token}"}
     try:
@@ -97,17 +97,17 @@ async def check_discord(token: str) -> dict:
                 result["reachable"] = True
                 if resp.status == 401:
                     result["token_ok"] = False
-                    result["error"] = ("Discord lehnt den Bot-Token ab. Im Developer Portal unter Bot → "
-                                       "Reset Token einen neuen erzeugen und hier eintragen.")
+                    result["error"] = ("Discord rejected the bot token. Generate a new one in the Developer Portal under "
+                                       "Bot → Reset Token and enter it here.")
                     return result
                 if resp.status != 200:
-                    result["error"] = f"Discord antwortet mit HTTP {resp.status}."
+                    result["error"] = f"Discord responded with HTTP {resp.status}."
                     return result
                 user = await resp.json()
             async with session.get(f"{DISCORD_API}/applications/@me", headers=headers) as resp:
                 app_info = await resp.json() if resp.status == 200 else {}
     except (aiohttp.ClientError, TimeoutError) as exc:
-        result["error"] = f"Discord nicht erreichbar: {exc}"
+        result["error"] = f"Discord unreachable: {exc}"
         return result
     flags = int(app_info.get("flags") or 0)
     result.update(token_ok=True, bot_name=user.get("username"), app_id=app_info.get("id") or user.get("id"))
@@ -119,13 +119,14 @@ async def check_discord(token: str) -> dict:
 
 
 def intent_warning(cfg, missing: list[str]) -> str:
-    """Erklärt, welche Intents fehlen und welche Funktionen deshalb pausieren."""
+    """Explains which intents are missing and which features are paused because of it."""
     needed = required_intents(cfg)
-    parts = [f"„{INTENT_LABELS[k]}“ (betroffen: {', '.join(needed[k]) or '–'})" for k in missing]
-    return ("Eingeschränkter Betrieb: Im Discord Developer Portal ist " + " und ".join(parts)
-            + " ausgeschaltet. Alle Befehle, RCON, Kits und Feeds laufen normal – nur die genannten "
-              "Funktionen pausieren. Beheben: Developer Portal → Bot → „Privileged Gateway Intents“ einschalten → "
-              "„Save Changes“ → Bot neu starten.")
+    parts = [f'"{INTENT_LABELS[k]}" (affects: {", ".join(needed[k]) or "–"})' for k in missing]
+    verb = "is" if len(parts) == 1 else "are"
+    return ("Limited mode: In the Discord Developer Portal, " + " and ".join(parts)
+            + f" {verb} turned off. All commands, RCON, kits and feeds work normally – only the features "
+              'listed are paused. Fix: Developer Portal → Bot → turn on "Privileged Gateway Intents" → '
+              '"Save Changes" → restart the bot.')
 
 
 def intents_fix_url(app_id: str | None) -> str:
@@ -134,16 +135,16 @@ def intents_fix_url(app_id: str | None) -> str:
 
 
 async def discord_preflight(cfg) -> dict | None:
-    """Prüft vor dem Start, wie Discord den Bot mit dieser Konfiguration annimmt.
+    """Checks before starting how Discord will accept the bot with this configuration.
 
-    None = alles ok (oder Discord gerade nicht erreichbar). Sonst ein Dict mit
-      preflight_error  – blockierend (z. B. ungültiger Token), Bot kann nicht starten
-      missing_intents  – fehlende privilegierte Intents: Bot startet trotzdem, nur ohne diese
+    None = all good (or Discord currently unreachable). Otherwise a dict with
+      preflight_error  – blocking (e.g. invalid token), the bot cannot start
+      missing_intents  – missing privileged intents: the bot starts anyway, just without them
       intent_warning, fix_url
     """
     info = await check_discord(cfg.discord_token)
     if not info["reachable"]:
-        return None  # z. B. kein Internet: nicht blockieren, der Bot versucht es selbst erneut
+        return None  # e.g. no internet: don't block, the bot retries on its own
     if info["token_ok"] is False:
         return {"preflight_error": info["error"], "missing_intents": [],
                 "fix_url": "https://discord.com/developers/applications"}
@@ -166,7 +167,7 @@ class WebSettings:
 
 
 def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
-    """WEB_*-Werte direkt aus der .env – auch wenn der Rest der Konfiguration noch unvollständig ist."""
+    """WEB_* values straight from .env – even if the rest of the configuration is still incomplete."""
     env = {**read_env(path), **{k: v for k, v in os.environ.items() if k.startswith("WEB_")}}
 
     def flag(key: str, default: bool) -> bool:
@@ -183,7 +184,7 @@ def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
 
 
 class WebInterface:
-    """bot=None startet den Einrichtungsmodus: nur Login und Einstellungen, ohne Discord/RCON."""
+    """bot=None starts setup mode: only login and settings, without Discord/RCON."""
 
     def __init__(self, bot: "RceBot | None", *, web_settings: WebSettings | None = None,
                  setup_error: str | None = None, setup_fix_url: str | None = None,
@@ -201,7 +202,7 @@ class WebInterface:
         self.ws = web_settings
         self.password = web_settings.password
         if not self.password:
-            # Ohne festes Passwort: Zufallspasswort + Einmal-Link (siehe start())
+            # No fixed password: random password + one-time link (see start())
             self.password = secrets.token_urlsafe(9)
         self.login_token = secrets.token_urlsafe(24)
         self._secret = self._load_secret(secret_path)
@@ -213,7 +214,7 @@ class WebInterface:
 
     @staticmethod
     def _load_secret(path: Path) -> bytes:
-        """Geheimer Schlüssel für die Session-Cookies – bleibt über Neustarts gleich."""
+        """Secret key for the session cookies – stays the same across restarts."""
         try:
             return bytes.fromhex(path.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
@@ -222,10 +223,10 @@ class WebInterface:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(secret.hex(), encoding="utf-8")
             except OSError:
-                log.warning("Konnte %s nicht speichern – Logins gelten nur bis zum Neustart.", path)
+                log.warning("Could not save %s – logins will only last until the next restart.", path)
             return secret
 
-    # ------------------------------------------------------------ Start/Stopp
+    # ------------------------------------------------------------ Start/stop
 
     def _build_app(self) -> web.Application:
         app = web.Application(middlewares=[self._error_middleware, self._host_middleware, self._auth_middleware],
@@ -283,25 +284,25 @@ class WebInterface:
         try:
             await web.TCPSite(self._runner, ws.host, ws.port).start()
         except OSError as exc:
-            log.error("Webinterface konnte Port %s nicht öffnen (%s) – anderen WEB_PORT wählen.", ws.port, exc)
+            log.error("Web interface could not open port %s (%s) – choose a different WEB_PORT.", ws.port, exc)
             return False
         shown_host = "localhost" if ws.host in ("127.0.0.1", "0.0.0.0", "") else ws.host
         url = f"http://{shown_host}:{ws.port}"
         login_url = f"{url}/auth?token={self.login_token}"
         if self.setup_mode:
-            log.warning("EINRICHTUNG: Öffne %s im Browser, um die fehlenden Einstellungen einzutragen.", login_url)
+            log.warning("SETUP: Open %s in your browser to fill in the missing settings.", login_url)
         else:
-            log.info("Webinterface läuft: %s", url)
+            log.info("Web interface running: %s", url)
             if not ws.password:
-                log.warning("Kein WEB_PASSWORD gesetzt – Login über diesen Link: %s  (oder Passwort: %s)",
+                log.warning("No WEB_PASSWORD set – log in via this link: %s  (or password: %s)",
                             login_url, self.password)
         if ws.host not in ("127.0.0.1", "localhost"):
-            log.warning("Webinterface ist im Netzwerk erreichbar (WEB_HOST=%s). Nicht ins Internet freigeben!",
+            log.warning("Web interface is reachable on the network (WEB_HOST=%s). Do not expose it to the internet!",
                         ws.host)
         if ws.open_browser if open_browser is None else open_browser:
             try:
                 webbrowser.open(login_url)
-            except Exception:  # z. B. kein Browser auf einem Server
+            except Exception:  # e.g. no browser on a server
                 pass
         return True
 
@@ -322,17 +323,17 @@ class WebInterface:
         except web.HTTPException:
             raise
         except Exception:
-            log.exception("Fehler im Webinterface (%s %s)", request.method, request.path)
-            return web.json_response({"error": "Interner Fehler – Details im Bot-Log."}, status=500)
+            log.exception("Error in web interface (%s %s)", request.method, request.path)
+            return web.json_response({"error": "Internal error – see the bot log for details."}, status=500)
 
     @web.middleware
     async def _host_middleware(self, request: web.Request, handler):
-        # Schutz gegen DNS-Rebinding: Läuft das Webinterface nur lokal, muss der Host auch lokal sein.
+        # DNS rebinding protection: if the web interface only runs locally, the host must be local too.
         if self.ws.host in ("127.0.0.1", "localhost"):
             host = (request.host or "").rsplit(":", 1)[0] if not (request.host or "").startswith("[") \
                 else (request.host or "").split("]")[0] + "]"
             if host.lower() not in LOCAL_HOSTS:
-                raise web.HTTPForbidden(text="Unbekannter Host.")
+                raise web.HTTPForbidden(text="Unknown host.")
         return await handler(request)
 
     @web.middleware
@@ -341,15 +342,15 @@ class WebInterface:
         if not path.startswith("/api/"):
             return await handler(request)
         if request.method not in ("GET", "HEAD") and request.headers.get(CSRF_HEADER) != "rce-web":
-            raise ApiError("Ungültige Anfrage.", 403)
+            raise ApiError("Invalid request.", 403)
         if path == "/api/login":
             return await handler(request)
         if not self._valid_session(request):
-            raise ApiError("Nicht angemeldet.", 401)
+            raise ApiError("Not logged in.", 401)
         return await handler(request)
 
     def _sign(self, expires: int) -> str:
-        # Das konfigurierte Passwort fließt ein: Passwortwechsel meldet alle ab.
+        # The configured password is part of the signature: changing it logs everyone out.
         msg = f"{expires}:{self.ws.password}".encode()
         return f"{expires}.{hmac.new(self._secret, msg, hashlib.sha256).hexdigest()}"
 
@@ -368,22 +369,22 @@ class WebInterface:
     def _set_session_cookie(self, resp: web.StreamResponse) -> None:
         resp.set_cookie(SESSION_COOKIE, self._new_session(), max_age=SESSION_TTL, httponly=True, samesite="Strict")
 
-    # ------------------------------------------------------------ Hilfen
+    # ------------------------------------------------------------ Helpers
 
     async def _json(self, request: web.Request) -> dict:
         try:
             data = await request.json()
         except Exception:
-            raise ApiError("Ungültiges JSON.") from None
+            raise ApiError("Invalid JSON.") from None
         if not isinstance(data, dict):
-            raise ApiError("Ungültiges JSON.")
+            raise ApiError("Invalid JSON.")
         return data
 
     @staticmethod
     def _text(data: dict, key: str, *, required: bool = True, limit: int = 200) -> str:
         value = str(data.get(key) or "").strip()[:limit]
         if required and not value:
-            raise ApiError(f"Feld „{key}“ fehlt.")
+            raise ApiError(f'Field "{key}" is missing.')
         return value
 
     @staticmethod
@@ -391,21 +392,21 @@ class WebInterface:
         try:
             value = int(data.get(key, default))
         except (TypeError, ValueError):
-            raise ApiError(f"Feld „{key}“ muss eine Zahl sein.") from None
+            raise ApiError(f'Field "{key}" must be a number.') from None
         return max(lo, min(hi, value))
 
     def _audit(self, text: str) -> None:
         if self.bot is not None:
-            self.bot.audit(f"🌐 Webinterface: {text}")
-        log.info("Web-Aktion: %s", text)
+            self.bot.audit(f"🌐 Web interface: {text}")
+        log.info("Web action: %s", text)
 
     def _cog(self, name: str):
         cog = self.bot.get_cog(name)
         if cog is None:
-            raise ApiError(f"Modul {name} ist nicht geladen.", 503)
+            raise ApiError(f"Module {name} is not loaded.", 503)
         return cog
 
-    # ------------------------------------------------------------ Seiten & Login
+    # ------------------------------------------------------------ Pages & login
 
     async def _index(self, request: web.Request) -> web.FileResponse:
         return web.FileResponse(STATIC_DIR / "index.html")
@@ -417,21 +418,21 @@ class WebInterface:
         while attempts and now - attempts[0] > 60:
             attempts.popleft()
         if len(attempts) >= LOGIN_ATTEMPTS_PER_MINUTE:
-            raise ApiError("Zu viele Versuche – bitte eine Minute warten.", 429)
+            raise ApiError("Too many attempts – please wait a minute.", 429)
         attempts.append(now)
 
         data = await self._json(request)
         if not hmac.compare_digest(str(data.get("password", "")).encode(), self.password.encode()):
-            log.warning("Fehlgeschlagener Web-Login von %s", ip)
-            raise ApiError("Falsches Passwort.", 401)
+            log.warning("Failed web login from %s", ip)
+            raise ApiError("Wrong password.", 401)
         attempts.clear()
         resp = web.json_response({"ok": True})
         self._set_session_cookie(resp)
-        log.info("Web-Login von %s", ip)
+        log.info("Web login from %s", ip)
         return resp
 
     async def auth_link(self, request: web.Request) -> web.Response:
-        """Einmal-Link aus dem Bot-Fenster: meldet an und öffnet die passende Seite."""
+        """One-time link from the bot window: logs in and opens the matching page."""
         if not hmac.compare_digest(request.query.get("token", ""), self.login_token):
             raise web.HTTPFound("/")
         resp = web.HTTPFound("/#settings" if self.setup_mode else "/#overview")
@@ -447,7 +448,7 @@ class WebInterface:
     async def me(self, request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "setup_mode": self.setup_mode})
 
-    # ------------------------------------------------------------ Einstellungen
+    # ------------------------------------------------------------ Settings
 
     async def get_settings(self, request: web.Request) -> web.Response:
         env = read_env(self.env_path)
@@ -457,7 +458,7 @@ class WebInterface:
                     "required": f.required, "pick": f.pick, "advanced": f.advanced,
                     "placeholder": f.placeholder, "choices": list(f.choices)}
             if f.kind == "secret":
-                item["is_set"] = bool((env.get(f.key) or "").strip())  # Geheimnisse nie ausliefern
+                item["is_set"] = bool((env.get(f.key) or "").strip())  # never send secrets out
             else:
                 item["value"] = env.get(f.key, "")
             fields.append(item)
@@ -476,7 +477,7 @@ class WebInterface:
     async def put_settings(self, request: web.Request) -> web.Response:
         values = (await self._json(request)).get("values")
         if not isinstance(values, dict):
-            raise ApiError("Ungültige Daten.")
+            raise ApiError("Invalid data.")
         current = read_env(self.env_path)
         updates, errors = {}, {}
         for key, raw in values.items():
@@ -487,30 +488,30 @@ class WebInterface:
             if f.kind != "textarea":
                 value = value.strip()
             if f.kind == "secret" and not value:
-                continue  # leer = unverändert lassen
+                continue  # empty = leave unchanged
             if f.kind == "ids":
                 value = ",".join(p.strip() for p in value.split(",") if p.strip())
             if value == (current.get(key) or ""):
-                continue  # unverändert – nichts schreiben
+                continue  # unchanged – nothing to write
             if error := settings_schema.validate(key, value):
                 errors[key] = error
             else:
                 updates[key] = value
         if errors:
-            return web.json_response({"error": "Bitte die markierten Felder korrigieren.", "errors": errors},
+            return web.json_response({"error": "Please fix the highlighted fields.", "errors": errors},
                                      status=400)
         if updates:
             update_env(self.env_path, updates, template=ENV_TEMPLATE)
-            self._audit("Einstellungen geändert: " + ", ".join(sorted(updates)))
+            self._audit("Settings changed: " + ", ".join(sorted(updates)))
         rcon_test = None
         if updates.keys() & {"RCON_HOST", "RCON_PORT", "RCON_PASSWORD"}:
-            # RCON-Daten geändert: gleich prüfen, damit Fehler sofort sichtbar sind
+            # RCON details changed: test right away so errors show up immediately
             saved = read_env(self.env_path)
             result = await diagnose_rcon(saved.get("RCON_HOST") or "", saved.get("RCON_PORT") or "",
                                          saved.get("RCON_PASSWORD") or "")
             rcon_test = {"ok": result.ok, "steps": result.steps}
         if "WEB_PASSWORD" in updates:
-            # Neues Passwort gilt sofort; die aktuelle Sitzung bleibt angemeldet
+            # New password applies immediately; the current session stays logged in
             self.ws.password = self.password = updates["WEB_PASSWORD"]
         try:
             load_config(self.env_path)
@@ -550,7 +551,7 @@ class WebInterface:
     async def settings_test_discord(self, request: web.Request) -> web.Response:
         token = str((await self._json(request)).get("token") or self._saved("DISCORD_TOKEN")).strip()
         if not token:
-            raise ApiError("Kein Bot-Token eingetragen.")
+            raise ApiError("No bot token entered.")
         info = await check_discord(token)
         if not info["token_ok"]:
             return web.json_response({"ok": False, "error": info["error"]})
@@ -561,19 +562,19 @@ class WebInterface:
         })
 
     async def _preflight(self) -> dict | None:
-        """Vor dem (Neu-)Start prüfen, ob Discord den Bot annimmt – sonst landet er in einer Start-Schleife.
+        """Before (re)starting, check that Discord accepts the bot – otherwise it ends up in a start loop.
 
-        Liefert None, wenn Discord gerade nicht erreichbar ist, sonst das Ergebnis von
-        discord_preflight(); nur "preflight_error" blockiert den Start.
+        Returns None if Discord is currently unreachable, otherwise the result of
+        discord_preflight(); only "preflight_error" blocks the start.
         """
         try:
             cfg = load_config(self.env_path)
         except ConfigError as exc:
-            return {"preflight_error": f"Noch nicht vollständig: {exc}", "fix_url": None}
+            return {"preflight_error": f"Not complete yet: {exc}", "fix_url": None}
         return await discord_preflight(cfg)
 
     async def settings_discord_options(self, request: web.Request) -> web.Response:
-        """Channels/Rollen/Server zur Auswahl – nur wenn der Bot mit Discord verbunden ist."""
+        """Channels/roles/servers to pick from – only when the bot is connected to Discord."""
         bot = self.bot
         if bot is None or not bot.is_ready():
             return web.json_response({"available": False})
@@ -595,14 +596,14 @@ class WebInterface:
     async def restart(self, request: web.Request) -> web.Response:
         preflight = await self._preflight()
         if preflight and preflight.get("preflight_error"):
-            # Nicht neu starten – sonst fiele der Bot in den Einrichtungsmodus zurück
+            # Don't restart – otherwise the bot would fall back into setup mode
             return web.json_response({"ok": False, **preflight})
-        self._audit("Bot-Neustart angefordert")
+        self._audit("Bot restart requested")
         self.bot.request_restart()
         return web.json_response({"ok": True, **(preflight or {})})
 
     async def setup_continue(self, request: web.Request) -> web.Response:
-        """Einrichtung: Bot mit der gespeicherten Konfiguration starten (z. B. nach Intents-Freigabe)."""
+        """Setup: start the bot with the saved configuration (e.g. after enabling intents)."""
         preflight = await self._preflight()
         if preflight and preflight.get("preflight_error"):
             return web.json_response({"ok": False, **preflight})
@@ -610,7 +611,7 @@ class WebInterface:
             self.on_config_saved()
         return web.json_response({"ok": True, "starting": True, **(preflight or {})})
 
-    # ------------------------------------------------------------ Status & Konsole
+    # ------------------------------------------------------------ Status & console
 
     async def status(self, request: web.Request) -> web.Response:
         if self.setup_mode:
@@ -658,7 +659,7 @@ class WebInterface:
 
     async def command(self, request: web.Request) -> web.Response:
         if not self.bot.config.allow_raw_rcon:
-            raise ApiError("Beliebige RCON-Befehle sind deaktiviert (ALLOW_RAW_RCON=false).", 403)
+            raise ApiError("Arbitrary RCON commands are disabled (ALLOW_RAW_RCON=false).", 403)
         cmd = self._text(await self._json(request), "command", limit=500)
         self._audit(f"RCON `{cmd[:200]}`")
         response = await self.bot.rcon.command(cmd, timeout=10, expect_response=False)
@@ -678,7 +679,7 @@ class WebInterface:
         cfg = self.bot.config
         template = {"kick": cfg.kick_template, "ban": cfg.ban_template, "unban": cfg.unban_template}[action]
         response = await self.bot.rcon.command(template.format(name=name), expect_response=False)
-        self._audit(f"{action.capitalize()} `{name}`" + (f" – Grund: {reason}" if reason else ""))
+        self._audit(f"{action.capitalize()} `{name}`" + (f" – reason: {reason}" if reason else ""))
         return web.json_response({"response": response})
 
     # ------------------------------------------------------------ Kits
@@ -708,14 +709,14 @@ class WebInterface:
         player = self._text(data, "player", required=False, limit=64)
         everyone = bool(data.get("all"))
         if not everyone and not player:
-            raise ApiError("Spieler fehlt.")
+            raise ApiError("Player is missing.")
         player = sanitize_player_name(player)
         cfg = self.bot.config
 
         if kit_type == "custom":
             custom = self._cog("CustomKits")
             if self.bot.db.custom_kit(kit) is None:
-                raise ApiError("Custom Kit nicht gefunden.", 404)
+                raise ApiError("Custom kit not found.", 404)
             targets = sorted(self.bot.online_players) if everyone else [player]
             ok = 0
             for target in targets:
@@ -723,7 +724,7 @@ class WebInterface:
                 if sent:
                     ok += 1
                     self.bot.db.record_kit_claim(None, kit, target, "web (custom)")
-            self._audit(f"Custom Kit **{kit}** an {'alle' if everyone else player} ({ok} Spieler)")
+            self._audit(f"Custom kit **{kit}** to {'everyone' if everyone else player} ({ok} players)")
             return web.json_response({"ok": True, "players": ok})
 
         if everyone:
@@ -731,7 +732,7 @@ class WebInterface:
         else:
             await self.bot.rcon.command(cfg.kit_give_template.format(kit=kit, name=player), expect_response=False)
             self.bot.db.record_kit_claim(None, kit, player, "web")
-        self._audit(f"Kit **{kit}** an {'alle' if everyone else player}")
+        self._audit(f"Kit **{kit}** to {'everyone' if everyone else player}")
         return web.json_response({"ok": True})
 
     async def create_custom_kit(self, request: web.Request) -> web.Response:
@@ -739,18 +740,18 @@ class WebInterface:
         name = kitparse.clean_arg(self._text(data, "name", limit=40), limit=40)
         description = self._text(data, "description", required=False, limit=300) or None
         if not name:
-            raise ApiError("Ungültiger Name.")
-        if not self.bot.db.create_custom_kit(name, description, "Webinterface"):
-            raise ApiError("Ein Custom Kit mit diesem Namen gibt es schon.", 409)
-        self._audit(f"Custom Kit **{name}** erstellt")
+            raise ApiError("Invalid name.")
+        if not self.bot.db.create_custom_kit(name, description, "Web interface"):
+            raise ApiError("A custom kit with this name already exists.", 409)
+        self._audit(f"Custom kit **{name}** created")
         return web.json_response({"ok": True})
 
     async def delete_custom_kit(self, request: web.Request) -> web.Response:
         name = request.match_info["name"]
         if self.bot.db.custom_kit(name) is None:
-            raise ApiError("Custom Kit nicht gefunden.", 404)
+            raise ApiError("Custom kit not found.", 404)
         rules = self.bot.db.delete_custom_kit(name)
-        self._audit(f"Custom Kit **{name}** gelöscht ({rules} Autokit-Regeln)")
+        self._audit(f"Custom kit **{name}** deleted ({rules} autokit rules)")
         return web.json_response({"ok": True, "rules_deleted": rules})
 
     async def add_custom_item(self, request: web.Request) -> web.Response:
@@ -758,21 +759,21 @@ class WebInterface:
         name = request.match_info["name"]
         kit = self.bot.db.custom_kit(name)
         if kit is None:
-            raise ApiError("Custom Kit nicht gefunden.", 404)
+            raise ApiError("Custom kit not found.", 404)
         data = await self._json(request)
         short = kitparse.clean_arg(self._text(data, "item", limit=64)).replace(" ", "").lower()
         amount = self._int(data, "amount", 1, 1, 100000)
         if len(self.bot.db.custom_kit_items(kit["name"])) >= MAX_ITEMS_PER_KIT:
-            raise ApiError(f"Höchstens {MAX_ITEMS_PER_KIT} Items pro Kit.")
+            raise ApiError(f"At most {MAX_ITEMS_PER_KIT} items per kit.")
         self.bot.db.add_custom_kit_item(kit["name"], short, amount)
-        self._audit(f"Custom Kit **{kit['name']}** + `{short}` × {amount}")
+        self._audit(f"Custom kit **{kit['name']}** + `{short}` × {amount}")
         return web.json_response({"ok": True, "known_item": short in itemlist.COMMON_ITEMS})
 
     async def remove_custom_item(self, request: web.Request) -> web.Response:
         name, item_id = request.match_info["name"], int(request.match_info["item_id"])
         if not self.bot.db.remove_custom_kit_item(name, item_id):
-            raise ApiError("Item nicht gefunden.", 404)
-        self._audit(f"Custom Kit **{name}** – Item #{item_id} entfernt")
+            raise ApiError("Item not found.", 404)
+        self._audit(f"Custom kit **{name}** – item #{item_id} removed")
         return web.json_response({"ok": True})
 
     async def create_autokit(self, request: web.Request) -> web.Response:
@@ -781,48 +782,48 @@ class WebInterface:
         kit_type = "custom" if data.get("kit_type") == "custom" else "ingame"
         trigger = data.get("trigger")
         if trigger not in ("respawn", "quickchat"):
-            raise ApiError("Auslöser muss respawn oder quickchat sein.")
+            raise ApiError("Trigger must be respawn or quickchat.")
         phrase = self._text(data, "phrase", required=trigger == "quickchat") or None
         if kit_type == "custom":
             row = self.bot.db.custom_kit(kit)
             if row is None:
-                raise ApiError("Custom Kit nicht gefunden.", 404)
+                raise ApiError("Custom kit not found.", 404)
             kit = row["name"]
         rule_id = self.bot.db.add_kit_rule(
             kit, trigger, phrase if trigger == "quickchat" else None,
             self._int(data, "cooldown", 0, 0, 525600), self._int(data, "max_claims", 0, 0, 10000),
-            "Webinterface", kit_type)
-        self._audit(f"Autokit #{rule_id} angelegt ({kit}, {trigger})")
+            "Web interface", kit_type)
+        self._audit(f"Autokit #{rule_id} created ({kit}, {trigger})")
         return web.json_response({"ok": True, "id": rule_id})
 
     async def toggle_autokit(self, request: web.Request) -> web.Response:
         rule_id = int(request.match_info["rule_id"])
         enabled = bool((await self._json(request)).get("enabled"))
         if not self.bot.db.set_kit_rule_enabled(rule_id, enabled):
-            raise ApiError("Regel nicht gefunden.", 404)
-        self._audit(f"Autokit #{rule_id} {'aktiviert' if enabled else 'pausiert'}")
+            raise ApiError("Rule not found.", 404)
+        self._audit(f"Autokit #{rule_id} {'enabled' if enabled else 'paused'}")
         return web.json_response({"ok": True})
 
     async def delete_autokit(self, request: web.Request) -> web.Response:
         rule_id = int(request.match_info["rule_id"])
         if not self.bot.db.delete_kit_rule(rule_id):
-            raise ApiError("Regel nicht gefunden.", 404)
-        self._audit(f"Autokit #{rule_id} gelöscht")
+            raise ApiError("Rule not found.", 404)
+        self._audit(f"Autokit #{rule_id} deleted")
         return web.json_response({"ok": True})
 
     async def reset_autokits(self, request: web.Request) -> web.Response:
         count = self.bot.db.reset_kit_claims()
-        self._audit(f"Autokit-Verlauf zurückgesetzt ({count} Einträge)")
+        self._audit(f"Autokit history reset ({count} entries)")
         return web.json_response({"ok": True, "count": count})
 
     async def meta(self, request: web.Request) -> web.Response:
-        """Auswahllisten für Formulare: Quick-Chat-Phrasen und Item-Vorschläge."""
+        """Option lists for forms: quick chat phrases and item suggestions."""
         return web.json_response({
             "phrases": [{"raw": raw, "text": text} for raw, text in quickchat.all_phrases().items()],
             "items": [{"short": s, "label": label} for s, label in itemlist.COMMON_ITEMS.items()],
         })
 
-    # ------------------------------------------------------------ Tickets, Statistik, KI
+    # ------------------------------------------------------------ Tickets, stats, AI
 
     async def tickets(self, request: web.Request) -> web.Response:
         status = request.query.get("status") or None
@@ -832,13 +833,13 @@ class WebInterface:
     async def ticket_detail(self, request: web.Request) -> web.Response:
         row = self.bot.db.ticket(int(request.match_info["ticket_id"]))
         if row is None:
-            raise ApiError("Ticket nicht gefunden.", 404)
+            raise ApiError("Ticket not found.", 404)
         return web.json_response(_row(row))
 
     async def leaderboard(self, request: web.Request) -> web.Response:
         category = request.query.get("category", "kills")
         if category not in LEADERBOARD_COLUMNS:
-            raise ApiError("Unbekannte Kategorie.")
+            raise ApiError("Unknown category.")
         return web.json_response({"rows": [dict(r) for r in self.bot.db.leaderboard(category, limit=50)]})
 
     async def get_knowledge(self, request: web.Request) -> web.Response:
@@ -849,11 +850,11 @@ class WebInterface:
     async def put_knowledge(self, request: web.Request) -> web.Response:
         text = str((await self._json(request)).get("text", ""))
         if len(text) > 50000:
-            raise ApiError("Text zu lang (max. 50.000 Zeichen).")
+            raise ApiError("Text too long (max. 50,000 characters).")
         path: Path = self.bot.config.support_knowledge_file
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-        self._audit("Wissensbasis bearbeitet")
+        self._audit("Knowledge base edited")
         return web.json_response({"ok": True})
 
     async def ai_status(self, request: web.Request) -> web.Response:
@@ -877,11 +878,11 @@ class WebInterface:
     async def put_rules(self, request: web.Request) -> web.Response:
         text = str((await self._json(request)).get("text", ""))
         if len(text) > 20000:
-            raise ApiError("Text zu lang (max. 20.000 Zeichen).")
+            raise ApiError("Text too long (max. 20,000 characters).")
         path: Path = self.bot.config.rules_file
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-        self._audit("Regeln bearbeitet")
+        self._audit("Rules edited")
         return web.json_response({"ok": True})
 
     async def community(self, request: web.Request) -> web.Response:
@@ -908,16 +909,16 @@ class WebInterface:
         row = self.bot.db.giveaway(int(request.match_info["giveaway_id"]))
         action = request.match_info["action"]
         if row is None:
-            raise ApiError("Giveaway nicht gefunden.", 404)
+            raise ApiError("Giveaway not found.", 404)
         cog = self._cog("Giveaways")
         if action == "end" and row["ended"]:
-            raise ApiError("Giveaway ist schon beendet.")
+            raise ApiError("Giveaway has already ended.")
         if action == "reroll" and not row["ended"]:
-            raise ApiError("Nur beendete Giveaways können neu ausgelost werden.")
+            raise ApiError("Only ended giveaways can be rerolled.")
         if not self.bot.is_ready():
-            raise ApiError("Discord ist noch nicht verbunden.", 503)
+            raise ApiError("Discord is not connected yet.", 503)
         winners = await cog.finish(row, reroll=action == "reroll")
-        self._audit(f"Giveaway #{row['id']} {'beendet' if action == 'end' else 'neu ausgelost'}")
+        self._audit(f"Giveaway #{row['id']} {'ended' if action == 'end' else 'rerolled'}")
         return web.json_response({"ok": True, "winners": [str(w) for w in winners]})
 
     async def botlog(self, request: web.Request) -> web.Response:
