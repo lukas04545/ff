@@ -21,10 +21,13 @@ def bot(tmp_path, monkeypatch):
     b.db.close()
 
 
-def run(bot, scenario):
+def run(bot, scenario, **kwargs):
     async def main():
         from web.server import WebInterface
-        web = WebInterface(bot)
+        tmp = bot.config.database_path.parent
+        kwargs.setdefault("env_path", tmp / ".env")
+        kwargs.setdefault("secret_path", tmp / "web_secret.key")
+        web = WebInterface(bot, **kwargs)
         client = TestClient(TestServer(web.app))
         await client.start_server()
         try:

@@ -42,13 +42,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM --- .env anlegen, falls noch nicht vorhanden ---
+REM --- .env anlegen, falls noch nicht vorhanden (ausfuellen dann im Browser) ---
 if not exist ".env" (
     copy ".env.example" ".env" >nul
     echo.
-    echo Es wurde eine neue .env-Datei angelegt.
-    echo Trage dort Discord-Token, RCON-Daten usw. ein, speichere und schliesse den Editor.
-    notepad ".env"
+    echo Erster Start: Die Einstellungen traegst du gleich im Browser ein.
+    echo Falls sich kein Browser oeffnet: den Link aus diesem Fenster kopieren.
 )
 
 REM --- Bot starten, bei Absturz neu starten ---

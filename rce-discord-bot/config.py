@@ -134,7 +134,8 @@ class Config:
 
 
 def load_config(env_file: str | os.PathLike = ".env") -> Config:
-    load_dotenv(env_file)
+    # override=True: Änderungen aus dem Webinterface werden beim erneuten Laden übernommen
+    load_dotenv(env_file, override=True)
 
     port = _int("RCON_PORT")
     if port is None:

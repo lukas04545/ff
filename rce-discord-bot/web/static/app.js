@@ -38,7 +38,7 @@ async function api(path, { method = "GET", body } = {}) {
   let data = {};
   try { data = await res.json(); } catch { /* leere Antwort */ }
   if (res.status === 401 && path !== "/api/login") { showLogin(); throw new Error("Nicht angemeldet"); }
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) { const err = new Error(data.error || `HTTP ${res.status}`); err.data = data; throw err; }
   return data;
 }
 
@@ -103,19 +103,45 @@ window.addEventListener("hashchange", route);
 async function refreshConnection() {
   try {
     status = await api("/api/status");
+    if (status.setup_mode) {
+      $("#conn-rcon").textContent = "Einrichtung"; $("#conn-rcon").className = "pill warn";
+      $("#conn-discord").textContent = "Bot gestoppt"; $("#conn-discord").className = "pill warn";
+      return;
+    }
     const r = $("#conn-rcon"), d = $("#conn-discord");
     r.textContent = status.rcon_connected ? "RCON verbunden" : "RCON getrennt";
     r.className = "pill " + (status.rcon_connected ? "ok" : "bad");
     d.textContent = status.discord_ready ? "Discord online" : "Discord verbindet …";
     d.className = "pill " + (status.discord_ready ? "ok" : "warn");
+    if (status.restart_required) { d.textContent = "Neustart nötig ⚙️"; d.className = "pill warn"; }
   } catch { /* Login-Dialog übernimmt */ }
 }
 
+let setupMode = false;
+
 async function start() {
-  try { await api("/api/me"); } catch { return; }
+  let me;
+  try { me = await api("/api/me"); } catch { return; }
+  setupMode = !!me.setup_mode;
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("hidden", setupMode && a.dataset.view !== "settings"));
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
-  route();
+  if (setupMode && location.hash !== "#settings") location.hash = "#settings";
+  else route();
+}
+
+// Wartet, bis der Bot nach einem Neustart wieder erreichbar ist, und lädt dann neu
+async function waitForBot(target) {
+  await new Promise((r) => setTimeout(r, 3000));
+  for (let i = 0; i < 60; i++) {
+    try {
+      const r = await fetch("/api/me", { credentials: "same-origin" });
+      if (r.ok) { const me = await r.json(); if (!me.setup_mode) { location.hash = target; location.reload(); return; } }
+      else if (r.status === 401) { location.reload(); return; }
+    } catch { /* Bot startet noch */ }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  toast("Der Bot antwortet nicht – bitte das Bot-Fenster prüfen.", true);
 }
 
 // ------------------------------------------------------------------ Übersicht
@@ -125,8 +151,25 @@ views.overview = (main) => {
   const playersBody = h("tbody");
   const sayInput = h("input", { placeholder: "Nachricht an alle Spieler (Rich-Text wie <color=red> erlaubt)", maxlength: 400 });
 
+  // Rote Karte, solange RCON nicht verbunden ist – mit Ursache aus der automatischen Diagnose
+  const rconInfo = h("div");
+  const rconTestOut = h("div");
+  const rconCard = h("div", { class: "card hidden", style: "border-left:4px solid var(--bad)" },
+    h("h2", { text: "🔴 Keine Verbindung zum Rust-Server (RCON)" }), rconInfo,
+    h("div", { class: "row", style: "margin-top:.5rem" },
+      h("button", { class: "primary", text: "🔌 Jetzt testen", onclick: async (ev) => {
+        ev.target.disabled = true;
+        rconTestOut.replaceChildren(h("p", { class: "muted", text: "Teste … (bis zu 20 Sekunden)" }));
+        try { rconTestOut.replaceChildren(renderSteps(await api("/api/settings/test-rcon", { method: "POST", body: {} }))); }
+        catch (e) { rconTestOut.replaceChildren(h("p", { class: "error", text: e.message })); }
+        ev.target.disabled = false;
+      } }),
+      h("a", { href: "#settings" }, h("button", { text: "⚙️ RCON-Einstellungen öffnen" }))),
+    rconTestOut);
+
   main.append(
     h("h1", { text: "Übersicht" }),
+    rconCard,
     stats,
     h("div", { class: "card" },
       h("h2", { text: "📢 Nachricht ins Spiel" }),
@@ -149,6 +192,14 @@ views.overview = (main) => {
   every(5000, async () => {
     await refreshConnection();
     if (!status) return;
+    rconCard.classList.toggle("hidden", !!status.rcon_connected);
+    if (!status.rcon_connected) {
+      const d = status.rcon_diagnosis;
+      rconInfo.replaceChildren(
+        h("p", {}, h("strong", { text: "Letzter Fehler: " }), status.rcon_last_error || "Verbindungsaufbau läuft …"),
+        d ? h("p", { class: "muted", text: `Automatische Diagnose von ${new Date(d.ts * 1000).toLocaleTimeString()}:` }) : null,
+        d ? renderSteps(d) : h("p", { class: "muted", text: "Die automatische Diagnose läuft, sobald ein Verbindungsversuch fehlschlägt." }));
+    }
     const s = status.server || {};
     const stat = (label, value) => h("div", { class: "stat" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value ?? "–" }));
     stats.replaceChildren(
@@ -507,6 +558,202 @@ views.community = async (main) => {
   const r = await api("/api/rules").catch(() => ({ text: "" }));
   rulesArea.value = r.text;
 };
+
+// ------------------------------------------------------------------ Einstellungen
+
+views.settings = async (main) => {
+  main.append(h("h1", { text: setupMode ? "Einrichtung" : "Einstellungen" }));
+  const banner = h("div");
+  main.append(banner);
+  let data, opts;
+  try {
+    [data, opts] = await Promise.all([api("/api/settings"), api("/api/settings/discord-options").catch(() => ({ available: false }))]);
+  } catch (e) { toast(e.message, true); return; }
+
+  const showBanner = (kind, ...content) => banner.replaceChildren(h("div", { class: "banner " + kind }, ...content));
+  if (data.setup_mode) {
+    showBanner("warn", h("strong", { text: "Der Bot ist noch nicht gestartet. " }), data.setup_error || "",
+      h("p", { class: "muted", style: "margin:.4rem 0 0", text: "Pflichtfelder (*) ausfüllen und speichern – der Bot startet dann automatisch." }));
+  } else if (data.restart_required) {
+    showBanner("warn", "Geänderte Einstellungen werden erst nach einem Neustart aktiv. ", restartButton());
+  } else if (!opts.available) {
+    showBanner("", h("span", { class: "muted", text: "Tipp: Sobald der Bot mit Discord verbunden ist, kannst du Channels und Rollen hier direkt auswählen." }));
+  }
+
+  const inputs = {}, rows = {};
+  const advancedCards = [];
+  const optionList = (pick) => ({ guild: opts.guilds, text_channel: opts.text_channels, category: opts.categories, role: opts.roles }[pick] || []);
+
+  const control = (f) => {
+    const value = f.value ?? "";
+    if (f.kind === "secret") {
+      const el = h("input", { type: "password", autocomplete: "new-password",
+        placeholder: f.is_set ? "•••••• gespeichert – leer lassen = unverändert" : "noch nicht gesetzt" });
+      inputs[f.key] = () => el.value;
+      return el;
+    }
+    if (f.kind === "bool") {
+      const el = h("select", {}, h("option", { value: "", text: "Standard" }), h("option", { value: "true", text: "An" }), h("option", { value: "false", text: "Aus" }));
+      el.value = ["true", "false"].includes(value.toLowerCase()) ? value.toLowerCase() : "";
+      inputs[f.key] = () => el.value;
+      return el;
+    }
+    if (f.choices.length) {
+      const el = h("select", {}, h("option", { value: "", text: "Standard" }), f.choices.map((c) => h("option", { value: c, text: c === "127.0.0.1" ? "Nur dieser PC (127.0.0.1)" : c === "0.0.0.0" ? "Auch Heimnetz (0.0.0.0)" : c })));
+      el.value = value;
+      inputs[f.key] = () => el.value;
+      return el;
+    }
+    if (f.kind === "textarea") {
+      const el = h("textarea", { rows: 3, placeholder: f.placeholder });
+      el.value = value;
+      inputs[f.key] = () => el.value;
+      return el;
+    }
+    const list = f.pick && opts.available ? optionList(f.pick) : [];
+    if (f.kind === "id" && list.length) {
+      const el = h("select", {}, h("option", { value: "", text: "– aus / keine –" }), list.map((o) => h("option", { value: o.id, text: o.name })));
+      if (value && !list.some((o) => o.id === value)) el.append(h("option", { value, text: `ID ${value} (nicht gefunden)` }));
+      el.value = value;
+      inputs[f.key] = () => el.value;
+      return el;
+    }
+    if (f.kind === "ids" && list.length) {
+      const current = new Set(value.split(",").map((v) => v.trim()).filter(Boolean));
+      const boxes = list.map((o) => { const cb = h("input", { type: "checkbox", value: o.id }); cb.checked = current.has(o.id); return [cb, o]; });
+      const unknown = [...current].filter((id) => !list.some((o) => o.id === id));
+      inputs[f.key] = () => [...boxes.filter(([cb]) => cb.checked).map(([cb]) => cb.value), ...unknown].join(",");
+      return h("div", { class: "checklist" }, boxes.map(([cb, o]) => h("label", {}, cb, o.name)),
+        unknown.length ? h("div", { class: "muted", text: `Weitere IDs: ${unknown.join(", ")}` }) : null);
+    }
+    const el = h("input", { value, placeholder: f.placeholder || (f.kind === "id" || f.kind === "ids" ? "Discord-ID (Rechtsklick → ID kopieren)" : ""),
+      inputmode: ["int", "id", "ids"].includes(f.kind) ? "numeric" : null });
+    inputs[f.key] = () => el.value;
+    return el;
+  };
+
+  for (const g of data.groups) {
+    const fields = data.fields.filter((f) => f.group === g.id);
+    const card = h("div", { class: "card" }, h("h2", { text: g.label }));
+    for (const f of fields) {
+      const err = h("div", { class: "field-error" });
+      const row = h("div", { class: "field" + (f.advanced ? " advanced hidden" : "") },
+        h("label", {}, f.label, f.required ? h("span", { class: "req", text: " *" }) : null),
+        h("div", { class: "control" }, control(f), f.help ? h("div", { class: "help", text: f.help }) : null, err));
+      rows[f.key] = { row, err };
+      card.append(row);
+    }
+    if (g.id === "discord") card.append(discordTester(inputs));
+    if (g.id === "rcon") card.append(rconTester(inputs));
+    if (g.id === "templates") { card.classList.add("hidden"); advancedCards.push(card); }
+    main.append(card);
+  }
+
+  const advancedToggle = h("button", { class: "ghost", text: "Experten-Einstellungen zeigen", onclick: () => {
+    const show = advancedToggle.textContent.includes("zeigen");
+    advancedCards.forEach((c) => c.classList.toggle("hidden", !show));
+    document.querySelectorAll(".field.advanced").forEach((r) => r.classList.toggle("hidden", !show));
+    advancedToggle.textContent = show ? "Experten-Einstellungen ausblenden" : "Experten-Einstellungen zeigen";
+  } });
+
+  const saveBtn = h("button", { class: "primary", text: data.setup_mode ? "Speichern & Bot starten" : "Speichern" });
+  saveBtn.addEventListener("click", async () => {
+    Object.values(rows).forEach(({ row, err }) => { row.classList.remove("has-error"); err.textContent = ""; });
+    const values = Object.fromEntries(Object.entries(inputs).map(([k, get]) => [k, get()]));
+    saveBtn.disabled = true;
+    try {
+      const r = await api("/api/settings", { method: "PUT", body: { values } });
+      document.querySelectorAll('input[type="password"]').forEach((el) => { el.value = ""; });
+      if (r.rcon_test && rconResultBox) {
+        rconResultBox.replaceChildren(h("p", { style: "margin:.5rem 0 0", text: "Automatischer Test der gespeicherten RCON-Daten:" }), renderSteps(r.rcon_test));
+        if (!r.rcon_test.ok) toast("Gespeichert – aber RCON funktioniert damit noch nicht (siehe RCON-Bereich).", true);
+      }
+      if (r.starting) {
+        showBanner("ok", h("strong", { text: "Gespeichert – der Bot startet jetzt …" }), " Diese Seite lädt automatisch neu.");
+        waitForBot("#overview");
+      } else if (r.config_error) {
+        showBanner("warn", h("strong", { text: "Gespeichert. Es fehlt noch etwas: " }), r.config_error);
+      } else if (r.restart_required) {
+        showBanner("warn", h("strong", { text: "Gespeichert. " }), "Damit die Änderungen gelten, den Bot neu starten: ", restartButton());
+      } else {
+        toast("Gespeichert");
+      }
+    } catch (e) {
+      const errors = e.data?.errors || {};
+      for (const [key, msg] of Object.entries(errors)) {
+        if (rows[key]) { rows[key].row.classList.add("has-error"); rows[key].err.textContent = msg; rows[key].row.classList.remove("hidden"); }
+      }
+      const first = Object.keys(errors)[0];
+      if (first && rows[first]) rows[first].row.scrollIntoView({ behavior: "smooth", block: "center" });
+      toast(e.message, true);
+    } finally { saveBtn.disabled = false; }
+  });
+
+  const bar = h("div", { class: "savebar" }, saveBtn, advancedToggle,
+    h("span", { class: "muted", text: "Gespeichert wird in der .env im Bot-Ordner." }));
+  if (data.setup_mode) {
+    bar.append(h("button", { text: "Bot mit gespeicherten Einstellungen starten", onclick: async () => {
+      try { await api("/api/setup/continue", { method: "POST" }); showBanner("ok", "Bot startet …"); waitForBot("#overview"); }
+      catch (e) { toast(e.message, true); }
+    } }));
+  }
+  main.append(bar);
+};
+
+function restartButton() {
+  return h("button", { class: "primary small", text: "Bot jetzt neu starten", onclick: async (ev) => {
+    if (!confirm("Bot neu starten? Er ist dabei ein paar Sekunden offline.")) return;
+    ev.target.disabled = true;
+    await act(() => api("/api/restart", { method: "POST" }), "Bot startet neu …");
+    waitForBot(location.hash || "#overview");
+  } });
+}
+
+// Ergebnisliste eines RCON-Tests ({ok, steps})
+function renderSteps(r) {
+  return h("div", {}, h("ul", { class: "steps" }, r.steps.map((s) => h("li", { class: s.level, text: s.text }))),
+    h("p", { style: "margin:.5rem 0 0", text: r.ok ? "✅ RCON funktioniert." : "❌ RCON funktioniert noch nicht – siehe oben." }));
+}
+
+let rconResultBox = null;
+function rconTester(inputs) {
+  const out = h("div");
+  rconResultBox = out;
+  const btn = h("button", { text: "🔌 RCON-Verbindung testen", onclick: async () => {
+    btn.disabled = true;
+    out.replaceChildren(h("p", { class: "muted", text: "Teste … (bis zu 20 Sekunden)" }));
+    try {
+      const r = await api("/api/settings/test-rcon", { method: "POST", body: {
+        host: inputs.RCON_HOST(), port: inputs.RCON_PORT(), password: inputs.RCON_PASSWORD() } });
+      out.replaceChildren(renderSteps(r),
+        r.ok ? null : h("p", { class: "muted", text: "Ohne eingetipptes Passwort wird das gespeicherte verwendet." }));
+    } catch (e) { out.replaceChildren(h("p", { class: "error", text: e.message })); }
+    btn.disabled = false;
+  } });
+  return h("div", { style: "margin-top:.75rem" }, btn, out);
+}
+
+function discordTester(inputs) {
+  const out = h("div");
+  const btn = h("button", { text: "🔑 Bot-Token prüfen", onclick: async () => {
+    btn.disabled = true;
+    out.replaceChildren(h("p", { class: "muted", text: "Prüfe …" }));
+    try {
+      const r = await api("/api/settings/test-discord", { method: "POST", body: { token: inputs.DISCORD_TOKEN() } });
+      if (!r.ok) { out.replaceChildren(h("p", { class: "error", text: r.error })); }
+      else {
+        const pill = (on, label) => h("span", { class: "pill " + (on ? "ok" : "bad"), text: (on ? "✓ " : "✗ ") + label });
+        out.replaceChildren(
+          h("p", {}, "✅ Token gültig – Bot: ", h("strong", { text: r.bot_name || "?" })),
+          r.intents ? h("p", { class: "row" }, "Intents im Developer Portal: ", pill(r.intents.message_content, "Message Content"), pill(r.intents.members, "Server Members")) : null,
+          r.intents && !(r.intents.message_content && r.intents.members) ? h("p", { class: "muted", text: "Fehlende Intents im Developer Portal unter Bot → Privileged Gateway Intents einschalten (nur nötig, wenn du Chat-Bridge, Tickets, Willkommen/Auto-Rolle oder Discord-Log nutzt)." }) : null,
+          r.invite_url ? h("p", {}, h("a", { href: r.invite_url, target: "_blank", rel: "noopener", text: "➕ Bot auf deinen Discord-Server einladen (mit allen nötigen Rechten)" })) : null);
+      }
+    } catch (e) { out.replaceChildren(h("p", { class: "error", text: e.message })); }
+    btn.disabled = false;
+  } });
+  return h("div", { style: "margin-top:.75rem" }, btn, out);
+}
 
 // ------------------------------------------------------------------ Bot-Log
 
