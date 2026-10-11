@@ -388,7 +388,7 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/kit add-item`, `/kit remove-item` | Admins | Edit kits |
 | `/kit autokit-add`, `/kit autokit-toggle`, `/kit autokit-delete`, `/kit wipe-reset`, `/kit history` | Admins | Manage autokits (also with custom kits) |
 | `/customkit create`, `add-item`, `remove-item`, `delete` | Admins | Create and edit custom kits |
-| `/customkit import` | Admins | Create/fill custom kits from kit builder `kit add` commands (text box or .txt file) |
+| `/customkit import`, `/customkit import-file` | Admins | Create/fill custom kits from kit builder `kit add` commands (text box or .txt file) |
 | `/customkit list`, `/customkit info` | Admins | Show custom kits (visible to admins only) |
 | `/customkit give`, `/customkit all` | Admins | Give a custom kit to one player or to all online players |
 | `/customkit link` | Everyone | Link your Discord account to your in-game player (verified via quick chat) |
@@ -493,7 +493,7 @@ custom kit, this is detected automatically. Cooldown, limit, quick-chat trigger 
 `kit add`, creates the kit if needed and adds every item:
 ```
 /customkit import                                   ← opens a text box; paste the commands
-/customkit import file:kit.txt                      ← or upload them as a .txt file (big kits)
+/customkit import-file file:kit.txt                 ← or upload them as a .txt file (big kits)
 /customkit import kit:VIP replace:False             ← optional: other kit name / append instead of replace
 ```
 Example line: `kit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main` → kit "Custom kit 1",
