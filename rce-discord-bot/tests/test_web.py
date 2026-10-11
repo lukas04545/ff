@@ -93,6 +93,12 @@ def test_custom_kits_autokits_knowledge(bot):
                             headers=H)).status == 400
         assert (await c.put("/api/custom-kits/Event/claim", json={"role_ids": ["x"], "cooldown": "0"},
                             headers=H)).status == 400
+        bot.db.link_player(42, "GamerTag42")
+        linked = (await (await c.get("/api/kits")).json())["linked"]
+        assert linked == [{"user_id": "42", "player": "GamerTag42", "linked_at": linked[0]["linked_at"],
+                           "user": "42"}]
+        assert (await c.delete("/api/linked-players/42", headers=H)).status == 200
+        assert (await c.delete("/api/linked-players/42", headers=H)).status == 404
         assert (await c.delete("/api/custom-kits/Event", headers=H)).status == 200
         assert (await (await c.get("/api/kits")).json())["rules"] == []
 

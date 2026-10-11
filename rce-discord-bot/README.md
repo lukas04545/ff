@@ -390,8 +390,9 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/customkit create`, `add-item`, `remove-item`, `delete` | Admins | Create and edit custom kits |
 | `/customkit list`, `/customkit info` | Admins | Show custom kits (visible to admins only) |
 | `/customkit give`, `/customkit all` | Admins | Give a custom kit to one player or to all online players |
-| `/customkit claim` | Members with an allowed role | Claim a custom kit yourself (cooldown per kit) |
-| `/customkit access`, `/customkit cooldown`, `/customkit reset-cooldown` | Admins | Who may claim a custom kit, how often, reset cooldowns |
+| `/customkit link` | Everyone | Link your Discord account to your in-game player (verified via quick chat) |
+| `/customkit claim` | Members with an allowed role | Claim a custom kit to your own linked player (cooldown per player) |
+| `/customkit access`, `/customkit cooldown`, `/customkit reset-cooldown`, `/customkit unlink` | Admins | Who may claim, how often, reset cooldowns, remove links |
 | `/ticket open`, `/ticket close` | everyone | Open a ticket or close your own ticket |
 | `/ticket ai`, `/ticket add` | Staff | Turn the AI on/off in a ticket, add a member |
 | `/ticket panel`, `/ticket ai-status`, `/ticket ai-test` | Admins | Post the ticket panel, show DeepSeek balance, test the AI |
@@ -488,20 +489,27 @@ custom kit, this is detected automatically. Cooldown, limit, quick-chat trigger 
 `/kit wipe-reset` work exactly as with in-game kits.
 
 **Members claim it themselves (by role):** give one or more roles access to a kit and set a cooldown.
-Members with one of those roles then claim the kit with `/customkit claim`:
+Each member links their in-game player once; after that `/customkit claim` always sends the kit to
+**their own** player – nobody can claim for someone else.
 ```
-/customkit access kit:Eventkit role:@VIP                ← allow a role (allow:False removes it)
-/customkit cooldown kit:Eventkit duration:12h           ← e.g. 30m, 12h, 1d, 1d 12h, 0 = no cooldown
-/customkit claim kit:Eventkit player:YourGamertag       ← members: in-game name is remembered
-/customkit reset-cooldown kit:Eventkit member:@Name      ← admins: claim again right away (empty = everyone)
+/customkit access kit:Eventkit role:@VIP                ← admins: allow a role (allow:False removes it)
+/customkit cooldown kit:Eventkit duration:12h           ← admins: 30m, 12h, 1d, 1d 12h, 0 = no cooldown
+/customkit link player:YourGamertag                     ← members, once: be online in-game
+/customkit claim kit:Eventkit                           ← members: goes to the linked player
+/customkit reset-cooldown kit:Eventkit player:Name      ← admins: claim again right away (empty = everyone)
+/customkit unlink member:@Name                          ← admins: remove a link (e.g. gamertag changed)
 ```
+- **Linking is verified in-game:** `/customkit link` shows two quick chat phrases. The player sends
+  them in-game in that order within 5 minutes; the server log proves the account belongs to them,
+  then the bot links it. Each in-game player can be linked to only one Discord account.
+- The **cooldown counts per player** (per kit). Linking the same player to another Discord account
+  doesn't reset it. A changed cooldown applies immediately, also to earlier claims.
 - New kits start with **no claim roles** (admins only) and a **24 h** cooldown.
-- The cooldown counts **per Discord account** (changing the in-game name doesn't reset it). A changed
-  cooldown applies immediately, also to earlier claims.
-- The player must be **online in-game** – the bot checks the player list, so nothing gets lost.
+- The player must be **online in-game** when claiming – nothing gets lost.
 - The autocomplete of `/customkit claim` only shows kits the member's roles allow.
-- Same settings in the web interface: Kits → custom kit → "🙋 Claim by role" (role checkboxes + cooldown).
-- Every claim appears in the admin log and the kit history.
+- Web interface: Kits → custom kit → "🙋 Claim by role" (role checkboxes + cooldown), and the
+  "🔗 Linked players" list with an Unlink button.
+- Every link and claim appears in the admin log; claims also in the kit history.
 
 **Differences from in-game kits (limitations of `inventory.giveto`)**
 

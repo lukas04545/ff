@@ -359,7 +359,7 @@ views.kits = async (main) => {
             h("td", { class: "muted", text: i.item_id !== null ? "ID " + i.item_id : "" }))))) : h("pre", { class: "transcript", text: info.raw || "No items." }));
       } }))) : h("p", { class: "muted", text: "No kits found (or no RCON connection)." }),
       ingameInfo),
-    customKitsCard(data, reload, opts)));
+    customKitsCard(data, reload, opts)), linkedPlayersCard(data, reload));
 
   // --- Autokits
   box.append(autokitCard(data, m, reload));
@@ -390,7 +390,7 @@ function claimSettings(kit, opts, reload) {
   const cooldown = h("input", { value: minutesToDuration(kit.cooldown_minutes), placeholder: "e.g. 12h, 1d, 0", style: "max-width:140px" });
   return h("details", { style: "margin-top:.5rem" },
     h("summary", { text: `🙋 Claim by role: ${current.size ? current.size + " role(s), cooldown " + minutesToDuration(kit.cooldown_minutes) : "off (admins only)"}` }),
-    h("p", { class: "muted", text: "Members with one of these roles can claim the kit themselves with /customkit claim (they must be online in-game). The cooldown counts per Discord account." }),
+    h("p", { class: "muted", text: "Members with one of these roles can claim the kit with /customkit claim. It always goes to their own in-game player, which they verify once with /customkit link. They must be online; the cooldown counts per player." }),
     roles.length ? h("div", { class: "checklist" }, boxes.map(([cb, r]) => h("label", {}, cb, r.name)),
       unknown.length ? h("div", { class: "muted", text: `Other role IDs: ${unknown.join(", ")}` }) : null) : manual,
     h("div", { class: "row", style: "margin-top:.5rem" }, h("span", { text: "Cooldown:" }), cooldown,
@@ -400,6 +400,22 @@ function claimSettings(kit, opts, reload) {
         const r = await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}/claim`, { method: "PUT", body: { role_ids, cooldown: cooldown.value } }), "Saved");
         if (r) reload();
       } })));
+}
+
+// Discord accounts linked (verified) to in-game players – needed for /customkit claim
+function linkedPlayersCard(data, reload) {
+  const rows = data.linked || [];
+  return h("div", { class: "card" }, h("h2", { text: `🔗 Linked players (${rows.length})` }),
+    h("p", { class: "muted", text: "Members link themselves with /customkit link (verified in-game by sending two quick chat phrases). Custom kit claims only go to the linked player." }),
+    rows.length ? h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["In-game player", "Discord", "Linked", ""].map((t) => h("th", { text: t })))),
+      h("tbody", {}, rows.map((r) => h("tr", {},
+        h("td", { text: r.player }), h("td", { text: r.user }), h("td", { class: "muted", text: r.linked_at }),
+        h("td", {}, h("button", { class: "small danger", text: "Unlink", onclick: async () => {
+          if (!confirm(`Unlink ${r.player} from ${r.user}?`)) return;
+          await act(() => api(`/api/linked-players/${r.user_id}`, { method: "DELETE" }), "Unlinked");
+          reload();
+        } }))))))) : h("p", { class: "muted", text: "Nobody linked yet." }));
 }
 
 function customKitsCard(data, reload, opts) {

@@ -258,6 +258,7 @@ class WebInterface:
         r.add_post("/api/custom-kits", self.create_custom_kit)
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
         r.add_put("/api/custom-kits/{name}/claim", self.custom_kit_claim_settings)
+        r.add_delete("/api/linked-players/{user_id:\\d+}", self.unlink_player)
         r.add_post("/api/custom-kits/{name}/items", self.add_custom_item)
         r.add_delete("/api/custom-kits/{name}/items/{item_id:\\d+}", self.remove_custom_item)
         r.add_post("/api/autokits", self.create_autokit)
@@ -693,7 +694,10 @@ class WebInterface:
             item_rows = self.bot.db.custom_kit_items(row["name"])
             custom.append({**dict(row), "items": [dict(i) for i in item_rows]})
         rules = [dict(r) for r in self.bot.db.kit_rules()]
-        return web.json_response({"ingame": ingame, "custom": custom, "rules": rules,
+        linked = [{"user_id": str(r["user_id"]), "player": r["player"], "linked_at": r["linked_at"],
+                   "user": str(self.bot.get_user(r["user_id"]) or r["user_id"])}
+                  for r in self.bot.db.linked_players()]
+        return web.json_response({"ingame": ingame, "custom": custom, "rules": rules, "linked": linked,
                                   "history": [dict(r) for r in self.bot.db.kit_claim_history(limit=30)]})
 
     async def ingame_kit_info(self, request: web.Request) -> web.Response:
@@ -774,6 +778,13 @@ class WebInterface:
         self._audit(f"Custom kit **{kit['name']}** – claim roles: {len(role_ids)}, "
                     f"cooldown {format_minutes(minutes)}")
         return web.json_response({"ok": True, "cooldown_minutes": minutes})
+
+    async def unlink_player(self, request: web.Request) -> web.Response:
+        player = self.bot.db.unlink_player(int(request.match_info["user_id"]))
+        if player is None:
+            raise ApiError("Not linked.", 404)
+        self._audit(f"Unlinked Discord user {request.match_info['user_id']} from **{player}**")
+        return web.json_response({"ok": True})
 
     async def add_custom_item(self, request: web.Request) -> web.Response:
         from cogs.custom_kits import MAX_ITEMS_PER_KIT

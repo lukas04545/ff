@@ -58,40 +58,85 @@ def cog(tmp_path, monkeypatch):
     bot.db.close()
 
 
-def _claim(cog, interaction, kit="VIP", player=None):
-    asyncio.run(cog.claim.callback(cog, interaction, kit, player))
+def _claim(cog, interaction, kit="VIP"):
+    asyncio.run(cog.claim.callback(cog, interaction, kit))
     return interaction.messages[-1]
 
 
-def test_claim_needs_role_and_respects_cooldown(cog):
+def _chat(cog, player, raw):
+    from rce.log_parser import ChatEvent
+    asyncio.run(cog.on_rce_chat(ChatEvent(channel="GLOBAL", player=player, raw=raw, text=raw)))
+
+
+def _link(cog, interaction, player):
+    """Starts /customkit link and returns the requested quick chat phrases."""
+    asyncio.run(cog.link.callback(cog, interaction, player))
+    pending = cog._pending.get(player.lower())
+    return pending.phrases if pending else None
+
+
+def test_link_requires_ingame_verification(cog):
     db = cog.bot.db
+    member = FakeInteraction(7, [55])
+    edits = []
+
+    async def edit(content=None, **kwargs):
+        edits.append(content)
+    member.edit_original_response = edit
+
+    assert _link(cog, member, "Nobody") is None and "not online" in member.messages[-1]
+    first, second = _link(cog, member, "gamertag42")
+    assert "quick chat" in member.messages[-1] and first != second
+    assert all("_responses_" not in p for p in (first, second))
+
+    _chat(cog, "OtherPlayer", first)        # someone else's chat doesn't count
+    _chat(cog, "OtherPlayer", second)
+    _chat(cog, "GamerTag42", second)        # wrong order doesn't count
+    assert db.linked_player(7) is None
+    _chat(cog, "GamerTag42", first)
+    _chat(cog, "GamerTag42", "d11_quick_chat_responses_slot_0")  # unrelated chat in between is ignored
+    _chat(cog, "GamerTag42", second)
+    assert db.linked_player(7) == "GamerTag42" and "Verified" in edits[-1]
+
+    # The player can't be taken over by another Discord account
+    thief = FakeInteraction(8, [55])
+    assert _link(cog, thief, "GamerTag42") is None and "already linked" in thief.messages[-1]
+    assert not db.link_player(8, "gamertag42")
+    assert db.unlink_player(7) == "GamerTag42" and db.linked_player(7) is None
+
+
+def test_claim_goes_only_to_own_player_with_cooldown_per_player(cog):
+    db = cog.bot.db
+    member = FakeInteraction(7, [55])
     # No roles configured -> nobody can claim
-    assert "can't claim" in _claim(cog, FakeInteraction(7, [55]), player="GamerTag42")
+    assert "can't claim" in _claim(cog, member)
 
     db.set_custom_kit_roles("VIP", [55])
     db.set_custom_kit_cooldown("VIP", 60)
-    assert "can't claim" in _claim(cog, FakeInteraction(8, [99]), player="GamerTag42")  # wrong role
+    assert "can't claim" in _claim(cog, FakeInteraction(8, [99]))  # wrong role
+    assert "link your in-game player" in _claim(cog, member)       # not linked yet
 
-    member = FakeInteraction(7, [55])
-    assert "enter your in-game name" in _claim(cog, member)
-    assert "not online" in _claim(cog, member, player="Somebody")
-    assert "sent to **GamerTag42**" in _claim(cog, member, player="gamertag42")  # name matched to the server's
+    db.link_player(7, "GamerTag42")
+    assert "sent to **GamerTag42**" in _claim(cog, member)
     assert cog.sent == ['inventory.giveto "GamerTag42" "rifle.ak" 1',
                         'inventory.giveto "GamerTag42" "ammo.rifle" 128']
-
-    # Cooldown: second claim refused, name remembered
     assert "can claim it again" in _claim(cog, member)
     assert len(cog.sent) == 2
 
-    # Shorter cooldown applies immediately; reset lets the member claim again
-    db.set_custom_kit_cooldown("VIP", 0)
-    assert "sent to" in _claim(cog, member)
-    db.set_custom_kit_cooldown("VIP", 60)
-    assert "can claim it again" in _claim(cog, member)
-    assert db.reset_custom_claims("VIP", 7) == 2
-    assert "sent to" in _claim(cog, member)
+    # Cooldown belongs to the player: re-linking the same player to another account doesn't reset it
+    db.unlink_player(7)
+    db.link_player(9, "GamerTag42")
+    assert "can claim it again" in _claim(cog, FakeInteraction(9, [55]))
 
-    # Cooldown is per Discord account, not per in-game name
-    assert "sent to" in _claim(cog, FakeInteraction(9, [55]), player="GamerTag42")
-    assert db.minutes_since_custom_claim("vip", 9) is not None
-    assert len(db.kit_claim_history("GamerTag42")) == 4
+    # Shorter cooldown applies immediately; reset lets the player claim again
+    db.set_custom_kit_cooldown("VIP", 0)
+    assert "sent to" in _claim(cog, FakeInteraction(9, [55]))
+    db.set_custom_kit_cooldown("VIP", 60)
+    assert db.reset_custom_claims("VIP", "gamertag42") == 2
+    assert "sent to" in _claim(cog, FakeInteraction(9, [55]))
+
+    # Linked player offline -> nothing is sent
+    cog.bot.online_players = {}
+    db.reset_custom_claims("VIP")
+    assert "not online" in _claim(cog, FakeInteraction(9, [55]))
+    assert len(db.kit_claim_history("GamerTag42")) == 3
