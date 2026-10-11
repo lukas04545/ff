@@ -579,6 +579,7 @@ Diese Funktionen stammen aus dem KRYVON-Bot und sind hier nachgebaut und erweite
 | `RCON-Handshake abgelehnt` oder `direkt nach dem Aufbau getrennt` | RCON-Passwort oder -Port falsch. Server nach einer Passwortänderung neu gestartet? |
 | `RCON-Verbindung fehlgeschlagen: … timeout` | IP/Port falsch, Server offline oder Firewall blockiert ausgehende Verbindungen |
 | Einstellungen ändern ohne Editor | Webinterface → ⚙️ Einstellungen → Speichern → „Bot jetzt neu starten“ |
+| RCON verbindet nicht | Der Bot testet das **automatisch** und zeigt die Ursache im Bot-Fenster und im Webinterface (rote Karte in der Übersicht). Beim Speichern neuer RCON-Daten unter ⚙️ Einstellungen läuft der Test ebenfalls sofort. |
 | RCON verbindet nicht – Ursache unklar | **`rcon_test.bat`** (Windows) bzw. `python tools/rcon_test.py` ausführen: prüft Einstellungen, Port, WebSocket, Passwort und Antwort Schritt für Schritt und nennt die Ursache |
 | `Message Content Intent … nicht aktiviert` | Developer Portal → Bot → Message Content Intent einschalten, oder `CHAT_BRIDGE_TO_GAME=false` |
 | Slash-Commands fehlen | `GUILD_ID` setzen und Bot mit Scope `applications.commands` einladen |

@@ -80,6 +80,8 @@ class RceBot(commands.Bot):
         self.web = None  # web.server.WebInterface, falls aktiviert
         self.restart_requested = False
         self._first_start = True
+        # Ergebnis der letzten automatischen RCON-Diagnose (fürs Webinterface)
+        self.rcon_diagnosis: dict | None = None
 
     # ------------------------------------------------------------ Lebenszyklus
 
@@ -101,6 +103,7 @@ class RceBot(commands.Bot):
         log.info("%d Slash-Commands synchronisiert.", len(synced))
 
         await self.rcon.start()
+        asyncio.create_task(self._rcon_watchdog(), name="rcon-watchdog")
 
         if self.config.web_enabled:
             from web.server import WebInterface
@@ -110,6 +113,24 @@ class RceBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Eingeloggt als %s (ID %s).", self.user, self.user.id if self.user else "?")
+
+    async def _rcon_watchdog(self) -> None:
+        """Klappt RCON nicht, die Ursache automatisch ermitteln und im Log/Webinterface anzeigen."""
+        from rce.diagnostics import diagnose_rcon
+
+        await asyncio.sleep(20)  # dem ersten Verbindungsversuch Zeit lassen
+        while not self.is_closed():
+            stale = self.rcon_diagnosis is None or time.time() - self.rcon_diagnosis["ts"] > 600
+            if not self.rcon.connected and self.rcon.failed_attempts and stale:
+                cfg = self.config
+                result = await diagnose_rcon(cfg.rcon_host, cfg.rcon_port, cfg.rcon_password)
+                self.rcon_diagnosis = {"ts": time.time(), "ok": result.ok, "steps": result.steps}
+                log.warning("RCON-Diagnose (automatisch, weil keine Verbindung besteht):")
+                for step in result.steps:
+                    log.warning("  [%s] %s", step["level"].upper(), step["text"])
+                if not result.ok:
+                    log.warning("  → Korrigieren im Webinterface unter ⚙️ Einstellungen → Rust-Server (RCON).")
+            await asyncio.sleep(30)
 
     def request_restart(self) -> None:
         """Beendet den Bot sauber; main() startet ihn danach mit neu geladener .env wieder."""

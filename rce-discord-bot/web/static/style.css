@@ -110,3 +110,5 @@ pre.transcript { background: var(--code-bg); color: var(--code-text); padding: .
   main { padding: 1rem; }
   .two-col { grid-template-columns: 1fr; }
 }
+
+a > button { color: var(--text); }

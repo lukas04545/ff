@@ -151,8 +151,25 @@ views.overview = (main) => {
   const playersBody = h("tbody");
   const sayInput = h("input", { placeholder: "Nachricht an alle Spieler (Rich-Text wie <color=red> erlaubt)", maxlength: 400 });
 
+  // Rote Karte, solange RCON nicht verbunden ist – mit Ursache aus der automatischen Diagnose
+  const rconInfo = h("div");
+  const rconTestOut = h("div");
+  const rconCard = h("div", { class: "card hidden", style: "border-left:4px solid var(--bad)" },
+    h("h2", { text: "🔴 Keine Verbindung zum Rust-Server (RCON)" }), rconInfo,
+    h("div", { class: "row", style: "margin-top:.5rem" },
+      h("button", { class: "primary", text: "🔌 Jetzt testen", onclick: async (ev) => {
+        ev.target.disabled = true;
+        rconTestOut.replaceChildren(h("p", { class: "muted", text: "Teste … (bis zu 20 Sekunden)" }));
+        try { rconTestOut.replaceChildren(renderSteps(await api("/api/settings/test-rcon", { method: "POST", body: {} }))); }
+        catch (e) { rconTestOut.replaceChildren(h("p", { class: "error", text: e.message })); }
+        ev.target.disabled = false;
+      } }),
+      h("a", { href: "#settings" }, h("button", { text: "⚙️ RCON-Einstellungen öffnen" }))),
+    rconTestOut);
+
   main.append(
     h("h1", { text: "Übersicht" }),
+    rconCard,
     stats,
     h("div", { class: "card" },
       h("h2", { text: "📢 Nachricht ins Spiel" }),
@@ -175,6 +192,14 @@ views.overview = (main) => {
   every(5000, async () => {
     await refreshConnection();
     if (!status) return;
+    rconCard.classList.toggle("hidden", !!status.rcon_connected);
+    if (!status.rcon_connected) {
+      const d = status.rcon_diagnosis;
+      rconInfo.replaceChildren(
+        h("p", {}, h("strong", { text: "Letzter Fehler: " }), status.rcon_last_error || "Verbindungsaufbau läuft …"),
+        d ? h("p", { class: "muted", text: `Automatische Diagnose von ${new Date(d.ts * 1000).toLocaleTimeString()}:` }) : null,
+        d ? renderSteps(d) : h("p", { class: "muted", text: "Die automatische Diagnose läuft, sobald ein Verbindungsversuch fehlschlägt." }));
+    }
     const s = status.server || {};
     const stat = (label, value) => h("div", { class: "stat" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value ?? "–" }));
     stats.replaceChildren(
@@ -639,6 +664,10 @@ views.settings = async (main) => {
     try {
       const r = await api("/api/settings", { method: "PUT", body: { values } });
       document.querySelectorAll('input[type="password"]').forEach((el) => { el.value = ""; });
+      if (r.rcon_test && rconResultBox) {
+        rconResultBox.replaceChildren(h("p", { style: "margin:.5rem 0 0", text: "Automatischer Test der gespeicherten RCON-Daten:" }), renderSteps(r.rcon_test));
+        if (!r.rcon_test.ok) toast("Gespeichert – aber RCON funktioniert damit noch nicht (siehe RCON-Bereich).", true);
+      }
       if (r.starting) {
         showBanner("ok", h("strong", { text: "Gespeichert – der Bot startet jetzt …" }), " Diese Seite lädt automatisch neu.");
         waitForBot("#overview");
@@ -680,16 +709,24 @@ function restartButton() {
   } });
 }
 
+// Ergebnisliste eines RCON-Tests ({ok, steps})
+function renderSteps(r) {
+  return h("div", {}, h("ul", { class: "steps" }, r.steps.map((s) => h("li", { class: s.level, text: s.text }))),
+    h("p", { style: "margin:.5rem 0 0", text: r.ok ? "✅ RCON funktioniert." : "❌ RCON funktioniert noch nicht – siehe oben." }));
+}
+
+let rconResultBox = null;
 function rconTester(inputs) {
   const out = h("div");
+  rconResultBox = out;
   const btn = h("button", { text: "🔌 RCON-Verbindung testen", onclick: async () => {
     btn.disabled = true;
     out.replaceChildren(h("p", { class: "muted", text: "Teste … (bis zu 20 Sekunden)" }));
     try {
       const r = await api("/api/settings/test-rcon", { method: "POST", body: {
         host: inputs.RCON_HOST(), port: inputs.RCON_PORT(), password: inputs.RCON_PASSWORD() } });
-      out.replaceChildren(h("ul", { class: "steps" }, r.steps.map((s) => h("li", { class: s.level, text: s.text }))),
-        h("p", { style: "margin:.5rem 0 0", text: r.ok ? "✅ RCON funktioniert." : "❌ Noch nicht – siehe oben. (Ohne eingetipptes Passwort wird das gespeicherte verwendet.)" }));
+      out.replaceChildren(renderSteps(r),
+        r.ok ? null : h("p", { class: "muted", text: "Ohne eingetipptes Passwort wird das gespeicherte verwendet." }));
     } catch (e) { out.replaceChildren(h("p", { class: "error", text: e.message })); }
     btn.disabled = false;
   } });

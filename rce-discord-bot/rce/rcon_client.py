@@ -78,6 +78,8 @@ class RconClient:
         self._ids = itertools.count(1000)
         self._pending: dict[int, asyncio.Future[str]] = {}
         self._timeouts = 0
+        self.last_error: str | None = None   # letzter Verbindungsfehler (fürs Webinterface)
+        self.failed_attempts = 0              # Fehlversuche seit der letzten erfolgreichen Verbindung
         self._message_listeners: list[MessageListener] = []
         self._state_listeners: list[StateListener] = []
 
@@ -191,6 +193,8 @@ class RconClient:
                 )
                 self._ws = ws
                 self._timeouts = 0
+                self.last_error = None
+                self.failed_attempts = 0
                 opened_at = asyncio.get_running_loop().time()
                 self._connected.set()
                 log.info("RCON verbunden.")
@@ -204,11 +208,13 @@ class RconClient:
                         break
                 log.warning("RCON-Verbindung geschlossen (Code %s).", ws.close_code)
             except aiohttp.WSServerHandshakeError as exc:
-                log.error(
-                    "RCON-Handshake abgelehnt (HTTP %s). Stimmen RCON-Port und Passwort?", exc.status
-                )
+                self.last_error = f"Handshake abgelehnt (HTTP {exc.status}) – RCON-Passwort oder Port falsch?"
+                self.failed_attempts += 1
+                log.error("RCON-%s", self.last_error)
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-                log.warning("RCON-Verbindung fehlgeschlagen: %s", exc or type(exc).__name__)
+                self.last_error = f"Verbindung fehlgeschlagen: {exc or type(exc).__name__}"
+                self.failed_attempts += 1
+                log.warning("RCON-%s", self.last_error)
             finally:
                 was_connected = self._connected.is_set()
                 self._connected.clear()
@@ -226,7 +232,9 @@ class RconClient:
             if opened_at is not None:
                 lived = asyncio.get_running_loop().time() - opened_at
                 if lived < 2:
-                    log.error("Verbindung wurde direkt nach dem Aufbau getrennt – ist das RCON-Passwort korrekt?")
+                    self.last_error = "Server hat die Verbindung sofort getrennt – RCON-Passwort falsch?"
+                    self.failed_attempts += 1
+                    log.error("RCON: %s", self.last_error)
                 else:
                     delay = self.reconnect_min  # war stabil verbunden -> Backoff zurücksetzen
 

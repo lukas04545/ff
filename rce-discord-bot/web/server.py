@@ -420,22 +420,31 @@ class WebInterface:
         if updates:
             update_env(self.env_path, updates, template=ENV_TEMPLATE)
             self._audit("Einstellungen geändert: " + ", ".join(sorted(updates)))
+        rcon_test = None
+        if updates.keys() & {"RCON_HOST", "RCON_PORT", "RCON_PASSWORD"}:
+            # RCON-Daten geändert: gleich prüfen, damit Fehler sofort sichtbar sind
+            saved = read_env(self.env_path)
+            result = await diagnose_rcon(saved.get("RCON_HOST") or "", saved.get("RCON_PORT") or "",
+                                         saved.get("RCON_PASSWORD") or "")
+            rcon_test = {"ok": result.ok, "steps": result.steps}
         if "WEB_PASSWORD" in updates:
             # Neues Passwort gilt sofort; die aktuelle Sitzung bleibt angemeldet
             self.ws.password = self.password = updates["WEB_PASSWORD"]
         try:
             load_config(self.env_path)
         except ConfigError as exc:
-            resp = web.json_response({"ok": True, "saved": sorted(updates), "config_error": str(exc)})
+            resp = web.json_response({"ok": True, "saved": sorted(updates), "config_error": str(exc),
+                                      "rcon_test": rcon_test})
         else:
             if self.setup_mode:
-                resp = web.json_response({"ok": True, "saved": sorted(updates), "starting": True})
+                resp = web.json_response({"ok": True, "saved": sorted(updates), "starting": True,
+                                          "rcon_test": rcon_test})
                 if self.on_config_saved:
                     self.on_config_saved()
             else:
                 self.restart_required = self.restart_required or bool(updates)
                 resp = web.json_response({"ok": True, "saved": sorted(updates),
-                                          "restart_required": self.restart_required})
+                                          "restart_required": self.restart_required, "rcon_test": rcon_test})
         if "WEB_PASSWORD" in updates:
             self._set_session_cookie(resp)
         return resp
@@ -533,6 +542,8 @@ class WebInterface:
             "setup_mode": False,
             "restart_required": self.restart_required,
             "rcon_connected": bot.rcon.connected,
+            "rcon_last_error": bot.rcon.last_error,
+            "rcon_diagnosis": bot.rcon_diagnosis,
             "rcon_target": f"{cfg.rcon_host}:{cfg.rcon_port}",
             "discord_ready": bot.is_ready(),
             "discord_user": str(bot.user) if bot.user else None,

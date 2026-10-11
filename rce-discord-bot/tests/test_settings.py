@@ -169,3 +169,33 @@ def test_rcon_diagnostics_against_mock():
         assert not closed.ok and closed.steps[-1]["level"] in ("info", "fail")
 
     asyncio.run(scenario())
+
+
+def test_saving_rcon_settings_runs_test(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    async def scenario():
+        runner = web.AppRunner(mock_rcon_server.create_app("pw"), shutdown_timeout=1)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        env = _env(tmp_path, DISCORD_TOKEN="tok", RCON_HOST="127.0.0.1", RCON_PORT="1", RCON_PASSWORD="pw",
+                   ADMIN_USER_IDS="1")
+        w = WebInterface(None, web_settings=WebSettings(password="x"), env_path=env,
+                         secret_path=tmp_path / "s.key", on_config_saved=lambda: None)
+        c = await _client(w)
+        try:
+            await c.post("/api/login", json={"password": "x"}, headers=H)
+            r = await (await c.put("/api/settings", json={"values": {"RCON_PORT": str(port)}}, headers=H)).json()
+            assert r["rcon_test"]["ok"] is True
+            r = await (await c.put("/api/settings", json={"values": {"RCON_PASSWORD": "falsch"}}, headers=H)).json()
+            assert r["rcon_test"]["ok"] is False
+            # Ohne RCON-Änderung kein Test
+            r = await (await c.put("/api/settings", json={"values": {"SERVER_DISPLAY_NAME": "X"}}, headers=H)).json()
+            assert r["rcon_test"] is None
+        finally:
+            await c.close()
+            await runner.cleanup()
+
+    asyncio.run(scenario())
