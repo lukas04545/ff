@@ -16,6 +16,10 @@ LEADERBOARD_COLUMNS = {
 }
 
 
+DEFAULT_CLAIM_COOLDOWN = 1440  # minutes (24 h) – default cooldown for self-service custom kit claims
+CLAIM_SOURCE = "claim"         # kit_claims.source prefix of self-service claims
+
+
 class Storage:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,6 +120,18 @@ class Storage:
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(tickets)")}
         if "transcript" not in columns:
             self._db.execute("ALTER TABLE tickets ADD COLUMN transcript TEXT")
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(custom_kits)")}
+        if "claim_role_ids" not in columns:
+            # Roles whose members may claim the kit themselves (comma-separated IDs, empty = admins only)
+            self._db.execute("ALTER TABLE custom_kits ADD COLUMN claim_role_ids TEXT NOT NULL DEFAULT ''")
+        if "cooldown_minutes" not in columns:
+            self._db.execute(f"ALTER TABLE custom_kits ADD COLUMN cooldown_minutes INTEGER NOT NULL "
+                             f"DEFAULT {DEFAULT_CLAIM_COOLDOWN}")
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_claims)")}
+        if "user_id" not in columns:
+            # Discord user who claimed the kit (self-service claims; cooldown is per Discord account)
+            self._db.execute("ALTER TABLE kit_claims ADD COLUMN user_id INTEGER")
+        self._db.execute("CREATE INDEX IF NOT EXISTS idx_kit_claims_user ON kit_claims (user_id, kit)")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 
@@ -291,6 +307,49 @@ class Storage:
         return self._db.execute(
             "SELECT * FROM custom_kit_items WHERE kit = ? ORDER BY id", (kit,)
         ).fetchall()
+
+    def set_custom_kit_cooldown(self, kit: str, minutes: int) -> bool:
+        cur = self._db.execute("UPDATE custom_kits SET cooldown_minutes = ? WHERE name = ?", (minutes, kit))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def set_custom_kit_roles(self, kit: str, role_ids: list[int]) -> bool:
+        value = ",".join(str(r) for r in dict.fromkeys(role_ids))
+        cur = self._db.execute("UPDATE custom_kits SET claim_role_ids = ? WHERE name = ?", (value, kit))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    @staticmethod
+    def claim_roles(row: sqlite3.Row) -> list[int]:
+        return [int(r) for r in (row["claim_role_ids"] or "").split(",") if r.strip().isdigit()]
+
+    def record_custom_claim(self, kit: str, player: str, user_id: int, user: str) -> int:
+        cur = self._db.execute(
+            "INSERT INTO kit_claims (rule_id, kit, player, source, user_id) VALUES (NULL, ?, ?, ?, ?)",
+            (kit, player, f"{CLAIM_SOURCE}:discord:{user}", user_id),
+        )
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def minutes_since_custom_claim(self, kit: str, user_id: int) -> float | None:
+        """Minutes since this Discord user last claimed the kit themselves (None = never)."""
+        row = self._db.execute(
+            "SELECT (julianday('now') - julianday(MAX(claimed_at))) * 1440 AS minutes FROM kit_claims "
+            "WHERE user_id = ? AND kit = ? COLLATE NOCASE AND source LIKE ?",
+            (user_id, kit, CLAIM_SOURCE + ":%"),
+        ).fetchone()
+        return row["minutes"]
+
+    def reset_custom_claims(self, kit: str, user_id: int | None = None) -> int:
+        """Resets claim cooldowns of a kit (for one user or everyone); the history entries stay visible."""
+        sql = "UPDATE kit_claims SET source = 'reset-' || source WHERE kit = ? COLLATE NOCASE AND source LIKE ?"
+        args: list = [kit, CLAIM_SOURCE + ":%"]
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            args.append(user_id)
+        cur = self._db.execute(sql, args)
+        self._db.commit()
+        return cur.rowcount
 
     # ------------------------------------------------------------ Tickets
 

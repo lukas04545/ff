@@ -83,6 +83,16 @@ def test_custom_kits_autokits_knowledge(bot):
         kits = await (await c.get("/api/kits")).json()
         assert kits["custom"][0]["items"][0]["shortname"] == "rifle.ak"
         assert kits["rules"][0]["enabled"] == 0 and kits["rules"][0]["kit"] == "Event"
+        # Self-service claim settings
+        r = await c.put("/api/custom-kits/Event/claim", json={"role_ids": ["55", "66"], "cooldown": "1d 12h"},
+                        headers=H)
+        assert (await r.json())["cooldown_minutes"] == 2160
+        kit = (await (await c.get("/api/kits")).json())["custom"][0]
+        assert kit["claim_role_ids"] == "55,66" and kit["cooldown_minutes"] == 2160
+        assert (await c.put("/api/custom-kits/Event/claim", json={"role_ids": [], "cooldown": "soon"},
+                            headers=H)).status == 400
+        assert (await c.put("/api/custom-kits/Event/claim", json={"role_ids": ["x"], "cooldown": "0"},
+                            headers=H)).status == 400
         assert (await c.delete("/api/custom-kits/Event", headers=H)).status == 200
         assert (await (await c.get("/api/kits")).json())["rules"] == []
 

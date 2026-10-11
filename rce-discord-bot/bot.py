@@ -100,6 +100,13 @@ class RceBot(commands.Bot):
             guild = discord.Object(id=self.config.guild_id)
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
+            # Remove old global registrations (e.g. from a start without GUILD_ID or an older version with
+            # other command names) – otherwise Discord shows them next to the current commands.
+            self.tree.clear_commands(guild=None)
+            try:
+                await self.tree.sync()
+            except discord.HTTPException as exc:
+                log.warning("Could not remove old global slash commands: %s", exc)
         else:
             synced = await self.tree.sync()
         log.info("Synced %d slash commands.", len(synced))
@@ -115,6 +122,14 @@ class RceBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (ID %s).", self.user, self.user.id if self.user else "?")
+        if not self.config.guild_id and not getattr(self, "_guild_commands_cleaned", False):
+            # Commands are global: remove old server-only registrations (from a start with GUILD_ID)
+            self._guild_commands_cleaned = True
+            for guild in self.guilds:
+                try:
+                    await self.tree.sync(guild=guild)
+                except discord.HTTPException as exc:
+                    log.warning("Could not remove old slash commands on %s: %s", guild.name, exc)
         problems = check_permissions(self)
         if problems:
             log.warning("The bot is missing Discord permissions (details also in the web interface → Overview):")

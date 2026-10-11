@@ -318,7 +318,8 @@ views.kits = async (main) => {
   main.append(h("h1", { text: "Kits" }));
   const box = h("div");
   main.append(box);
-  const [data, m] = await Promise.all([api("/api/kits"), loadMeta()]).catch((e) => { toast(e.message, true); return []; });
+  const [data, m, opts] = await Promise.all([api("/api/kits"), loadMeta(),
+    api("/api/settings/discord-options").catch(() => ({ available: false }))]).catch((e) => { toast(e.message, true); return []; });
   if (!data) return;
   const reload = () => { main.replaceChildren(); views.kits(main); };
 
@@ -358,7 +359,7 @@ views.kits = async (main) => {
             h("td", { class: "muted", text: i.item_id !== null ? "ID " + i.item_id : "" }))))) : h("pre", { class: "transcript", text: info.raw || "No items." }));
       } }))) : h("p", { class: "muted", text: "No kits found (or no RCON connection)." }),
       ingameInfo),
-    customKitsCard(data, reload)));
+    customKitsCard(data, reload, opts)));
 
   // --- Autokits
   box.append(autokitCard(data, m, reload));
@@ -372,7 +373,36 @@ views.kits = async (main) => {
         h("td", { class: "muted", text: r.rule_id !== null ? `Autokit #${r.rule_id} (${r.source})` : r.source }))))))));
 };
 
-function customKitsCard(data, reload) {
+// Cooldown in minutes -> "1d 12h" (input format of the cooldown field)
+function minutesToDuration(min) {
+  if (!min) return "0";
+  const d = Math.floor(min / 1440), hr = Math.floor((min % 1440) / 60), mi = min % 60;
+  return [d && d + "d", hr && hr + "h", mi && mi + "m"].filter(Boolean).join(" ");
+}
+
+// Self-service claim: roles that may claim the kit (/customkit claim) and cooldown
+function claimSettings(kit, opts, reload) {
+  const current = new Set((kit.claim_role_ids || "").split(",").filter(Boolean));
+  const roles = opts.available ? opts.roles : [];
+  const boxes = roles.map((r) => { const cb = h("input", { type: "checkbox", value: r.id }); cb.checked = current.has(r.id); return [cb, r]; });
+  const unknown = [...current].filter((id) => !roles.some((r) => r.id === id));
+  const manual = h("input", { placeholder: "Role IDs, comma-separated", value: roles.length ? "" : [...current].join(",") });
+  const cooldown = h("input", { value: minutesToDuration(kit.cooldown_minutes), placeholder: "e.g. 12h, 1d, 0", style: "max-width:140px" });
+  return h("details", { style: "margin-top:.5rem" },
+    h("summary", { text: `🙋 Claim by role: ${current.size ? current.size + " role(s), cooldown " + minutesToDuration(kit.cooldown_minutes) : "off (admins only)"}` }),
+    h("p", { class: "muted", text: "Members with one of these roles can claim the kit themselves with /customkit claim (they must be online in-game). The cooldown counts per Discord account." }),
+    roles.length ? h("div", { class: "checklist" }, boxes.map(([cb, r]) => h("label", {}, cb, r.name)),
+      unknown.length ? h("div", { class: "muted", text: `Other role IDs: ${unknown.join(", ")}` }) : null) : manual,
+    h("div", { class: "row", style: "margin-top:.5rem" }, h("span", { text: "Cooldown:" }), cooldown,
+      h("button", { class: "primary small", text: "Save", onclick: async () => {
+        const role_ids = roles.length ? [...boxes.filter(([cb]) => cb.checked).map(([cb]) => cb.value), ...unknown]
+          : manual.value.split(",").map((v) => v.trim()).filter(Boolean);
+        const r = await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}/claim`, { method: "PUT", body: { role_ids, cooldown: cooldown.value } }), "Saved");
+        if (r) reload();
+      } })));
+}
+
+function customKitsCard(data, reload, opts) {
   const name = h("input", { placeholder: "Name of the new custom kit", maxlength: 40 });
   const desc = h("input", { placeholder: "Note (optional)", maxlength: 300 });
   const card = h("div", { class: "card" }, h("h2", { text: "🔒 Custom kits (bot only)" }),
@@ -404,7 +434,8 @@ function customKitsCard(data, reload) {
         const r = await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}/items`, { method: "POST", body: { item: item.value, amount: Number(amount.value) } }));
         if (r && !r.known_item) toast("Unknown shortname – please test it on yourself once.");
         reload();
-      } }, item, amount, h("button", { text: "+ Item" }))));
+      } }, item, amount, h("button", { text: "+ Item" })),
+      claimSettings(kit, opts || { available: false }, reload)));
   }
   return card;
 }

@@ -390,6 +390,8 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/customkit create`, `add-item`, `remove-item`, `delete` | Admins | Create and edit custom kits |
 | `/customkit list`, `/customkit info` | Admins | Show custom kits (visible to admins only) |
 | `/customkit give`, `/customkit all` | Admins | Give a custom kit to one player or to all online players |
+| `/customkit claim` | Members with an allowed role | Claim a custom kit yourself (cooldown per kit) |
+| `/customkit access`, `/customkit cooldown`, `/customkit reset-cooldown` | Admins | Who may claim a custom kit, how often, reset cooldowns |
 | `/ticket open`, `/ticket close` | everyone | Open a ticket or close your own ticket |
 | `/ticket ai`, `/ticket add` | Staff | Turn the AI on/off in a ticket, add a member |
 | `/ticket panel`, `/ticket ai-status`, `/ticket ai-test` | Admins | Post the ticket panel, show DeepSeek balance, test the AI |
@@ -481,9 +483,25 @@ That means:
 ```
 
 **As an autokit:** `/kit autokit-add kit:Eventkit trigger:"🔄 Respawn" kit_type:"🔒 Custom kit (bot only)"`. The
-autocomplete marks custom kits with 🔒. If you don't choose a `type` and the kit only exists as a
+autocomplete marks custom kits with 🔒. If you don't choose a `kit_type` and the kit only exists as a
 custom kit, this is detected automatically. Cooldown, limit, quick-chat trigger and
 `/kit wipe-reset` work exactly as with in-game kits.
+
+**Members claim it themselves (by role):** give one or more roles access to a kit and set a cooldown.
+Members with one of those roles then claim the kit with `/customkit claim`:
+```
+/customkit access kit:Eventkit role:@VIP                ← allow a role (allow:False removes it)
+/customkit cooldown kit:Eventkit duration:12h           ← e.g. 30m, 12h, 1d, 1d 12h, 0 = no cooldown
+/customkit claim kit:Eventkit player:YourGamertag       ← members: in-game name is remembered
+/customkit reset-cooldown kit:Eventkit member:@Name      ← admins: claim again right away (empty = everyone)
+```
+- New kits start with **no claim roles** (admins only) and a **24 h** cooldown.
+- The cooldown counts **per Discord account** (changing the in-game name doesn't reset it). A changed
+  cooldown applies immediately, also to earlier claims.
+- The player must be **online in-game** – the bot checks the player list, so nothing gets lost.
+- The autocomplete of `/customkit claim` only shows kits the member's roles allow.
+- Same settings in the web interface: Kits → custom kit → "🙋 Claim by role" (role checkboxes + cooldown).
+- Every claim appears in the admin log and the kit history.
 
 **Differences from in-game kits (limitations of `inventory.giveto`)**
 
@@ -588,6 +606,7 @@ These features come from the KRYVON bot and have been rebuilt and extended here:
 | RCON won't connect – cause unclear | Run **`rcon_test.bat`** (Windows) or `python tools/rcon_test.py`: checks settings, port, WebSocket, password and response step by step and names the cause |
 | `Message Content Intent … disabled` | Developer Portal → Bot → enable Message Content Intent → Save Changes → restart the bot |
 | Slash commands missing | Set `GUILD_ID` and invite the bot with the `applications.commands` scope |
+| Old (German) slash commands still show up | The bot removes old registrations at startup. Restart the bot (latest version), then press Ctrl+R in Discord. Without `GUILD_ID`, global commands can take up to 1 h to update – setting `GUILD_ID` makes changes instant. |
 | Killfeed or chat stays empty | Set `CONSOLE_LOG_CHANNEL_ID` and compare the real log lines with `rce/log_parser.py` |
 | Kick/ban has no effect | Test the command syntax via `/rcon` and adjust the `*_COMMAND_TEMPLATE` in the `.env` |
 | Kit doesn't arrive | Test `/rcon kit givetoplayer "Kit" "Player"` and check the response in the console log. If the syntax differs, adjust `KIT_GIVE_TEMPLATE`. |

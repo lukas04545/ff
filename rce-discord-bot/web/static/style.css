@@ -112,3 +112,5 @@ pre.transcript { background: var(--code-bg); color: var(--code-text); padding: .
 }
 
 a > button { color: var(--text); }
+
+summary { cursor: pointer; font-weight: 600; }
