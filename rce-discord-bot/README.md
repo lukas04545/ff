@@ -691,6 +691,16 @@ from your knowledge base. If it can't help, it **pings the support roles**.
 - The AI is unreachable (e.g. no balance left) or the reply limit per ticket has been reached.
 - Without a `DEEPSEEK_API_KEY`, every new ticket goes straight to staff.
 
+**The AI learns from staff answers:** when a ticket is closed, the bot sends the staff answers of that ticket
+(including `/aiconfirm` messages; the player's messages only as context) to the AI and asks for **general, new**
+information – rules, how something works, prices, times – that isn't in the knowledge base yet. It's added to
+`support_knowledge.md` under **"Learned from tickets"** (at most 5 per ticket, each marked with the ticket number)
+and posted in the admin log, so the AI knows it in the next tickets. Nothing personal or case-specific (names,
+IDs, order numbers, refunds or other individual decisions), no admin commands, and never what only a player said.
+Check the section now and then on the web Knowledge base page and edit or delete entries freely. When the
+knowledge base reaches the AI's reading limit (12,000 characters) nothing more is added. Switch:
+**Settings → Tickets & AI → AI learns from staff answers** (`TICKET_AI_LEARN`).
+
 **Talk to the AI without pausing it – `/aiconfirm`:** staff can tell the ticket AI something with
 `/aiconfirm message:"Both purchases are verified, file the second kit"`. The bot posts it as
 *"🛡️ Staff confirmation – Name: …"*, the AI treats it as true, answers the player and **stays active** (it even
