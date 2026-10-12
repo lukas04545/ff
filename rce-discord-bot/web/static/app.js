@@ -997,6 +997,10 @@ function claimSettings(kit, opts, reload) {
   return h("details", { style: "margin-top:.5rem" },
     h("summary", { text: `🙋 Claim by role: ${current.size ? current.size + " role(s), cooldown " + minutesToDuration(kit.cooldown_minutes) : "off (admins only)"}` }),
     h("p", { class: "muted", text: "Members with one of these roles can claim the kit with /customkit claim. It always goes to their own in-game player, which they verify once with /customkit link. They must be online; the cooldown counts per player." }),
+    roles.length > 12 ? h("input", { type: "search", placeholder: "🔍 Filter roles…", style: "margin-bottom:.4rem", oninput: (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      for (const [cb, r] of boxes) cb.parentElement.hidden = !!q && !r.name.toLowerCase().includes(q) && !cb.checked;
+    } }) : null,
     roles.length ? h("div", { class: "checklist" }, boxes.map(([cb, r]) => h("label", {}, cb, r.name)),
       unknown.length ? h("div", { class: "muted", text: `Other role IDs: ${unknown.join(", ")}` }) : null) : manual,
     h("div", { class: "row", style: "margin-top:.5rem" }, h("span", { text: "Cooldown:" }), cooldown,
@@ -1049,6 +1053,9 @@ function importBox(reload) {
     out);
 }
 
+const CK_OPEN = "customkits-open";
+let ckFilter = "";   // search text survives the re-render after an edit
+
 function customKitsCard(data, reload, opts) {
   const name = h("input", { placeholder: "Name of the new custom kit", maxlength: 40 });
   const desc = h("input", { placeholder: "Note (optional)", maxlength: 300 });
@@ -1061,16 +1068,42 @@ function customKitsCard(data, reload, opts) {
     } }, name, desc, h("button", { class: "primary", text: "Create" })),
     importBox(reload));
 
+  // Each kit is collapsible (closed by default); open kits stay open across reloads and visits
+  const openKits = new Set(kbStore.get(CK_OPEN, []));
+  const saveOpen = () => kbStore.set(CK_OPEN, [...openKits].filter((n) => data.custom.some((k) => k.name === n)));
+  const kitEls = [];
+  const search = h("input", { type: "search", placeholder: "🔍 Search kits or items…", value: ckFilter, style: "flex:1;min-width:180px" });
+  const shown = h("span", { class: "muted" });
+  const applyFilter = () => {
+    ckFilter = search.value;
+    const q = search.value.trim().toLowerCase();
+    let n = 0;
+    for (const [el, kit] of kitEls) {
+      const hit = !q || kit.name.toLowerCase().includes(q) || (kit.description || "").toLowerCase().includes(q)
+        || kit.items.some((i) => i.shortname.toLowerCase().includes(q));
+      el.hidden = !hit;
+      n += hit ? 1 : 0;
+    }
+    shown.textContent = q ? `${n} of ${kitEls.length} kits` : `${kitEls.length} kits`;
+  };
+  const setAll = (open) => { for (const [el] of kitEls) if (!el.hidden) el.open = open; };
+  if (data.custom.length) {
+    card.append(h("div", { class: "row ck-toolbar" }, search, shown,
+      h("button", { class: "small", type: "button", text: "Expand all", onclick: () => setAll(true) }),
+      h("button", { class: "small", type: "button", text: "Collapse all", onclick: () => setAll(false) })));
+    search.addEventListener("input", applyFilter);
+  }
+
   for (const kit of data.custom) {
     const item = h("input", { placeholder: "Item shortname", list: "dl-items" });
     const amount = h("input", { type: "number", min: 1, value: 1, style: "max-width:90px" });
-    card.append(h("div", { class: "card" },
-      h("div", { class: "row" }, h("strong", { text: kit.name }), kit.description ? h("span", { class: "muted", text: kit.description }) : null,
-        h("button", { class: "small danger", style: "margin-left:auto", text: "Delete", onclick: async () => {
-          if (!confirm(`Delete custom kit ${kit.name} along with its autokits?`)) return;
-          await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}`, { method: "DELETE" }), "Deleted");
-          reload();
-        } })),
+    const roles = (kit.claim_role_ids || "").split(",").filter(Boolean).length;
+    const el = h("details", { class: "card ck-kit" },
+      h("summary", {},
+        h("strong", { text: kit.name }),
+        h("span", { class: "pill", text: `${kit.items.length} item${kit.items.length === 1 ? "" : "s"}` }),
+        roles ? h("span", { class: "pill ok", text: `🙋 ${roles} role${roles === 1 ? "" : "s"} · ${minutesToDuration(kit.cooldown_minutes) || "no cooldown"}` }) : null,
+        kit.description ? h("span", { class: "muted ck-desc", text: kit.description }) : null),
       h("table", {}, h("tbody", {}, kit.items.map((i) => h("tr", {},
         h("td", { text: i.shortname }), h("td", { text: "× " + i.amount }),
         h("td", {}, h("button", { class: "small", text: "✕", title: "Remove", onclick: async () => {
@@ -1082,9 +1115,19 @@ function customKitsCard(data, reload, opts) {
         const r = await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}/items`, { method: "POST", body: { item: item.value, amount: Number(amount.value) } }));
         if (r && !r.known_item) toast("Unknown shortname – please test it on yourself once.");
         reload();
-      } }, item, amount, h("button", { text: "+ Item" })),
-      claimSettings(kit, opts || { available: false }, reload)));
+      } }, item, amount, h("button", { text: "+ Item" }),
+        h("button", { class: "small danger", type: "button", style: "margin-left:auto", text: "Delete kit", onclick: async () => {
+          if (!confirm(`Delete custom kit ${kit.name} along with its autokits?`)) return;
+          await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}`, { method: "DELETE" }), "Deleted");
+          reload();
+        } })),
+      claimSettings(kit, opts || { available: false }, reload));
+    el.open = openKits.has(kit.name);
+    el.addEventListener("toggle", () => { if (el.open) openKits.add(kit.name); else openKits.delete(kit.name); saveOpen(); });
+    kitEls.push([el, kit]);
+    card.append(el);
   }
+  applyFilter();
   return card;
 }
 
