@@ -68,6 +68,8 @@ KIT_ACTIONS = """- You have tools for the player who opened this ticket – and 
   for that kit to be claimed now. The tool enforces roles, cooldowns and the linked player – report its
   result honestly (cooldown time, not linked, not online) and never claim for anyone else.
   If they are not linked: tell them to use /customkit link in Discord while they are online in-game.
+  get_my_kits also shows their points balance (if the shop is on): they earn points by playing, PvP kills and
+  /daily and spend them themselves with /shop buy – you can't buy or give points for them.
   For "when can I claim again" copy the can_claim_again_discord value (e.g. <t:1791900000:R>) into your
   reply exactly as it is – Discord shows it as a live countdown.
 - Apart from these tools you CANNOT perform actions (no other kits/items, no unbanning, no refunds,

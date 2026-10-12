@@ -71,6 +71,7 @@ RCE tools use exactly this WebRCON interface. Also G-Portal's wiki article
 | **Discord moderation** | Discord | `/mod timeout/untimeout/kick/ban/unban/purge` with permission and role-hierarchy checks |
 | **Discord log** | Discord | Joins/leaves, deleted and edited messages, moderation, giveaways |
 | **Giveaways** | Discord + database | Enter via button, automatic draw, multiple winners, winner role, reroll; **survive restarts** |
+| **Points & shop** | Bot database + RCON | Points for playtime, PvP kills and `/daily` (streaks), playtime rewards, `/shop` with kits, items and (timed) roles, `/profile`. See [Points & shop](#points--shop). |
 | **Timed roles** | Discord + database | `/temprole`: roles that end by themselves (e.g. VIP for 7 days) – also for giveaway prizes. See [Timed roles](#timed-roles-eg-vip-for-7-days). |
 | **Alerts & backups** | Bot | Staff ping when the server is offline, daily backups. See [Alerts & backups](#alerts--backups). |
 | **Automatic updates** | GitHub | Installs new versions by itself. See [Automatic updates](#automatic-updates). |
@@ -176,6 +177,7 @@ rce-discord-bot/
 │   ├── giveaways.py       # /giveaway … (persisted in the database)
 │   ├── timed_roles.py     # /temprole …: roles that end by themselves
 │   ├── monitor.py         # Server-down alerts, daily backups
+│   ├── economy.py         # Points, /shop, /daily, playtime rewards, /profile
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
@@ -370,6 +372,7 @@ your browser opens automatically; otherwise go to **<http://localhost:8080>**.
 | ⌨️ Console | **Live server console** and running any RCON command (if `ALLOW_RAW_RCON=true`) |
 | 🎒 Kits | Give kits (player/everyone), view in-game kits, create/edit **custom kits**, create/pause/delete **autokits**, wipe reset, give history |
 | 🧰 Kit builder | **Visual kit builder** (like the Helios kit builder): all 566 RCE items by category with search, 7 wear / 24 inventory / 6 belt slots, click or drag items in, drag to move/swap, amount & condition per slot. Generates the `kit add` commands (copy), **creates the in-game kit on the server** or **saves it as a custom kit**. Load existing kits from the server, save kits in the browser, export/import share codes, import pasted `kit add` commands |
+| 🪙 Shop | Shop items (custom kit, in-game kit, item, role – optionally for N days), prices, on sale/hidden; all point balances with ± correction; how members earn points |
 | 🎫 Tickets | All tickets with status, **transcripts of closed tickets**, DeepSeek balance |
 | 🏆 Stats | Leaderboard (kills, deaths, K/D, playtime), platform, last seen |
 | 🎉 Community | Giveaways (end early, reroll), **edit rules**, overview of the community settings |
@@ -491,6 +494,11 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/mod kick`, `/mod ban`, `/mod unban` | "Kick Members"/"Ban Members" | Kick/ban a Discord member (with a DM to the user), unban by user ID |
 | `/mod purge` | "Manage Messages" | Delete 1–100 messages, optionally only from one user |
 | `/giveaway start/end/reroll/list` | "Manage Server" | Start, end early, reroll and list giveaways |
+| `/daily` | Members with a linked player | Collect daily points (more for days in a row) |
+| `/shop list`, `/shop buy <item>` | everyone | See the shop and buy with your points – delivered in-game to your linked player |
+| `/points balance`, `/points top`, `/points history` | everyone | Your balance, the top 10, your last point changes |
+| `/points give`, `/points take` | Admins | Give or take points |
+| `/profile [member]` | everyone | Linked player, PvP stats, playtime, points, /daily, custom kits with cooldowns, timed roles |
 | `/temprole give/remove/list` | Admins | Give a Discord role for a limited time (`7d`, `12h`, `2w` …), take it away early, list running ones |
 
 Admin rights for **server commands** (RCON, kits, ticket management) are given only to the
@@ -748,6 +756,27 @@ These features come from the KRYVON bot and have been rebuilt and extended here:
 - Let your community know what gets logged (e.g. in the rules) – privacy.
 - Giveaway prizes are **not** given out in-game automatically (Discord users and in-game names
   are not linked). Hand out prizes e.g. with `/customkit give` or `/kit give`.
+
+### Points & shop
+
+Members earn points with the in-game player they linked (`/customkit link` – so points can only ever
+go to their own verified account):
+
+| Source | Setting (default) |
+|---|---|
+| Every hour online | `POINTS_PER_HOUR` (10) |
+| PvP kill (the same victim counts at most once every 10 minutes – no farming) | `POINTS_PER_KILL` (5) |
+| `/daily` (every 20 h; +`DAILY_STREAK_BONUS` per day in a row, max. 7 days, streak kept within 48 h) | `DAILY_POINTS` (50), `DAILY_STREAK_BONUS` (10) |
+| **Playtime reward**: every N hours online a custom kit (sent in-game, announced with `say`) and/or points | `PLAYTIME_REWARD_HOURS` (0 = off), `PLAYTIME_REWARD_KIT`, `PLAYTIME_REWARD_POINTS` |
+
+The name of the points is up to you (`POINTS_NAME`, e.g. *coins* or *scrap*). Members spend them with
+`/shop buy`. Shop items are set up in the web interface (**🪙 Shop**): a **custom kit**, an **in-game
+kit**, an **item** (shortname + amount) or a **Discord role** – permanent or for N days (uses the timed
+roles below). Kits and items need the linked player to be online. If a delivery fails (e.g. RCON down),
+the points are refunded automatically. Every purchase is in the admin log. The Shop page also shows all
+balances, with **± Points** to correct one; in Discord admins use `/points give/take`.
+`/profile` shows everything about a member at a glance (also useful for staff in tickets), and the
+ticket AI sees the owner's balance too.
 
 ### Timed roles (e.g. VIP for 7 days)
 

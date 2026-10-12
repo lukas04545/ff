@@ -503,6 +503,11 @@ class Tickets(commands.Cog):
                                    if channel.guild.get_role(r["required_role_id"]) else "a role"),
                  "has_role": r["required_role_id"] in roles}
                 for r in self.bot.db.kit_rules(enabled_only=True) if r["required_role_id"]] if kits_cog else []
+            economy = self.bot.get_cog("Economy")
+            if economy is not None and economy.enabled:
+                overview["points"] = {"balance": self.bot.db.wallet(member.id)["points"],
+                                      "name": self.bot.config.points_name,
+                                      "how_to_spend": "/shop list and /shop buy in Discord", "daily": "/daily"}
             if overview["linked_player"] is None:
                 overview["note"] = "Not linked yet: the player must use /customkit link while online in-game."
             return overview

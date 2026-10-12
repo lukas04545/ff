@@ -1121,6 +1121,96 @@ views.knowledge = async (main) => {
   info.textContent = `File: ${r.path}`;
 };
 
+// ------------------------------------------------------------------ Shop (points)
+
+views.shop = async (main) => {
+  main.append(h("h1", { text: "Shop" }));
+  let d, m, kits;
+  try { [d, m, kits] = await Promise.all([api("/api/shop"), loadMeta(), api("/api/kits").catch(() => ({ ingame: [] }))]); }
+  catch (e) { main.append(h("p", { class: "error", text: e.message })); return; }
+  const pts = d.points_name;
+  const e = d.earning;
+  if (!d.enabled) main.append(h("div", { class: "banner warn", text: "Points & shop are switched off (⚙️ Settings → 🪙 Points & shop)." }));
+  main.append(h("div", { class: "card" }, h("h2", { text: `🪙 How members earn ${pts}` }),
+    h("p", { class: "muted", style: "margin-top:0", text: "Only members who linked their in-game player with /customkit link. They see their balance with /points balance or /profile and buy with /shop buy." }),
+    h("div", { class: "grid", style: "margin:0" },
+      ...[["⏱️", "Per hour online", e.per_hour], ["⚔️", "Per PvP kill", e.per_kill], ["📅", "/daily", `${e.daily} (+${e.streak_bonus}/day streak)`],
+        ["🎁", "Playtime reward", e.reward_hours ? `every ${e.reward_hours}h: ${[e.reward_kit, e.reward_points ? `${e.reward_points} ${pts}` : ""].filter(Boolean).join(" + ") || "–"}` : "off"]]
+        .map(([icon, label, value]) => h("div", { class: "stat" }, h("div", { class: "label" }, icon, " ", label), h("div", { class: "value", style: "font-size:1.05rem", text: String(value) })))),
+    isOwner() ? h("p", { class: "muted", style: "margin:.75rem 0 0" }, "Change these in ", h("a", { href: "#settings", text: "⚙️ Settings → 🪙 Points & shop" }), ".") : null));
+
+  // Items
+  const kindSel = h("select", {}, Object.entries(d.kinds).map(([k, label]) => h("option", { value: k, text: label })));
+  const targetBox = h("span", { style: "display:contents" });
+  const amount = h("input", { type: "number", min: 0, value: 1, style: "max-width:110px", title: "Amount" });
+  const amountLabel = h("span", { class: "muted", style: "font-size:.85rem" });
+  const name = h("input", { placeholder: "Name in the shop, e.g. VIP 7 days", maxlength: 60 });
+  const price = h("input", { type: "number", min: 0, placeholder: `Price (${pts})`, style: "max-width:150px" });
+  const desc = h("input", { placeholder: "Description (optional)", maxlength: 300 });
+  let target = null;
+  const itemsList = h("datalist", { id: "dl-shop-items" }, m.items.map((i) => h("option", { value: i.short, label: i.label })));
+  const renderTarget = () => {
+    const k = kindSel.value;
+    const opts = (list) => h("select", {}, list.length ? list.map(([v, t]) => h("option", { value: v, text: t })) : [h("option", { value: "", text: "– none yet –" })]);
+    if (k === "custom_kit") target = opts(d.custom_kits.map((n) => [n, n]));
+    else if (k === "kit") target = opts((kits.ingame || []).map((n) => [n, n]));
+    else if (k === "role") target = opts(d.roles.map((r) => [r.id, r.name]));
+    else target = h("input", { placeholder: "Item shortname, e.g. rifle.ak", list: "dl-shop-items" });
+    targetBox.replaceChildren(target);
+    amount.style.display = amountLabel.style.display = ["item", "role"].includes(k) ? "" : "none";
+    amountLabel.textContent = k === "role" ? "days (0 = permanent)" : "pieces";
+    if (k === "role") amount.value = 7; else amount.value = 1;
+  };
+  kindSel.addEventListener("change", renderTarget);
+  renderTarget();
+  const iBody = h("tbody");
+  const renderItems = () => iBody.replaceChildren(...(d.items.length ? d.items.map((it) => h("tr", {},
+    h("td", {}, h("strong", { text: it.name }), it.description ? h("div", { class: "muted", style: "font-size:.85rem", text: it.description }) : null),
+    h("td", { text: it.summary }),
+    h("td", { text: `${it.price} ${pts}` }),
+    h("td", {}, h("button", { class: "small", text: it.enabled ? "✅ on sale" : "⏸️ hidden", onclick: async () => {
+      await act(() => api(`/api/shop/items/${it.id}`, { method: "PUT", body: { enabled: !it.enabled } }));
+      it.enabled = !it.enabled; renderItems();
+    } })),
+    h("td", {}, h("button", { class: "small", text: "Price", onclick: async () => {
+      const p = prompt(`New price for ${it.name} (${pts}):`, it.price);
+      if (p === null || p === "") return;
+      await act(() => api(`/api/shop/items/${it.id}`, { method: "PUT", body: { ...it, price: Number(p) } }), "Price changed");
+      reload();
+    } }), " ", h("button", { class: "small danger", text: "Delete", onclick: async () => {
+      if (!confirm(`Delete ${it.name} from the shop?`)) return;
+      await act(() => api(`/api/shop/items/${it.id}`, { method: "DELETE" }), "Deleted"); reload();
+    } }))))
+    : [h("tr", {}, h("td", { colspan: 5, class: "muted", text: "No items yet – add the first one below." }))]));
+  renderItems();
+  main.append(h("div", { class: "card" }, h("h2", { text: "🛒 Items" }),
+    h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Item", "Gives", "Price", "Status", ""].map((t) => h("th", { text: t })))), iBody)),
+    h("h3", { style: "margin-top:1.1rem", text: "Add an item" }), itemsList,
+    h("form", { class: "row", onsubmit: async (ev) => {
+      ev.preventDefault();
+      await act(() => api("/api/shop/items", { method: "POST", body: { name: name.value, kind: kindSel.value, target: target.value, amount: Number(amount.value || 0), price: Number(price.value || 0), description: desc.value } }), "Item added");
+      name.value = desc.value = price.value = ""; reload();
+    } }, name, kindSel, targetBox, amount, amountLabel, price, desc, h("button", { class: "primary", text: "Add" }))));
+
+  // Balances
+  const wBody = h("tbody", {}, d.wallets.length ? d.wallets.map((w) => h("tr", {},
+    h("td", { text: w.user }), h("td", { class: "muted", text: w.player || "–" }),
+    h("td", {}, h("strong", { text: String(w.points) })), h("td", { text: String(w.earned_total) }),
+    h("td", { text: w.daily_streak ? `🔥 ${w.daily_streak}` : "–" }),
+    h("td", {}, h("button", { class: "small", text: "± Points", onclick: async () => {
+      const v = prompt(`Add (e.g. 100) or remove (e.g. -50) ${pts} for ${w.user}:`);
+      if (!v) return;
+      const reason = prompt("Reason (shown in their history):", "") || "";
+      await act(() => api("/api/points", { method: "POST", body: { user_id: w.user_id, delta: Number(v), reason } }), "Saved"); reload();
+    } }))))
+    : [h("tr", {}, h("td", { colspan: 6, class: "muted", text: "Nobody has points yet." }))]);
+  main.append(h("div", { class: "card" }, h("h2", { text: `🏦 Balances (top ${d.wallets.length || 50})` }),
+    h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Member", "Player", pts, "Earned total", "Streak", ""].map((t) => h("th", { text: t })))), wBody)),
+    h("p", { class: "muted", style: "margin:.75rem 0 0", text: "In Discord: /points give, /points take, /points history." })));
+
+  function reload() { route(); }
+};
+
 // ------------------------------------------------------------------ Community
 
 views.community = async (main) => {
