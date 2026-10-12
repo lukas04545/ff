@@ -404,3 +404,20 @@ def test_order_ids_with_label():
     assert order_ids("Receipt/order ID 1110065 (store purchase)") == {"1110065"}
     assert order_ids("T4s, order ID #1110065") == {"1110065"}
     assert order_ids("I bought 50000 hqm and 10 aks for 25 EUR on 12.10.2026") == set()
+
+
+def test_order_that_already_got_a_kit_cant_be_approved_again(env):
+    import time as _t
+    first = new_kit(env, {"kit_name": "Geek kit 2", "items": ORDER[:1], "proof": "T4s order ID #1110065"})
+    ok, _ = asyncio.run(env.requests.decide(first["request_id"], True, env.staff))
+    assert ok
+    env.tickets._staff_ok[env.channel.id] = (_t.monotonic() + 60, "Lukas")   # filed anyway via /aiconfirm
+    second = new_kit(env, {"kit_name": "Geek kit 3", "items": ORDER[:1], "proof": "Receipt/order ID 1110065"})
+    assert second["result"] == "waiting_for_staff"
+    embed = env.requests.embed(env.db.kit_request(second["request_id"]))
+    assert any(f.name == "⚠️ Same order ID as" and "Geek kit 2" in f.value for f in embed.fields)
+    ok, text = asyncio.run(env.requests.decide(second["request_id"], True, env.staff))
+    assert not ok and "already gave the kit Geek kit 2" in text
+    assert env.db.kit_request(second["request_id"])["status"] == "pending"
+    assert env.db.custom_kit("Geek kit 3") is None
+    assert asyncio.run(env.requests.decide(second["request_id"], False, env.staff))[0]    # rejecting works
