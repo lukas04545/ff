@@ -35,11 +35,18 @@ class Tip4ServError(Exception):
     pass
 
 
+KEY_HELP = ("On tip4serv.com open your store → Servers → add (or open) a server for the bot with the PLUGIN "
+            "connection (game Rust / Oxide, not \"Connect with RCON\"), and copy that server's key – three parts "
+            "separated by dots, the first one is the server's number.")
+
+
 def split_key(key: str) -> list[str]:
     parts = key.strip().split(".")
     if len(parts) != 3 or not all(parts):
-        raise Tip4ServError("The Tip4Serv key must have three parts separated by dots – copy the whole server key "
-                            "from tip4serv.com.")
+        raise Tip4ServError("The Tip4Serv key must have three parts separated by dots. " + KEY_HELP)
+    if parts[0].startswith("eyJ"):          # a JWT: the store API key from Dashboard -> API keys
+        raise Tip4ServError("TIP4SERV_KEY is the store API key (Dashboard → API keys) – the bot needs a SERVER key "
+                            "instead. " + KEY_HELP)
     return parts
 
 
@@ -92,8 +99,13 @@ class Tip4ServClient:
                                        timeout=aiohttp.ClientTimeout(total=20)) as resp:
                 text = await resp.text()
                 if resp.status != 200:
-                    hint = " – check TIP4SERV_KEY" if resp.status in (401, 403) else ""
-                    raise Tip4ServError(f"HTTP {resp.status}{hint}: {text[:200]}")
+                    hint = {401: " – the key is wrong or belongs to another server",
+                            403: " – the key is wrong or belongs to another server",
+                            404: " – Tip4Serv doesn't know this server number",
+                            500: " – Tip4Serv couldn't handle the request; usually the key is not a plugin "
+                                 "server key (e.g. the server was added with \"Connect with RCON\")"}.get(resp.status, "")
+                    raise Tip4ServError(f"HTTP {resp.status}{hint} (server #{self.server_id})"
+                                        + (f": {text[:200]}" if text.strip() else "") + ". " + KEY_HELP)
                 return json.loads(text) if text.strip() else None
         except aiohttp.ClientError as exc:
             raise Tip4ServError(f"connection failed: {exc}") from exc

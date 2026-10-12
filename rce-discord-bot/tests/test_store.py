@@ -368,6 +368,9 @@ def test_tip4serv_find_and_assign(shop):
     assert "has not received order" in out[-1]
     asyncio.run(env.store.assign_cmd.callback(env.store, inter, "1110065", env.buyer))
     assert env.db.kit_request(r["request_id"])["status"] == "approved"       # checked again -> paid
+    async def no_poll(client=None):
+        return 0
+    env.store.poll = no_poll
     asyncio.run(env.store.status_cmd.callback(env.store, inter))
     assert "✅ working" in out[-1] and "used by request #" in out[-1]
     stranger = NS(id=8, roles=[], __str__=lambda: "x")
@@ -422,3 +425,56 @@ def test_verify_payment_other_buyer(shop):
     env.db.add_store_payment("O:1", "555111", amount=999, currency="EUR", discord_id=123456789012345678,
                              player=None, username=None, customer=None, command="rcebot", raw=None)
     assert verify(env, "555111")["result"] == "other_buyer"
+
+
+# ------------------------------------------------------------------ talking to Tip4Serv (local fake server)
+
+def test_client_request_format_and_errors():
+    import base64
+    import hashlib
+    import hmac as hm
+    from aiohttp import web
+    from support.tip4serv import Tip4ServClient, Tip4ServError, split_key
+    seen = {}
+
+    async def handler(request):
+        seen.update(path=request.path, query=dict(request.query), auth=request.headers.get("Authorization"),
+                    method=request.method, body=await request.text())
+        if request.match_info["sid"] == "500":
+            return web.Response(status=500, text="")
+        return web.json_response([{"id": "P1", "action": "purchase", "cmds": [{"id": 1, "str": "rcebot 5 EUR"}]}])
+
+    async def run():
+        app = web.Application()
+        app.router.add_route("*", "/v1/store/server/{sid}/commands", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        base = f"http://127.0.0.1:{port}/v1/store/server/"
+        try:
+            ok = Tip4ServClient("4242.secret.pub", base=base)
+            payments = await ok.pending()
+            ts = seen["query"]["time"]
+            digest = hm.new(b"secret", f"4242pub{ts}".encode(), hashlib.sha256).hexdigest()
+            assert seen["path"] == "/v1/store/server/4242/commands" and seen["method"] == "GET"
+            assert seen["auth"] == "Bearer SERVER_KEY:" + base64.b64encode(digest.encode()).decode()
+            assert payments[0]["id"] == "P1"
+            await ok.mark_executed({"P1": ("purchase", ["1"])})
+            assert seen["method"] == "POST" and json.loads(seen["body"]) == {
+                "P1": {"action": "purchase", "cmds": {"1": "Executed"}}}
+            try:
+                await Tip4ServClient("500.secret.pub", base=base).pending()
+                raise AssertionError("no error")
+            except Tip4ServError as exc:
+                assert "HTTP 500" in str(exc) and "Connect with RCON" in str(exc) and "server #500" in str(exc)
+        finally:
+            await runner.cleanup()
+    asyncio.run(run())
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc"
+    try:
+        split_key(jwt)
+        raise AssertionError("JWT accepted")
+    except Tip4ServError as exc:
+        assert "store API key" in str(exc)
