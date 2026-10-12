@@ -99,8 +99,20 @@ PRICED = [{"item": "m249", "amount": 2}, {"item": "ammo.rocket.basic", "amount":
 
 
 @pytest.fixture
-def shop(env, tmp_path):
+def shop(env, tmp_path, monkeypatch):
+    import time
+    from cogs.store import Store
     env.bot.config = replace(env.bot.config, tip4serv_key="srv.secret.x", price_list_file=PRICES)
+
+    async def add():
+        await env.bot.add_cog(Store(env.bot))
+    monkeypatch.setattr(Store, "cog_load", lambda self: asyncio.sleep(0))  # no polling loop in tests
+    asyncio.run(add())
+    env.store = env.bot.get_cog("Store")
+    env.store.last_ok = time.time()                                       # connected
+    env.db.add_store_payment("OLD:1", "OLD", amount=1, currency="EUR", discord_id=1, player=None, username=None,
+                             customer=None, command="rcebot", raw=None)   # the bot received purchases before
+    env.db.use_store_payments(["OLD:1"], 999999)
     return env
 
 
@@ -163,7 +175,8 @@ def test_cases_staff_still_decides(shop):
 
     # staff approves the unpriced one by hand -> the found payment is used up too
     ok, _ = asyncio.run(env.requests.decide(unpriced["request_id"], True, env.staff))
-    assert ok and env.db.store_payments()[0]["used_by"] == unpriced["request_id"]
+    assert ok and next(p for p in env.db.store_payments() if p["payment_id"] == "B")["used_by"] == \
+        unpriced["request_id"]
 
 
 def test_name_matching_and_switch(shop):
@@ -301,4 +314,63 @@ def test_staff_cant_approve_with_a_payment_used_elsewhere(shop):
     assert not ok and "already used for request #999" in text
     req = env.db.kit_request(first["request_id"])
     assert req["status"] == "pending" and env.buyer.roles == []
-    assert "No Tip4Serv payment found yet" in req["pay_note"]           # status refreshed for staff
+    assert "No matching Tip4Serv payment found yet" in req["pay_note"]  # status refreshed for staff
+
+
+# ------------------------------------------------------------------ order IDs, setup problems, staff commands
+
+def test_order_id_found_anywhere_in_the_payment(shop):
+    env = shop
+    env.db.add_store_payment("T1:1", "88001", amount=400, currency="EUR", discord_id=None, player=None,
+                             username=None, customer=None, command="rcebot",
+                             raw=json.dumps({"id": "88001", "order": {"number": "1110065"}}))
+    r = new_kit(env, {"kit_name": "Geek kit", "items": PRICED, "proof": "T4s, order ID #1110065"})
+    assert r["payment"] == "approved_automatically"
+
+
+def test_setup_problems_are_reported_not_hidden(shop):
+    env = shop
+    env.store.last_error = "HTTP 401 – check TIP4SERV_KEY: bad signature"
+    r = new_kit(env, {"items": PRICED, "proof": "order #1110065"})
+    assert r["payment"] == "store_unavailable" and "HTTP 401" in r["payment_note"]
+    assert "by hand" in r["tell_player"]
+    env.store.last_error = None
+    env.db._db.execute("DELETE FROM store_payments")                     # nothing ever received
+    env.db._db.commit()
+    asyncio.run(env.requests.check_payment(r["request_id"]))
+    assert "hasn't received any Tip4Serv purchase" in env.db.kit_request(r["request_id"])["pay_note"]
+    env.db.add_store_payment("X:1", "X", amount=1, currency="EUR", discord_id=1, player=None, username=None,
+                             customer=None, command="rcebot", raw=None)
+    asyncio.run(env.requests.check_payment(r["request_id"]))
+    note = env.db.kit_request(r["request_id"])["pay_note"]
+    assert note.startswith("⏳ No matching Tip4Serv payment found yet (order 1110065 not received")
+
+
+def test_tip4serv_find_and_assign(shop):
+    from types import SimpleNamespace as NS
+    env = shop
+    env.db.add_store_payment("P9:1", "1110065", amount=400, currency="EUR", discord_id=None, player="SomeoneElse",
+                             username=None, customer=None, command="rcebot", raw=None)
+    r = new_kit(env, {"items": PRICED, "proof": "paid on the store"})
+    assert r["payment"] == "not_found_yet"
+    out = []
+
+    async def send_message(text, **kw):
+        out.append(text)
+
+    async def defer(**kw):
+        return None
+    staff = NS(id=2, roles=env.staff.roles, __str__=lambda: "Mod")
+    inter = NS(user=staff, response=NS(send_message=send_message, defer=defer), followup=NS(send=send_message))
+    asyncio.run(env.store.find_cmd.callback(env.store, inter, "#1110065"))
+    assert "`1110065` 400.00 EUR – SomeoneElse" in out[-1] and "unused" in out[-1]
+    asyncio.run(env.store.find_cmd.callback(env.store, inter, "424242"))
+    assert "has not received order" in out[-1]
+    asyncio.run(env.store.assign_cmd.callback(env.store, inter, "1110065", env.buyer))
+    assert env.db.kit_request(r["request_id"])["status"] == "approved"       # checked again -> paid
+    asyncio.run(env.store.status_cmd.callback(env.store, inter))
+    assert "✅ working" in out[-1] and "used by request #" in out[-1]
+    stranger = NS(id=8, roles=[], __str__=lambda: "x")
+    asyncio.run(env.store.assign_cmd.callback(env.store, NS(user=stranger, response=NS(send_message=send_message)),
+                                              "1110065", env.buyer))
+    assert "Staff only" in out[-1]
