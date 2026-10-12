@@ -8,8 +8,10 @@ Limitation: "inventory.giveto" supports neither condition nor slot (hotbar/cloth
 the items go into the player's inventory (if it is full, they may drop on the ground).
 
 Self-service: admins pick roles per kit (/customkit access). Members first link their Discord
-account to their in-game player (/customkit link) – verified by sending two requested quick chat
-phrases in-game, so nobody can claim for someone else's account. Members with one of the roles then
+account to their in-game player (/customkit link or the "Link my player" panel button): they pick their
+online player from a dropdown. Changing the link afterwards needs an admin (/customkit unlink). With
+LINK_VERIFY_QUICKCHAT on, they also have to send two requested quick chat phrases in-game to prove the
+player is theirs. Members with one of the roles then
 claim the kit with /customkit claim; it always goes to their own linked player. The cooldown
 (/customkit cooldown) is per kit and per player.
 """
@@ -64,6 +66,31 @@ class PendingLink:
     interaction: discord.Interaction
     expires: float
     step: int = 0
+
+
+class LinkPlayerSelect(discord.ui.Select):
+    """Dropdown of the online players – the member picks their own."""
+
+    def __init__(self, cog: "CustomKits", names: list[str]) -> None:
+        super().__init__(placeholder="Pick your in-game player…", min_values=1, max_values=1,
+                         options=[discord.SelectOption(label=n[:100], value=n[:100]) for n in names])
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self.cog.start_link(interaction, self.values[0], edit=True)
+
+
+class LinkPanelView(discord.ui.View):
+    """Persistent "Link my player" button (posted with /customkit link-panel)."""
+
+    def __init__(self, cog: "CustomKits") -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="Link my in-game player", emoji="🔗", style=discord.ButtonStyle.primary,
+                       custom_id="rce:link:start")
+    async def start(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.link_dropdown(interaction)
 
 
 def _category(raw: str) -> str:
@@ -147,6 +174,9 @@ class CustomKits(commands.Cog):
         self.bot = bot
         self._claim_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._pending: dict[str, PendingLink] = {}  # player (lowercase) -> open ownership check
+
+    async def cog_load(self) -> None:
+        self.bot.add_view(LinkPanelView(self))
 
     # ------------------------------------------------------------ Delivery (also used by autokits)
 
@@ -507,27 +537,68 @@ class CustomKits(commands.Cog):
         except discord.HTTPException:
             pass
 
-    @customkit.command(name="link",
-                       description="Link your Discord account to your in-game player (needed to claim kits).")
-    @app_commands.describe(player="Your in-game name (you must be online)")
-    @app_commands.autocomplete(player=_player_ac)
-    async def link(self, interaction: discord.Interaction, player: str) -> None:
+    def _linkable(self, user_id: int) -> list[str]:
+        """Online players for the dropdown: not linked to someone else, sorted by name."""
+        return sorted((n for n in self.bot.online_players
+                       if self.bot.db.player_owner(n) in (None, user_id)), key=str.lower)
+
+    async def link_dropdown(self, interaction: discord.Interaction) -> None:
+        current = self.bot.db.linked_player(interaction.user.id)
+        if current and not self.bot.config.link_verify_quickchat:
+            await interaction.response.send_message(
+                f"✅ You are linked to **{safe_md(current)}**. Wrong player? Ask an admin to unlink you "
+                "(`/customkit unlink`).", ephemeral=True)
+            return
+        names = self._linkable(interaction.user.id)
+        if not names:
+            await interaction.response.send_message(
+                "🎮 Nobody who can be linked is online right now. Join the game first, then try again.",
+                ephemeral=True)
+            return
+        view = discord.ui.View(timeout=300)
+        view.add_item(LinkPlayerSelect(self, names[:25]))
+        more = (f"\nOnly the first 25 of {len(names)} online players are listed – not there? Use "
+                "`/customkit link player:<your name>`." if len(names) > 25 else "")
+        await interaction.response.send_message(
+            "🔗 Pick **your** in-game player (you must be online). Choose carefully – changing it later needs "
+            f"an admin.{more}", view=view, ephemeral=True)
+
+    async def start_link(self, interaction: discord.Interaction, player: str, *, edit: bool = False) -> None:
+        """Links the member to an online player (or starts the quick chat check if LINK_VERIFY_QUICKCHAT)."""
+        async def reply(text: str) -> None:
+            if edit:
+                await interaction.response.edit_message(content=text, view=None)
+            else:
+                await interaction.response.send_message(text, ephemeral=True)
+
         name = sanitize_player_name(player)
         online = next((n for n in self.bot.online_players if n.lower() == name.lower()), None)
         if online is None:
-            await interaction.response.send_message(
-                f"🎮 **{safe_md(name)}** is not online right now. Join the game first – you have to confirm "
-                "in-game that this is your account.", ephemeral=True)
+            await reply(f"🎮 **{safe_md(name)}** is not online right now. Join the game first, then link.")
             return
         owner = self.bot.db.player_owner(online)
         if owner == interaction.user.id:
-            await interaction.response.send_message(f"✅ You are already linked to **{safe_md(online)}**.",
-                                                    ephemeral=True)
+            await reply(f"✅ You are already linked to **{safe_md(online)}**.")
             return
         if owner is not None:
-            await interaction.response.send_message(
-                f"⛔ **{safe_md(online)}** is already linked to another Discord account. If that's wrong, "
-                "ask an admin (`/customkit unlink`).", ephemeral=True)
+            await reply(f"⛔ **{safe_md(online)}** is already linked to another Discord account. If that's wrong, "
+                        "ask an admin (`/customkit unlink`).")
+            return
+        verify = self.bot.config.link_verify_quickchat
+        current = self.bot.db.linked_player(interaction.user.id)
+        if current and not verify:   # no hopping between players (the kit cooldown counts per player)
+            await reply(f"⛔ You are already linked to **{safe_md(current)}**. Ask an admin to unlink you first "
+                        "(`/customkit unlink`).")
+            return
+        if not verify:
+            if not self.bot.db.link_player(interaction.user.id, online):
+                await reply(f"⛔ **{safe_md(online)}** was linked to another Discord account in the meantime.")
+                return
+            feed = self.bot.feed(self.bot.config.admin_log_channel_id)
+            if feed:
+                feed.add_line(f"🔗 <@{interaction.user.id}> linked to in-game player **{safe_md(online)}**")
+            await reply(f"✅ Your Discord account is now linked to **{safe_md(online)}**. "
+                        "You can claim kits with `/customkit claim`.")
             return
         phrases = self._verification_phrases()
         for key, other in list(self._pending.items()):  # one open verification per Discord account
@@ -537,10 +608,32 @@ class CustomKits(commands.Cog):
                                                     time.monotonic() + VERIFY_SECONDS)
         steps = "\n".join(f"{i}. **{quickchat.translate(raw)}**  _(quick chat → {_category(raw)})_"
                           for i, raw in enumerate(phrases, 1))
-        await interaction.response.send_message(
-            f"🔗 To prove that **{safe_md(online)}** is your account, send these **quick chat** messages "
-            f"in-game, in this order, within {VERIFY_SECONDS // 60} minutes:\n{steps}\n"
-            "This message updates as soon as it worked.", ephemeral=True)
+        await reply(f"🔗 To prove that **{safe_md(online)}** is your account, send these **quick chat** messages "
+                    f"in-game, in this order, within {VERIFY_SECONDS // 60} minutes:\n{steps}\n"
+                    "This message updates as soon as it worked.")
+
+    @customkit.command(name="link",
+                       description="Link your Discord account to your in-game player (needed to claim kits).")
+    @app_commands.describe(player="Optional: your in-game name – leave empty to pick from a list of online players")
+    @app_commands.autocomplete(player=_player_ac)
+    async def link(self, interaction: discord.Interaction, player: str | None = None) -> None:
+        if player:
+            await self.start_link(interaction, player)
+        else:
+            await self.link_dropdown(interaction)
+
+    @customkit.command(name="link-panel", description="Posts a 'Link my in-game player' button in this channel.")
+    @admin_only()
+    async def link_panel(self, interaction: discord.Interaction) -> None:
+        embed = discord.Embed(title="🔗 Link your in-game player", colour=discord.Colour.blurple(),
+                              description="Join the server, press the button and pick your in-game name from the "
+                                          "list. Linked players can claim their kits with `/customkit claim`.")
+        try:
+            await interaction.channel.send(embed=embed, view=LinkPanelView(self))
+        except discord.HTTPException as exc:
+            await interaction.response.send_message(f"⚠️ Could not post here: {exc}", ephemeral=True)
+            return
+        await interaction.response.send_message("✅ Link panel posted.", ephemeral=True)
 
     @customkit.command(name="unlink", description="Removes the link between a member and their in-game player.")
     @app_commands.describe(member="Discord member")
@@ -592,7 +685,7 @@ class CustomKits(commands.Cog):
 
     async def claim_for(self, member: discord.abc.User, kit: str, *, via: str) -> ClaimOutcome:
         """Claims a custom kit for this member – same rules for everyone (role, linked player, online, cooldown).
-        The kit only ever goes to the player linked (and verified) for this Discord account."""
+        The kit only ever goes to the player linked to this Discord account."""
         row = self._resolve(kit)
         if row is None or not self.can_claim(member, row):
             claimable = [r["name"] for r in self.bot.db.custom_kits() if self.can_claim(member, r)]

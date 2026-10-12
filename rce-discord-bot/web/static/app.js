@@ -1012,11 +1012,11 @@ function claimSettings(kit, opts, reload) {
       } })));
 }
 
-// Discord accounts linked (verified) to in-game players – needed for /customkit claim
+// Discord accounts linked to in-game players – needed for /customkit claim
 function linkedPlayersCard(data, reload) {
   const rows = data.linked || [];
   return h("div", { class: "card" }, h("h2", { text: `🔗 Linked players (${rows.length})` }),
-    h("p", { class: "muted", text: "Members link themselves with /customkit link (verified in-game by sending two quick chat phrases). Custom kit claims only go to the linked player." }),
+    h("p", { class: "muted", text: "Members link themselves with /customkit link (dropdown of online players; optional quick chat check in Settings → Kits). Custom kit claims only go to the linked player." }),
     rows.length ? h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, ["In-game player", "Discord", "Linked", ""].map((t) => h("th", { text: t })))),
       h("tbody", {}, rows.map((r) => h("tr", {},

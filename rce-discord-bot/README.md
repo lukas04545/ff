@@ -568,7 +568,7 @@ Examples:
 
 **Role-locked autokits (e.g. a VIP spawn kit):** an autokit can require a Discord role. The game only
 knows the in-game name, so each player links it to their Discord account once with
-`/customkit link` (verified in-game via two quick chat phrases). On respawn the bot gives the kit
+`/customkit link` (pick their online player from a dropdown). On respawn the bot gives the kit
 only if the linked Discord account has the role. Unlinked players and members without the role
 don't get it (for quick chat kits they get a short in-game hint). Role changes on Discord apply
 within 2 minutes. Works without the Server Members Intent. Also in the web interface: Kits →
@@ -639,9 +639,15 @@ Each member links their in-game player once; after that `/customkit claim` alway
 /customkit reset-cooldown kit:Eventkit player:Name      ← admins: claim again right away (empty = everyone)
 /customkit unlink member:@Name                          ← admins: remove a link (e.g. gamertag changed)
 ```
-- **Linking is verified in-game:** `/customkit link` shows two quick chat phrases. The player sends
-  them in-game in that order within 5 minutes; the server log proves the account belongs to them,
-  then the bot links it. Each in-game player can be linked to only one Discord account.
+- **Linking with a dropdown:** `/customkit link` (or the **🔗 Link my in-game player** button that
+  `/customkit link-panel` posts in a channel) shows a dropdown of the online players; the member picks
+  theirs and is linked right away. They can also type it: `/customkit link player:Name`. Each in-game player
+  can be linked to only one Discord account, and changing the link needs an admin (`/customkit unlink`) –
+  otherwise members could hop between friends' players to claim kits again (the cooldown counts per player).
+  ⚠️ Nothing proves the player is really theirs. To make players prove it, turn on **Linking: also verify
+  with quick chat in-game** (`LINK_VERIFY_QUICKCHAT`, Settings → Kits): after picking, they send two requested
+  quick chat phrases in-game within 5 minutes. Linked players of the abuse-protection *allowed roles* may spawn
+  rockets/C4 – keep the *allowed in-game names* list for that if you leave the check off.
 - The **cooldown counts per player** (per kit). Linking the same player to another Discord account
   doesn't reset it. A changed cooldown applies immediately, also to earlier claims.
 - New kits start with **no claim roles** (admins only) and a **24 h** cooldown.
