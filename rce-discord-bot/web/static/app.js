@@ -62,18 +62,20 @@ function showLogin() {
   stopTimers();
   $("#app").classList.add("hidden");
   $("#login").classList.remove("hidden");
-  $("#login-password").focus();
+  ($("#login-username").value ? $("#login-password") : $("#login-username")).focus();
 }
 
 $("#login-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   $("#login-error").textContent = "";
   try {
-    await api("/api/login", { method: "POST", body: { password: $("#login-password").value } });
+    await api("/api/login", { method: "POST", body: { username: $("#login-username").value.trim(), password: $("#login-password").value } });
     $("#login-password").value = "";
     start();
   } catch (e) { $("#login-error").textContent = e.message; }
 });
+
+$("#account").addEventListener("click", () => { location.hash = "#account"; });
 
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" }).catch(() => {});
@@ -96,6 +98,10 @@ function route() {
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   const main = $("#main");
   main.replaceChildren();
+  if (!isOwner() && ["settings", "users"].includes(view)) {
+    main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
+    return;
+  }
   (views[view] || views.overview)(main);
 }
 window.addEventListener("hashchange", route);
@@ -118,12 +124,16 @@ async function refreshConnection() {
 }
 
 let setupMode = false;
+let me = { user: "", role: "admin" };
+const isOwner = () => me.role === "owner";
 
 async function start() {
-  let me;
   try { me = await api("/api/me"); } catch { return; }
   setupMode = !!me.setup_mode;
-  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("hidden", setupMode && a.dataset.view !== "settings"));
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("hidden",
+    (setupMode && a.dataset.view !== "settings") || (a.hasAttribute("data-owner") && !isOwner())));
+  $("#whoami").textContent = `👤 ${me.user} (${me.role})`;
+  $("#account").classList.toggle("hidden", me.user === "owner");
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   if (setupMode && location.hash !== "#settings") location.hash = "#settings";
@@ -148,6 +158,91 @@ async function waitForBot(target) {
   }
   toast("The bot is not responding – please check the bot window.", true);
 }
+
+// ------------------------------------------------------------------ Users (owners only) & own account
+
+views.users = async (main) => {
+  main.append(h("h1", { text: "Users" }),
+    h("p", { class: "muted", text: "Accounts for other admins. Admin = everything except Settings, bot restart and this page. Owner = everything. Every action in the web interface is logged with the username in the admin log channel." }));
+  const list = h("div");
+  const name = h("input", { placeholder: "Username", maxlength: 32, autocomplete: "off" });
+  const pw = h("input", { type: "password", placeholder: "Password (min. 8 characters)", autocomplete: "new-password" });
+  const role = h("select", {}, h("option", { value: "admin", text: "Admin" }), h("option", { value: "owner", text: "Owner" }));
+  const genBtn = h("button", { type: "button", text: "🎲 Generate", onclick: () => {
+    const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    pw.value = Array.from(crypto.getRandomValues(new Uint32Array(14)), (n) => chars[n % chars.length]).join("");
+    pw.type = "text";
+  } });
+  main.append(h("div", { class: "card" }, h("h2", { text: "➕ New account" }),
+    h("form", { class: "row", onsubmit: async (e) => {
+      e.preventDefault();
+      const r = await act(() => api("/api/users", { method: "POST", body: { username: name.value.trim(), password: pw.value, role: role.value } }), "Account created").catch(() => null);
+      if (!r) return;
+      alert(`Account created – send this to the admin:\n\nAddress: ${location.origin}\nUsername: ${name.value.trim()}\nPassword: ${pw.value}\n\nThey can change the password after logging in (🔑 My password).`);
+      name.value = ""; pw.value = ""; pw.type = "password";
+      load();
+    } }, name, pw, genBtn, role, h("button", { class: "primary", text: "Create" }))),
+  list);
+
+  const fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "–";
+  async function load() {
+    let data;
+    try { data = await api("/api/users"); } catch (e) { toast(e.message, true); return; }
+    const rows = data.users.map((u) => {
+      const roleSel = h("select", {}, h("option", { value: "admin", text: "Admin" }), h("option", { value: "owner", text: "Owner" }));
+      roleSel.value = u.role;
+      roleSel.addEventListener("change", async () => { await act(() => api(`/api/users/${encodeURIComponent(u.username)}`, { method: "PUT", body: { role: roleSel.value } }), "Role changed").catch(() => {}); load(); });
+      return h("tr", {},
+        h("td", {}, h("strong", { text: u.username }), u.disabled ? h("span", { class: "pill warn", style: "margin-left:.4rem", text: "disabled" }) : null),
+        h("td", {}, roleSel),
+        h("td", { class: "muted", text: fmt(u.last_login) }),
+        h("td", { class: "muted", text: `${fmt(u.created_at)} by ${u.created_by || "?"}` }),
+        h("td", {}, h("div", { class: "row" },
+          h("button", { class: "small", text: "Reset password", onclick: async () => {
+            const npw = prompt(`New password for ${u.username} (min. 8 characters):`);
+            if (!npw) return;
+            await act(() => api(`/api/users/${encodeURIComponent(u.username)}`, { method: "PUT", body: { password: npw } }), "Password changed – their old sessions are logged out").catch(() => {});
+          } }),
+          h("button", { class: "small", text: u.disabled ? "Enable" : "Disable", onclick: async () => {
+            await act(() => api(`/api/users/${encodeURIComponent(u.username)}`, { method: "PUT", body: { disabled: !u.disabled } }), u.disabled ? "Enabled" : "Disabled – logged out").catch(() => {});
+            load();
+          } }),
+          h("button", { class: "small danger", text: "Delete", onclick: async () => {
+            if (!confirm(`Delete the account ${u.username}?`)) return;
+            await act(() => api(`/api/users/${encodeURIComponent(u.username)}`, { method: "DELETE" }), "Deleted").catch(() => {});
+            load();
+          } }))));
+    });
+    list.replaceChildren(h("div", { class: "card" }, h("h2", { text: `👥 Accounts (${data.users.length})` }),
+      h("p", { class: "muted" }, "Built-in: ", h("code", { text: "owner" }), " – password is WEB_PASSWORD (Settings → Web interface)",
+        data.owner_password_set ? "." : " – ⚠️ not set yet, set one so you can log in from other devices."),
+      rows.length ? h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Username", "Role", "Last login", "Created", ""].map((t) => h("th", { text: t })))),
+        h("tbody", {}, rows))) : h("p", { class: "muted", text: "No other accounts yet." })),
+      h("div", { class: "card" }, h("h2", { text: "🌍 How other admins reach the web interface" }),
+        h("ul", {},
+          h("li", {}, h("strong", { text: "Same home network: " }), "Settings → Web interface → Reachable from: “Also home network (0.0.0.0)”, restart the bot, then they open ", h("code", { text: "http://<your PC's IP>:" + (location.port || 80) }), "."),
+          h("li", {}, h("strong", { text: "From anywhere (recommended): " }), "a secure tunnel such as Tailscale or Cloudflare Tunnel (HTTPS, nothing to open on your router). Details in the README."),
+          h("li", {}, h("strong", { text: "Don't " }), "forward the port on your router: the web interface uses plain HTTP, passwords would travel unencrypted."))));
+  }
+  load();
+};
+
+views.account = async (main) => {
+  main.append(h("h1", { text: "My password" }));
+  if (me.user === "owner") { main.append(h("p", { class: "muted", text: "The owner password is WEB_PASSWORD – change it under Settings → Web interface." })); return; }
+  const cur = h("input", { type: "password", placeholder: "Current password", autocomplete: "current-password" });
+  const npw = h("input", { type: "password", placeholder: "New password (min. 8 characters)", autocomplete: "new-password" });
+  const npw2 = h("input", { type: "password", placeholder: "Repeat new password", autocomplete: "new-password" });
+  main.append(h("div", { class: "card", style: "max-width:460px" },
+    h("p", { class: "muted", text: `Logged in as ${me.user} (${me.role}). Changing the password logs out your other sessions.` }),
+    h("form", { style: "display:grid;gap:.6rem", onsubmit: async (e) => {
+      e.preventDefault();
+      if (npw.value !== npw2.value) { toast("The new passwords don't match", true); return; }
+      const r = await act(() => api("/api/account/password", { method: "POST", body: { current: cur.value, new: npw.value } }), "Password changed").catch(() => null);
+      if (r) { cur.value = npw.value = npw2.value = ""; }
+    } }, cur, npw, npw2, h("button", { class: "primary", text: "Change password" }))));
+};
 
 // ------------------------------------------------------------------ Overview
 

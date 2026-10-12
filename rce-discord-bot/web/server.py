@@ -12,6 +12,8 @@ Security:
 """
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import hashlib
 import hmac
 import logging
@@ -34,6 +36,7 @@ from envfile import read_env, update_env
 from rce.diagnostics import diagnose_rcon
 
 from logbuffer import memory_log
+from web.users import OWNER, UserError, UserStore
 from permcheck import check_permissions
 from rce import items as itemlist
 from rce import kits as kitparse
@@ -53,6 +56,9 @@ SESSION_COOKIE = "rce_session"
 SESSION_TTL = 12 * 3600
 LOGIN_ATTEMPTS_PER_MINUTE = 5
 CSRF_HEADER = "X-Requested-With"
+# Only for role "owner": settings (tokens/passwords), bot restart, user management
+OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users")
+_current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
 
@@ -190,7 +196,8 @@ class WebInterface:
     def __init__(self, bot: "RceBot | None", *, web_settings: WebSettings | None = None,
                  setup_error: str | None = None, setup_fix_url: str | None = None,
                  on_config_saved: Callable[[], None] | None = None,
-                 env_path: Path = ENV_PATH, secret_path: Path = Path("data") / "web_secret.key") -> None:
+                 env_path: Path = ENV_PATH, secret_path: Path = Path("data") / "web_secret.key",
+                 users_path: Path | None = None) -> None:
         self.bot = bot
         self.setup_mode = bot is None
         self.setup_error = setup_error
@@ -207,6 +214,7 @@ class WebInterface:
             self.password = secrets.token_urlsafe(9)
         self.login_token = secrets.token_urlsafe(24)
         self._secret = self._load_secret(secret_path)
+        self.users = UserStore(users_path or secret_path.parent / "web_users.json")
         self._revoked: set[str] = set()
         self._login_attempts: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
         self._runner: web.AppRunner | None = None
@@ -245,6 +253,11 @@ class WebInterface:
         r.add_post("/api/settings/test-rcon", self.settings_test_rcon)
         r.add_post("/api/settings/test-discord", self.settings_test_discord)
         r.add_get("/api/settings/discord-options", self.settings_discord_options)
+        r.add_get("/api/users", self.list_users)
+        r.add_post("/api/users", self.create_user)
+        r.add_put("/api/users/{username}", self.update_user)
+        r.add_delete("/api/users/{username}", self.delete_user)
+        r.add_post("/api/account/password", self.change_own_password)
         if self.setup_mode:
             r.add_post("/api/setup/continue", self.setup_continue)
             return app
@@ -352,29 +365,52 @@ class WebInterface:
             raise ApiError("Invalid request.", 403)
         if path == "/api/login":
             return await handler(request)
-        if not self._valid_session(request):
+        session = self._session_user(request)
+        if session is None:
             raise ApiError("Not logged in.", 401)
+        request["user"], request["role"] = session
+        if request["role"] != "owner" and path.startswith(OWNER_ONLY_PREFIXES):
+            raise ApiError("Only owners can do this (ask the server owner).", 403)
+        _current_user.set(session[0])
         return await handler(request)
 
-    def _sign(self, expires: int) -> str:
-        # The configured password is part of the signature: changing it logs everyone out.
-        msg = f"{expires}:{self.ws.password}".encode()
-        return f"{expires}.{hmac.new(self._secret, msg, hashlib.sha256).hexdigest()}"
+    def _session_key(self, username: str) -> str | None:
+        """Secret part of the signature: the owner's WEB_PASSWORD or the user's password hash.
+        Changing the password (or deleting/disabling the account) ends all their sessions."""
+        if username == OWNER:
+            return self.ws.password
+        return self.users.session_key(username)
 
-    def _new_session(self) -> str:
-        return self._sign(int(time.time()) + SESSION_TTL)
+    def _sign(self, username: str, expires: int, nonce: str) -> str | None:
+        key = self._session_key(username)
+        if key is None:
+            return None
+        msg = f"{username}:{expires}:{nonce}:{key}".encode()
+        sig = hmac.new(self._secret, msg, hashlib.sha256).hexdigest()
+        return f"{username.encode().hex()}.{expires}.{nonce}.{sig}"
 
-    def _valid_session(self, request: web.Request) -> bool:
+    def _session_user(self, request: web.Request) -> tuple[str, str] | None:
+        """(username, role) of a valid session cookie, else None."""
         token = request.cookies.get(SESSION_COOKIE, "")
-        if not token or token in self._revoked or "." not in token:
-            return False
-        expires_raw = token.split(".", 1)[0]
-        if not expires_raw.isdigit() or int(expires_raw) < time.time():
-            return False
-        return hmac.compare_digest(token, self._sign(int(expires_raw)))
+        parts = token.split(".")
+        if token in self._revoked or len(parts) != 4 or not parts[1].isdigit() or int(parts[1]) < time.time():
+            return None
+        try:
+            username = bytes.fromhex(parts[0]).decode()
+        except ValueError:
+            return None
+        expected = self._sign(username, int(parts[1]), parts[2])
+        if expected is None or not hmac.compare_digest(token, expected):
+            return None
+        if username == OWNER:
+            return OWNER, "owner"
+        return username, self.users.get(username)["role"]
 
-    def _set_session_cookie(self, resp: web.StreamResponse) -> None:
-        resp.set_cookie(SESSION_COOKIE, self._new_session(), max_age=SESSION_TTL, httponly=True, samesite="Strict")
+    def _set_session_cookie(self, resp: web.StreamResponse, username: str = OWNER) -> None:
+        # Random nonce: every login gets its own token (logout revokes exactly that one)
+        token = self._sign(username, int(time.time()) + SESSION_TTL, secrets.token_hex(8))
+        if token:
+            resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL, httponly=True, samesite="Strict")
 
     # ------------------------------------------------------------ Helpers
 
@@ -403,9 +439,10 @@ class WebInterface:
         return max(lo, min(hi, value))
 
     def _audit(self, text: str) -> None:
+        user = _current_user.get()
         if self.bot is not None:
-            self.bot.audit(f"🌐 Web interface: {text}")
-        log.info("Web action: %s", text)
+            self.bot.audit(f"🌐 Web interface ({user}): {text}")
+        log.info("Web action by %s: %s", user, text)
 
     def _cog(self, name: str):
         cog = self.bot.get_cog(name)
@@ -418,9 +455,8 @@ class WebInterface:
     async def _index(self, request: web.Request) -> web.FileResponse:
         return web.FileResponse(STATIC_DIR / "index.html")
 
-    async def login(self, request: web.Request) -> web.Response:
-        ip = request.remote or "?"
-        attempts = self._login_attempts[ip]
+    def _rate_limit(self, key: str) -> None:
+        attempts = self._login_attempts[key]
         now = time.time()
         while attempts and now - attempts[0] > 60:
             attempts.popleft()
@@ -428,14 +464,31 @@ class WebInterface:
             raise ApiError("Too many attempts – please wait a minute.", 429)
         attempts.append(now)
 
+    async def login(self, request: web.Request) -> web.Response:
+        ip = request.remote or "?"
         data = await self._json(request)
-        if not hmac.compare_digest(str(data.get("password", "")).encode(), self.password.encode()):
-            log.warning("Failed web login from %s", ip)
-            raise ApiError("Wrong password.", 401)
-        attempts.clear()
+        username = str(data.get("username") or OWNER).strip()[:32] or OWNER
+        password = str(data.get("password", ""))[:256]
+        self._rate_limit(ip)
+        self._rate_limit("user:" + username.lower())  # also limits guessing one account from many IPs
+
+        if username.lower() == OWNER:
+            username = OWNER
+            ok = hmac.compare_digest(password.encode(), self.password.encode())
+        else:
+            user = await asyncio.to_thread(self.users.authenticate, username, password)
+            ok = user is not None
+            username = user["username"] if user else username
+        if not ok:
+            log.warning("Failed web login for '%s' from %s", username, ip)
+            raise ApiError("Wrong username or password.", 401)
+        self._login_attempts[ip].clear()
+        self._login_attempts["user:" + username.lower()].clear()
         resp = web.json_response({"ok": True})
-        self._set_session_cookie(resp)
-        log.info("Web login from %s", ip)
+        self._set_session_cookie(resp, username)
+        log.info("Web login: %s from %s", username, ip)
+        if self.bot is not None and username != OWNER:
+            self.bot.audit(f"🌐 Web interface: **{username}** logged in")
         return resp
 
     async def auth_link(self, request: web.Request) -> web.Response:
@@ -453,7 +506,63 @@ class WebInterface:
         return resp
 
     async def me(self, request: web.Request) -> web.Response:
-        return web.json_response({"ok": True, "setup_mode": self.setup_mode})
+        return web.json_response({"ok": True, "setup_mode": self.setup_mode,
+                                  "user": request["user"], "role": request["role"]})
+
+    # ------------------------------------------------------------ Accounts (other admins)
+
+    async def list_users(self, request: web.Request) -> web.Response:
+        return web.json_response({"users": self.users.list(), "owner_password_set": bool(self.ws.password)})
+
+    async def create_user(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        try:
+            user = await asyncio.to_thread(
+                self.users.create, self._text(data, "username", limit=32), str(data.get("password") or ""),
+                str(data.get("role") or "admin"), request["user"])
+        except UserError as exc:
+            raise ApiError(str(exc)) from None
+        self._audit(f"Account **{user['username']}** created (role {user['role']})")
+        return web.json_response({"ok": True})
+
+    async def update_user(self, request: web.Request) -> web.Response:
+        username = request.match_info["username"]
+        data = await self._json(request)
+        password = data.get("password")
+        try:
+            user = await asyncio.to_thread(
+                self.users.update, username, role=data.get("role"), disabled=data.get("disabled"),
+                password=str(password) if password else None)
+        except UserError as exc:
+            raise ApiError(str(exc), 404 if "not found" in str(exc) else 400) from None
+        changes = [k for k in ("role", "disabled", "password") if data.get(k) is not None]
+        self._audit(f"Account **{user['username']}** changed ({', '.join(changes) or 'nothing'})")
+        return web.json_response({"ok": True})
+
+    async def delete_user(self, request: web.Request) -> web.Response:
+        username = request.match_info["username"]
+        if username.lower() == request["user"].lower():
+            raise ApiError("You can't delete your own account.")
+        if not self.users.delete(username):
+            raise ApiError("User not found.", 404)
+        self._audit(f"Account **{username}** deleted")
+        return web.json_response({"ok": True})
+
+    async def change_own_password(self, request: web.Request) -> web.Response:
+        if request["user"] == OWNER:
+            raise ApiError("The owner password is WEB_PASSWORD – change it under Settings → Web interface.")
+        data = await self._json(request)
+        if await asyncio.to_thread(self.users.authenticate, request["user"],
+                                   str(data.get("current") or "")) is None:
+            raise ApiError("The current password is wrong.", 403)
+        try:
+            await asyncio.to_thread(self.users.update, request["user"], password=str(data.get("new") or ""))
+        except UserError as exc:
+            raise ApiError(str(exc)) from None
+        resp = web.json_response({"ok": True})
+        self._set_session_cookie(resp, request["user"])  # old sessions end, this one continues
+        self._audit("changed their own password")
+        return resp
 
     # ------------------------------------------------------------ Settings
 
@@ -541,7 +650,7 @@ class WebInterface:
                 resp = web.json_response({"ok": True, "saved": sorted(updates), "rcon_test": rcon_test,
                                           "restart_required": self.restart_required, **(preflight or {})})
         if "WEB_PASSWORD" in updates:
-            self._set_session_cookie(resp)
+            self._set_session_cookie(resp, request["user"])
         return resp
 
     def _saved(self, key: str) -> str:

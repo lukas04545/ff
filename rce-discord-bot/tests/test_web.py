@@ -167,3 +167,70 @@ def test_kit_builder(bot):
                     {"kit": "X", "items": [{"item": "wood"}] * 38}):
             assert (await c.post("/api/kit-builder/ingame", json=bad, headers=H)).status == 400, bad
     run(bot, scenario)
+
+
+def test_admin_accounts(bot):
+    async def scenario(c):
+        async def login(username, password):
+            return await c.post("/api/login", json={"username": username, "password": password}, headers=H)
+
+        # Owner (WEB_PASSWORD) – username defaults to "owner"
+        assert (await c.post("/api/login", json={"password": "secret123"}, headers=H)).status == 200
+        me = await (await c.get("/api/me")).json()
+        assert me["user"] == "owner" and me["role"] == "owner"
+
+        r = await c.post("/api/users", json={"username": "Mod_Anna", "password": "anna-pass-1", "role": "admin"},
+                         headers=H)
+        assert r.status == 200
+        for bad in ({"username": "owner", "password": "longenough1"}, {"username": "mod_anna", "password": "x" * 9},
+                    {"username": "ab", "password": "longenough1"}, {"username": "Bob", "password": "short"},
+                    {"username": "Bob", "password": "longenough1", "role": "god"}):
+            assert (await c.post("/api/users", json=bad, headers=H)).status == 400, bad
+        users = (await (await c.get("/api/users")).json())["users"]
+        assert [(u["username"], u["role"], u["created_by"]) for u in users] == [("Mod_Anna", "admin", "owner")]
+        stored = (bot.config.database_path.parent / "web_users.json").read_text()
+        assert "anna-pass-1" not in stored and "scrypt$" in stored  # only hashes on disk
+
+        # Admin: everything except settings / users / restart
+        await c.post("/api/logout", headers=H)
+        assert (await login("mod_anna", "wrong-password")).status == 401
+        assert (await login("mod_anna", "anna-pass-1")).status == 200   # username is case-insensitive
+        me = await (await c.get("/api/me")).json()
+        assert me["user"] == "Mod_Anna" and me["role"] == "admin"
+        assert (await c.get("/api/kits")).status == 200
+        for method, path in (("GET", "/api/settings"), ("GET", "/api/users"), ("POST", "/api/restart"),
+                             ("PUT", "/api/settings"), ("DELETE", "/api/users/Mod_Anna")):
+            assert (await c.request(method, path, json={}, headers=H)).status == 403, path
+
+        # Own password change: wrong current password refused, then works and keeps this session
+        r = await c.post("/api/account/password", json={"current": "nope", "new": "anna-pass-2"}, headers=H)
+        assert r.status == 403
+        r = await c.post("/api/account/password", json={"current": "anna-pass-1", "new": "anna-pass-2"}, headers=H)
+        assert r.status == 200 and (await c.get("/api/me")).status == 200
+        old_cookie = c.session.cookie_jar.filter_cookies(c.make_url("/"))["rce_session"].value
+
+        # Owner disables the account -> the admin's session ends immediately
+        await c.post("/api/logout", headers=H)
+        await login("owner", "secret123")
+        assert (await c.put("/api/users/Mod_Anna", json={"disabled": True}, headers=H)).status == 200
+        c.session.cookie_jar.update_cookies({"rce_session": old_cookie}, response_url=c.make_url("/"))
+        assert (await c.get("/api/me")).status == 401
+        assert (await login("Mod_Anna", "anna-pass-2")).status == 401
+
+        # Re-enable + promote to owner; deletion
+        await login("owner", "secret123")
+        assert (await c.put("/api/users/Mod_Anna", json={"disabled": False, "role": "owner"}, headers=H)).status == 200
+        assert (await c.put("/api/users/ghost", json={"role": "admin"}, headers=H)).status == 404
+        await c.post("/api/logout", headers=H)
+        await login("Mod_Anna", "anna-pass-2")
+        assert (await c.get("/api/users")).status == 200                      # owners may manage users
+        assert (await c.delete("/api/users/Mod_Anna", headers=H)).status == 400  # not yourself
+        await login("owner", "secret123")
+        assert (await c.delete("/api/users/Mod_Anna", headers=H)).status == 200
+        assert (await login("Mod_Anna", "anna-pass-2")).status == 401
+
+        # Brute force protection per account
+        for _ in range(5):
+            await login("someone", "guess")
+        assert (await login("someone", "guess")).status == 429
+    run(bot, scenario)
