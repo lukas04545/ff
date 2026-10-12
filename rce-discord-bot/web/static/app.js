@@ -1608,6 +1608,7 @@ views.settings = async (main) => {
     if (g.id === "rcon") card.append(rconTester(inputs));
     if (g.id === "updates" && !data.setup_mode) card.firstChild.after(updateStatus());
     if (g.id === "alerts" && !data.setup_mode) card.firstChild.after(backupBox());
+    if (g.id === "abuse" && !data.setup_mode) card.firstChild.after(abuseBox());
     if (g.id === "templates") { card.classList.add("hidden"); advancedCards.push(card); }
     main.append(card);
   }
@@ -1676,6 +1677,31 @@ views.settings = async (main) => {
   }
   main.append(bar);
 };
+
+// Admin abuse protection: active?, who is allowed, last raid item spawns the bot saw
+function abuseBox() {
+  const box = h("div", { class: "update-box" }, h("span", { class: "muted", text: "Loading …" }));
+  const render = (s) => {
+    const state = !s.enabled ? h("span", { class: "pill warn", text: "switched off" })
+      : s.active ? h("span", { class: "pill ok", text: "active" })
+      : h("span", { class: "pill warn", text: "waiting for setup – tick allowed roles or enter allowed names below, then Save" });
+    const allowed = [
+      ...s.roles.map((r) => r.members === null ? `${r.name} (checked when someone spawns)`
+        : `${r.name} (${r.members} member(s)${r.linked_players.length ? ": " + r.linked_players.join(", ") : ", none linked yet"})`),
+      ...s.players];
+    box.replaceChildren(
+      h("div", { class: "row" }, h("strong", { text: "Status:" }), state),
+      h("div", { class: "muted", style: "font-size:.85rem", text: "Allowed: " + (allowed.join(" · ") || "nobody yet") }),
+      h("div", { style: "font-size:.85rem;margin-top:.3rem" }, h("strong", { text: "Last rockets/C4 spawns the bot received:" })),
+      ...(s.recent.length ? s.recent.slice(0, 8).map((e) => h("div", { class: "muted", style: "font-size:.82rem" },
+        `${new Date(e.ts * 1000).toLocaleTimeString()} · `, h("strong", { text: e.player }), ` ${e.what} → ${e.result}`))
+        : [h("div", { class: "muted", style: "font-size:.82rem", text: "None since the bot started. If you spawned some and nothing shows here, the server's \"[ServerVar] giving …\" lines don't reach the bot – check 🖥️ Console." })]),
+      h("div", { class: "row", style: "margin-top:.4rem" }, h("button", { class: "small", text: "↻ Refresh", onclick: load })));
+  };
+  const load = () => api("/api/abuse").then(render).catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
+  load();
+  return box;
+}
 
 // Backups: list, download, "Backup now" (settings page, group "Alerts & backups")
 function backupBox() {

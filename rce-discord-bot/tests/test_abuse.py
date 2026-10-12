@@ -66,6 +66,9 @@ def test_rogue_admin_is_punished_once(guard):
     assert len(guard.sent) == 3
     spawn(guard, "[ServerVar] giving Someone 1 x Timed Explosive Charge")          # C4
     assert guard.sent[-1] == 'global.killplayer "Someone"'
+    status = guard.cog.status()                                       # web interface status box
+    assert status["active"] and status["players"] == ["ownergt"]
+    assert status["recent"][0]["player"] == "Someone" and status["recent"][1]["result"].startswith("PUNISHED")
 
 
 def test_allowed_and_harmless(guard):
