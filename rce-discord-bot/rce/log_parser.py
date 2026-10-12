@@ -44,6 +44,9 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "kit_give": re.compile(r"\[ServerVar\] (?P<admin>.+?) giving (?P<player>.+?) kit (?P<kit>\S+)"),
     # giving Player 1000 x Wood
     "item_spawn": re.compile(r"\bgiving (?P<player>.+?) (?P<amount>[\d.]+) x (?P<item>.+)$"),
+    # In-game admin panel: "[ServerVar] giving Player 3 x Rocket" (RCON/console gives look different, e.g.
+    # "[ServerVar] SERVER giving …" or without "[ServerVar]")
+    "item_spawn_panel": re.compile(r"\[ServerVar\] giving (?P<player>.+?) (?P<amount>[\d.]+) x (?P<item>.+)$"),
     # Executing console system command 'kick "x"'
     "command": re.compile(r"Executing console system command '(?P<command>[^']+)'"),
     "save": re.compile(r"^\[ SAVE \] Saved (?P<entities>\d+) ents"),
@@ -125,6 +128,7 @@ class AdminActionEvent:
     player: str | None = None    # item: who received it
     item: str | None = None
     amount: float | None = None
+    admin_panel: bool = False    # item spawned with the in-game admin panel
 
 
 @dataclass(slots=True)
@@ -185,8 +189,11 @@ def parse_line(line: str) -> Event | None:
     if m := PATTERNS["kit_give"].search(line):
         return AdminActionEvent("kit", f"{m['admin']} gives {m['player']} kit `{m['kit']}`")
     if m := PATTERNS["item_spawn"].search(line):
+        panel = PATTERNS["item_spawn_panel"].search(line)
+        m = panel or m
         return AdminActionEvent("item", f"{m['player']} receives {m['amount']} × {m['item']}",
-                                player=m["player"].strip(), item=m["item"].strip(), amount=float(m["amount"]))
+                                player=m["player"].strip(), item=m["item"].strip(), amount=float(m["amount"]),
+                                admin_panel=panel is not None)
     if m := PATTERNS["command"].search(line):
         return AdminActionEvent("command", m["command"])
 

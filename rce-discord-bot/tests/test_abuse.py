@@ -57,33 +57,49 @@ def spawn(guard, line):
 
 
 def test_rogue_admin_is_punished_once(guard):
-    spawn(guard, "giving RogueAdmin 3 x Rocket")
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
     assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.killplayer "RogueAdmin"']
     content, embed = guard.alerts[0]
     assert content == "<@&42>" and "3 × Rocket" in embed.description
     assert "Removed" in embed.fields[0].value and "<@7>" in embed.fields[1].value
-    spawn(guard, "giving RogueAdmin 3 x Rocket")                       # second stack of the same spawn
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")                       # second stack of the same spawn
     assert len(guard.sent) == 3
-    spawn(guard, "giving Someone 1 x Timed Explosive Charge")          # C4
+    spawn(guard, "[ServerVar] giving Someone 1 x Timed Explosive Charge")          # C4
     assert guard.sent[-1] == 'global.killplayer "Someone"'
 
 
 def test_allowed_and_harmless(guard):
-    spawn(guard, "giving OwnerGT 10 x Rocket")                          # allowed name (any case)
-    spawn(guard, "giving CoOwnerPSN 5 x Timed Explosive Charge")        # linked to the co-owner role
-    spawn(guard, "giving RogueAdmin 1 x Rocket Launcher")              # launcher is not a rocket
-    spawn(guard, "giving RogueAdmin 1000 x Wood")
+    spawn(guard, "[ServerVar] giving OwnerGT 10 x Rocket")                          # allowed name (any case)
+    spawn(guard, "[ServerVar] giving CoOwnerPSN 5 x Timed Explosive Charge")        # linked to the co-owner role
+    spawn(guard, "[ServerVar] giving RogueAdmin 1 x Rocket Launcher")              # launcher is not a rocket
+    spawn(guard, "[ServerVar] giving RogueAdmin 1000 x Wood")
     assert guard.sent == [] and guard.alerts == []
 
 
 def test_bot_gives_dont_count(guard):
     asyncio.run(guard.bot.rcon.command('inventory.giveto "RogueAdmin" "ammo.rocket.basic" 3'))  # e.g. the shop
     guard.sent.clear()
-    spawn(guard, "giving RogueAdmin 3 x Rocket")
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
     assert guard.sent == []
+
+
+def test_only_admin_panel_spawns_count(guard):
+    """RCON/console gives (the bot, /rcon, other tools) are logged differently and never punished."""
+    for line in ("giving RogueAdmin 3 x Rocket", "[ServerVar] SERVER giving RogueAdmin 3 x Rocket"):
+        ev = lp.parse_line(line)
+        assert ev.kind == "item" and not ev.admin_panel
+        asyncio.run(guard.cog.on_rce_admin_action(ev))
+    assert guard.sent == []
+    # As the server shows it in the console, also with a time in front
+    ev = lp.parse_line("21:51:16[ServerVar] giving Articbricks0 3 x Rocket")
+    assert ev.admin_panel and ev.player == "Articbricks0" and ev.item == "Rocket" and ev.amount == 3
+    asyncio.run(guard.cog.on_rce_admin_action(ev))
+    asyncio.run(guard.cog.on_rce_admin_action(lp.parse_line("[ServerVar] giving Jones_Ewan 3 x Rocket")))
+    assert [c for c in guard.sent if c.startswith("global.")] == ['global.killplayer "Articbricks0"',
+                                                                   'global.killplayer "Jones_Ewan"']
 
 
 def test_inactive_without_exemptions(guard, caplog):
     guard.cfg.abuse_exempt_role_ids, guard.cfg.abuse_exempt_players = frozenset(), frozenset()
-    spawn(guard, "giving RogueAdmin 3 x Rocket")
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
     assert guard.sent == [] and "not active" in caplog.text
