@@ -255,6 +255,24 @@ class RceBot(commands.Bot):
             pass
 
 
+def disable_console_quick_edit() -> None:
+    """Windows: clicking/selecting text in the bot window ("QuickEdit") pauses the whole program until
+    Esc/Enter – the bot, the web interface and the tunnel would stop answering. Switch it off for this window
+    (copying via right-click → Mark still works)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            ENABLE_QUICK_EDIT_MODE, ENABLE_EXTENDED_FLAGS = 0x0040, 0x0080
+            kernel32.SetConsoleMode(handle, (mode.value & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS)
+    except Exception:  # no console (e.g. started as a service) – nothing to do
+        pass
+
+
 def setup_logging() -> None:
     # Windows console: force UTF-8, otherwise umlauts/emojis break in log lines
     for stream in (sys.stdout, sys.stderr):
@@ -303,6 +321,7 @@ def main() -> None:
     # Working directory = bot folder, so .env, database and knowledge base are found
     # even when started by double-click or autostart.
     os.chdir(BASE_DIR)
+    disable_console_quick_edit()
     setup_logging()
     from web.server import discord_preflight, intent_warning, intents_fix_url, web_settings_from_env
 
