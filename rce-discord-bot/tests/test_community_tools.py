@@ -50,9 +50,10 @@ def bot(tmp_path):
         return ""
     import discord
     b = SimpleNamespace(config=cfg, db=Storage(tmp_path / "bot.db"), audit=audit.append, online_players={},
-                        rcon=SimpleNamespace(command=command, connected=True), get_channel=lambda cid: Channel(),
+                        rcon=SimpleNamespace(command=command, connected=True),
+                        get_channel=lambda cid: (b.channels_used.append(cid), Channel())[1],
                         get_cog=lambda name: None, add_view=lambda v: None, get_user=lambda uid: None)
-    b.sent, b.said, b.audit_lines = sent, said, audit
+    b.sent, b.said, b.audit_lines, b.channels_used = sent, said, audit, []
     old = discord.abc.Messageable
     discord.abc.Messageable = Channel
     yield b
@@ -113,8 +114,9 @@ def test_reports_and_watchlist(bot):
     assert r.is_staff(SimpleNamespace(id=1, roles=[SimpleNamespace(id=42)])) and not r.is_staff(member)
 
     bot.db.watch("BanEvader", "alt of banned Cheater123", "admin")
+    bot.config.watchlist_channel_id = 8                           # own channel for watchlist alerts
     asyncio.run(r.on_rce_player_join("banevader"))                # case doesn't matter
-    assert bot.sent[-1][1] == "👀 Watched player joined"
+    assert bot.sent[-1][1] == "👀 Watched player joined" and bot.channels_used[-1] == 8
     n = len(bot.sent)
     asyncio.run(r.on_rce_player_join("BanEvader"))                # re-join right away: no second ping
     asyncio.run(r.on_rce_player_join("SomeoneElse"))

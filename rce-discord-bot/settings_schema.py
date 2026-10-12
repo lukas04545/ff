@@ -160,6 +160,8 @@ FIELDS: list[Field] = [
     Field("WIPE_RESET_POINTS", "Reset points at the wipe", "wipe", "bool", help="Default off."),
     Field("REPORT_CHANNEL_ID", "Channel for /report and watchlist alerts", "alerts", "id", pick="text_channel",
           help="Empty = alert channel (or admin log). Support roles are pinged."),
+    Field("WATCHLIST_CHANNEL_ID", "Channel for watchlist alerts", "alerts", "id", pick="text_channel",
+          help="Where \"Watched player joined\" is posted. Empty = the report channel above."),
     # Admin abuse protection
     Field("ABUSE_PROTECTION", "Punish admins who spawn raid items", "abuse", "bool",
           help="On (default): when someone who is NOT allowed spawns rockets or C4 with the in-game admin panel, the "
