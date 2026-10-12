@@ -74,3 +74,26 @@ def test_wrong_password_does_not_connect():
         await runner.cleanup()
 
     asyncio.run(scenario())
+
+
+def test_reconfigure_reconnects_without_restart():
+    """New IP/port/password from the settings: the client reconnects right away (no bot restart, no long backoff)."""
+    async def scenario():
+        runner, port = await _start_mock()
+        runner2, port2 = await _start_mock(password="pw2")
+        client = RconClient("127.0.0.1", port, "wrong", reconnect_min=30, reconnect_max=60)
+        await client.start()
+        assert not await client.wait_until_connected(1.0)          # wrong password, next try only in 30 s
+        assert await client.reconfigure("127.0.0.1", port, "pw")
+        assert await client.wait_until_connected(3)
+        assert not await client.reconfigure("127.0.0.1", port, "pw")  # unchanged -> nothing happens
+        # Switch to another server while connected
+        assert await client.reconfigure("127.0.0.1", port2, "pw2")
+        await asyncio.sleep(0.2)
+        assert await client.wait_until_connected(3) and client.port == port2
+        assert json.loads(await client.command("serverinfo"))["MaxPlayers"] == 50
+        await client.close()
+        await runner.cleanup()
+        await runner2.cleanup()
+
+    asyncio.run(scenario())

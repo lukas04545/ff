@@ -88,6 +88,10 @@ class Wipe(commands.Cog):
     async def cog_unload(self) -> None:
         self.wipe_loop.cancel()
 
+    async def on_config_changed(self, old, new) -> None:
+        if old.wipe_timezone != new.wipe_timezone:
+            self.tz = get_tz(new.wipe_timezone)
+
     # ------------------------------------------------------------ Schedule
 
     def schedule(self) -> dict:

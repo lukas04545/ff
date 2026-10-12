@@ -233,6 +233,7 @@ class WebInterface:
         self.tunnel_problem: str | None = None
         self.generated_password: str | None = None  # shown once in the bot window
         self.restart_required = False
+        self.restart_for: list[str] = []     # saved settings that only apply after a restart
         self.app = self._build_app()
 
     @staticmethod
@@ -697,7 +698,7 @@ class WebInterface:
             "groups": [{"id": g, "label": label} for g, label in settings_schema.GROUPS],
             "fields": fields, "setup_mode": self.setup_mode, "setup_error": self.setup_error,
             "setup_fix_url": self.setup_fix_url,
-            "config_error": config_error, "restart_required": self.restart_required,
+            "config_error": config_error, "restart_required": self.restart_required, "restart_for": self.restart_for,
         })
 
     async def put_settings(self, request: web.Request) -> web.Response:
@@ -756,12 +757,27 @@ class WebInterface:
                     if self.on_config_saved:
                         self.on_config_saved()
             else:
-                self.restart_required = self.restart_required or bool(updates)
+                # Apply right away – only a few settings (token, Discord server, web address …) need a restart
+                needs = await self._apply_live(load_config(self.env_path)) if updates else []
+                self.restart_for = sorted(set(self.restart_for) | set(needs))
+                self.restart_required = bool(self.restart_for)
                 resp = web.json_response({"ok": True, "saved": sorted(updates), "rcon_test": rcon_test,
+                                          "applied": bool(updates), "restart_for": self.restart_for,
                                           "restart_required": self.restart_required, **(preflight or {})})
         if "WEB_PASSWORD" in updates:
             self._set_session_cookie(resp, request["user"])
         return resp
+
+    async def _apply_live(self, cfg) -> list[str]:
+        """New settings without a restart: bot + cogs, RCON connection, tunnel. Returns what needs a restart."""
+        needs = await self.bot.apply_config(cfg)
+        ws = self.ws
+        tunnel_before = (ws.tunnel, ws.tunnel_token, ws.public_url)
+        ws.tunnel, ws.tunnel_token, ws.public_url = cfg.web_tunnel, cfg.web_tunnel_token, cfg.web_public_url
+        ws.open_browser = cfg.web_open_browser
+        if tunnel_before != (ws.tunnel, ws.tunnel_token, ws.public_url):
+            self._start_tunnel()
+        return needs
 
     def _saved(self, key: str) -> str:
         return (read_env(self.env_path).get(key) or "").strip()

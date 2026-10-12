@@ -85,6 +85,7 @@ class RconClient:
         # Commands the bot itself sent recently (time, command) – e.g. to tell the bot's own item gives apart
         # from admins spawning items in the server log
         self.recent_commands: deque[tuple[float, str]] = deque(maxlen=500)
+        self._wake = asyncio.Event()           # new connection details -> reconnect right away
         self._message_listeners: list[MessageListener] = []
         self._state_listeners: list[StateListener] = []
 
@@ -114,8 +115,22 @@ class RconClient:
             self._session = aiohttp.ClientSession()
             self._task = asyncio.create_task(self._run_forever(), name="rcon-connection")
 
+    async def reconfigure(self, host: str, port: int, password: str) -> bool:
+        """New IP/port/password (settings saved in the web interface): reconnect right away, no bot restart.
+        Returns False if nothing changed."""
+        if (host, port, password) == (self.host, self.port, self._password):
+            return False
+        self.host, self.port, self._password = host, port, password
+        self.failed_attempts, self.last_error = 0, None
+        log.info("RCON settings changed – reconnecting to %s:%s …", host, port)
+        self._wake.set()
+        if self._ws is not None and not self._ws.closed:
+            await self._ws.close()
+        return True
+
     async def close(self) -> None:
         self._closing = True
+        self._wake.set()
         if self._ws is not None and not self._ws.closed:
             await self._ws.close()
         if self._task is not None:
@@ -192,6 +207,7 @@ class RconClient:
         delay = self.reconnect_min
         while not self._closing:
             opened_at: float | None = None
+            self._wake.clear()
             try:
                 log.info("Connecting to WebRCON %s:%s ...", self.host, self.port)
                 ws = await asyncio.wait_for(
@@ -233,6 +249,9 @@ class RconClient:
 
             if self._closing:
                 break
+            if self._wake.is_set():
+                delay = self.reconnect_min        # new settings -> try them right away
+                continue
 
             # Closing right after opening usually means a wrong password.
             if opened_at is not None:
@@ -245,8 +264,11 @@ class RconClient:
                     delay = self.reconnect_min  # was connected stably -> reset backoff
 
             log.info("Retrying connection in %.0f s.", delay)
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, self.reconnect_max)
+            try:
+                await asyncio.wait_for(self._wake.wait(), delay)
+                delay = self.reconnect_min        # woken by new settings
+            except asyncio.TimeoutError:
+                delay = min(delay * 2, self.reconnect_max)
 
     async def _handle_raw(self, data: str) -> None:
         try:

@@ -27,13 +27,28 @@ CHANNEL_LABELS = {"LOCAL": "Local", "TEAM": "Team", "SERVER": "Server", "GLOBAL"
 class Feeds(commands.Cog):
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
-        cfg = bot.config
-        self.chat = bot.feed(cfg.chat_channel_id)
-        self.killfeed = bot.feed(cfg.killfeed_channel_id)
-        self.events = bot.feed(cfg.events_channel_id)
-        self.admin_log = bot.feed(cfg.admin_log_channel_id)
-        self.console = bot.feed(cfg.console_log_channel_id, code_block=True)
         self._chat_cooldowns: dict[int, float] = {}
+
+    # Looked up on every use, so channels changed in the settings apply right away
+    @property
+    def chat(self):
+        return self.bot.feed(self.bot.config.chat_channel_id)
+
+    @property
+    def killfeed(self):
+        return self.bot.feed(self.bot.config.killfeed_channel_id)
+
+    @property
+    def events(self):
+        return self.bot.feed(self.bot.config.events_channel_id)
+
+    @property
+    def admin_log(self):
+        return self.bot.feed(self.bot.config.admin_log_channel_id)
+
+    @property
+    def console(self):
+        return self.bot.feed(self.bot.config.console_log_channel_id, code_block=True)
 
     # ------------------------------------------------------------ Chat bridge
 

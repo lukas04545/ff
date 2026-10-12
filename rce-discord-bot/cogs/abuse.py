@@ -38,7 +38,7 @@ class AbuseGuard(commands.Cog):
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
         self._punished: dict[str, float] = {}
-        self._warned = False
+        self._noted: dict[str, float] = {}      # spawns reported but not punished (allowed / not set up)
 
     @property
     def active(self) -> bool:
@@ -82,24 +82,33 @@ class AbuseGuard(commands.Cog):
     async def on_rce_admin_action(self, ev) -> None:
         if ev.kind != "item" or not ev.admin_panel or not ev.player or not ev.item or not self.forbidden(ev.item):
             return
-        if not self.active:
-            if self.bot.config.abuse_protection and not self._warned:
-                self._warned = True
-                log.warning("Admin abuse protection is not active: set ABUSE_EXEMPT_ROLE_IDS or ABUSE_EXEMPT_PLAYERS "
-                            "(who may spawn rockets/C4) in the settings.")
-            return
         player = ev.player
+        what = f"{ev.amount:g} × {ev.item}" if ev.amount else ev.item
+        now = time.monotonic()
+        if any(now - seen.get(player.lower(), -PUNISH_COOLDOWN) < PUNISH_COOLDOWN
+               for seen in (self._punished, self._noted)):
+            return   # already handled (one spawn = several lines)
+        if not self.bot.config.abuse_protection:
+            return
+        if not self.active:
+            self._note(player, f"🛡️ **{safe_md(player)}** spawned **{safe_md(what)}** with the admin panel – "
+                               "**not punished: the protection is waiting for setup.** Set the allowed Discord roles "
+                               "or in-game names under ⚙️ Settings → 🛡️ Admin abuse protection.")
+            return
         if self.bot_gave(player):
             return
         reason = await self.exempt(player)
         if reason:
-            log.info("%s spawned %s × %s – allowed (%s).", player, ev.amount, ev.item, reason)
-            return
-        now = time.monotonic()
-        if now - self._punished.get(player.lower(), -PUNISH_COOLDOWN) < PUNISH_COOLDOWN:
+            self._note(player, f"🛡️ **{safe_md(player)}** spawned **{safe_md(what)}** – allowed ({safe_md(reason)}).")
             return
         self._punished[player.lower()] = now
         await self.punish(player, ev.item, ev.amount)
+
+    def _note(self, player: str, text: str) -> None:
+        """Admin log entry for a spawn that was NOT punished (once per player and spawn)."""
+        self._noted[player.lower()] = time.monotonic()
+        log.warning(text.replace("**", ""))
+        self.bot.audit(text)
 
     async def punish(self, player: str, item: str, amount: float | None) -> list[tuple[str, str]]:
         """Removes admin and kills the player. Returns (command, server reply) for the alert."""

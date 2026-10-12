@@ -42,6 +42,12 @@ class Monitor(commands.Cog):
         self.watch_loop.cancel()
         self.backup_loop.cancel()
 
+    async def on_config_changed(self, old, new) -> None:
+        if new.backup_enabled and not self.backup_loop.is_running():
+            self.backup_loop.start()
+        elif not new.backup_enabled and self.backup_loop.is_running():
+            self.backup_loop.cancel()
+
     # ------------------------------------------------------------ Server-down alert
 
     @commands.Cog.listener()

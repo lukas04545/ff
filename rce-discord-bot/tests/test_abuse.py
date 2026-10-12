@@ -99,7 +99,19 @@ def test_only_admin_panel_spawns_count(guard):
                                                                    'global.killplayer "Jones_Ewan"']
 
 
-def test_inactive_without_exemptions(guard, caplog):
+def test_inactive_without_exemptions(guard):
     guard.cfg.abuse_exempt_role_ids, guard.cfg.abuse_exempt_players = frozenset(), frozenset()
+    for _ in range(4):                                                  # one spawn = several lines
+        spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
+    assert guard.sent == [] and len(guard.audit) == 1 and "waiting for setup" in guard.audit[0]
+    # Set up later (settings apply without restart) -> the next spawn is punished right away
+    guard.cfg.abuse_exempt_players = frozenset({"ownergt"})
+    guard.cog._noted.clear()
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
-    assert guard.sent == [] and "not active" in caplog.text
+    assert guard.sent[-1] == 'global.killplayer "RogueAdmin"'
+
+
+def test_allowed_spawn_is_logged(guard):
+    spawn(guard, "[ServerVar] giving OwnerGT 3 x Rocket")
+    spawn(guard, "[ServerVar] giving OwnerGT 3 x Rocket")
+    assert guard.sent == [] and len(guard.audit) == 1 and "allowed (allowed in-game name)" in guard.audit[0]
