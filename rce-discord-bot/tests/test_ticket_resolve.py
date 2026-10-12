@@ -116,3 +116,50 @@ def test_not_asked_when_staff_involved_or_purchase_pending_or_player_wrote(setup
     env.bot.config = replace(env.bot.config, ticket_resolve_minutes=5)
     ask(env)
     assert "Is your issue resolved?" in env.posted[-1][0]
+
+
+def test_parse_close_flag():
+    from support.prompt import parse_answer
+    assert parse_answer('{"reply": "Glad it works, bye!", "escalate": false, "close": true}').close
+    assert parse_answer('{"reply": "Bye", "escalate": false, "close": "true"}').close
+    assert not parse_answer('{"reply": "Hi", "escalate": false}').close
+    assert not parse_answer('{"reply": "Getting staff", "escalate": true, "reason": "x", "close": true}').close
+
+
+def _ai_says(env, monkeypatch, raw):
+    async def chat_json(messages):
+        return raw
+
+    async def history(channel, ticket):
+        return [("user", "Bob: all fixed now, thanks!")]
+    env.tickets.ai = SimpleNamespace(enabled=True, model="m", chat_json=chat_json)
+    monkeypatch.setattr(env.tickets, "_ai_tools", lambda: [])
+    monkeypatch.setattr(env.tickets, "_history", history)
+    env.channel.typing = lambda: _NoCtx()
+    env.channel.guild.get_member = {7: env.buyer}.get
+    asyncio.run(env.tickets._ai_reply(env.channel))
+
+
+class _NoCtx:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+def test_player_says_resolved_closes(setup, monkeypatch):
+    env = setup
+    _ai_says(env, monkeypatch, '{"reply": "Great, glad it is fixed! Closing the ticket.", "escalate": false, '
+                               '"reason": "", "close": true}')
+    assert "glad it is fixed" in env.posted[-1][0]
+    assert env.closed == [(env.ticket["id"], env.buyer, "Resolved (confirmed by the player)")]
+
+
+def test_player_says_resolved_but_purchase_pending(setup, monkeypatch):
+    env = setup
+    env.db.add_kit_request(env.ticket["id"], 7, "Ak Kit", 0, "Tebex #1")
+    _ai_says(env, monkeypatch, '{"reply": "Bye!", "escalate": false, "reason": "", "close": true}')
+    assert env.closed == [] and "waiting for staff approval" in env.posted[-1][0]
+    owner_says(env, "yes")                                         # typed yes doesn't close either
+    assert env.closed == []

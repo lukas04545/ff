@@ -442,7 +442,7 @@ class Tickets(commands.Cog):
             question = self._resolve_asked.pop(message.channel.id, None)
             if question is not None:
                 await self._clear_resolve_buttons(message.channel, question)
-                if is_yes(message.content):
+                if is_yes(message.content) and not self._purchase_pending(ticket):
                     await message.channel.send(AI_PREFIX + "Glad I could help! Closing the ticket. 👋")
                     await self._close(message.channel, ticket, message.author, RESOLVED_REASON)
                     return
@@ -550,6 +550,15 @@ class Tickets(commands.Cog):
         if answer.reply:
             await channel.send(AI_PREFIX + answer.reply, allowed_mentions=discord.AllowedMentions.none())
             self.bot.db.increment_ticket_ai_replies(ticket["id"])
+        if answer.close and not answer.escalate:
+            if self._purchase_pending(ticket):
+                await channel.send(AI_PREFIX + "A kit purchase in this ticket is still waiting for staff approval, "
+                                   "so I'll keep the ticket open until it's decided.")
+                return
+            owner = await self._ticket_member(channel, ticket)
+            log.info("Ticket #%s: the player said it's resolved – closing", ticket["id"])
+            await self._close(channel, ticket, owner or self.bot.user, RESOLVED_REASON)
+            return
         if answer.escalate:
             await self._escalate(channel, ticket, answer.reason, source="AI")
         elif answer.reply and self.bot.config.ticket_resolve_minutes:
@@ -568,7 +577,7 @@ class Tickets(commands.Cog):
         if (ticket is None or not ticket["ai_enabled"] or ticket["staff_joined"] or ticket["escalated"]
                 or not self.bot.config.ticket_resolve_minutes):
             return
-        if any(r["ticket_id"] == ticket["id"] for r in self.bot.db.kit_requests(status="pending")):
+        if self._purchase_pending(ticket):
             return  # waiting for staff to approve a purchase
         try:
             msg = await channel.send(AI_PREFIX + RESOLVE_QUESTION, view=ResolveView(self),
@@ -577,6 +586,9 @@ class Tickets(commands.Cog):
             log.warning("Resolve question in %s failed: %s", channel.id, exc)
             return
         self._resolve_asked[channel.id] = msg.id
+
+    def _purchase_pending(self, ticket) -> bool:
+        return any(r["ticket_id"] == ticket["id"] for r in self.bot.db.kit_requests(status="pending", limit=500))
 
     async def _clear_resolve_buttons(self, channel: discord.TextChannel, message_id: int) -> None:
         try:
@@ -1082,7 +1094,9 @@ class Tickets(commands.Cog):
                 else "no tools (enable *Ticket AI kit tools* in the settings)")
         actions = "\n".join(f"• {u}" for u in used) or "none"
         text = (f"**Answer:**\n{answer.reply or '–'}\n\n**Call staff:** "
-                f"{'yes – ' + answer.reason if answer.escalate else 'no'}\n**Tools the AI used:**\n{actions}")
+                f"{'yes – ' + answer.reason if answer.escalate else 'no'}"
+                f"{chr(10) + '**Would close the ticket:** yes (player said it is resolved)' if answer.close else ''}"
+                f"\n**Tools the AI used:**\n{actions}")
         footer = f"\n-# Model: {self.ai.model} · Knowledge base {knowledge} · {mode}"
         await interaction.followup.send(text[:2000 - len(footer) - 1].rstrip() + footer,
                                         ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
