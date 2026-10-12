@@ -15,7 +15,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from support.tip4serv import Tip4ServClient, Tip4ServError, parse_command, parse_webhook, strip_private
+from support.tip4serv import (Tip4ServClient, Tip4ServError, parse_announcement, parse_command, parse_webhook,
+                              strip_private)
 from utils import is_admin, safe_md
 
 if TYPE_CHECKING:
@@ -44,7 +45,8 @@ class Store(commands.Cog):
 
     def status(self) -> dict:
         """For the web interface."""
-        return {"enabled": bool(self.bot.config.tip4serv_key), "last_ok": self.last_ok, "error": self.last_error,
+        return {"enabled": bool(self.bot.config.tip4serv_key), "channel": self.bot.config.tip4serv_channel_id,
+                "last_ok": self.last_ok, "error": self.last_error,
                 "received": self.received, "ignored": self.ignored,
                 "stored_total": self.bot.db.count_store_payments(),
                 "webhook_last": self.bot.db.last_webhook_payment()}
@@ -53,7 +55,9 @@ class Store(commands.Cog):
         """Why purchases may not arrive – for the request message and the AI (None = looks fine)."""
         st = self.status()
         if st["webhook_last"]:
-            return None                       # live payments arrive via the webhook
+            return None                       # live payments arrive via the webhook / the announcement channel
+        if st["channel"]:
+            return None                       # purchases are announced in the channel – waiting for the message
         if not st["enabled"]:
             return ("the Tip4Serv store is not connected – no webhook payment received yet (web → Shop shows the "
                     "webhook URL for Tip4Serv) and no TIP4SERV_KEY")
@@ -86,6 +90,8 @@ class Store(commands.Cog):
             return {"ok": True, "stored": False, "reason": "event ignored"}
         if self.bot.db.store_payment_known(pid):          # also came via the server key / sent twice
             return {"ok": True, "stored": False, "reason": "known"}
+        if self.bot.db.similar_store_payment(parsed["discord_id"], parsed["amount"], int(time.time())):
+            return {"ok": True, "stored": False, "reason": "already received via Discord / server key"}
         self.bot.db.add_store_payment(
             f"{pid}:webhook", pid, amount=parsed["amount"], currency=parsed["currency"],
             discord_id=parsed["discord_id"], player=parsed["player"], username=None, customer=None,
@@ -98,6 +104,60 @@ class Store(commands.Cog):
         if requests is not None:
             await requests.on_new_payments()
         return {"ok": True, "stored": True}
+
+    # ------------------------------------------------------------ Tip4Serv bot's purchase messages in Discord
+
+    async def read_announcement(self, message: discord.Message) -> bool:
+        """Stores a purchase from a bot message in TIP4SERV_CHANNEL_ID. True if a new payment was stored."""
+        if (not message.author.bot or (self.bot.user and message.author.id == self.bot.user.id)
+                or message.channel.id != self.bot.config.tip4serv_channel_id):
+            return False                      # only other bots (Tip4Serv) – members can't fake purchases
+        text = " ".join([message.content or ""] + [f"{e.title or ''} {e.description or ''} " + " ".join(
+            f"{f.name} {f.value}" for f in e.fields) for e in message.embeds])
+        parsed = parse_announcement(text)
+        if parsed is None:
+            return False
+        at = int(message.created_at.timestamp())
+        pid = parsed["order"] or f"dc-{message.id}"
+        if self.bot.db.store_payment_known(pid) or self.bot.db.similar_store_payment(
+                parsed["discord_id"], parsed["amount"], at):
+            return False                      # already read, or the same purchase came via webhook / server key
+        self.bot.db.add_store_payment(
+            f"{pid}:discord", pid, amount=parsed["amount"], currency=parsed["currency"],
+            discord_id=parsed["discord_id"], player=None, username=None, customer=None, command="discord",
+            raw=json.dumps({"message_id": str(message.id), "text": text[:1000]}, ensure_ascii=False))
+        self.bot.audit(f"💳 Tip4Serv purchase (Discord message): <@{parsed['discord_id']}> paid "
+                       f"{parsed['amount']:.2f} {parsed['currency'] or ''}".rstrip())
+        self.received += 1
+        return True
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        if self.bot.config.tip4serv_channel_id and message.channel.id == self.bot.config.tip4serv_channel_id:
+            if await self.read_announcement(message):
+                requests = self.bot.get_cog("KitRequests")
+                if requests is not None:
+                    await requests.on_new_payments()
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        """Catch up on purchases posted while the bot was offline (last 100 messages)."""
+        channel_id = self.bot.config.tip4serv_channel_id
+        channel = self.bot.get_channel(channel_id) if channel_id else None
+        if channel is None:
+            return
+        new = 0
+        try:
+            async for message in channel.history(limit=100, oldest_first=False):
+                new += await self.read_announcement(message)
+        except discord.HTTPException as exc:
+            log.warning("Tip4Serv channel could not be read: %s", exc)
+            return
+        if new:
+            log.info("Tip4Serv: %s purchase message(s) read from the channel", new)
+            requests = self.bot.get_cog("KitRequests")
+            if requests is not None:
+                await requests.on_new_payments()
 
     def _allowed(self, user) -> bool:
         requests = self.bot.get_cog("KitRequests")
@@ -212,8 +272,9 @@ class Store(commands.Cog):
                     continue                      # not for the bot (e.g. a command for the game server)
                 cmd_id = str(cmd.get("id"))
                 done.setdefault(pid, (p.get("action"), []))
-                if self.bot.db.store_payment_known(pid, source="webhook"):
-                    done[pid][1].append(cmd_id)     # already received via the webhook – count it once
+                if self.bot.db.store_payment_known(pid, source="webhook") or self.bot.db.similar_store_payment(
+                        parsed["discord_id"], parsed["amount"], int(time.time())):
+                    done[pid][1].append(cmd_id)     # already received live (webhook / Discord) – count it once
                     continue
                 stored = self.bot.db.add_store_payment(
                     f"{pid}:{cmd_id}", pid, amount=parsed["amount"], currency=parsed["currency"],

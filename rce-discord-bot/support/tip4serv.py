@@ -199,3 +199,33 @@ def parse_webhook(data) -> dict | None:
             "amount": float(str(amount).replace(",", ".")) if amount is not None else None,
             "currency": currency.strip().upper() if currency else None, "discord_id": discord,
             "player": str(player).strip()[:64] if player else None}
+
+
+# ------------------------------------------------------------------ Discord announcements of Tip4Serv's own bot
+# e.g. "Thank you <@{discord_id}> for your {total_paid} {currency} donation !" in a channel (TIP4SERV_CHANNEL_ID)
+
+_MENTION = re.compile(r"<@!?(\d{17,20})>")
+_AMOUNT_CODE = re.compile(r"(?<![\w.,])(\d+(?:[.,]\d{1,2})?)\s*([A-Za-z]{3})\b")
+_AMOUNT_SYMBOL = re.compile(r"([€$£])\s*(\d+(?:[.,]\d{1,2})?)|(\d+(?:[.,]\d{1,2})?)\s*([€$£])")
+_ORDER = re.compile(r"\b(?:order|payment|receipt|transaction)(?:\s*id)?\s*[:#]?\s*#?([A-Za-z0-9-]*\d[A-Za-z0-9-]*)"
+                    r"|(?<![\w<@])#(\d{4,})",
+                    re.I)
+
+
+def parse_announcement(text: str) -> dict | None:
+    """Buyer (first user mention), amount and currency from a purchase announcement; None if one is missing."""
+    m = _MENTION.search(text or "")
+    if not m:
+        return None
+    rest = _MENTION.sub(" ", text)
+    amount = currency = None
+    if a := _AMOUNT_CODE.search(rest):
+        amount, currency = a.group(1), a.group(2).upper()
+    elif a := _AMOUNT_SYMBOL.search(rest):
+        amount = a.group(2) or a.group(3)
+        currency = _CURRENCY_SYMBOLS[a.group(1) or a.group(4)]
+    if amount is None:
+        return None
+    order = _ORDER.search(rest)
+    return {"discord_id": int(m.group(1)), "amount": float(amount.replace(",", ".")), "currency": currency,
+            "order": (order.group(1) or order.group(2)) if order else None}

@@ -392,7 +392,8 @@ class KitRequests(commands.Cog):
         Returns info for the AI ({} when Tip4Serv isn't used or the request is a giveaway prize)."""
         db, cfg = self.bot.db, self.bot.config
         req = db.kit_request(request_id)
-        store_used = bool(cfg.tip4serv_key) or db.last_webhook_payment() is not None   # key or live webhook
+        store_used = (bool(cfg.tip4serv_key) or bool(cfg.tip4serv_channel_id)        # key, channel or live webhook
+                      or db.last_webhook_payment() is not None)
         if req is None or req["status"] != "pending" or req["source"] != "purchase" or not store_used:
             return {}
         payments = self._matching_payments(req)

@@ -164,6 +164,10 @@ FIELDS: list[Field] = [
                "(3 parts with dots, the first is the server number). Give your custom kit "
                "product this command on that server: rcebot {discord_id} {total_paid} {currency} {PlayerName} – "
                "the bot then sees every purchase. Empty = off."),
+    Field("TIP4SERV_CHANNEL_ID", "Channel with Tip4Serv purchase messages", "store", "id", pick="text_channel",
+          help="Where Tip4Serv's Discord bot posts purchases, e.g. \"Thank you <@{discord_id}> for your {total_paid} "
+               "{currency} donation !\". The bot reads the buyer (mention), amount and currency from every bot "
+               "message there – no key or webhook needed. Empty = off."),
     Field("TIP4SERV_AUTO_APPROVE", "Approve paid custom kits automatically", "store", "bool",
           help="On (default): a NEW custom kit request is approved by itself when the buyer's Tip4Serv payment "
                "covers the price from the price list (web → Shop → Price list) and every item has a price. Each "

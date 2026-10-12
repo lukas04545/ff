@@ -1086,8 +1086,19 @@ class Storage:
         return used
 
     def last_webhook_payment(self) -> int | None:
-        row = self._db.execute("SELECT MAX(received_at) FROM store_payments WHERE id LIKE '%:webhook'").fetchone()
+        """Last payment that arrived live (Tip4Serv webhook or the Tip4Serv bot's Discord announcement)."""
+        row = self._db.execute("SELECT MAX(received_at) FROM store_payments "
+                               "WHERE id LIKE '%:webhook' OR id LIKE '%:discord'").fetchone()
         return row[0] if row and row[0] else None
+
+    def similar_store_payment(self, discord_id: int | None, amount: float | None, at: int,
+                              window: int = 900) -> sqlite3.Row | None:
+        """The same purchase from another source (webhook / announcement / server key): same buyer and amount
+        within 15 minutes."""
+        if not discord_id or amount is None:
+            return None
+        return self._db.execute("SELECT * FROM store_payments WHERE discord_id = ? AND abs(amount - ?) < 0.01 "
+                                "AND abs(received_at - ?) <= ? LIMIT 1", (discord_id, amount, at, window)).fetchone()
 
     def count_store_payments(self) -> int:
         return int(self._db.execute("SELECT COUNT(*) FROM store_payments").fetchone()[0])

@@ -525,3 +525,50 @@ def test_webhook_endpoint_stores_and_approves(shop):
     assert env.store.problem() is None                                      # webhook counts as connected
     row = env.db.find_store_payments("1110065")[0]
     assert row["id"] == "1110065:webhook" and row["used_by"] == r["request_id"]
+
+
+# ------------------------------------------------------------------ Tip4Serv bot's purchase messages in a channel
+
+def test_parse_announcement():
+    from support.tip4serv import parse_announcement
+    assert parse_announcement("Thank you <@1385231250033475675> for your 25.00 EUR donation !") == {
+        "discord_id": 1385231250033475675, "amount": 25.0, "currency": "EUR", "order": None}
+    assert parse_announcement("Thanks <@!1385231250033475675>, you paid €12,50 – order #1110065")["order"] == "1110065"
+    assert parse_announcement("<@1385231250033475675> paid 40 USD")["amount"] == 40.0   # "paid" isn't an order ID
+    assert parse_announcement("<@1385231250033475675> paid 40 USD")["order"] is None
+    assert parse_announcement("Thank you for your 25 EUR donation") is None               # no buyer
+    assert parse_announcement("Thank you <@1385231250033475675>!") is None                # no amount
+
+
+def announce(env, text, *, bot=True, mid=1, channel_id=321, author_id=4242):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace as NS
+    msg = NS(id=mid, content=text, embeds=[], author=NS(id=author_id, bot=bot), channel=NS(id=channel_id),
+             created_at=datetime.now(timezone.utc))
+    asyncio.run(env.store.on_message(msg))
+
+
+def test_channel_announcement_confirms_purchase(shop):
+    env = shop
+    buyer = 1385231250033475675
+    env.bot.config = replace(env.bot.config, tip4serv_key="", tip4serv_channel_id=321)
+    env.channel.guild.get_member = {buyer: env.buyer, 7: env.buyer}.get
+    r = new_kit(env, {"kit_name": "Geek kit", "items": [{"item": "rifle.ak", "amount": 5}], "proof": "paid on T4s"})
+    env.db._db.execute("UPDATE kit_requests SET user_id = ? WHERE id = ?", (buyer, r["request_id"]))
+    env.db._db.commit()
+    assert r["payment"] == "not_found_yet"                                # channel set: waiting, not "can't check"
+    text = f"Thank you <@{buyer}> for your 25.00 EUR donation !"
+    announce(env, text, bot=False, mid=10)                                 # members can't fake purchases
+    announce(env, text, channel_id=999, mid=11)                            # other channels don't count
+    assert env.db.find_store_payments("dc-10") == [] and env.db.find_store_payments("dc-11") == []
+    announce(env, text, mid=12)
+    row = env.db.find_store_payments("dc-12")[0]
+    assert (row["id"], row["discord_id"], row["amount"], row["currency"]) == ("dc-12:discord", buyer, 25, "EUR")
+    assert env.db.kit_request(r["request_id"])["status"] == "approved" and row["id"] and \
+        env.db.find_store_payments("dc-12")[0]["used_by"] == r["request_id"]
+    announce(env, text, mid=12)                                            # same message again -> nothing new
+    assert len(env.db.find_store_payments("dc-12")) == 1
+    # the same purchase via the webhook a moment later is not counted a second time
+    res = asyncio.run(env.store.on_webhook({"event": "payment successful", "id": "1110099", "amount": 25,
+                                            "currency": "EUR", "discord_id": str(buyer)}))
+    assert res["stored"] is False
