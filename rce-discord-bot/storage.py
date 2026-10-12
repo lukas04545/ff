@@ -1051,6 +1051,14 @@ class Storage:
             return False
         return bool(row_ids)
 
+    def store_payments_used_elsewhere(self, row_ids: list[str], request_id: int) -> list[sqlite3.Row]:
+        """Of these payments, the ones another request already used."""
+        if not row_ids:
+            return []
+        marks = ",".join("?" * len(row_ids))
+        return self._db.execute(f"SELECT * FROM store_payments WHERE id IN ({marks}) AND used_by IS NOT NULL "
+                                "AND used_by != ?", (*row_ids, request_id)).fetchall()
+
     def release_store_payments(self, request_id: int) -> None:
         self._db.execute("UPDATE store_payments SET used_by = NULL, used_at = NULL WHERE used_by = ?", (request_id,))
         self._db.commit()

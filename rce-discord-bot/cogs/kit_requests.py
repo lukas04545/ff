@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -45,6 +46,22 @@ PAYMENT_MAX_AGE_DAYS = 30        # only payments from the last 30 days can confi
 
 class KitRequestError(Exception):
     """Request can't be filed / approved – message for the AI or staff."""
+
+
+_DATE = re.compile(r"\d{1,4}([-./]\d{1,2}){1,2}([-./]\d{2,4})?")
+
+
+def order_ids(text: str) -> set[str]:
+    """Order / transaction IDs in what the player wrote (e.g. tbx-1a2b3c4d, 5RX12345AB678901C): at least 6
+    characters with letters and digits, or 8+ digits. Dates and amounts don't count."""
+    found = set()
+    for tok in re.findall(r"[A-Za-z0-9-]{6,}", text or ""):
+        if _DATE.fullmatch(tok):
+            continue
+        has_digit, has_alpha = any(c.isdigit() for c in tok), any(c.isalpha() for c in tok)
+        if (has_digit and has_alpha) or (tok.isdigit() and len(tok) >= 8):
+            found.add(tok.lower())
+    return found
 
 
 def resolve_items(items: list) -> tuple[list[dict], list[dict]]:
@@ -155,6 +172,20 @@ class KitRequests(commands.Cog):
 
     # ------------------------------------------------------------ Filing (ticket AI)
 
+    def _order_reused(self, proof: str) -> dict | None:
+        """One purchase = one kit: an order ID that another pending/approved purchase request already used."""
+        ids = order_ids(proof)
+        if not ids:
+            return None
+        for r in self.bot.db.kit_requests(limit=1000):
+            if r["status"] in ("pending", "approved") and r["source"] == "purchase" and ids & order_ids(r["proof"]):
+                same = sorted(ids & order_ids(r["proof"]))[0]
+                return {"ok": False, "result": "order_already_used", "order_id": same, "used_for_request": r["id"],
+                        "message": f"This order ID was already used for request #{r['id']} ({r['kit']}, "
+                                   f"{r['status']}). One purchase gives one kit – tell the player; if it's a "
+                                   "different purchase they need its own order ID, otherwise call staff."}
+        return None
+
     async def file(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
                    proof: str, days: int = 0, *, giveaway: bool = False, checkout_name: str | None = None) -> dict:
         """Creates a pending request and posts it with buttons in the ticket. Result dict for the AI."""
@@ -168,6 +199,8 @@ class KitRequests(commands.Cog):
         if custom is not None and custom.can_claim(member, row) and not days:
             return {"ok": False, "result": "already_has_access", "kit": kit,
                     "message": "They already have access – they can claim it with /customkit claim."}
+        if not giveaway and (reused := self._order_reused(proof)):
+            return reused
         open_req = [r for r in db.kit_requests(status="pending", user_id=member.id) if r["kit"].lower() == kit.lower()]
         if open_req:
             return {"ok": True, "result": "already_waiting_for_staff", "request_id": open_req[0]["id"], "kit": kit}
@@ -192,6 +225,15 @@ class KitRequests(commands.Cog):
             return {"ok": False, "result": "fix_items", "resolved": resolved, "unknown": unknown,
                     "message": "Not filed yet: fix or ask about these entries (use find_items), then call again "
                                "with the complete list."}
+        waiting = [r for r in db.kit_requests(status="pending", user_id=member.id)
+                   if r["items"] and not r["addon"] and r["source"] == ("giveaway" if giveaway else "purchase")]
+        if waiting:   # one purchase = one kit: never two open new-kit requests that one payment could stand for
+            return {"ok": False, "result": "already_waiting_for_staff", "request_id": waiting[0]["id"],
+                    "kit": waiting[0]["kit"],
+                    "message": "They already have a new custom kit waiting for approval – it has to be decided "
+                               "first. If they bought a second kit, staff handles it."}
+        if not giveaway and (reused := self._order_reused(proof)):
+            return reused
         q = self.quote(resolved, timer_hours)
         if q is not None and q.over_cap:
             return {"ok": False, "result": "over_limits", "over_limits": q.over_cap, "price": self.quote_for_ai(q),
@@ -242,6 +284,8 @@ class KitRequests(commands.Cog):
             return {"ok": False, "result": "fix_items", "resolved": resolved, "unknown": unknown,
                     "message": "Not filed yet: fix or ask about these entries (use find_items), then call again "
                                "with the complete list of items to ADD."}
+        if not giveaway and (reused := self._order_reused(proof)):
+            return reused
         current = self._kit_contents(kit)
         if len({i["short"] for i in current} | {i["short"] for i in resolved}) > MAX_ITEMS_PER_KIT:
             return {"ok": False, "result": "too_many_items",
@@ -469,6 +513,15 @@ class KitRequests(commands.Cog):
         if req is None:
             return False, "Request not found."
         by_name = str(by)
+        if approve and by_name != AUTO_BY and req["status"] == "pending" and req["payment_ids"]:
+            taken = db.store_payments_used_elsewhere(req["payment_ids"].split(","), request_id)
+            if taken:          # one purchase = one kit: that payment already paid for another request
+                db.set_kit_request_payment(request_id, [], "⚠️ The payment found earlier was used for request "
+                                           + ", ".join(f"#{p['used_by']}" for p in taken) + " in the meantime.")
+                await self.check_payment(request_id)
+                return False, (f"Not approved: the Tip4Serv payment for this request was already used for request "
+                               f"#{taken[0]['used_by']} – one purchase gives one kit. Ask the player for their payment "
+                               "or reject.")
         if not db.decide_kit_request(request_id, "approved" if approve else "rejected", by_name):
             return False, f"Request #{request_id} was already {req['status']} by {req['decided_by']}."
         channel = self.bot.get_channel(req["channel_id"]) if req["channel_id"] else None
