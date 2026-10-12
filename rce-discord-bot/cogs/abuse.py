@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("rce.abuse")
 
 OWN_GIVE_WINDOW = 60         # seconds: an item line this soon after the bot's own give to that player is the bot's
+RESPAWN_WAIT = 3600         # on-respawn commands only within 1 hour after the punishment
 PUNISH_COOLDOWN = 120        # one punishment per player (a spawn of several stacks makes several lines)
 IGNORED_WORDS = ("launcher",)   # "Rocket Launcher" is not a rocket
 
@@ -42,6 +43,7 @@ class AbuseGuard(commands.Cog):
         self._punished: dict[str, float] = {}
         self._noted: dict[str, float] = {}      # spawns reported but not punished (allowed / not set up)
         self.recent: deque[dict] = deque(maxlen=15)   # last raid item spawns seen (web interface status box)
+        self._await_respawn: dict[str, float] = {}     # punished players -> on-respawn commands still to run
 
     @property
     def active(self) -> bool:
@@ -112,6 +114,20 @@ class AbuseGuard(commands.Cog):
         results = await self.punish(player, ev.item, ev.amount)
         self._remember(player, what, "PUNISHED: " + " · ".join(f"{c} → {r}" for c, r in results))
 
+    @commands.Cog.listener()
+    async def on_rce_respawn(self, ev) -> None:
+        """The punished player respawned: run the on-respawn commands (e.g. global.sleep) once."""
+        key = ev.player.strip().lower()
+        since = self._await_respawn.pop(key, None)
+        if since is None or time.monotonic() - since > RESPAWN_WAIT:
+            return
+        name = sanitize_player_name(ev.player.strip())
+        results = [await self._run(t, name) for t in self.bot.config.abuse_on_respawn_commands]
+        text = " · ".join(f"{c} → {r}" for c, r in results)
+        self._remember(ev.player.strip(), "respawned", "on respawn: " + text)
+        log.warning("Admin abuse: %s respawned – %s", ev.player, text)
+        self.bot.audit(f"🚨 **{safe_md(ev.player)}** respawned – {safe_md(text)}")
+
     def _remember(self, player: str, what: str, result: str) -> None:
         self.recent.appendleft({"ts": int(time.time()), "player": player, "what": what, "result": result})
 
@@ -153,13 +169,18 @@ class AbuseGuard(commands.Cog):
         Returns (command, server reply) for the alert."""
         cfg = self.bot.config
         name = sanitize_player_name(player)
-        results = [await self._run(t, name) for t in (*cfg.abuse_remove_admin_commands, cfg.abuse_kill_command)]
-        after = [t for t in cfg.abuse_after_kill_commands if t != "-"]
+        results = [await self._run(t, name) for t in (*cfg.abuse_remove_admin_commands, *cfg.abuse_before_kill_commands,
+                                                       cfg.abuse_kill_command)]
+        after = list(cfg.abuse_after_kill_commands)
         if after:
             await asyncio.sleep(1)       # let the kill go through first
             results += [await self._run(t, name) for t in after]
+        if cfg.abuse_on_respawn_commands:
+            self._await_respawn[name.lower()] = time.monotonic()
         what = f"{amount:g} × {item}" if amount else item
         done = "admin removed, killed in-game" + (", " + ", ".join(t.split(" ")[0] for t in after) if after else "")
+        if cfg.abuse_on_respawn_commands:
+            done += " – on respawn: " + ", ".join(t.split(" ")[0] for t in cfg.abuse_on_respawn_commands)
         log.warning("Admin abuse: %s spawned %s – %s.", player, what, done)
         self.bot.audit(f"🚨 **{safe_md(player)}** spawned **{safe_md(what)}** without permission – {done}")
         await self._alert(player, what, results)

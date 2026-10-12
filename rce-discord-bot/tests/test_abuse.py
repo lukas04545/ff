@@ -18,8 +18,10 @@ def guard(tmp_path):
                           abuse_exempt_players=frozenset({"ownergt"}),
                           abuse_items=("rocket", "c4", "timed explosive", "explosive.timed"),
                           abuse_remove_admin_commands=('removeowner "{name}"', 'removemoderator "{name}"'),
+                          abuse_before_kill_commands=('global.god 0 "{name}"',),
                           abuse_kill_command='global.killplayer "{name}"',
-                          abuse_after_kill_commands=('entity.deleteby "{name}"',), guild_id=1, alert_channel_id=9,
+                          abuse_after_kill_commands=('entity.deleteby "{name}"',),
+                          abuse_on_respawn_commands=('global.sleep "{name}"',), guild_id=1, alert_channel_id=9,
                           admin_log_channel_id=None, alert_role_ids=frozenset({42}))
 
     async def command(cmd, **kw):
@@ -59,18 +61,25 @@ def spawn(guard, line):
 
 def test_rogue_admin_is_punished_once(guard):
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
-    assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.killplayer "RogueAdmin"',
-                          'entity.deleteby "RogueAdmin"']
+    assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.god 0 "RogueAdmin"',
+                          'global.killplayer "RogueAdmin"', 'entity.deleteby "RogueAdmin"']
+    # Respawn of someone else: nothing; respawn of the punished player: global.sleep once
+    asyncio.run(guard.cog.on_rce_respawn(lp.parse_line("Innocent [SCARLETT] has entered the game")))
+    asyncio.run(guard.cog.on_rce_respawn(lp.parse_line("RogueAdmin [SCARLETT] has entered the game")))
+    asyncio.run(guard.cog.on_rce_respawn(lp.parse_line("RogueAdmin [SCARLETT] has entered the game")))
+    assert guard.sent[5:] == ['global.sleep "RogueAdmin"'] and "respawned" in guard.audit[-1]
+    del guard.sent[5:]
     content, embed = guard.alerts[0]
     assert content == "<@&42>" and "3 × Rocket" in embed.description
     assert "Removed" in embed.fields[0].value and "<@7>" in embed.fields[1].value
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")                       # second stack of the same spawn
-    assert len(guard.sent) == 4
+    assert len(guard.sent) == 5
     spawn(guard, "[ServerVar] giving Someone 1 x Timed Explosive Charge")          # C4
     assert guard.sent[-2:] == ['global.killplayer "Someone"', 'entity.deleteby "Someone"']
     status = guard.cog.status()                                       # web interface status box
     assert status["active"] and status["players"] == ["ownergt"]
-    assert status["recent"][0]["player"] == "Someone" and status["recent"][1]["result"].startswith("PUNISHED")
+    assert status["recent"][0]["player"] == "Someone" and status["recent"][0]["result"].startswith("PUNISHED")
+    assert any(e["result"].startswith("on respawn: global.sleep") for e in status["recent"])
 
 
 def test_allowed_and_harmless(guard):
@@ -100,7 +109,7 @@ def test_only_admin_panel_spawns_count(guard):
     assert ev.admin_panel and ev.player == "Articbricks0" and ev.item == "Rocket" and ev.amount == 3
     asyncio.run(guard.cog.on_rce_admin_action(ev))
     asyncio.run(guard.cog.on_rce_admin_action(lp.parse_line("[ServerVar] giving Jones_Ewan 3 x Rocket")))
-    assert [c for c in guard.sent if c.startswith("global.")] == ['global.killplayer "Articbricks0"',
+    assert [c for c in guard.sent if c.startswith("global.killplayer")] == ['global.killplayer "Articbricks0"',
                                                                    'global.killplayer "Jones_Ewan"']
 
 

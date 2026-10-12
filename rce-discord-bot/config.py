@@ -54,6 +54,11 @@ def _id_set(name: str) -> frozenset[int]:
         raise ConfigError(f"'{name}' must be a comma-separated list of IDs.") from None
 
 
+def _commands(name: str, default: str) -> tuple[str, ...]:
+    """Console command templates separated by ";" ("-" = none)."""
+    return tuple(c.strip() for c in _get(name, default).split(";") if c.strip() and c.strip() != "-")
+
+
 @dataclass(frozen=True)
 class Config:
     # Discord
@@ -156,8 +161,10 @@ class Config:
     abuse_exempt_players: frozenset[str]   # in-game names that may spawn (lowercase)
     abuse_items: tuple[str, ...]           # keywords of forbidden items (lowercase)
     abuse_remove_admin_commands: tuple[str, ...]   # templates with {name}
+    abuse_before_kill_commands: tuple[str, ...]  # right before the kill, e.g. global.god 0 "{name}"
     abuse_kill_command: str                # template with {name}
     abuse_after_kill_commands: tuple[str, ...]   # run after the kill, e.g. entity.deleteby "{name}"
+    abuse_on_respawn_commands: tuple[str, ...]   # when the punished player respawns, e.g. global.sleep "{name}"
 
     # Staff alerts & backups
     server_down_alert_minutes: int        # ping staff after the server is offline this long (0 = off)
@@ -294,9 +301,10 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
                           "rocket,c4,timed explosive,explosive.timed").split(",") if k.strip()),
         abuse_remove_admin_commands=tuple(c.strip() for c in (_get("ABUSE_REMOVE_ADMIN_COMMANDS") or
                                           'removeowner "{name}";removemoderator "{name}"').split(";") if c.strip()),
+        abuse_before_kill_commands=_commands("ABUSE_BEFORE_KILL_COMMANDS", 'global.god 0 "{name}"'),
         abuse_kill_command=_get("ABUSE_KILL_COMMAND", 'global.killplayer "{name}"'),
-        abuse_after_kill_commands=tuple(c.strip() for c in _get("ABUSE_AFTER_KILL_COMMANDS",
-                                                                 'entity.deleteby "{name}"').split(";") if c.strip()),
+        abuse_after_kill_commands=_commands("ABUSE_AFTER_KILL_COMMANDS", 'entity.deleteby "{name}"'),
+        abuse_on_respawn_commands=_commands("ABUSE_ON_RESPAWN_COMMANDS", 'global.sleep "{name}"'),
         server_down_alert_minutes=max(0, _int("SERVER_DOWN_ALERT_MINUTES", 10)),
         alert_channel_id=_int("ALERT_CHANNEL_ID"),
         alert_role_ids=_id_set("ALERT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),
