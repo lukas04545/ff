@@ -24,6 +24,7 @@ import webbrowser
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING, Callable
 
 import aiohttp
@@ -36,6 +37,7 @@ from envfile import read_env, update_env
 from rce.diagnostics import diagnose_rcon
 
 from logbuffer import memory_log
+from web import tunnel as tunnelmod
 from web.users import OWNER, UserError, UserStore
 from permcheck import check_permissions
 from rce import items as itemlist
@@ -171,6 +173,9 @@ class WebSettings:
     port: int = 8080
     password: str = ""
     open_browser: bool = True
+    tunnel: bool = False
+    tunnel_token: str = ""
+    public_url: str = ""
 
 
 def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
@@ -187,7 +192,9 @@ def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
         port = 8080
     return WebSettings(enabled=flag("WEB_ENABLED", True), host=(env.get("WEB_HOST") or "127.0.0.1").strip(),
                        port=port, password=(env.get("WEB_PASSWORD") or "").strip(),
-                       open_browser=flag("WEB_OPEN_BROWSER", True))
+                       open_browser=flag("WEB_OPEN_BROWSER", True), tunnel=flag("WEB_TUNNEL", False),
+                       tunnel_token=(env.get("WEB_TUNNEL_TOKEN") or "").strip(),
+                       public_url=(env.get("WEB_PUBLIC_URL") or "").strip())
 
 
 class WebInterface:
@@ -206,7 +213,8 @@ class WebInterface:
         self.env_path = env_path
         if web_settings is None:
             cfg = bot.config
-            web_settings = WebSettings(True, cfg.web_host, cfg.web_port, cfg.web_password, cfg.web_open_browser)
+            web_settings = WebSettings(True, cfg.web_host, cfg.web_port, cfg.web_password, cfg.web_open_browser,
+                                       cfg.web_tunnel, cfg.web_tunnel_token, cfg.web_public_url)
         self.ws = web_settings
         self.password = web_settings.password
         if not self.password:
@@ -218,6 +226,8 @@ class WebInterface:
         self._revoked: set[str] = set()
         self._login_attempts: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
         self._runner: web.AppRunner | None = None
+        self.tunnel: tunnelmod.Tunnel | None = None
+        self.tunnel_problem: str | None = None
         self.restart_required = False
         self.app = self._build_app()
 
@@ -319,6 +329,7 @@ class WebInterface:
         if ws.host not in ("127.0.0.1", "localhost"):
             log.warning("Web interface is reachable on the network (WEB_HOST=%s). Do not expose it to the internet!",
                         ws.host)
+        self._start_tunnel()
         if ws.open_browser if open_browser is None else open_browser:
             try:
                 webbrowser.open(login_url)
@@ -326,7 +337,37 @@ class WebInterface:
                 pass
         return True
 
+    def _start_tunnel(self) -> None:
+        """Cloudflare tunnel (reachable from the internet). Keeps running across bot restarts."""
+        ws = self.ws
+        if not ws.tunnel:
+            tunnelmod.stop_tunnel()
+            return
+        if not ws.password and not self.users.list():
+            self.tunnel_problem = ("Not started: set a WEB_PASSWORD first (Settings → Web interface) – "
+                                   "otherwise the public address would only be protected by a random password.")
+            log.error("Cloudflare tunnel %s", self.tunnel_problem)
+            tunnelmod.stop_tunnel()
+            return
+        self.tunnel = tunnelmod.ensure_tunnel(ws.port, token=ws.tunnel_token, public_url=ws.public_url)
+        loop = asyncio.get_running_loop()
+        self.tunnel.on_online = lambda url: loop.call_soon_threadsafe(self._tunnel_online, url)
+        if self.tunnel.state == "online":
+            log.warning("🌍 Web interface reachable from anywhere: %s", self.tunnel.url or ws.public_url)
+
+    def _tunnel_online(self, url: str | None) -> None:
+        if self.bot is not None:
+            self.bot.audit(f"🌍 Web interface reachable from anywhere: {url or self.ws.public_url or '(fixed address)'}")
+
+    @property
+    def public_url(self) -> str | None:
+        if self.tunnel is not None and self.tunnel.state == "online":
+            return self.tunnel.url or self.ws.public_url or None
+        return None
+
     async def stop(self) -> None:
+        if self.tunnel is not None:
+            self.tunnel.on_online = None  # the tunnel itself keeps running for the restarted bot
         if self._runner is not None:
             await self._runner.cleanup()
 
@@ -352,7 +393,9 @@ class WebInterface:
         if self.ws.host in ("127.0.0.1", "localhost"):
             host = (request.host or "").rsplit(":", 1)[0] if not (request.host or "").startswith("[") \
                 else (request.host or "").split("]")[0] + "]"
-            if host.lower() not in LOCAL_HOSTS:
+            allowed = LOCAL_HOSTS | {h for h in (self.tunnel.host if self.tunnel else None,
+                                                 urlparse(self.ws.public_url).hostname) if h}
+            if host.lower() not in allowed:
                 raise web.HTTPForbidden(text="Unknown host.")
         return await handler(request)
 
@@ -464,8 +507,17 @@ class WebInterface:
             raise ApiError("Too many attempts – please wait a minute.", 429)
         attempts.append(now)
 
+    @staticmethod
+    def _client_ip(request: web.Request) -> str:
+        """Real visitor IP – behind the Cloudflare tunnel every request comes from 127.0.0.1."""
+        remote = request.remote or "?"
+        forwarded = request.headers.get("CF-Connecting-IP")
+        if forwarded and remote in ("127.0.0.1", "::1"):
+            return forwarded.strip()[:64]
+        return remote
+
     async def login(self, request: web.Request) -> web.Response:
-        ip = request.remote or "?"
+        ip = self._client_ip(request)
         data = await self._json(request)
         username = str(data.get("username") or OWNER).strip()[:32] or OWNER
         password = str(data.get("password", ""))[:256]
@@ -507,7 +559,13 @@ class WebInterface:
 
     async def me(self, request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "setup_mode": self.setup_mode,
-                                  "user": request["user"], "role": request["role"]})
+                                  "user": request["user"], "role": request["role"], **self._tunnel_info()})
+
+    def _tunnel_info(self) -> dict:
+        t = self.tunnel
+        return {"public_url": self.public_url, "tunnel_enabled": self.ws.tunnel,
+                "tunnel_state": t.state if t else ("error" if self.tunnel_problem else None),
+                "tunnel_error": (t.error if t and t.state != "online" else None) or self.tunnel_problem}
 
     # ------------------------------------------------------------ Accounts (other admins)
 
@@ -751,6 +809,7 @@ class WebInterface:
             "discord_ready": bot.is_ready(),
             "discord_user": str(bot.user) if bot.user else None,
             "permission_problems": check_permissions(bot) if bot.is_ready() else [],
+            **self._tunnel_info(),
             "invite_url": invite_url(bot.application_id),
             "server": {
                 "name": cfg.server_display_name or strip_rich_text(str(info.get("Hostname", ""))),

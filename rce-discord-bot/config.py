@@ -129,6 +129,9 @@ class Config:
     web_port: int
     web_password: str
     web_open_browser: bool
+    web_tunnel: bool          # reachable from the internet via Cloudflare tunnel
+    web_tunnel_token: str     # optional: named tunnel (fixed address)
+    web_public_url: str       # optional: fixed address of the named tunnel
 
     database_path: Path
 
@@ -216,6 +219,9 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         web_port=_int("WEB_PORT", 8080),
         web_password=_get("WEB_PASSWORD"),
         web_open_browser=_bool("WEB_OPEN_BROWSER", True),
+        web_tunnel=_bool("WEB_TUNNEL", False),
+        web_tunnel_token=_get("WEB_TUNNEL_TOKEN"),
+        web_public_url=_get("WEB_PUBLIC_URL"),
         database_path=Path(_get("DATABASE_PATH", "data/bot.db")),
     )
 

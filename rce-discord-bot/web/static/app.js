@@ -178,7 +178,8 @@ views.users = async (main) => {
       e.preventDefault();
       const r = await act(() => api("/api/users", { method: "POST", body: { username: name.value.trim(), password: pw.value, role: role.value } }), "Account created").catch(() => null);
       if (!r) return;
-      alert(`Account created – send this to the admin:\n\nAddress: ${location.origin}\nUsername: ${name.value.trim()}\nPassword: ${pw.value}\n\nThey can change the password after logging in (🔑 My password).`);
+      const address = (await api("/api/me").catch(() => ({}))).public_url || location.origin;
+      alert(`Account created – send this to the admin:\n\nAddress: ${address}\nUsername: ${name.value.trim()}\nPassword: ${pw.value}\n\nThey can change the password after logging in (🔑 My password).`);
       name.value = ""; pw.value = ""; pw.type = "password";
       load();
     } }, name, pw, genBtn, role, h("button", { class: "primary", text: "Create" }))),
@@ -222,7 +223,7 @@ views.users = async (main) => {
       h("div", { class: "card" }, h("h2", { text: "🌍 How other admins reach the web interface" }),
         h("ul", {},
           h("li", {}, h("strong", { text: "Same home network: " }), "Settings → Web interface → Reachable from: “Also home network (0.0.0.0)”, restart the bot, then they open ", h("code", { text: "http://<your PC's IP>:" + (location.port || 80) }), "."),
-          h("li", {}, h("strong", { text: "From anywhere (recommended): " }), "a secure tunnel such as Tailscale or Cloudflare Tunnel (HTTPS, nothing to open on your router). Details in the README."),
+          h("li", {}, h("strong", { text: "From anywhere (recommended): " }), "Settings → Web interface → “Reachable from the internet (Cloudflare tunnel)” → On, restart the bot. You get an encrypted https:// address (shown on the Overview and in the admin log channel) – nothing to open on your router."),
           h("li", {}, h("strong", { text: "Don't " }), "forward the port on your router: the web interface uses plain HTTP, passwords would travel unencrypted."))));
   }
   load();
@@ -282,8 +283,32 @@ views.overview = (main) => {
       "Alternatively, open the invite link again – this resets the bot role's permissions (channel overrides stay as they are)."),
     h("div", { class: "row" }, inviteLink));
 
+  // Public address via Cloudflare tunnel (Settings → Web interface → Reachable from the internet)
+  const publicCard = h("div", { class: "card hidden" });
+  let shownPublic = null;
+  const renderPublic = () => {
+    const url = status.public_url, err = status.tunnel_error;
+    const key = `${status.tunnel_enabled}|${url}|${status.tunnel_state}|${err}`;
+    publicCard.classList.toggle("hidden", !status.tunnel_enabled);
+    if (!status.tunnel_enabled || key === shownPublic) return;
+    shownPublic = key;
+    publicCard.style.borderLeft = "4px solid var(" + (url ? "--ok" : err ? "--bad" : "--warn") + ")";
+    if (url) {
+      publicCard.replaceChildren(h("h2", { text: "🌍 Reachable from anywhere" }),
+        h("div", { class: "row" }, h("a", { href: url, target: "_blank", rel: "noopener" }, h("code", { text: url })),
+          h("button", { class: "small", text: "📋 Copy", onclick: async () => {
+            try { await navigator.clipboard.writeText(url); toast("Copied"); } catch { prompt("Copy the address:", url); }
+          } })),
+        h("p", { class: "muted", style: "margin:.5rem 0 0", text: "Encrypted Cloudflare tunnel – share it only with your admins (they log in with their account from 👥 Users). A random address changes when the bot window is closed; the current one is always posted in the admin log channel." }));
+    } else {
+      publicCard.replaceChildren(h("h2", { text: err ? "🌍 Tunnel problem" : "🌍 Tunnel is starting …" }),
+        h("p", { class: err ? "error" : "muted", text: err || "Connecting to Cloudflare – the public address appears here in a few seconds (the first start downloads cloudflared, ~40 MB)." }));
+    }
+  };
+
   main.append(
     h("h1", { text: "Overview" }),
+    publicCard,
     rconCard,
     intentCard,
     permCard,
@@ -309,6 +334,7 @@ views.overview = (main) => {
   every(5000, async () => {
     await refreshConnection();
     if (!status) return;
+    renderPublic();
     intentCard.classList.toggle("hidden", !status.intent_warning);
     if (status.intent_warning && !intentInfo.dataset.shown) {
       intentInfo.dataset.shown = "1";

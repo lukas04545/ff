@@ -378,20 +378,26 @@ role:
 
 **How other admins reach the web interface** (it runs on your PC):
 
-- **Same home network:** Settings → Web interface → *Reachable from* → "Also home network (0.0.0.0)",
-  restart the bot. Others open `http://<your PC's local IP>:8080` (e.g. `http://192.168.1.20:8080`;
-  find the IP with `ipconfig`). Allow the port in the Windows firewall if asked.
-- **From anywhere – use a secure tunnel (recommended):**
-  - **[Tailscale](https://tailscale.com/)** (free, easiest): install it on your PC and on the other
-    admins' devices, invite them to your tailnet, set *Reachable from* to 0.0.0.0. They open
-    `http://<your PC's Tailscale name or 100.x IP>:8080`. The traffic is encrypted, nothing is public.
-  - **[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)**:
-    run `cloudflared tunnel --url http://localhost:8080` on your PC – it prints an `https://….trycloudflare.com`
-    address you can share (for a fixed address use a named tunnel with your own domain). Set *Reachable
-    from* to 0.0.0.0, because with 127.0.0.1 the bot only accepts requests addressed to "localhost".
-    The address is public, so use strong passwords – the login is rate-limited.
-- **Don't** simply forward the port on your router: the web interface speaks plain HTTP, so
-  passwords would travel unencrypted over the internet.
+- **From anywhere – built-in Cloudflare tunnel (easiest):** Settings → Web interface → *Reachable from
+  the internet (Cloudflare tunnel)* → **On**, save, restart the bot. The bot starts Cloudflare's free
+  `cloudflared` itself (downloaded once into `bin/`, ~40 MB, from Cloudflare's official GitHub releases)
+  and gets an encrypted **https://….trycloudflare.com** address. Nothing to open on your router, and the
+  web interface itself still only listens on your PC.
+  - The address is shown in the bot window, as a card on the **Overview** (with a copy button) and posted
+    in your **admin log channel** – so your admins always find the current one.
+  - It stays the same while the bot runs (also across restarts from the web interface) and **changes when
+    you close the bot window**. For a **fixed address** (needs your own domain on Cloudflare): create a
+    tunnel in the Cloudflare dashboard (Zero Trust → Networks → Tunnels), point its public hostname to
+    `http://localhost:8080`, then paste the tunnel **token** into *Cloudflare tunnel token* and the
+    address into *Fixed public address* (advanced settings).
+  - Requires a `WEB_PASSWORD`. The address is public, so give every admin their own account with a
+    strong password – logins are rate-limited per visitor IP and per account.
+  - macOS: install it once with `brew install cloudflared`.
+- **Same home network only:** Settings → Web interface → *Reachable from* → "Also home network
+  (0.0.0.0)", restart the bot. Others open `http://<your PC's local IP>:8080` (find it with `ipconfig`).
+- **Alternative:** [Tailscale](https://tailscale.com/) (private network between your devices).
+- **Don't** forward the port on your router: the web interface speaks plain HTTP, so passwords would
+  travel unencrypted over the internet. The tunnel gives you HTTPS instead.
 
 ### Testing without a real server
 
@@ -673,6 +679,7 @@ These features come from the KRYVON bot and have been rebuilt and extended here:
 | RCON won't connect | The bot tests this **automatically** and shows the cause in the bot window and in the web interface (red card on the Overview page). Saving new RCON details under ⚙️ Settings also runs the test right away. |
 | RCON won't connect – cause unclear | Run **`rcon_test.bat`** (Windows) or `python tools/rcon_test.py`: checks settings, port, WebSocket, password and response step by step and names the cause |
 | `Message Content Intent … disabled` | Developer Portal → Bot → enable Message Content Intent → Save Changes → restart the bot |
+| Tunnel: "failed to request quick Tunnel" / no address | The PC can't reach Cloudflare (firewall/antivirus/DNS) – allow `bin/cloudflared.exe`, or use a tunnel token. The Overview card shows the exact error. |
 | Slash commands missing | Set `GUILD_ID` and invite the bot with the `applications.commands` scope |
 | Old (German) slash commands still show up | The bot removes old registrations at startup. Restart the bot (latest version), then press Ctrl+R in Discord. Without `GUILD_ID`, global commands can take up to 1 h to update – setting `GUILD_ID` makes changes instant. |
 | Killfeed or chat stays empty | Set `CONSOLE_LOG_CHANNEL_ID` and compare the real log lines with `rce/log_parser.py` |
