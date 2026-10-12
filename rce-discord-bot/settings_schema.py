@@ -91,6 +91,10 @@ FIELDS: list[Field] = [
           help="platform.deepseek.com → API Keys. Empty = tickets without AI."),
     Field("DEEPSEEK_MODEL", "DeepSeek model", "tickets", placeholder="deepseek-flash"),
     Field("TICKET_AI_MAX_REPLIES", "Max. AI replies per ticket", "tickets", "int", placeholder="20"),
+    Field("TICKET_AI_KIT_TOOLS", "AI may check and claim kits for the ticket owner", "tickets", "bool",
+          help="On (default): the AI can look up which custom kits the ticket owner's Discord roles allow, "
+               "when they last claimed them, and claim one for them – same rules as /customkit claim "
+               "(role, cooldown, linked player). Never for anyone else."),
     Field("DEEPSEEK_BASE_URL", "DeepSeek API URL", "tickets", advanced=True,
           placeholder="https://api.deepseek.com"),
     Field("SUPPORT_KNOWLEDGE_FILE", "Knowledge base file", "tickets", advanced=True,

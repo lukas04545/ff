@@ -1,8 +1,8 @@
 """Prompt building and parsing of AI answers for support tickets.
 
-The AI deliberately gets NO tools (no RCON commands): it can only reply and request
-staff. That way a user cannot use prompt injection to make it hand out kits or unban
-someone.
+The AI gets NO admin powers (no RCON commands, no unbans, no giving arbitrary kits). Its only tools
+(see cogs/tickets.py) act for the player who opened the ticket and follow exactly the same rules as
+/customkit claim – so prompt injection can't get anyone more than they could claim themselves.
 """
 from __future__ import annotations
 
@@ -18,8 +18,7 @@ RULES
 - Reply in the same language the player writes in. If unclear, reply in English.
 - Only use the knowledge base and the live status below. Do not make up rules, prices,
   wipe dates or facts. If you are not sure about something, say so and call staff.
-- You CANNOT perform any actions (no giving kits/items, no unbanning, no refunds,
-  no teleporting anyone). Never promise anything like that – call staff for it.
+{actions}
 - Call staff (escalate = true) when:
   * the player asks for a human/admin/staff,
   * it is about bans/unban appeals, cheater/hacker reports, payments/donations/VIP purchases,
@@ -58,9 +57,27 @@ class AiAnswer:
     reason: str
 
 
+NO_ACTIONS = """- You CANNOT perform any actions (no giving kits/items, no unbanning, no refunds,
+  no teleporting anyone). Never promise anything like that – call staff for it."""
+
+KIT_ACTIONS = """- You have tools for the player who opened this ticket – and ONLY for them:
+  * get_my_kits: which custom kits their Discord roles let them claim, what is inside, when they last
+    claimed each one and when they can claim it again, their linked in-game player, role-locked autokits.
+  * claim_kit: claims one of those kits for them (sent to their linked in-game player).
+  Use get_my_kits before answering questions about kits. Only call claim_kit when the player clearly asks
+  for that kit to be claimed now. The tool enforces roles, cooldowns and the linked player – report its
+  result honestly (cooldown time, not linked, not online) and never claim for anyone else.
+  If they are not linked: tell them to use /customkit link in Discord while they are online in-game.
+  For "when can I claim again" copy the can_claim_again_discord value (e.g. <t:1791900000:R>) into your
+  reply exactly as it is – Discord shows it as a live countdown.
+- Apart from these tools you CANNOT perform actions (no other kits/items, no unbanning, no refunds,
+  no teleporting anyone). Never promise anything like that – call staff for it."""
+
+
 def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None,
-                        status: str, knowledge: str) -> str:
+                        status: str, knowledge: str, kit_tools: bool = False) -> str:
     return SYSTEM_TEMPLATE.format(
+        actions=KIT_ACTIONS if kit_tools else NO_ACTIONS,
         server_name=server_name or "Rust Console Server",
         topic=topic,
         ingame_name=ingame_name or "not provided",
@@ -88,8 +105,15 @@ def parse_answer(raw: str) -> AiAnswer:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        text = raw.strip()
-        return AiAnswer(text[:MAX_REPLY_CHARS], escalate=not text, reason="AI answer was not JSON")
+        # Tool rounds run without JSON mode: the object may be wrapped in text or a ```json block
+        start, end = raw.find("{"), raw.rfind("}")
+        try:
+            data = json.loads(raw[start:end + 1]) if 0 <= start < end else None
+        except json.JSONDecodeError:
+            data = None
+        if not isinstance(data, dict):
+            text = raw.strip()
+            return AiAnswer(text[:MAX_REPLY_CHARS], escalate=not text, reason="AI answer was not JSON")
     if not isinstance(data, dict):
         return AiAnswer("", escalate=True, reason="AI answer had an unexpected format")
 

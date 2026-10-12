@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import re
 import time
@@ -36,11 +37,29 @@ if TYPE_CHECKING:
 log = logging.getLogger("rce.tickets")
 
 AI_PREFIX = "🤖 "             # Marks AI replies (important for the conversation history)
+CLAIM_PREFIX = "✅ 🎁 "        # Kit claimed by the AI tool (also part of the history)
 DEBOUNCE_SECONDS = 3.0        # answer several quick messages in one go
 HISTORY_LIMIT = 40            # number of messages the AI gets as history
 STAFF_REPING_SECONDS = 600    # "Call staff" again only after 10 minutes
 KNOWLEDGE_MAX_CHARS = 12000
 DELETE_DELAY_SECONDS = 5
+MAX_TOOL_ROUNDS = 4           # AI tool calls per reply (look up kits, claim, …)
+
+# Tools for the AI – they always act for the ticket owner (never a user chosen by the model)
+KIT_TOOLS = [
+    {"type": "function", "function": {
+        "name": "get_my_kits",
+        "description": "Kits the ticket owner may claim (from their Discord roles) with contents, last claim, "
+                       "cooldown and whether they can claim now; their linked in-game player and online status; "
+                       "role-locked autokits (e.g. spawn kits) and whether they have the needed role.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "claim_kit",
+        "description": "Claims one custom kit for the ticket owner – sent in-game to their linked player. "
+                       "Enforces role, cooldown, linked player and online status. Only when they asked for it.",
+        "parameters": {"type": "object", "properties": {
+            "kit": {"type": "string", "description": "Exact kit name from get_my_kits"}}, "required": ["kit"]}}},
+]
 
 
 class TicketModal(discord.ui.Modal, title="Open support ticket"):
@@ -304,6 +323,8 @@ class Tickets(commands.Cog):
             if self.bot.user and m.author.id == self.bot.user.id:
                 if m.content.startswith(AI_PREFIX):
                     history.append(("assistant", m.content[len(AI_PREFIX):].strip()))
+                elif m.content.startswith(CLAIM_PREFIX):
+                    history.append(("assistant", "[Kit claimed via claim_kit] " + m.content[len(CLAIM_PREFIX):]))
                 continue
             if m.author.bot:
                 continue
@@ -327,13 +348,23 @@ class Tickets(commands.Cog):
             await self._escalate(channel, ticket, "AI reply limit reached in this ticket", source="System")
             return
 
+        tools = self._kit_tools_enabled()
         system = build_system_prompt(server_name=self._server_name(), topic=ticket["topic"],
                                      ingame_name=ticket["ingame_name"], status=self._status_text(),
-                                     knowledge=self._knowledge())
+                                     knowledge=self._knowledge(), kit_tools=tools)
         messages = build_messages(system, await self._history(channel, ticket))
         try:
             async with channel.typing():
-                raw = await self.ai.chat_json(messages)
+                raw = None
+                if tools:
+                    try:
+                        raw = await self._chat_with_tools(list(messages), ticket, channel)
+                    except DeepSeekError as exc:
+                        if "HTTP 400" not in str(exc) and "HTTP 422" not in str(exc):
+                            raise
+                        log.warning("DeepSeek rejected the kit tools (%s) – answering without them.", exc)
+                if raw is None:
+                    raw = await self.ai.chat_json(messages)
         except DeepSeekError as exc:
             log.warning("DeepSeek error in ticket #%s: %s", ticket["id"], exc)
             if not ticket["escalated"]:
@@ -351,6 +382,69 @@ class Tickets(commands.Cog):
             self.bot.db.increment_ticket_ai_replies(ticket["id"])
         if answer.escalate:
             await self._escalate(channel, ticket, answer.reason, source="AI")
+
+    # ------------------------------------------------------------ AI tools (kits of the ticket owner)
+
+    def _kit_tools_enabled(self) -> bool:
+        return self.bot.config.ticket_ai_kit_tools and self.bot.get_cog("CustomKits") is not None
+
+    async def _ticket_member(self, channel: discord.TextChannel, ticket) -> discord.Member | None:
+        member = channel.guild.get_member(ticket["user_id"])
+        if member is None:
+            try:
+                member = await channel.guild.fetch_member(ticket["user_id"])
+            except discord.HTTPException:
+                return None
+        return member
+
+    async def _chat_with_tools(self, messages: list[dict], ticket, channel: discord.TextChannel) -> str:
+        """Lets the AI call the kit tools (several rounds), returns its final answer text."""
+        for _ in range(MAX_TOOL_ROUNDS):
+            msg = await self.ai.chat(messages, tools=KIT_TOOLS)
+            calls = msg["tool_calls"]
+            if not calls:
+                return msg["content"]
+            messages.append({"role": "assistant", "content": msg["content"], "tool_calls": calls})
+            for call in calls:
+                result = await self._run_tool(call, ticket, channel)
+                messages.append({"role": "tool", "tool_call_id": call.get("id", ""),
+                                 "content": json.dumps(result, ensure_ascii=False)})
+        # Too many tool rounds – final answer without tools
+        return (await self.ai.chat(messages, json_mode=False))["content"]
+
+    async def _run_tool(self, call: dict, ticket, channel: discord.TextChannel) -> dict:
+        fn = call.get("function") or {}
+        name = fn.get("name")
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        custom = self.bot.get_cog("CustomKits")
+        member = await self._ticket_member(channel, ticket)
+        if custom is None or member is None:
+            return {"error": "The ticket owner is not on this Discord server any more."}
+        if name == "get_my_kits":
+            overview = custom.kit_overview(member)
+            kits_cog = self.bot.get_cog("Kits")
+            roles = {r.id for r in getattr(member, "roles", [])}
+            overview["role_locked_autokits"] = [
+                {"kit": r["kit"], "trigger": "respawn" if r["trigger"] == "respawn" else "quick chat",
+                 "required_role": (channel.guild.get_role(r["required_role_id"]).name
+                                   if channel.guild.get_role(r["required_role_id"]) else "a role"),
+                 "has_role": r["required_role_id"] in roles}
+                for r in self.bot.db.kit_rules(enabled_only=True) if r["required_role_id"]] if kits_cog else []
+            if overview["linked_player"] is None:
+                overview["note"] = "Not linked yet: the player must use /customkit link while online in-game."
+            return overview
+        if name == "claim_kit":
+            outcome = await custom.claim_for(member, str(args.get("kit") or ""), via=f"ticket #{ticket['id']} (AI)")
+            if outcome.ok:  # visible confirmation in the ticket, independent of the AI's wording
+                await channel.send(CLAIM_PREFIX + outcome.message.removeprefix("🎁 "),
+                                   allowed_mentions=discord.AllowedMentions.none())
+            return {"ok": outcome.ok, "result": outcome.code, "kit": outcome.kit, "player": outcome.player,
+                    "can_claim_again_discord": f"<t:{outcome.ready_at}:R>" if outcome.ready_at else None,
+                    "message": outcome.message.replace("**", "")}
+        return {"error": f"Unknown tool {name}"}
 
     # ------------------------------------------------------------ Ping staff
 

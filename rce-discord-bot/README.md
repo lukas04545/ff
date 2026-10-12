@@ -624,6 +624,18 @@ give kits, unban anyone or run commands, no matter what's written in the ticket.
 knowledge base and the live status (online/offline, player count) – no player list and no custom
 kits. Replies are sent without @mentions.
 
+
+**Kits in tickets:** the AI can also help with kits – for the person who opened the ticket only
+(setting *AI may check and claim kits for the ticket owner*, on by default):
+- "Which kits can I get?" → it lists the custom kits their **Discord roles** allow, what's inside, when
+  they **last claimed** each one and when they can claim again (shown as a live Discord countdown), plus
+  role-locked autokits such as a VIP spawn kit and whether they have the role.
+- "Give me my VIP kit" → it **claims the kit for them**: sent in-game to their linked player, with a ✅
+  confirmation in the ticket and an entry in the admin log.
+- It follows exactly the same rules as `/customkit claim` (role, cooldown, linked + online player) and
+  can never claim for anyone else or give other kits – so nobody can talk it into more than they could
+  claim themselves. Not linked yet? It explains `/customkit link`.
+
 ### Setup
 
 1. **DeepSeek platform:** Create an account at [platform.deepseek.com](https://platform.deepseek.com),
