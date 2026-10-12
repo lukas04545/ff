@@ -22,6 +22,28 @@ DEFAULT_CLAIM_COOLDOWN = 1440  # minutes (24 h) – default cooldown for self-se
 CLAIM_SOURCE = "claim"         # kit_claims.source prefix of self-service claims
 
 
+def raw_values(raw: str | None) -> set[str]:
+    """All scalar values in a stored JSON payload, lowercased (to find an order ID anywhere in it)."""
+    import json
+    try:
+        data = json.loads(raw) if raw else None
+    except ValueError:
+        return set()
+    out: set[str] = set()
+
+    def walk(v):
+        if isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+        elif v is not None:
+            out.add(str(v).strip().lstrip("#").lower())
+    walk(data)
+    return out
+
+
 class _Rollback(Exception):
     """Aborts a `with db:` transaction."""
 
@@ -259,6 +281,7 @@ class Storage:
                 username TEXT,                         -- buyer fields Tip4Serv sends
                 customer TEXT,
                 command TEXT,
+                raw TEXT,                              -- everything Tip4Serv sent about the payment (JSON)
                 received_at INTEGER NOT NULL,
                 used_by INTEGER,                       -- kit request that used this payment
                 used_at INTEGER
@@ -312,6 +335,10 @@ class Storage:
         if "items" not in columns:
             # Requests for a NEW custom kit carry its items (JSON)
             self._db.execute("ALTER TABLE kit_requests ADD COLUMN items TEXT")
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(store_payments)")}
+        if "raw" not in columns:
+            self._db.execute("ALTER TABLE store_payments ADD COLUMN raw TEXT")
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_requests)")}
         for column, kind in (("addon", "INTEGER NOT NULL DEFAULT 0"),           # items for an existing kit
                              ("source", "TEXT NOT NULL DEFAULT 'purchase'"),   # purchase / giveaway
                              ("price", "REAL"), ("currency", "TEXT"),         # price list quote (new kits)
@@ -1025,18 +1052,38 @@ class Storage:
 
     def add_store_payment(self, row_id: str, payment_id: str, *, amount: float | None, currency: str | None,
                           discord_id: int | None, player: str | None, username: str | None, customer: str | None,
-                          command: str) -> bool:
+                          command: str, raw: str | None = None) -> bool:
         """False if it was stored before (Tip4Serv re-sends until the command is marked executed)."""
         cur = self._db.execute(
             "INSERT OR IGNORE INTO store_payments (id, payment_id, amount, currency, discord_id, player, username, "
-            "customer, command, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (row_id, payment_id, amount, currency, discord_id, player, username, customer, command, int(time.time())))
+            "customer, command, raw, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (row_id, payment_id, amount, currency, discord_id, player, username, customer, command, raw,
+             int(time.time())))
         self._db.commit()
         return cur.rowcount > 0
 
     def store_payments(self, *, unused: bool = False, since: int = 0, limit: int = 200) -> list[sqlite3.Row]:
         sql = "SELECT * FROM store_payments WHERE received_at >= ?" + (" AND used_by IS NULL" if unused else "")
         return self._db.execute(sql + " ORDER BY received_at DESC LIMIT ?", (since, limit)).fetchall()
+
+    def count_store_payments(self) -> int:
+        return int(self._db.execute("SELECT COUNT(*) FROM store_payments").fetchone()[0])
+
+    def find_store_payments(self, order: str) -> list[sqlite3.Row]:
+        """Payments whose Tip4Serv ID or any other value Tip4Serv sent equals this order/transaction ID."""
+        order = order.strip().lstrip("#").strip()
+        if len(order) < 4:
+            return []
+        rows = self._db.execute("SELECT * FROM store_payments WHERE lower(payment_id) = lower(?) OR raw LIKE ? "
+                                "ORDER BY received_at DESC LIMIT 50", (order, f"%{order}%")).fetchall()
+        return [r for r in rows if r["payment_id"].lower() == order.lower() or order.lower() in raw_values(r["raw"])]
+
+    def assign_store_payment(self, payment_id: str, discord_id: int) -> int:
+        """Staff vouches that this payment belongs to a member (for payments without Discord ID)."""
+        cur = self._db.execute("UPDATE store_payments SET discord_id = ? WHERE payment_id = ? AND used_by IS NULL",
+                               (discord_id, payment_id))
+        self._db.commit()
+        return cur.rowcount
 
     def use_store_payments(self, row_ids: list[str], request_id: int) -> bool:
         """Marks payments as used by a request – all or nothing (each payment confirms only one purchase)."""

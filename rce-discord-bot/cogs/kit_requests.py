@@ -28,6 +28,7 @@ from discord.ext import commands
 from permcheck import explain_forbidden
 from rce import items as itemlist
 from rce import kits as kitparse
+from storage import raw_values
 from support import pricing
 from utils import is_admin, safe_md
 
@@ -323,6 +324,11 @@ class KitRequests(commands.Cog):
 
     # ------------------------------------------------------------ Tip4Serv payments
 
+    @staticmethod
+    def _order_tokens(proof: str | None) -> set[str]:
+        """Order/transaction IDs the player gave ("#1110065", "tbx-…") – compared with every value Tip4Serv sent."""
+        return {t.lower() for t in re.findall(r"[A-Za-z0-9-]{4,}", proof or "") if any(c.isdigit() for c in t)}
+
     def _matching_payments(self, req) -> list:
         """Unused store payments that belong to the request's buyer (oldest first)."""
         db, cfg = self.bot.db, self.bot.config
@@ -330,7 +336,7 @@ class KitRequests(commands.Cog):
         if cfg.tip4serv_name_match:
             linked = db.linked_player(req["user_id"])
             names |= {n.casefold() for n in (linked, req["checkout_name"]) if n}
-        proof = (req["proof"] or "").casefold()
+        tokens = self._order_tokens(req["proof"])
         since = int(time.time()) - PAYMENT_MAX_AGE_DAYS * 86400
         found = []
         for p in db.store_payments(unused=True, since=since, limit=500):
@@ -339,7 +345,8 @@ class KitRequests(commands.Cog):
             else:
                 ok = cfg.tip4serv_name_match and (
                     any((p[f] or "").casefold() in names for f in ("player", "username", "customer") if p[f])
-                    or (len(p["payment_id"]) >= 4 and p["payment_id"].casefold() in proof))
+                    or p["payment_id"].lower().lstrip("#") in tokens
+                    or bool({t for t in tokens if len(t) >= 5} & raw_values(p["raw"])))
             if ok and (not req["currency"] or not p["currency"] or p["currency"] == req["currency"]):
                 found.append(p)
         return sorted(found, key=lambda p: p["received_at"])
@@ -365,14 +372,26 @@ class KitRequests(commands.Cog):
         q = self._request_quote(req)
         price = q.total if q else None
         if not payments:
+            store = self.bot.get_cog("Store")
+            problem = store.problem() if store is not None else "the store connection is not loaded"
+            if problem:            # purchases don't reach the bot at all – say so instead of "not yet"
+                note = f"⚠️ Can't check Tip4Serv: {problem}. Staff, please check the purchase by hand."
+                db.set_kit_request_payment(request_id, [], note)
+                await self._update(request_id)
+                return {"payment": "store_unavailable", "payment_note": note,
+                        "tell_player": "The automatic payment check isn't available right now – the team checks "
+                                       "the purchase by hand and approves it. Don't promise an automatic approval."}
             auto = cfg.tip4serv_auto_approve and q is not None and q.complete
-            note = ("⏳ No Tip4Serv payment found yet – " + ("approved automatically as soon as it arrives."
-                    if auto else "staff checks the purchase."))
+            given = sorted(self._order_tokens(req["proof"]))[:3]
+            note = ("⏳ No matching Tip4Serv payment found yet"
+                    + (f" (order {', '.join(given)} not received from Tip4Serv)" if given else "") + " – "
+                    + ("approved automatically as soon as it arrives." if auto else "staff checks the purchase."))
             db.set_kit_request_payment(request_id, [], note)
             await self._update(request_id)
             return {"payment": "not_found_yet", "payment_note": note,
-                    "tell_player": "No store payment found yet. " + (
-                        "As soon as it arrives on Tip4Serv the kit is approved automatically." if auto else
+                    "tell_player": "No matching store payment found yet – Tip4Serv can take a few minutes. " + (
+                        "If it arrives (and matches their Discord account, linked player, checkout name or order "
+                        "ID) the kit is approved automatically; otherwise the team checks it." if auto else
                         "Staff will check the purchase.") + " Ask for the name/gamertag used at checkout if unsure."}
         paid_total = sum(p["amount"] or 0 for p in payments)
         chosen = payments

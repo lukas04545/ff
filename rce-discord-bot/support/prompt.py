@@ -128,7 +128,9 @@ PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
   * Prices & payment: request_new_custom_kit returns the price from the server's price list ("price") and, if the
     store is connected, the Tip4Serv payment check ("payment"). Tell them the total price. Results:
     approved_automatically = their payment covered it, the kit is created and they have the role – tell them to
-    claim it; not_found_yet = no payment yet: it is approved automatically once it arrives (or staff checks);
+    claim it; not_found_yet = no matching payment yet: approved automatically if it arrives and matches (or staff
+    checks) – ask for the checkout name / order ID if they didn't give it; store_unavailable = the automatic check
+    can't run right now: staff checks by hand, never promise an automatic approval then;
     found = staff decides (e.g. paid too little – tell them what is missing, or items without a price).
     over_limits = the server's kit limits or timer options – tell them and ask them to lower the amounts.
     Claim timer: the kit's claim cooldown; if they bought a shorter one (e.g. 24h, 12h, 6h) pass

@@ -1274,7 +1274,9 @@ class WebInterface:
                    for r in self.bot.db.kit_requests(status="pending", limit=50)]
         for p in payments:
             p["discord_id"] = str(p["discord_id"]) if p["discord_id"] else None
-        return web.json_response({"status": store.status() if store else {"enabled": False},
+        status = store.status() if store else {"enabled": False}
+        status["problem"] = store.problem() if store else "store module not loaded"
+        return web.json_response({"status": status,
                                   "payments": payments, "pending": pending})
 
     async def ai_status(self, request: web.Request) -> web.Response:

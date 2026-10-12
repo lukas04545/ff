@@ -776,6 +776,15 @@ and approve paid custom kits by itself:
 3. The bot asks Tip4Serv for new purchases every minute, stores each one once and marks it as executed on Tip4Serv.
    Web → Shop → **💳 Tip4Serv purchases** lists them and the open kit requests.
 
+**If a payment isn't found:** `/tip4serv status` shows whether the connection works, when it last checked, how
+many purchases arrived and the latest ones; `/tip4serv find order:1110065` checks whether the bot received a certain
+order (the order number is compared with everything Tip4Serv sent about the payment); `/tip4serv assign order:…
+member:@…` tells the bot whose payment it is – their open request is checked again right away (staff / approver
+roles). If purchases don't reach the bot at all (no key, connection error, or no `rcebot` command on the product),
+requests say so ("Can't check Tip4Serv: …") and the AI tells the player the team checks by hand – instead of
+waiting for a payment that never comes. Purchases made **before** the `rcebot` command was set on the product
+never reach the bot, so `/tip4serv assign` can't help with those – approve them with the button or `/aiconfirm`.
+
 When a player files a **new custom kit** in a ticket, the AI prices the item list with the **price list**
 (`prices.txt`, editable on web → Shop → **🧾 Custom kit price list**; preset from your pricing sheet: rockets, C4,
 AK kits with armour, resources, components, doors, teas, … plus the kit caps and the claim timer options 30h/24h/12h/
