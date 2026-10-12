@@ -8,11 +8,17 @@ Flow
      kit's name, else a newly created one, linked as claim role), the buyer gets that role (for N days if the
      purchase was time-limited) and can claim the kit with /customkit claim.
 Requests survive restarts (database); each can only be decided once.
+
+Tip4Serv (optional, TIP4SERV_KEY): purchases arrive as "rcebot ..." commands (cogs/store.py). A request for a NEW
+custom kit is priced with the price list (prices.txt); when an unused payment of the buyer covers the price, the
+bot approves it by itself (TIP4SERV_AUTO_APPROVE) and the payment can't be used again. Giveaway prizes
+(won_in_giveaway) are never checked against payments – staff always approves them.
 """
 from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import discord
@@ -21,6 +27,7 @@ from discord.ext import commands
 from permcheck import explain_forbidden
 from rce import items as itemlist
 from rce import kits as kitparse
+from support import pricing
 from utils import is_admin, safe_md
 
 if TYPE_CHECKING:
@@ -32,6 +39,8 @@ COLOUR = discord.Colour(0xE0A23B)
 MAX_NEW_KIT_ITEMS = 40
 MAX_AMOUNT = 1_000_000
 STATUS_TEXT = {"pending": "⏳ Waiting for staff", "approved": "✅ Approved", "rejected": "✖️ Rejected"}
+AUTO_BY = "Tip4Serv (automatic)"
+PAYMENT_MAX_AGE_DAYS = 30        # only payments from the last 30 days can confirm a request
 
 
 class KitRequestError(Exception):
@@ -93,9 +102,35 @@ class KitRequestView(discord.ui.View):
 class KitRequests(commands.Cog):
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
+        self._prices: tuple[float, pricing.PriceList | None] | None = None
 
     async def cog_load(self) -> None:
         self.bot.add_view(KitRequestView(self))
+
+    def price_list(self) -> pricing.PriceList | None:
+        """prices.txt (re-read when it changes); None = no price list."""
+        path = self.bot.config.price_list_file
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return None
+        if self._prices is None or self._prices[0] != mtime:
+            self._prices = (mtime, pricing.load(path))
+        return self._prices[1]
+
+    def quote(self, resolved: list[dict], timer_hours: int | None) -> pricing.Quote | None:
+        prices = self.price_list()
+        return pricing.quote(prices, resolved, timer_hours) if prices else None
+
+    @staticmethod
+    def quote_for_ai(q: pricing.Quote) -> dict:
+        money = lambda v: pricing.format_money(v, q.currency)  # noqa: E731
+        return {"total_price": money(q.total),
+                "claim_timer": f"{q.timer_hours}h" + (f" (+{money(q.timer_price)})" if q.timer_price else "")
+                if q.timer_hours else None,
+                "lines": [f"{line['item']} ×{line['amount']:,}: " + ("no price – staff decides" if line["price"] is None
+                          else "included" if line.get("note") else money(line["price"])) for line in q.lines],
+                "items_without_price": q.unpriced, "over_limits": q.over_cap}
 
     def is_staff(self, user: discord.abc.User) -> bool:
         tickets = self.bot.get_cog("Tickets")
@@ -117,7 +152,7 @@ class KitRequests(commands.Cog):
     # ------------------------------------------------------------ Filing (ticket AI)
 
     async def file(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
-                   proof: str, days: int = 0) -> dict:
+                   proof: str, days: int = 0, *, giveaway: bool = False, checkout_name: str | None = None) -> dict:
         """Creates a pending request and posts it with buttons in the ticket. Result dict for the AI."""
         db = self.bot.db
         row = db.custom_kit(kit_name.strip())
@@ -133,15 +168,19 @@ class KitRequests(commands.Cog):
         if open_req:
             return {"ok": True, "result": "already_waiting_for_staff", "request_id": open_req[0]["id"], "kit": kit}
         request_id = db.add_kit_request(ticket["id"] if ticket else None, member.id, kit, max(0, int(days)),
-                                        proof.strip()[:500])
+                                        proof.strip()[:500], source="giveaway" if giveaway else "purchase",
+                                        checkout_name=(checkout_name or "").strip()[:64] or None)
         await self._post(channel, request_id)
-        self.bot.audit(f"🛒 Kit purchase request #{request_id}: <@{member.id}> → **{safe_md(kit)}** "
-                       f"({safe_md(proof[:150])}) – waiting for staff")
-        return {"ok": True, "result": "waiting_for_staff", "request_id": request_id, "kit": kit,
-                "message": "Posted for staff approval. Tell the player staff will check the purchase and confirm."}
+        self.bot.audit(f"{'🎉 Giveaway prize' if giveaway else '🛒 Kit purchase'} request #{request_id}: "
+                       f"<@{member.id}> → **{safe_md(kit)}** ({safe_md(proof[:150])}) – waiting for staff")
+        result = {"ok": True, "result": "waiting_for_staff", "request_id": request_id, "kit": kit,
+                  "message": "Posted for staff approval. Tell the player staff will check it and confirm."}
+        result.update(await self.check_payment(request_id))
+        return result
 
     async def file_new(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
-                       items: list, proof: str, days: int = 0) -> dict:
+                       items: list, proof: str, days: int = 0, *, timer_hours: int | None = None,
+                       giveaway: bool = False, checkout_name: str | None = None) -> dict:
         """Request for a NEW custom kit with the buyer's item list. Unknown items go back to the AI first."""
         db = self.bot.db
         resolved, unknown = resolve_items(items)
@@ -149,19 +188,126 @@ class KitRequests(commands.Cog):
             return {"ok": False, "result": "fix_items", "resolved": resolved, "unknown": unknown,
                     "message": "Not filed yet: fix or ask about these entries (use find_items), then call again "
                                "with the complete list."}
+        q = self.quote(resolved, timer_hours)
+        if q is not None and q.over_cap:
+            return {"ok": False, "result": "over_limits", "over_limits": q.over_cap, "price": self.quote_for_ai(q),
+                    "message": "Not filed: the server's custom kit limits are exceeded – tell the player the limits "
+                               "and ask them to lower the amounts (or pick an available claim timer)."}
         name = kitparse.clean_arg(kit_name or "")[:40] or f"{member.display_name} kit"
         base, n = name, 2
         while db.custom_kit(name) is not None or any(r["kit"].lower() == name.lower()
                                                      for r in db.kit_requests(status="pending")):
             name, n = f"{base} {n}", n + 1
-        request_id = db.add_kit_request(ticket["id"] if ticket else None, member.id, name, max(0, int(days)),
-                                        proof.strip()[:500], json.dumps(resolved))
+        request_id = db.add_kit_request(
+            ticket["id"] if ticket else None, member.id, name, max(0, int(days)), proof.strip()[:500],
+            json.dumps(resolved), source="giveaway" if giveaway else "purchase",
+            price=q.total if q else None, currency=q.currency if q else None,
+            cooldown_minutes=q.timer_hours * 60 if q and q.timer_hours else None,
+            checkout_name=(checkout_name or "").strip()[:64] or None)
         await self._post(channel, request_id)
-        self.bot.audit(f"🛒 New custom kit request #{request_id}: <@{member.id}> → **{safe_md(name)}** "
-                       f"({len(resolved)} items, {safe_md(proof[:150])}) – waiting for staff")
-        return {"ok": True, "result": "waiting_for_staff", "request_id": request_id, "kit": name, "items": resolved,
-                "message": "Posted for staff approval with the item list. Tell the player staff will check the "
-                           "purchase; after approval the kit is created and they get its role."}
+        self.bot.audit(f"{'🎉 Giveaway prize' if giveaway else '🛒 New custom kit'} request #{request_id}: "
+                       f"<@{member.id}> → **{safe_md(name)}** ({len(resolved)} items"
+                       + (f", {pricing.format_money(q.total, q.currency)}" if q else "")
+                       + f", {safe_md(proof[:150])}) – waiting for staff")
+        result = {"ok": True, "result": "waiting_for_staff", "request_id": request_id, "kit": name, "items": resolved,
+                  "message": "Posted for staff approval with the item list. Tell the player staff will check it; "
+                             "after approval the kit is created and they get its role."}
+        if q is not None:
+            result["price"] = self.quote_for_ai(q)
+        result.update(await self.check_payment(request_id))
+        return result
+
+    # ------------------------------------------------------------ Tip4Serv payments
+
+    def _matching_payments(self, req) -> list:
+        """Unused store payments that belong to the request's buyer (oldest first)."""
+        db, cfg = self.bot.db, self.bot.config
+        names: set[str] = set()
+        if cfg.tip4serv_name_match:
+            linked = db.linked_player(req["user_id"])
+            names |= {n.casefold() for n in (linked, req["checkout_name"]) if n}
+        proof = (req["proof"] or "").casefold()
+        since = int(time.time()) - PAYMENT_MAX_AGE_DAYS * 86400
+        found = []
+        for p in db.store_payments(unused=True, since=since, limit=500):
+            if p["discord_id"]:                       # the store knows the buyer's Discord account: must be theirs
+                ok = p["discord_id"] == req["user_id"]
+            else:
+                ok = cfg.tip4serv_name_match and (
+                    any((p[f] or "").casefold() in names for f in ("player", "username", "customer") if p[f])
+                    or (len(p["payment_id"]) >= 4 and p["payment_id"].casefold() in proof))
+            if ok and (not req["currency"] or not p["currency"] or p["currency"] == req["currency"]):
+                found.append(p)
+        return sorted(found, key=lambda p: p["received_at"])
+
+    def _request_quote(self, req) -> pricing.Quote | None:
+        new = self.new_items(req)
+        if not new:
+            return None
+        return self.quote(new, req["cooldown_minutes"] // 60 if req["cooldown_minutes"] else None)
+
+    async def check_payment(self, request_id: int) -> dict:
+        """Looks for the buyer's Tip4Serv payment; approves the request by itself when it covers the price.
+        Returns info for the AI ({} when Tip4Serv isn't used or the request is a giveaway prize)."""
+        db, cfg = self.bot.db, self.bot.config
+        req = db.kit_request(request_id)
+        if req is None or req["status"] != "pending" or req["source"] != "purchase" or not cfg.tip4serv_key:
+            return {}
+        payments = self._matching_payments(req)
+        money = lambda v: pricing.format_money(v, req["currency"] or payments[0]["currency"] or "EUR")  # noqa: E731
+        q = self._request_quote(req)
+        price = q.total if q else None
+        if not payments:
+            auto = cfg.tip4serv_auto_approve and q is not None and q.complete
+            note = ("⏳ No Tip4Serv payment found yet – " + ("approved automatically as soon as it arrives."
+                    if auto else "staff checks the purchase."))
+            db.set_kit_request_payment(request_id, [], note)
+            await self._update(request_id)
+            return {"payment": "not_found_yet", "payment_note": note,
+                    "tell_player": "No store payment found yet. " + (
+                        "As soon as it arrives on Tip4Serv the kit is approved automatically." if auto else
+                        "Staff will check the purchase.") + " Ask for the name/gamertag used at checkout if unsure."}
+        paid_total = sum(p["amount"] or 0 for p in payments)
+        chosen = payments
+        if price is not None:
+            single = [p for p in payments if (p["amount"] or 0) + 0.005 >= price]
+            chosen = [min(single, key=lambda p: p["amount"])] if single else payments
+        paid = sum(p["amount"] or 0 for p in chosen)
+        ids = [p["id"] for p in chosen]
+        if price is None:
+            note = f"💳 Paid {money(paid_total)} on Tip4Serv – no price list price for this kit, staff decides."
+        elif paid + 0.005 < price:
+            note = f"⚠️ Paid {money(paid)} on Tip4Serv – price {money(price)} – {money(price - paid)} missing."
+        elif not q.complete:
+            note = (f"💳 Paid {money(paid)} – price {money(price)} without the items that have no price "
+                    f"({', '.join(q.unpriced)}) – staff decides.")
+        elif not cfg.tip4serv_auto_approve:
+            note = f"✅ Paid {money(paid)} on Tip4Serv – price {money(price)} – covered."
+        else:
+            note = f"✅ Paid {money(paid)} on Tip4Serv – price {money(price)} – approved automatically."
+            if db.use_store_payments(ids, request_id):
+                db.set_kit_request_payment(request_id, ids, note)
+                ok, text = await self.decide(request_id, True, AUTO_BY)
+                if ok:
+                    return {"payment": "approved_automatically", "paid": money(paid), "price": money(price),
+                            "tell_player": "Payment found and it covers the price – the kit is approved and created, "
+                                           "they got its role. They claim it with /customkit claim."}
+                db.release_store_payments(request_id)
+                note = f"⚠️ Paid {money(paid)} – covers the price, but approving failed: {text[:300]} – staff, " \
+                       "please fix it and approve."
+        db.set_kit_request_payment(request_id, ids, note)
+        await self._update(request_id)
+        return {"payment": "found", "paid": money(paid), "price": money(price) if price is not None else None,
+                "payment_note": note, "tell_player": "Staff will check the purchase and confirm."}
+
+    async def on_new_payments(self) -> None:
+        """New Tip4Serv payments arrived: re-check the open purchase requests."""
+        for req in reversed(self.bot.db.kit_requests(status="pending", limit=200)):
+            if req["source"] == "purchase":
+                try:
+                    await self.check_payment(req["id"])
+                except discord.HTTPException as exc:
+                    log.warning("Payment check for request #%s failed: %s", req["id"], exc)
 
     async def _post(self, channel, request_id: int) -> None:
         guild = getattr(channel, "guild", None)
@@ -191,10 +337,21 @@ class KitRequests(commands.Cog):
         new = self.new_items(req)
         what = (f"a **new custom kit** – it will be created as **{safe_md(req['kit'])}**" if new
                 else f"**{safe_md(req['kit'])}**")
-        embed = discord.Embed(title=f"🛒 Kit purchase #{req['id']} – {STATUS_TEXT[status]}", colour=COLOUR
-                              if status == "pending" else discord.Colour.dark_grey(),
-                              description=f"<@{req['user_id']}> says they bought {what}.")
+        prize = req["source"] == "giveaway"
+        embed = discord.Embed(title=f"{'🎉 Giveaway prize' if prize else '🛒 Kit purchase'} #{req['id']} – "
+                                    f"{STATUS_TEXT[status]}",
+                              colour=COLOUR if status == "pending" else discord.Colour.dark_grey(),
+                              description=f"<@{req['user_id']}> says they " + (f"won {what} in a giveaway." if prize
+                                                                               else f"bought {what}."))
         embed.add_field(name="Duration", value=f"{req['days']} days" if req["days"] else "permanent")
+        if req["cooldown_minutes"]:
+            embed.add_field(name="Claim timer", value=f"{req['cooldown_minutes'] // 60}h")
+        if req["price"] is not None:
+            embed.add_field(name="Price (price list)", value=pricing.format_money(req["price"], req["currency"] or "EUR"))
+        if req["checkout_name"]:
+            embed.add_field(name="Name on the store", value=safe_md(req["checkout_name"]))
+        if req["pay_note"]:
+            embed.add_field(name="💳 Tip4Serv", value=safe_md(req["pay_note"])[:1024], inline=False)
         if req["proof"]:
             embed.add_field(name="Their info (check it!)", value=safe_md(req["proof"])[:1024], inline=False)
         if new:
@@ -217,7 +374,8 @@ class KitRequests(commands.Cog):
         if status == "pending":
             embed.set_footer(text=("Approve = the kit is created with these items (edit it later in the web interface → "
                                    "Kits), gets a role and the buyer gets it." if new else
-                                   "Approve = the buyer gets the kit's role and can claim it with /customkit claim."))
+                                   "Approve = the buyer gets the kit's role and can claim it with /customkit claim.")
+                             + (" Giveaway prizes are always approved by staff." if prize else ""))
         else:
             role = f" · role <@&{req['role_id']}>" if req["role_id"] else ""
             embed.add_field(name=STATUS_TEXT[status], value=f"by {safe_md(req['decided_by'] or '?')}{role}",
@@ -262,8 +420,11 @@ class KitRequests(commands.Cog):
         except KitRequestError as exc:
             db.reopen_kit_request(request_id)          # nothing given – staff can fix it and approve again
             return False, str(exc)
+        if req["payment_ids"] and by_name != AUTO_BY:     # staff approved: the found payment is used up too
+            db.use_store_payments(req["payment_ids"].split(","), req["id"])
         await self._update(req["id"])
-        await self._say(channel, f"✅ 🎁 Purchase confirmed by {safe_md(by_name)}: {text} – claim it with "
+        what = "Prize" if req["source"] == "giveaway" else "Purchase"
+        await self._say(channel, f"✅ 🎁 {what} confirmed by {safe_md(by_name)}: {text} – claim it with "
                                  f"`/customkit claim {req['kit']}` while you're online in-game.")
         return True, f"Request #{request_id} approved: {text}"
 
@@ -280,6 +441,8 @@ class KitRequests(commands.Cog):
                 self.bot.db.create_custom_kit(req["kit"], marker, by)
                 for item in new:
                     self.bot.db.add_custom_kit_item(req["kit"], item["short"], int(item["amount"]))
+                if req["cooldown_minutes"]:
+                    self.bot.db.set_custom_kit_cooldown(req["kit"], int(req["cooldown_minutes"]))
                 self.bot.audit(f"🛒 Custom kit **{safe_md(req['kit'])}** created ({len(new)} items, request "
                                f"#{req['id']}, approved by {safe_md(by)})")
             elif existing["description"] != marker:   # same marker = created by an earlier, failed approval: reuse

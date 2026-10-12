@@ -137,6 +137,10 @@ class Config:
 
     # Points & shop (economy)
     economy_enabled: bool
+    tip4serv_key: str                    # Tip4Serv server key (empty = store connection off)
+    tip4serv_auto_approve: bool          # paid + priced new custom kits are approved by the bot
+    tip4serv_name_match: bool            # payments may be matched by in-game name (not only Discord ID)
+    price_list_file: Path                # prices.txt
     points_name: str                      # e.g. "points", "coins", "scrap"
     points_per_hour: int                  # for linked players while online
     points_per_kill: int                  # PvP kill of a linked player
@@ -285,6 +289,10 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         giveaway_auto_ticket=_bool("GIVEAWAY_AUTO_TICKET", True),
         giveaway_prize_days=max(0, _int("GIVEAWAY_PRIZE_DAYS", 0)),
         economy_enabled=_bool("ECONOMY_ENABLED", True),
+        tip4serv_key=_get("TIP4SERV_KEY").strip(),
+        tip4serv_auto_approve=_bool("TIP4SERV_AUTO_APPROVE", True),
+        tip4serv_name_match=_bool("TIP4SERV_NAME_MATCH", True),
+        price_list_file=Path(_get("PRICE_LIST_FILE", "prices.txt") or "prices.txt"),
         points_name=_get("POINTS_NAME", "points") or "points",
         points_per_hour=max(0, _int("POINTS_PER_HOUR", 10)),
         points_per_kill=max(0, _int("POINTS_PER_KILL", 5)),

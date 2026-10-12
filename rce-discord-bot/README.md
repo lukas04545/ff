@@ -189,12 +189,16 @@ rce-discord-bot/
 │   ├── reports.py         # /report and /watch
 │   ├── abuse.py           # Admin abuse protection (raid items spawned without permission)
 │   ├── kit_requests.py    # Bought custom kits: AI request → staff approve button → kit role
+│   ├── store.py           # Tip4Serv purchases (polled every minute) → automatic approval
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
-│   └── prompt.py          # System prompt, history, parsing the AI reply
+│   ├── pricing.py         # Price list for custom kits (prices.txt)
+│   ├── prompt.py          # System prompt, history, parsing the AI reply
+│   └── tip4serv.py        # Tip4Serv store connection (signed requests, rcebot commands)
 ├── support_knowledge.md   # Knowledge base for the AI  ← fill in yourself
 ├── rules.md               # Rules for /rules  ← adjust
+├── prices.txt             # Custom kit price list (Tip4Serv auto-approve)  ← adjust
 ├── web/
 │   ├── server.py          # Web interface: login + JSON API (runs inside the bot process)
 │   └── static/            # Frontend (HTML/CSS/JS, no external files)
@@ -742,6 +746,33 @@ every item with its shortname and amount – check them! On **Approve** the bot 
 items (named as the player asked, or "<name> kit", numbered if taken), creates its role and gives it to the buyer as
 above. You can edit the kit later in the web interface → Kits. If staff approves but the role can't be given (e.g.
 missing permission), the request stays open and approving again reuses the kit that was already created.
+
+**Tip4Serv: automatic purchase check.** The bot can see your [Tip4Serv](https://tip4serv.com) store's purchases
+and approve paid custom kits by itself:
+1. On tip4serv.com add a **server for the bot** and copy its **key** (three parts separated by dots) into
+   **Settings → 💳 Tip4Serv store → Tip4Serv server key** (`TIP4SERV_KEY`).
+2. Give your custom kit product (the one where players pay the total) this command **on that server**:
+   `rcebot {discord_id} {total_paid} {currency} {PlayerName}`. Tip4Serv fills in the buyer's Discord ID, the amount,
+   the currency and the in-game name; markers it can't fill are ignored.
+3. The bot asks Tip4Serv for new purchases every minute, stores each one once and marks it as executed on Tip4Serv.
+   Web → Shop → **💳 Tip4Serv purchases** lists them and the open kit requests.
+
+When a player files a **new custom kit** in a ticket, the AI prices the item list with the **price list**
+(`prices.txt`, editable on web → Shop → **🧾 Custom kit price list**; preset from your pricing sheet: rockets, C4,
+AK kits with armour, resources, components, doors, teas, … plus the kit caps and the claim timer options 30h/24h/12h/
+6h) and tells the player the total. If an unused payment of that player covers the price – also several payments
+together – the request is **approved automatically** (`TIP4SERV_AUTO_APPROVE`): the kit is created with the bought
+claim timer, gets its role and the player gets it. If the payment comes later, the approval happens as soon as it
+arrives. Each payment confirms only one request; payments older than 30 days don't count.
+Staff still decides (the request shows what was found, e.g. "Paid €30 – price €42.50 – €12.50 missing") when the
+payment is too low, an item has no price, or the kit is an existing one. Over the caps, the AI asks the player to
+lower the amounts. A payment matches the player by **Discord ID** (`{discord_id}`) or – if *Match payments by
+in-game name* is on (`TIP4SERV_NAME_MATCH`, default) – by their linked player or the name they used at checkout.
+⚠️ Names aren't verified (linking has no in-game check), so for real money turn name matching off and let Tip4Serv
+collect the Discord ID. Only the owner can change the price list.
+
+**Custom kits won in a giveaway:** the player says they won it – the AI files the same request marked
+**🎉 Giveaway prize**: no payment check, staff always approves it with the buttons.
 
 **Giveaway prizes in tickets:** the AI knows the ticket owner's giveaway wins from two sources:
 - the bot's own **`/giveaway`** (straight from the database), and

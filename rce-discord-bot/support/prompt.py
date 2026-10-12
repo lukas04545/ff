@@ -121,7 +121,19 @@ PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
     list. Staff checks the purchase and the list and approves it with a button – you can NEVER approve it yourself.
     After approval the bot creates the kit and its role and gives them the role; they claim it in-game with
     /customkit claim (after /customkit link if their player isn't linked).
-  * Bought kits are handled with these two tools, NOT by just calling staff: the request already pings staff,
+  * Prices & payment: request_new_custom_kit returns the price from the server's price list ("price") and, if the
+    store is connected, the Tip4Serv payment check ("payment"). Tell them the total price. Results:
+    approved_automatically = their payment covered it, the kit is created and they have the role – tell them to
+    claim it; not_found_yet = no payment yet: it is approved automatically once it arrives (or staff checks);
+    found = staff decides (e.g. paid too little – tell them what is missing, or items without a price).
+    over_limits = the server's kit limits or timer options – tell them and ask them to lower the amounts.
+    Claim timer: the kit's claim cooldown; if they bought a shorter one (e.g. 24h, 12h, 6h) pass
+    claim_timer_hours. Ask for the name/gamertag they used at checkout if it differs from their in-game name
+    (checkout_name). quote_custom_kit tells the price of a list without filing anything ("how much is …?").
+  * Giveaway prizes: if they WON a custom kit (existing or their own item list) in a giveaway instead of buying it,
+    use the same tools with won_in_giveaway = true – no payment is checked, staff always approves those.
+    (For prizes from the bot's giveaways use get_my_giveaway_wins / redeem_giveaway_win first.)
+  * Bought kits are handled with these tools, NOT by just calling staff: the request already pings staff,
     so keep escalate false for it. Even if the knowledge base says only the team can give or create kits, file
     the request – staff approving it IS the team doing it. Call staff only if they also need something else."""
 

@@ -47,6 +47,7 @@ from rce import kits as kitparse
 from rce import quickchat
 from rce.rcon_client import RconError
 from storage import LEADERBOARD_COLUMNS
+from support import pricing
 from support.deepseek import DeepSeekError
 from utils import format_minutes, parse_duration, sanitize_ingame_text, sanitize_player_name, strip_rich_text
 
@@ -305,6 +306,9 @@ class WebInterface:
         r.add_get("/api/tickets/{ticket_id:\\d+}", self.ticket_detail)
         r.add_get("/api/leaderboard", self.leaderboard)
         r.add_get("/api/knowledge", self.get_knowledge)
+        r.add_get("/api/prices", self.get_prices)
+        r.add_put("/api/prices", self.put_prices)
+        r.add_get("/api/store", self.store_status)
         r.add_put("/api/knowledge", self.put_knowledge)
         r.add_get("/api/ai", self.ai_status)
         r.add_get("/api/botlog", self.botlog)
@@ -1239,6 +1243,39 @@ class WebInterface:
         path.write_text(text, encoding="utf-8")
         self._audit("Knowledge base edited")
         return web.json_response({"ok": True})
+
+    async def get_prices(self, request: web.Request) -> web.Response:
+        path: Path = self.bot.config.price_list_file
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+        pl = pricing.parse(text)
+        return web.json_response({"path": str(path), "text": text, "warnings": pl.warnings, "rules": len(pl.rules),
+                                  "currency": pl.currency, "can_edit": request["role"] == "owner"})
+
+    async def put_prices(self, request: web.Request) -> web.Response:
+        if request["role"] != "owner":       # prices decide what the bot approves by itself
+            raise ApiError("Only the owner can change the price list.", status=403)
+        text = str((await self._json(request)).get("text", ""))
+        if len(text) > 50000:
+            raise ApiError("Text too long (max. 50,000 characters).")
+        pl = pricing.parse(text)
+        unknown = sorted({s for r in pl.rules for s in r.items | r.extras} - set(itemlist.COMMON_ITEMS))
+        path: Path = self.bot.config.price_list_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        self._audit("Price list edited")
+        return web.json_response({"ok": True, "warnings": pl.warnings, "rules": len(pl.rules),
+                                  "unknown_items": unknown})
+
+    async def store_status(self, request: web.Request) -> web.Response:
+        store = self.bot.get_cog("Store")
+        payments = [dict(p) for p in self.bot.db.store_payments(limit=100)]
+        pending = [{"id": r["id"], "kit": r["kit"], "user_id": str(r["user_id"]), "price": r["price"],
+                    "currency": r["currency"], "source": r["source"], "note": r["pay_note"], "created_at": r["created_at"]}
+                   for r in self.bot.db.kit_requests(status="pending", limit=50)]
+        for p in payments:
+            p["discord_id"] = str(p["discord_id"]) if p["discord_id"] else None
+        return web.json_response({"status": store.status() if store else {"enabled": False},
+                                  "payments": payments, "pending": pending})
 
     async def ai_status(self, request: web.Request) -> web.Response:
         tickets_cog = self.bot.get_cog("Tickets")

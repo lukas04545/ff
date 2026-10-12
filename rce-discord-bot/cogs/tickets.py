@@ -30,6 +30,7 @@ from permcheck import explain_forbidden
 from rce import items as itemlist
 from support.deepseek import PLATFORM_KEYS_URL, PLATFORM_USAGE_URL, DeepSeekClient, DeepSeekError
 from support.giveaway_wins import GiveawayWin, match_kit, parse_win, prize_duration_minutes
+from support import pricing
 from support.prompt import build_messages, build_system_prompt, parse_answer
 from utils import admin_only, format_duration, is_admin, safe_md, strip_rich_text
 
@@ -93,7 +94,10 @@ PURCHASE_TOOLS = [
             "kit": {"type": "string", "description": "Name of the custom kit they bought"},
             "proof": {"type": "string", "description": "What they told you: store, order/transaction ID, date, price"},
             "days": {"type": "integer", "description": "Only if the purchase is time-limited: number of days. "
-                                                       "0 = permanent (default)"}},
+                                                       "0 = permanent (default)"},
+            "won_in_giveaway": {"type": "boolean", "description": "true if they WON it in a giveaway instead of "
+                                                                  "buying it (staff always checks those)"},
+            "checkout_name": {"type": "string", "description": "Name/gamertag they entered when paying on the store"}},
             "required": ["kit", "proof"]}}},
     {"type": "function", "function": {
         "name": "request_new_custom_kit",
@@ -110,8 +114,25 @@ PURCHASE_TOOLS = [
                           "required": ["item", "amount"]}},
             "proof": {"type": "string", "description": "What they told you: store, order/transaction ID, date, price"},
             "days": {"type": "integer", "description": "Only if the purchase is time-limited: number of days. "
-                                                       "0 = permanent (default)"}},
+                                                       "0 = permanent (default)"},
+            "claim_timer_hours": {"type": "integer", "description": "Bought claim timer (cooldown) in hours, e.g. "
+                                                                    "30, 24, 12 or 6 – default: the included one"},
+            "won_in_giveaway": {"type": "boolean", "description": "true if they WON the kit in a giveaway instead of "
+                                                                  "buying it (staff always checks those)"},
+            "checkout_name": {"type": "string", "description": "Name/gamertag they entered when paying on the store"}},
             "required": ["items", "proof"]}}},
+    {"type": "function", "function": {
+        "name": "quote_custom_kit",
+        "description": "Prices an item list with the server's price list (and checks the custom kit limits) WITHOUT "
+                       "filing anything – use it when a player asks what a kit would cost.",
+        "parameters": {"type": "object", "properties": {
+            "items": {"type": "array", "description": "Every item of the kit",
+                      "items": {"type": "object", "properties": {
+                          "item": {"type": "string", "description": "Rust shortname (e.g. rifle.ak) or item name"},
+                          "amount": {"type": "integer", "description": "Amount, e.g. 50000 for 50k"}},
+                          "required": ["item", "amount"]}},
+            "claim_timer_hours": {"type": "integer", "description": "Claim timer in hours (e.g. 30, 24, 12, 6)"}},
+            "required": ["items"]}}},
     {"type": "function", "function": {
         "name": "find_items",
         "description": "Searches the Rust item list by name or shortname, e.g. 'door', 'rocket', 'l96'. Returns up to "
@@ -136,6 +157,13 @@ GIVEAWAY_TOOLS = [
             "message_id": {"type": "string", "description": "message_id of the win from get_my_giveaway_wins"}},
             "required": ["message_id"]}}},
 ]
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 class TicketError(Exception):
@@ -728,7 +756,9 @@ class Tickets(commands.Cog):
             except (TypeError, ValueError):
                 days = 0
             return await requests.file(channel, ticket, member, str(args.get("kit") or ""),
-                                       str(args.get("proof") or "")[:500], days)
+                                       str(args.get("proof") or "")[:500], days,
+                                       giveaway=bool(args.get("won_in_giveaway")),
+                                       checkout_name=str(args.get("checkout_name") or "") or None)
         if name == "request_new_custom_kit":
             requests = self.bot.get_cog("KitRequests")
             if requests is None:
@@ -741,7 +771,21 @@ class Tickets(commands.Cog):
             except (TypeError, ValueError):
                 days = 0
             return await requests.file_new(channel, ticket, member, str(args.get("kit_name") or ""), items,
-                                           str(args.get("proof") or "")[:500], days)
+                                           str(args.get("proof") or "")[:500], days,
+                                           timer_hours=_int_or_none(args.get("claim_timer_hours")),
+                                           giveaway=bool(args.get("won_in_giveaway")),
+                                           checkout_name=str(args.get("checkout_name") or "") or None)
+        if name == "quote_custom_kit":
+            requests = self.bot.get_cog("KitRequests")
+            items = args.get("items")
+            if requests is None or not isinstance(items, list) or not items:
+                return {"error": "items must be a non-empty list of {item, amount}"}
+            from cogs.kit_requests import resolve_items
+            resolved, unknown = resolve_items(items)
+            q = requests.quote(resolved, _int_or_none(args.get("claim_timer_hours")))
+            if q is None:
+                return {"error": "This server has no price list – staff tells the price."}
+            return {"price": requests.quote_for_ai(q), "unknown_items": unknown}
         if name == "find_items":
             query = str(args.get("query") or "").strip()[:60]
             hits = itemlist.suggestions(query, limit=10) if query else []
@@ -1125,6 +1169,14 @@ class Tickets(commands.Cog):
         await interaction.followup.send(text[:2000 - len(footer) - 1].rstrip() + footer,
                                         ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
+    def _quote_dry(self, args: dict) -> dict:
+        from cogs.kit_requests import resolve_items
+        requests = self.bot.get_cog("KitRequests")
+        items = args.get("items") if isinstance(args.get("items"), list) else []
+        resolved, unknown = resolve_items(items)
+        q = requests.quote(resolved, _int_or_none(args.get("claim_timer_hours"))) if requests else None
+        return {"price": requests.quote_for_ai(q), "unknown_items": unknown} if q else {"error": "no price list"}
+
     async def _dry_tool(self, call: dict, interaction: discord.Interaction, used: list[str]) -> dict:
         """/ticket ai-test: read-only tools run for the tester, actions are only checked and simulated."""
         fn = call.get("function") or {}
@@ -1150,9 +1202,17 @@ class Tickets(commands.Cog):
                 return {"ok": False, "result": "fix_items", "resolved": resolved, "unknown": unknown,
                         "message": "Not filed yet: fix or ask about these entries (use find_items), then call again "
                                    "with the complete list."}
-            used.append(f"request_new_custom_kit **{safe_md(str(args.get('kit_name') or 'new kit'))}** – would post "
-                        "for staff approval: " + ", ".join(f"{i['short']} ×{i['amount']:,}" for i in resolved)[:900])
-            return {"ok": True, "result": "waiting_for_staff", "items": resolved, **note}
+            requests = self.bot.get_cog("KitRequests")
+            q = requests.quote(resolved, _int_or_none(args.get("claim_timer_hours"))) if requests else None
+            price = f" – price {pricing.format_money(q.total, q.currency)}" if q else ""
+            used.append(f"request_new_custom_kit **{safe_md(str(args.get('kit_name') or 'new kit'))}**"
+                        f"{' (giveaway prize)' if args.get('won_in_giveaway') else ''}{price} – would post for "
+                        "staff approval: " + ", ".join(f"{i['short']} ×{i['amount']:,}" for i in resolved)[:800])
+            return {"ok": True, "result": "waiting_for_staff", "items": resolved,
+                    **({"price": requests.quote_for_ai(q)} if q else {}), **note}
+        if name == "quote_custom_kit":
+            used.append("quote_custom_kit")
+            return self._quote_dry(args)
         if name == "request_kit_access":
             kit = self.bot.db.custom_kit(str(args.get("kit") or "").strip())
             if kit is None:

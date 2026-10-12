@@ -36,6 +36,7 @@ GROUPS = [
     ("tickets", "🎫 Tickets & AI"),
     ("community", "🎉 Community"),
     ("economy", "🪙 Points & shop"),
+    ("store", "💳 Tip4Serv store"),
     ("wipe", "🧹 Wipe"),
     ("alerts", "🚨 Alerts & backups"),
     ("abuse", "🛡️ Admin abuse protection"),
@@ -151,6 +152,21 @@ FIELDS: list[Field] = [
     Field("POINTS_PER_KILL", "Points per PvP kill", "economy", "int", placeholder="5",
           help="The same killer/victim pair counts at most once every 10 minutes (no farming)."),
     Field("DAILY_POINTS", "Points for /daily", "economy", "int", placeholder="50"),
+    # Tip4Serv store (custom kit purchases)
+    Field("TIP4SERV_KEY", "Tip4Serv server key", "store", "secret",
+          help="tip4serv.com → add a server for the bot → copy its key (3 parts with dots). Give your custom kit "
+               "product this command on that server: rcebot {discord_id} {total_paid} {currency} {PlayerName} – "
+               "the bot then sees every purchase. Empty = off."),
+    Field("TIP4SERV_AUTO_APPROVE", "Approve paid custom kits automatically", "store", "bool",
+          help="On (default): a NEW custom kit request is approved by itself when the buyer's Tip4Serv payment "
+               "covers the price from the price list (web → Shop → Price list) and every item has a price. Each "
+               "payment confirms only one request. Off: staff still approves, the request just shows the payment. "
+               "Giveaway prizes are always approved by staff."),
+    Field("TIP4SERV_NAME_MATCH", "Match payments by in-game name", "store", "bool",
+          help="On (default): a payment without Discord ID counts for the member whose linked player (or the name "
+               "they say they used at checkout) matches. Off: only payments carrying the buyer's Discord ID "
+               "({discord_id}) count – safer, because linking and names are not verified."),
+    Field("PRICE_LIST_FILE", "Price list file", "store", advanced=True, placeholder="prices.txt"),
     Field("DAILY_STREAK_BONUS", "Extra points per day in a row", "economy", "int", placeholder="10",
           help="/daily on consecutive days (max. 48 h apart) adds this per day, up to 7 days."),
     Field("PLAYTIME_REWARD_HOURS", "Playtime reward every … hours", "economy", "int", placeholder="0",

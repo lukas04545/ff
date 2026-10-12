@@ -8,7 +8,7 @@ Two install types are supported:
   files removed upstream are deleted too – but never your own files.
 * **Git checkout** (git clone): git fetch + a fast-forward merge (only if you have no local changes).
 
-Never touched: .env, data/, logs/, bin/, .venv/, PUBLIC_LINK.txt. rules.md and support_knowledge.md are
+Never touched: .env, data/, logs/, bin/, .venv/, PUBLIC_LINK.txt. rules.md, support_knowledge.md and prices.txt are
 only replaced if you never edited them.
 
 After an update the bot exits with EXIT_UPDATED; start.bat/start.sh start it again right away.
@@ -41,7 +41,7 @@ STATE_FILE = Path("data") / "update_state.json"
 # Never written or deleted by the updater (relative to the bot folder; folders end with "/")
 PROTECTED = (".env", "PUBLIC_LINK.txt", "data/", "logs/", "bin/", ".venv/", "venv/", ".git/", ".pytest_cache/")
 # Files the owner edits (also in the web interface): only replaced while still unchanged
-USER_EDITABLE = ("rules.md", "support_knowledge.md")
+USER_EDITABLE = ("rules.md", "support_knowledge.md", "prices.txt")
 # Start scripts run while the bot runs: only replaced if they are the update-safe version (marker inside)
 START_SCRIPTS = ("start.bat", "start.sh")
 SAFE_MARKER = b"update-safe"

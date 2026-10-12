@@ -1396,8 +1396,68 @@ views.shop = async (main) => {
     h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Member", "Player", pts, "Earned total", "Streak", ""].map((t) => h("th", { text: t })))), wBody)),
     h("p", { class: "muted", style: "margin:.75rem 0 0", text: "In Discord: /points give, /points take, /points history." })));
 
+  main.append(storeCard(), priceListCard());
+
   function reload() { route(); }
 };
+
+// ------------------------------------------------------------------ Tip4Serv purchases + custom kit price list
+
+function storeCard() {
+  const card = h("div", { class: "card" }, h("h2", { text: "💳 Tip4Serv purchases" }), h("p", { class: "muted", text: "Loading …" }));
+  api("/api/store").then((d) => {
+    const st = d.status || {};
+    const pill = !st.enabled ? h("span", { class: "pill", text: "off" })
+      : st.error ? h("span", { class: "pill bad", text: "error" }) : st.last_ok ? h("span", { class: "pill ok", text: "connected" })
+      : h("span", { class: "pill warn", text: "connecting …" });
+    const money = (v, c) => v === null || v === undefined ? "?" : `${Number(v).toFixed(2)} ${c || ""}`.trim();
+    const fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "–";
+    card.replaceChildren(...[h("h2", {}, "💳 Tip4Serv purchases ", pill),
+      !st.enabled ? h("p", { class: "muted", style: "margin-top:0" }, "Not connected. Add a server for the bot on tip4serv.com, paste its key in ",
+        h("a", { href: "#settings", text: "⚙️ Settings → 💳 Tip4Serv store" }), " and give your custom kit product the command ",
+        h("code", { text: "rcebot {discord_id} {total_paid} {currency} {PlayerName}" }), " on that server.") : null,
+      st.error ? h("p", { class: "error", text: st.error }) : null,
+      st.enabled && st.last_ok ? h("p", { class: "muted", style: "margin-top:0", text: `Last check ${fmt(st.last_ok)} · checked every minute.` }) : null,
+      d.pending.length ? h("div", {}, h("h3", { text: "Open kit requests" }), h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["#", "Kit", "Type", "Price", "Payment"].map((t) => h("th", { text: t })))),
+        h("tbody", {}, d.pending.map((r) => h("tr", {}, h("td", { text: "#" + r.id }), h("td", { text: r.kit }),
+          h("td", { text: r.source === "giveaway" ? "🎉 giveaway" : "🛒 purchase" }),
+          h("td", { text: r.price !== null ? money(r.price, r.currency) : "–" }), h("td", { class: "muted", text: r.note || "–" }))))))) : null,
+      h("h3", { text: "Payments" }),
+      d.payments.length ? h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Received", "Amount", "Buyer", "Payment", "Used by"].map((t) => h("th", { text: t })))),
+        h("tbody", {}, d.payments.map((p) => h("tr", {}, h("td", { text: fmt(p.received_at) }), h("td", { text: money(p.amount, p.currency) }),
+          h("td", { text: [p.discord_id ? "Discord " + p.discord_id : "", p.player || p.username || p.customer || ""].filter(Boolean).join(" · ") || "?" }),
+          h("td", { class: "muted", text: p.payment_id }),
+          h("td", { text: p.used_by ? `request #${p.used_by}` : "unused" })))))) : h("p", { class: "muted", text: "No payments yet." })]
+      .filter(Boolean));
+  }).catch((e) => card.replaceChildren(h("h2", { text: "💳 Tip4Serv purchases" }), h("p", { class: "error", text: e.message })));
+  return card;
+}
+
+function priceListCard() {
+  const card = h("div", { class: "card" }, h("h2", { text: "🧾 Custom kit price list" }), h("p", { class: "muted", text: "Loading …" }));
+  api("/api/prices").then((d) => {
+    const area = h("textarea", { rows: 22, spellcheck: "false", style: "width:100%;font-family:var(--mono, monospace);font-size:.85rem" });
+    area.value = d.text;
+    area.readOnly = !d.can_edit;
+    const info = h("p", { class: "muted", style: "margin:.5rem 0 0" });
+    const showInfo = (r) => {
+      const warn = [...(r.warnings || []), ...(r.unknown_items || []).map((i) => `unknown item: ${i}`)];
+      info.className = warn.length ? "error" : "muted";
+      info.textContent = warn.length ? warn.join(" · ") : `${r.rules} prices · currency ${r.currency || d.currency} · file ${d.path}`;
+    };
+    showInfo(d);
+    card.replaceChildren(h("h2", { text: "🧾 Custom kit price list" }),
+      h("p", { class: "muted", style: "margin-top:0", text: "The ticket AI tells players the price of their custom kit with this list, and new custom kits are approved automatically when the Tip4Serv payment covers the price and every item has a price. Format: see the comments at the top." }),
+      area, info,
+      d.can_edit ? h("div", { class: "row", style: "margin-top:.6rem" }, h("button", { class: "primary", text: "Save", onclick: async () => {
+        const r = await act(() => api("/api/prices", { method: "PUT", body: { text: area.value } }), "Price list saved – applies right away");
+        if (r) showInfo(r);
+      } })) : h("p", { class: "muted", text: "Only the owner can change the price list." }));
+  }).catch((e) => card.replaceChildren(h("h2", { text: "🧾 Custom kit price list" }), h("p", { class: "error", text: e.message })));
+  return card;
+}
 
 // ------------------------------------------------------------------ Community: wipe + scheduled messages
 
