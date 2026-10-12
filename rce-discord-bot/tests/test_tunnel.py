@@ -53,14 +53,21 @@ def test_web_interface_with_tunnel(tmp_path, monkeypatch):
     monkeypatch.setattr(tunnelmod, "find_binary", lambda: _fake_cloudflared(tmp_path))
 
     async def scenario():
-        # Without a password the tunnel is refused
-        w = WebInterface(None, web_settings=WebSettings(password="", tunnel=True), env_path=tmp_path / ".env",
+        # Without a password the bot creates one and saves it in the .env (public address needs a password)
+        env = tmp_path / ".env"
+        env.write_text("DISCORD_TOKEN=x\n", encoding="utf-8")
+        w = WebInterface(None, web_settings=WebSettings(password="", tunnel=True), env_path=env,
                          secret_path=tmp_path / "k")
         w._start_tunnel()
-        assert w.tunnel is None and "WEB_PASSWORD" in w.tunnel_problem
+        assert w.generated_password and len(w.generated_password) >= 16 and w.ws.password == w.generated_password
+        assert f"WEB_PASSWORD={w.generated_password}" in env.read_text()
+        assert await asyncio.to_thread(_wait, lambda: w.public_url)
+        await asyncio.sleep(0.2)  # banner + PUBLIC_LINK.txt are written on the event loop
+        assert (tmp_path / "PUBLIC_LINK.txt").read_text().startswith("https://quiet-fox-123.trycloudflare.com")
+        tunnelmod.stop_tunnel()
 
         w = WebInterface(None, web_settings=WebSettings(password="secret123", tunnel=True),
-                         env_path=tmp_path / ".env", secret_path=tmp_path / "k")
+                         env_path=env, secret_path=tmp_path / "k")
         w._start_tunnel()
         assert await asyncio.to_thread(_wait, lambda: w.public_url)
         c = TestClient(TestServer(w.app))

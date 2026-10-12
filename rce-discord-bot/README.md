@@ -378,20 +378,29 @@ role:
 
 **How other admins reach the web interface** (it runs on your PC):
 
-- **From anywhere – built-in Cloudflare tunnel (easiest):** Settings → Web interface → *Reachable from
-  the internet (Cloudflare tunnel)* → **On**, save, restart the bot. The bot starts Cloudflare's free
-  `cloudflared` itself (downloaded once into `bin/`, ~40 MB, from Cloudflare's official GitHub releases)
-  and gets an encrypted **https://….trycloudflare.com** address. Nothing to open on your router, and the
-  web interface itself still only listens on your PC.
-  - The address is shown in the bot window, as a card on the **Overview** (with a copy button) and posted
-    in your **admin log channel** – so your admins always find the current one.
+- **From anywhere – built-in Cloudflare tunnel (on by default):** just start the bot. It sets up a free,
+  encrypted Cloudflare tunnel by itself (downloads Cloudflare's `cloudflared` once into `bin/`, ~40 MB,
+  from Cloudflare's official GitHub releases) and prints your link in a box in the bot window:
+  ```
+  ========================================================================
+    🌍 YOUR WEB INTERFACE LINK – works from anywhere (phone, other PCs):
+       https://quiet-fox-123.trycloudflare.com
+    Login: owner / <your password>
+  ========================================================================
+  ```
+  If you haven't set a `WEB_PASSWORD`, the bot creates a strong one on the first start, saves it in the
+  `.env` and shows it in that box. Nothing to open on your router; the web interface itself still only
+  listens on your PC. To turn it off: Settings → Web interface → *Reachable from the internet* → Off.
+  - The link is also saved in **`PUBLIC_LINK.txt`** (next to `start.bat`), shown as a card on the
+    **Overview** (with a copy button) and posted in your **admin log channel** – so your admins always find
+    the current one.
   - It stays the same while the bot runs (also across restarts from the web interface) and **changes when
     you close the bot window**. For a **fixed address** (needs your own domain on Cloudflare): create a
     tunnel in the Cloudflare dashboard (Zero Trust → Networks → Tunnels), point its public hostname to
     `http://localhost:8080`, then paste the tunnel **token** into *Cloudflare tunnel token* and the
     address into *Fixed public address* (advanced settings).
-  - Requires a `WEB_PASSWORD`. The address is public, so give every admin their own account with a
-    strong password – logins are rate-limited per visitor IP and per account.
+  - The address is public, so give every admin their own account with a strong password (👥 Users) –
+    logins are rate-limited per visitor IP and per account.
   - macOS: install it once with `brew install cloudflared`.
 - **Same home network only:** Settings → Web interface → *Reachable from* → "Also home network
   (0.0.0.0)", restart the bot. Others open `http://<your PC's local IP>:8080` (find it with `ipconfig`).

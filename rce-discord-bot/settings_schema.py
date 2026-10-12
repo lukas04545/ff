@@ -116,8 +116,9 @@ FIELDS: list[Field] = [
                "Never expose it to the internet!"),
     Field("WEB_PORT", "Port", "web", "int", placeholder="8080"),
     Field("WEB_TUNNEL", "Reachable from the internet (Cloudflare tunnel)", "web", "bool",
-          help="On = free, encrypted https:// address that works from anywhere – no router settings needed. "
-               "The address is shown on the Overview and posted in the admin log channel. Needs WEB_PASSWORD."),
+          help="On (default) = free, encrypted https:// address that works from anywhere – no router settings "
+               "needed. The link is shown in the bot window, in PUBLIC_LINK.txt, on the Overview and in the admin "
+               "log channel. Without a WEB_PASSWORD the bot generates one and saves it."),
     Field("WEB_TUNNEL_TOKEN", "Cloudflare tunnel token (fixed address)", "web", "secret", advanced=True,
           help="Optional. Empty = random address (changes when the bot window is closed). For a fixed address "
                "create a tunnel in the Cloudflare dashboard (needs your own domain) and paste its token."),

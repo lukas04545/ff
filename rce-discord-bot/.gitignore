@@ -7,3 +7,4 @@ venv/
 .pytest_cache/
 logs/
 bin/
+PUBLIC_LINK.txt
