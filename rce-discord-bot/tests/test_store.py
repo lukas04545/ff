@@ -151,6 +151,8 @@ def test_payment_first_single_payment_used_once(shop):
 def test_cases_staff_still_decides(shop):
     env = shop
     pay(env, "B", 1000)
+    over = new_kit(env, {"items": [{"item": "ammo.rocket.basic", "amount": 5000}], "proof": "paid"})
+    assert over["result"] == "over_limits"
     unpriced = new_kit(env, {"items": PRICED + [{"item": "rug", "amount": 1}], "proof": "paid"})
     assert unpriced["payment"] == "found" and "staff decides" in unpriced["payment_note"]
     assert env.db.kit_request(unpriced["request_id"])["status"] == "pending"
@@ -158,9 +160,6 @@ def test_cases_staff_still_decides(shop):
     prize = new_kit(env, {"kit_name": "Prize kit", "items": PRICED, "proof": "won it", "won_in_giveaway": True})
     assert "payment" not in prize and env.db.kit_request(prize["request_id"])["status"] == "pending"
     assert env.posted[-1][1].title.startswith("🎉 Giveaway prize")
-
-    over = new_kit(env, {"items": [{"item": "ammo.rocket.basic", "amount": 5000}], "proof": "paid"})
-    assert over["result"] == "over_limits"
 
     # staff approves the unpriced one by hand -> the found payment is used up too
     ok, _ = asyncio.run(env.requests.decide(unpriced["request_id"], True, env.staff))
@@ -185,6 +184,7 @@ def test_auto_approve_off_and_store_off(shop):
     env.bot.config = replace(env.bot.config, tip4serv_auto_approve=False)
     r = new_kit(env, {"items": PRICED, "proof": "paid"})
     assert r["payment"] == "found" and env.db.kit_request(r["request_id"])["status"] == "pending"
+    asyncio.run(env.requests.decide(r["request_id"], False, env.staff))
     env.bot.config = replace(env.bot.config, tip4serv_key="")
     r2 = new_kit(env, {"kit_name": "Other", "items": PRICED, "proof": "paid"})
     assert "payment" not in r2 and "price" in r2                         # price still shown without the store
@@ -257,3 +257,48 @@ def test_addon_won_in_giveaway_needs_staff(shop):
     ok, _ = asyncio.run(env.requests.decide(r["request_id"], True, env.staff))
     assert ok and {i["shortname"]: i["amount"] for i in env.db.custom_kit_items(kit)}["samsite"] == 2
     assert "Prize confirmed" in env.posted[-1][0]
+
+
+# ------------------------------------------------------------------ one purchase = one kit
+
+def test_order_ids():
+    from cogs.kit_requests import order_ids
+    assert order_ids("Tebex order tbx-1a2b3c4d paid 40.00 EUR on 2026-10-12") == {"tbx-1a2b3c4d"}
+    assert order_ids("PayPal 5RX12345AB678901C, 12345678") == {"5rx12345ab678901c", "12345678"}
+    assert order_ids("50000 hqm, 12/10/2026, order #1234") == set()
+
+
+def test_same_order_id_only_once(shop):
+    env = shop
+    r = new_kit(env, {"items": PRICED, "proof": "Tebex order tbx-9f8e7d6c"})
+    assert r["result"] == "waiting_for_staff"
+    asyncio.run(env.requests.decide(r["request_id"], True, env.staff))
+    again = new_kit(env, {"kit_name": "Second", "items": PRICED, "proof": "order TBX-9F8E7D6C again"})
+    assert again["result"] == "order_already_used" and again["used_for_request"] == r["request_id"]
+    access = asyncio.run(env.tickets._run_tool({"id": "c", "type": "function", "function": {
+        "name": "request_kit_access", "arguments": json.dumps({"kit": "Mega raid kit", "proof": "tbx-9f8e7d6c"})}},
+        env.ticket, env.channel))
+    assert access["result"] == "order_already_used"
+    prize = new_kit(env, {"kit_name": "Won", "items": PRICED, "proof": "tbx-9f8e7d6c", "won_in_giveaway": True})
+    assert prize["result"] == "waiting_for_staff"                         # giveaway prizes aren't purchases
+    # a rejected request frees its order ID
+    env.db._db.execute("UPDATE kit_requests SET status = 'rejected' WHERE id = ?", (r["request_id"],))
+    env.db._db.commit()
+    assert new_kit(env, {"kit_name": "Third", "items": PRICED, "proof": "tbx-9f8e7d6c"})["result"] == \
+        "waiting_for_staff"
+
+
+def test_staff_cant_approve_with_a_payment_used_elsewhere(shop):
+    env = shop
+    env.bot.config = replace(env.bot.config, tip4serv_auto_approve=False)
+    pay(env, "ONE", 400)
+    first = new_kit(env, {"items": PRICED, "proof": "paid"})
+    assert first["payment"] == "found"
+    # The same payment also shows up for an add-on request filed meanwhile (pretend it matched there too)
+    env.db._db.execute("UPDATE store_payments SET used_by = 999 WHERE payment_id = 'ONE'")
+    env.db._db.commit()
+    ok, text = asyncio.run(env.requests.decide(first["request_id"], True, env.staff))
+    assert not ok and "already used for request #999" in text
+    req = env.db.kit_request(first["request_id"])
+    assert req["status"] == "pending" and env.buyer.roles == []
+    assert "No Tip4Serv payment found yet" in req["pay_note"]           # status refreshed for staff

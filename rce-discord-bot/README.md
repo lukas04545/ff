@@ -771,6 +771,12 @@ in-game name* is on (`TIP4SERV_NAME_MATCH`, default) – by their linked player 
 ⚠️ Names aren't verified (linking has no in-game check), so for real money turn name matching off and let Tip4Serv
 collect the Discord ID. Only the owner can change the price list.
 
+**One purchase = one kit:** each Tip4Serv payment confirms only one request (marked as used in the same database
+step). An order/transaction ID the player gives (e.g. `tbx-1a2b3c4d`) can only be used for one purchase request –
+a second ticket with the same ID gets "order already used". A member can only have one new custom kit waiting for
+approval at a time. And if staff tries to approve a request whose payment was used by another request in the
+meantime, the bot refuses ("one purchase gives one kit") and shows the current payment state instead.
+
 **Add-ons for a bought kit:** the member who originally bought a custom kit (through a ticket) can buy extra items
 for it later ("add 3 more M249 and 10 C4 to my kit"). The AI files a **➕ Kit add-on** request with only the new
 items; it's priced with the price list (add-ons keep the kit's claim timer, no timer is charged again), the caps

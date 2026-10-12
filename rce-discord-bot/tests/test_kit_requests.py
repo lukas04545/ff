@@ -183,9 +183,9 @@ def test_new_kit_created_on_approval(env):
     assert "(`lmg.m249`) ×2" in items_text and "(`metal.refined`) ×50,000" in items_text
     assert env.db.custom_kit("Zim raid kit") is None and env.buyer.roles == []      # nothing before approval
 
-    # same name again while pending -> numbered
-    assert new_kit(env, {"kit_name": "Zim raid kit", "items": ORDER[:1], "proof": "2nd order"})["kit"] == \
-        "Zim raid kit 2"
+    # one purchase = one kit: no second new kit while this one waits
+    assert new_kit(env, {"kit_name": "Zim raid kit", "items": ORDER[:1], "proof": "2nd order"})["result"] == \
+        "already_waiting_for_staff"
 
     ok, text = asyncio.run(env.requests.decide(r["request_id"], True, env.staff))
     assert ok, text
@@ -199,6 +199,8 @@ def test_new_kit_created_on_approval(env):
     assert env.db.claim_roles(kit) == [role.id]
     assert env.bot.get_cog("CustomKits").can_claim(env.buyer, kit)
     assert "/customkit claim Zim raid kit" in env.posted[-1][0]
+    # numbered when the name is taken by an existing kit
+    assert new_kit(env, {"kit_name": "Ak Kit", "items": ORDER[:1], "proof": "3rd order"})["kit"] == "Ak Kit 2"
 
 
 def test_new_kit_name_taken_meanwhile(env):
