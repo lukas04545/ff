@@ -240,6 +240,7 @@ pre.transcript {
 .field .field-error { color: var(--bad); font-size: .83rem; }
 .field.has-error input, .field.has-error select { border-color: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
 .checklist { max-height: 190px; overflow-y: auto; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: .4rem .65rem; background: var(--input); }
+.checklist label[hidden] { display: none; }
 .checklist label { display: flex; gap: .55rem; align-items: center; font-weight: 450; padding: .18rem 0; }
 .savebar {
   position: sticky; bottom: 1rem; z-index: 5; background: color-mix(in srgb, var(--panel) 88%, transparent);
@@ -390,3 +391,12 @@ textarea.kb-output { font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, mon
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Collapsible custom kits */
+.ck-toolbar { margin: .9rem 0 .6rem; }
+.card.ck-kit { padding: .55rem .9rem; margin-bottom: .5rem; box-shadow: none; background: var(--panel-2); }
+.card.ck-kit[open] { padding-bottom: .9rem; background: var(--panel); box-shadow: var(--shadow-sm); }
+.ck-kit > summary { flex-wrap: wrap; row-gap: .25rem; }
+.ck-kit > summary .pill::before { display: none; }
+.ck-kit .ck-desc { font-weight: 400; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.ck-kit[hidden] { display: none; }
