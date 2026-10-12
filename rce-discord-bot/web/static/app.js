@@ -314,6 +314,334 @@ views.console = (main) => {
 let meta = null;
 async function loadMeta() { if (!meta) meta = await api("/api/meta"); return meta; }
 
+// ------------------------------------------------------------------ Kit builder
+
+const KB_SIZES = { Wear: 7, Main: 24, Belt: 6 };
+const KB_LABELS = { Wear: "👕 Wear", Main: "🎒 Main inventory", Belt: "🔥 Belt" };
+const KB_DRAFT = "kitbuilder-draft";
+const KB_SAVED = "kitbuilder-saved";
+const KB_SHORT = /^[a-z0-9][a-z0-9._ -]*$/;  // spaces only for real items like "lumberjack hoodie" (checked below)
+
+// Browser storage may be unavailable (private mode etc.) – the builder still works without it
+const kbStore = {
+  get(key, fallback) { try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ } },
+};
+
+// Parses pasted 'kit add "Kit" "item" amount condition container' lines (same rules as the bot)
+function kbParseCommands(text) {
+  const out = [];
+  for (const line of text.replace(/\\n/g, "\n").split(/\n/)) {
+    for (const seg of line.split(/\bkit\s+add\b/i).slice(1)) {
+      const tokens = [...seg.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+      const item = (tokens[1] || "").trim().replace(/\s+/g, " ").toLowerCase();
+      if (!tokens[0] || !KB_SHORT.test(item)) continue;
+      const container = { main: "Main", belt: "Belt", wear: "Wear" }[(tokens[4] || "").toLowerCase()] || "Main";
+      out.push({ kit: tokens[0].trim(), item, amount: Math.max(1, parseInt(tokens[2]) || 1),
+        condition: Math.min(100, Math.max(1, parseInt(tokens[3]) || 100)), container });
+    }
+  }
+  return out;
+}
+
+views.kitbuilder = async (main) => {
+  let m, kitData;
+  try { [m, kitData] = await Promise.all([loadMeta(), api("/api/kits")]); }
+  catch (e) { main.append(h("h1", { text: "Kit builder" })); toast(e.message, true); return; }
+
+  // --- State: slots per container, each null or {item, amount, condition}
+  const empty = () => Object.fromEntries(Object.entries(KB_SIZES).map(([c, n]) => [c, Array(n).fill(null)]));
+  let slots = empty(), selected = null;
+  const allItems = m.catalogue.flatMap((c) => c.items.map((i) => ({ ...i, category: c.category, icon: c.icon })));
+  const byShort = Object.fromEntries(allItems.map((i) => [i.short, i]));
+  const label = (s) => byShort[s]?.label || s;
+  const icon = (s) => byShort[s]?.icon || "📦";
+  const kitName = h("input", { placeholder: "Kit name, e.g. Starter", maxlength: 40 });
+
+  const setSlots = (src) => {
+    slots = empty();
+    for (const c of Object.keys(KB_SIZES)) {
+      (src?.[c] || []).slice(0, KB_SIZES[c]).forEach((s, i) => {
+        if (s && KB_SHORT.test(s.item)) slots[c][i] = { item: s.item, amount: Math.max(1, s.amount | 0 || 1), condition: Math.min(100, Math.max(1, s.condition | 0 || 100)) };
+      });
+    }
+  };
+  const draft = kbStore.get(KB_DRAFT, null);
+  if (draft) { setSlots(draft.slots); kitName.value = draft.name || ""; }
+
+  const filled = () => Object.entries(slots).flatMap(([container, arr]) => arr.map((s) => s && { ...s, container }).filter(Boolean));
+  const firstFree = (container) => slots[container].findIndex((s) => !s);
+  const preferredContainer = (short) => {
+    const cat = byShort[short]?.category;
+    if (cat === "Attire" && firstFree("Wear") >= 0) return "Wear";
+    if (["Weapons", "Tools", "Medical"].includes(cat) && firstFree("Belt") >= 0) return "Belt";
+    return "Main";
+  };
+  const place = (short, target) => {
+    short = short.trim().replace(/\s+/g, " ").toLowerCase();
+    if (!KB_SHORT.test(short) || (short.includes(" ") && !byShort[short])) { toast("Invalid shortname", true); return; }
+    if (!target) {
+      target = selected && !slots[selected.container][selected.index] ? selected : null;
+      for (const c of [preferredContainer(short), "Main", "Belt"]) {
+        if (target) break;
+        const i = firstFree(c); if (i >= 0) target = { container: c, index: i };
+      }
+    }
+    if (!target) { toast("The kit is full", true); return; }
+    slots[target.container][target.index] = { item: short, amount: 1, condition: 100 };
+    selected = target;
+    render();
+  };
+
+  // --- Header stats (like Helios: items loaded / slots filled / commands)
+  const stats = h("div", { class: "kb-stats" });
+
+  // --- Item browser
+  const catSelect = h("select", {}, h("option", { value: "", text: "All categories" }),
+    m.catalogue.map((c) => h("option", { value: c.category, text: `${c.icon} ${c.category}` })));
+  catSelect.value = m.catalogue[0]?.category || "";
+  const search = h("input", { type: "search", placeholder: "AK, rockets, hazmat …" });
+  const itemGrid = h("div", { class: "kb-items" });
+  const renderItems = () => {
+    const q = search.value.trim().toLowerCase();
+    const pool = allItems.filter((i) => (!catSelect.value || q || i.category === catSelect.value)
+      && (!q || i.short.includes(q) || i.label.toLowerCase().includes(q)));
+    const children = [];
+    let lastGroup = null;
+    for (const i of pool) {
+      const group = `${i.category} – ${i.group}`;
+      if (group !== lastGroup) { children.push(h("div", { class: "kb-group", text: group })); lastGroup = group; }
+      const btn = h("button", { class: "kb-item", title: `${i.label} (${i.short}) – click or drag into a slot`, draggable: "true", onclick: () => place(i.short) },
+        h("span", { class: "kb-item-icon", text: i.icon }), h("span", {}, i.label, h("small", { text: i.short })));
+      btn.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", JSON.stringify({ add: i.short })); e.dataTransfer.effectAllowed = "copy"; });
+      children.push(btn);
+    }
+    if (q && KB_SHORT.test(q) && !q.includes(" ") && !byShort[q]) {
+      children.push(h("button", { class: "kb-item", onclick: () => place(q) }, h("span", { class: "kb-item-icon", text: "➕" }), h("span", {}, `Use "${q}"`, h("small", { text: "custom shortname" }))));
+    }
+    itemGrid.replaceChildren(...(children.length ? children : [h("p", { class: "muted", text: "No items found." })]));
+  };
+  search.addEventListener("input", renderItems);
+  catSelect.addEventListener("change", () => { search.value = ""; renderItems(); });
+
+  // --- Slots with drag & drop (move/swap between slots, drop new items from the list)
+  const inventory = h("div");
+  const editor = h("div", { class: "kb-editor" });
+  const output = h("textarea", { class: "kb-output", rows: 8, readonly: true, placeholder: "Generated commands …" });
+
+  const slotEl = (container, index) => {
+    const s = slots[container][index];
+    const isSel = selected && selected.container === container && selected.index === index;
+    const el = h("div", { class: "kb-slot" + (s ? " filled" : "") + (isSel ? " selected" : ""), draggable: s ? "true" : null,
+      title: s ? `${label(s.item)} (${s.item})` : `Empty ${container.toLowerCase()} slot – click it, then pick an item (or drag one here)`,
+      onclick: () => { selected = { container, index }; render(); } },
+      s ? [h("span", { class: "icon", text: icon(s.item) }), h("span", { class: "name", text: label(s.item) }),
+        s.amount > 1 ? h("span", { class: "amt", text: "×" + s.amount }) : null,
+        s.condition < 100 ? h("span", { class: "cond", text: s.condition + "%" }) : null]
+        : h("span", { class: "num", text: String(index + 1).padStart(2, "0") }));
+    el.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", JSON.stringify({ container, index })); e.dataTransfer.effectAllowed = "move"; });
+    el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("over"); });
+    el.addEventListener("dragleave", () => el.classList.remove("over"));
+    el.addEventListener("drop", (e) => {
+      e.preventDefault(); el.classList.remove("over");
+      let data;
+      try { data = JSON.parse(e.dataTransfer.getData("text/plain")); } catch { return; }
+      if (data?.add) { place(data.add, { container, index }); return; }
+      if (!data || !slots[data.container]) return;
+      [slots[container][index], slots[data.container][data.index]] = [slots[data.container][data.index], slots[container][index]];
+      selected = { container, index };
+      render();
+    });
+    return el;
+  };
+
+  const renderEditor = () => {
+    const s = selected && slots[selected.container][selected.index];
+    if (!s) {
+      editor.replaceChildren(h("span", { class: "muted", text: selected ? "Empty slot selected – click an item on the left to put it here." : "Click or drag items into the slots. Click a slot to edit amount/condition, drag to move or swap." }));
+      return;
+    }
+    const amount = h("input", { type: "number", min: 1, max: 100000, value: s.amount });
+    const condition = h("input", { type: "number", min: 1, max: 100, value: s.condition });
+    amount.addEventListener("change", () => { s.amount = Math.max(1, Math.min(100000, parseInt(amount.value) || 1)); render(); });
+    condition.addEventListener("change", () => { s.condition = Math.max(1, Math.min(100, parseInt(condition.value) || 100)); render(); });
+    const quick = [1, 10, 64, 128, 256, 1000].map((n) => h("button", { class: "small", text: "×" + n, onclick: () => { s.amount = n; render(); } }));
+    editor.replaceChildren(
+      h("strong", { text: `${icon(s.item)} ${label(s.item)}` }), h("code", { text: s.item }),
+      h("label", { class: "row", style: "gap:.3rem" }, "Amount", amount), ...quick,
+      h("label", { class: "row", style: "gap:.3rem" }, "Condition %", condition),
+      h("button", { class: "small danger", text: "Remove", onclick: () => { slots[selected.container][selected.index] = null; render(); } }));
+  };
+
+  const commands = () => {
+    const name = kitName.value.replace(/"/g, "").trim() || "Kit name";
+    return filled().map((i) => m.kit_add_template.replaceAll("{kit}", name).replaceAll("{item}", i.item)
+      .replaceAll("{amount}", i.amount).replaceAll("{condition}", i.condition).replaceAll("{container}", i.container)).join("\n");
+  };
+
+  function render() {
+    inventory.replaceChildren(...["Wear", "Main", "Belt"].flatMap((c) => [
+      h("div", { class: "kb-section" }, h("span", { text: KB_LABELS[c] }), h("span", { text: `${slots[c].filter(Boolean).length}/${KB_SIZES[c]} slots` })),
+      h("div", { class: "kb-grid" + (c === "Wear" ? " wear" : "") }, slots[c].map((_, i) => slotEl(c, i))),
+    ]));
+    renderEditor();
+    output.value = commands();
+    const n = filled().length;
+    stats.replaceChildren(
+      h("span", {}, h("strong", { text: allItems.length }), " items loaded"),
+      h("span", {}, h("strong", { text: n }), " slots filled"),
+      h("span", {}, h("strong", { text: n }), " commands"));
+    kbStore.set(KB_DRAFT, { name: kitName.value, slots });
+  }
+  kitName.addEventListener("input", render);
+
+  const loadItems = (items, name) => {
+    slots = empty(); selected = null;
+    let skipped = 0;
+    for (const i of items) {
+      let c = KB_SIZES[i.container] ? i.container : "Main";
+      if (firstFree(c) < 0) c = firstFree("Main") >= 0 ? "Main" : "Belt";
+      const idx = firstFree(c);
+      if (idx >= 0) slots[c][idx] = { item: i.item, amount: i.amount, condition: i.condition || 100 };
+      else skipped++;
+    }
+    if (name) kitName.value = name;
+    if (skipped) toast(`${skipped} items did not fit (max. 37 slots)`, true);
+    render();
+  };
+  const confirmReplace = () => !filled().length || confirm("Replace the current kit in the builder?");
+
+  // --- Load kits from the server (in-game kits / custom kits)
+  const serverSel = h("select", {}, h("option", { value: "", text: "📥 Load from server …" }),
+    kitData.ingame.map((k) => h("option", { value: "ingame:" + k, text: "🎒 " + k })),
+    kitData.custom.map((k) => h("option", { value: "custom:" + k.name, text: "🔒 " + k.name })));
+  serverSel.addEventListener("change", async () => {
+    const v = serverSel.value; serverSel.value = "";
+    if (!v || !confirmReplace()) return;
+    const [type, name] = [v.split(":")[0], v.slice(v.indexOf(":") + 1)];
+    try {
+      if (type === "ingame") {
+        const info = await api(`/api/kits/ingame/${encodeURIComponent(name)}`);
+        if (!info.items.length) { toast("Could not read the items of this kit (see Kits page).", true); return; }
+        loadItems(info.items.map((i) => ({ item: i.short_name, amount: i.amount, condition: i.condition, container: i.container })), name);
+      } else {
+        loadItems((kitData.custom.find((k) => k.name === name)?.items || []).map((i) => ({ item: i.shortname, amount: i.amount, condition: 100, container: "Main" })), name);
+      }
+    } catch (e) { toast(e.message, true); }
+  });
+
+  // --- Saved kits in this browser + import/export
+  const panel = h("div");
+  const showPanel = (...content) => panel.replaceChildren(h("div", { class: "card" }, ...content,
+    h("div", { class: "row", style: "margin-top:.5rem" }, h("button", { class: "small", text: "Close", onclick: () => panel.replaceChildren() }))));
+  const saveLocal = () => {
+    const name = kitName.value.trim();
+    if (!name) { toast("Enter a kit name first", true); kitName.focus(); return; }
+    if (!filled().length) { toast("The kit is empty", true); return; }
+    const saved = kbStore.get(KB_SAVED, {});
+    if (saved[name] && !confirm(`Overwrite the saved kit "${name}"?`)) return;
+    saved[name] = { slots, savedAt: Date.now() };
+    kbStore.set(KB_SAVED, saved);
+    toast(`Saved "${name}" in this browser`);
+  };
+  const manageLocal = () => {
+    const saved = kbStore.get(KB_SAVED, {});
+    const names = Object.keys(saved).sort((a, b) => a.localeCompare(b));
+    showPanel(h("h2", { text: "💾 Saved kits (this browser)" }),
+      names.length ? h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, names.map((n) => h("tr", {},
+        h("td", { text: n }),
+        h("td", { class: "muted", text: `${Object.values(saved[n].slots || {}).flat().filter(Boolean).length} items` }),
+        h("td", { class: "muted", text: saved[n].savedAt ? new Date(saved[n].savedAt).toLocaleString() : "" }),
+        h("td", {}, h("div", { class: "row" },
+          h("button", { class: "small primary", text: "Load", onclick: () => { if (!confirmReplace()) return; setSlots(saved[n].slots); kitName.value = n; selected = null; render(); panel.replaceChildren(); } }),
+          h("button", { class: "small danger", text: "Delete", onclick: () => { if (!confirm(`Delete "${n}"?`)) return; delete saved[n]; kbStore.set(KB_SAVED, saved); manageLocal(); } })))))))) 
+        : h("p", { class: "muted", text: "Nothing saved yet – build a kit and click \"Save kit\"." }));
+  };
+  const exportCode = () => {
+    if (!filled().length) { toast("The kit is empty", true); return; }
+    const code = "RCEKIT:" + btoa(unescape(encodeURIComponent(JSON.stringify({ v: 1, name: kitName.value.trim(), slots }))));
+    const box = h("textarea", { class: "kb-output", rows: 4, readonly: true, value: code });
+    showPanel(h("h2", { text: "📤 Export code" }), h("p", { class: "muted", text: "Share this code – paste it into \"Import\" on any bot's kit builder to get the exact same layout." }), box,
+      h("div", { class: "row", style: "margin-top:.5rem" }, h("button", { class: "primary small", text: "📋 Copy code", onclick: async () => {
+        try { await navigator.clipboard.writeText(code); toast("Copied"); } catch { box.select(); document.execCommand("copy"); toast("Copied"); }
+      } })));
+  };
+  const importDialog = () => {
+    const box = h("textarea", { class: "kb-output", rows: 6, placeholder: 'Paste an export code (RCEKIT:…) or "kit add" commands, e.g.\nkit add "Custom kit 1" "ammo.grenadelauncher.buckshot" 1 1 main' });
+    showPanel(h("h2", { text: "📥 Import" }), box, h("div", { class: "row", style: "margin-top:.5rem" }, h("button", { class: "primary small", text: "Import", onclick: () => {
+      const text = box.value.trim();
+      if (!text) return;
+      if (text.startsWith("RCEKIT:")) {
+        try {
+          const data = JSON.parse(decodeURIComponent(escape(atob(text.slice(7)))));
+          if (!confirmReplace()) return;
+          setSlots(data.slots); kitName.value = data.name || kitName.value; selected = null; render(); panel.replaceChildren(); toast("Imported");
+        } catch { toast("Invalid export code", true); }
+        return;
+      }
+      const items = kbParseCommands(text);
+      if (!items.length) { toast('No "kit add" commands found', true); return; }
+      const kits = [...new Set(items.map((i) => i.kit))];
+      if (!confirmReplace()) return;
+      loadItems(items.filter((i) => i.kit === kits[0]), kits[0]);
+      panel.replaceChildren();
+      toast(kits.length > 1 ? `Imported "${kits[0]}" (the paste contained ${kits.length} kits – import the others separately)` : `Imported ${items.length} items`);
+    } })));
+  };
+
+  // --- Actions
+  const replace = h("input", { type: "checkbox" }); replace.checked = true;
+  const payload = () => ({ kit: kitName.value.trim(), items: filled().map(({ item, amount, condition, container }) => ({ item, amount, condition, container })) });
+  const check = () => {
+    if (!kitName.value.trim()) { toast("Enter a kit name first", true); kitName.focus(); return false; }
+    if (!filled().length) { toast("The kit is empty", true); return false; }
+    return true;
+  };
+  const actions = h("div", { class: "row", style: "margin-top:.5rem" },
+    h("button", { class: "primary", text: "📋 Copy commands", onclick: async () => {
+      if (!filled().length) { toast("The kit is empty", true); return; }
+      try { await navigator.clipboard.writeText(output.value); toast("Copied"); }
+      catch { output.select(); document.execCommand("copy"); toast("Copied"); }
+    } }),
+    h("button", { text: "🎒 Create in-game kit on server", onclick: async () => {
+      if (!check()) return;
+      if (!confirm(`Send ${filled().length} "kit add" commands for "${kitName.value.trim()}" to the server?\n\nIf the kit already exists in-game, the items are ADDED to it.`)) return;
+      const r = await act(() => api("/api/kit-builder/ingame", { method: "POST", body: payload() })).catch(() => null);
+      if (r) toast(`In-game kit ${r.kit}: ${r.added} items sent`);
+    } }),
+    h("button", { text: "🔒 Save as custom kit", onclick: async () => {
+      if (!check()) return;
+      const r = await act(() => api("/api/kit-builder/custom", { method: "POST", body: { ...payload(), replace: replace.checked } })).catch(() => null);
+      if (r) toast(`Custom kit ${r.kit} ${r.created ? "created" : "saved"} (${r.added} items)`);
+    } }),
+    h("label", { class: "row muted", style: "gap:.3rem" }, replace, "replace existing custom kit items"),
+    h("button", { class: "danger", style: "margin-left:auto", text: "Clear all", onclick: () => {
+      if (filled().length && !confirm("Remove all items from the builder?")) return;
+      slots = empty(); selected = null; render();
+    } }));
+  const secondary = h("div", { class: "row", style: "margin-top:.5rem" },
+    h("button", { text: "💾 Save kit", onclick: saveLocal }),
+    h("button", { text: "📂 Saved kits", onclick: manageLocal }),
+    h("button", { text: "📤 Export code", onclick: exportCode }),
+    h("button", { text: "📥 Import", onclick: importDialog }));
+
+  main.append(
+    h("div", { class: "row", style: "justify-content:space-between;align-items:flex-end" }, h("h1", { text: "Kit builder", style: "margin:0" }), stats),
+    h("div", { class: "card", style: "margin-top:.75rem" }, h("div", { class: "row" }, kitName, serverSel)),
+    panel,
+    h("div", { class: "kb-layout" },
+      h("div", { class: "card" }, h("h2", { text: "Items" }), h("div", { class: "row" }, catSelect, search), itemGrid,
+        h("p", { class: "muted", style: "margin:.5rem 0 0", text: "Not in the list? Type the shortname into the search and click \"Use\"." })),
+      h("div", {},
+        h("div", { class: "card" }, inventory, editor),
+        h("div", { class: "card" }, h("h2", { text: "Generated commands" }),
+          h("p", { class: "muted", style: "margin:0 0 .5rem", text: "Each filled slot becomes one kit add command (uses your KIT_ADD_TEMPLATE)." }),
+          output, actions, secondary,
+          h("p", { class: "muted", style: "margin:.5rem 0 0", text: "In-game kits keep slot (wear/belt/inventory) and condition. Custom kits are bot-only (invisible in the in-game kit manager) and put everything into the inventory. Saved kits stay in this browser only." })))));
+  renderItems();
+  render();
+};
+
 views.kits = async (main) => {
   main.append(h("h1", { text: "Kits" }));
   const box = h("div");

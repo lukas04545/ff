@@ -71,6 +71,7 @@ ENV_PATH = Path(".env")
 ENV_TEMPLATE = Path(".env.example")
 DISCORD_API = "https://discord.com/api/v10"
 # Bot permissions for the invite link (every feature of this bot)
+BUILDER_MAX_ITEMS = 37  # 24 inventory + 6 hotbar + 7 clothing slots
 INVITE_PERMISSIONS = discord.Permissions(
     view_channel=True, send_messages=True, embed_links=True, attach_files=True, read_message_history=True,
     add_reactions=True, manage_channels=True, manage_roles=True, moderate_members=True, kick_members=True,
@@ -255,6 +256,8 @@ class WebInterface:
         r.add_get("/api/kits", self.kits)
         r.add_get("/api/kits/ingame/{name}", self.ingame_kit_info)
         r.add_post("/api/kits/give", self.give_kit)
+        r.add_post("/api/kit-builder/ingame", self.builder_ingame)
+        r.add_post("/api/kit-builder/custom", self.builder_custom)
         r.add_post("/api/custom-kits", self.create_custom_kit)
         r.add_post("/api/custom-kits/import", self.import_custom_kits)
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
@@ -742,6 +745,65 @@ class WebInterface:
         self._audit(f"Kit **{kit}** to {'everyone' if everyone else player}")
         return web.json_response({"ok": True})
 
+    # ------------------------------------------------------------ Kit builder
+
+    def _builder_payload(self, data: dict) -> tuple[str, list[dict]]:
+        """Kit name + validated items {item, amount, condition, container} from the kit builder."""
+        kit = kitparse.clean_arg(self._text(data, "kit", limit=40), limit=40)
+        raw_items = data.get("items")
+        if not kit:
+            raise ApiError("Please enter a kit name.")
+        if not isinstance(raw_items, list) or not raw_items:
+            raise ApiError("The kit is empty – add some items first.")
+        if len(raw_items) > BUILDER_MAX_ITEMS:
+            raise ApiError(f"At most {BUILDER_MAX_ITEMS} items.")
+        items = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                raise ApiError("Invalid item.")
+            short = " ".join(str(raw.get("item") or "").split()).lower()
+            if len(short) > 64 or not kitparse.valid_shortname(short):
+                raise ApiError(f"Invalid item shortname: {short[:40] or '(empty)'}")
+            container = str(raw.get("container") or "Main").capitalize()
+            if container not in kitparse.CONTAINERS:
+                raise ApiError("Container must be Main, Belt or Wear.")
+            items.append({"item": short, "amount": self._int(raw, "amount", 1, 1, 100000),
+                          "condition": self._int(raw, "condition", 100, 1, 100), "container": container})
+        return kit, items
+
+    async def builder_ingame(self, request: web.Request) -> web.Response:
+        """Creates/extends an in-game kit on the server (one "kit add" per item, in order)."""
+        kit, items = self._builder_payload(await self._json(request))
+        template = self.bot.config.kit_add_template
+        for i in items:
+            await self.bot.rcon.command(template.format(kit=kit, item=i["item"], amount=i["amount"],
+                                                        condition=i["condition"], container=i["container"]),
+                                        expect_response=False)
+        kits_cog = self.bot.get_cog("Kits")
+        if kits_cog:
+            kits_cog.kit_names.invalidate()
+        self._audit(f"Kit builder: in-game kit **{kit}** – {len(items)} items added")
+        return web.json_response({"ok": True, "kit": kit, "added": len(items)})
+
+    async def builder_custom(self, request: web.Request) -> web.Response:
+        """Saves the kit as a custom kit (bot only). Condition/container are not supported there."""
+        from cogs.custom_kits import MAX_ITEMS_PER_KIT
+        data = await self._json(request)
+        kit, items = self._builder_payload(data)
+        if len(items) > MAX_ITEMS_PER_KIT:
+            raise ApiError(f"Custom kits hold at most {MAX_ITEMS_PER_KIT} items.")
+        db = self.bot.db
+        created = db.create_custom_kit(kit, None, "Web interface (kit builder)")
+        name = db.custom_kit(kit)["name"]
+        if not created and data.get("replace", True) is not False:
+            db.clear_custom_kit_items(name)
+        if len(db.custom_kit_items(name)) + len(items) > MAX_ITEMS_PER_KIT:
+            raise ApiError(f"Custom kits hold at most {MAX_ITEMS_PER_KIT} items – turn on \"replace\".")
+        for i in items:
+            db.add_custom_kit_item(name, i["item"], i["amount"])
+        self._audit(f"Kit builder: custom kit **{name}** saved ({len(items)} items)")
+        return web.json_response({"ok": True, "kit": name, "created": created, "added": len(items)})
+
     async def create_custom_kit(self, request: web.Request) -> web.Response:
         data = await self._json(request)
         name = kitparse.clean_arg(self._text(data, "name", limit=40), limit=40)
@@ -809,7 +871,7 @@ class WebInterface:
         if kit is None:
             raise ApiError("Custom kit not found.", 404)
         data = await self._json(request)
-        short = kitparse.clean_arg(self._text(data, "item", limit=64)).replace(" ", "").lower()
+        short = itemlist.normalize_shortname(kitparse.clean_arg(self._text(data, "item", limit=64)))
         amount = self._int(data, "amount", 1, 1, 100000)
         if len(self.bot.db.custom_kit_items(kit["name"])) >= MAX_ITEMS_PER_KIT:
             raise ApiError(f"At most {MAX_ITEMS_PER_KIT} items per kit.")
@@ -884,6 +946,11 @@ class WebInterface:
         return web.json_response({
             "phrases": [{"raw": raw, "text": text} for raw, text in quickchat.all_phrases().items()],
             "items": [{"short": s, "label": label} for s, label in itemlist.COMMON_ITEMS.items()],
+            "catalogue": [{"category": cat, "icon": icon,
+                           "items": [{"short": s, "label": label, "group": itemlist.GROUPS.get(s, "")}
+                                     for s, label in entries.items()]}
+                          for (cat, icon), entries in itemlist.CATALOGUE.items()],
+            "kit_add_template": self.bot.config.kit_add_template,
         })
 
     # ------------------------------------------------------------ Tickets, stats, AI

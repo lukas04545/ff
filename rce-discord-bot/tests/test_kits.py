@@ -128,3 +128,12 @@ def test_import_kit_builder_into_custom_kits(tmp_path):
     assert "No `kit add`" in import_summary(import_kit_commands(db, "hello", kit_name=None, replace=True,
                                                                 created_by="admin"))
     db.close()
+
+
+def test_item_catalogue_and_shortnames():
+    from rce import items
+    assert len(items.COMMON_ITEMS) == 566 and items.GROUPS["rifle.ak"] == "Guns"
+    assert items.normalize_shortname("Lumberjack  Hoodie") == "lumberjack hoodie"  # real RCE name with a space
+    assert items.normalize_shortname("rifle. ak") == "rifle.ak"
+    lines, errors = kits.parse_kit_add_commands('kit add "Kit" "lumberjack hoodie" 1 100 wear kit add "Kit" "t1_smg" 1')
+    assert [x.item for x in lines] == ["lumberjack hoodie", "t1_smg"] and not errors

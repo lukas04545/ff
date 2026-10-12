@@ -257,7 +257,7 @@ class CustomKits(commands.Cog):
         if row is None:
             await self._missing(interaction, kit)
             return
-        short = kitparse.clean_arg(item).replace(" ", "").lower()
+        short = itemlist.normalize_shortname(kitparse.clean_arg(item))
         if not short:
             await interaction.response.send_message("Please enter an item shortname.", ephemeral=True)
             return

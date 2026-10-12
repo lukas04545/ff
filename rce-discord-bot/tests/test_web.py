@@ -129,3 +129,41 @@ def test_rules_and_community(bot, tmp_path, monkeypatch):
         assert (await c.post("/api/giveaways/99/end", headers=H)).status == 404
     monkeypatch.chdir(tmp_path)  # create rules.md in the test folder, not in the project
     run(bot, scenario)
+
+
+def test_kit_builder(bot):
+    sent = []
+
+    async def command(cmd, **kwargs):
+        sent.append(cmd)
+        return ""
+    bot.rcon.command = command
+
+    async def scenario(c):
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        meta = await (await c.get("/api/meta")).json()
+        assert sum(len(cat["items"]) for cat in meta["catalogue"]) == 566 and meta["kit_add_template"]
+        weapons = next(cat for cat in meta["catalogue"] if cat["category"] == "Weapons")
+        assert {"short": "rifle.ak", "label": "Assault Rifle", "group": "Guns"} in weapons["items"]
+
+        items = [{"item": "rifle.ak", "amount": 1, "condition": 80, "container": "belt"},
+                 {"item": "lumberjack hoodie", "amount": 1, "container": "Wear"},
+                 {"item": "ammo.rifle", "amount": 128, "container": "Main"}]
+        r = await (await c.post("/api/kit-builder/ingame", json={"kit": "Starter", "items": items}, headers=H)).json()
+        assert r["added"] == 3 and sent == [
+            'kit add "Starter" "rifle.ak" "1" "80" "Belt"',
+            'kit add "Starter" "lumberjack hoodie" "1" "100" "Wear"',
+            'kit add "Starter" "ammo.rifle" "128" "100" "Main"']
+
+        r = await (await c.post("/api/kit-builder/custom", json={"kit": "Starter", "items": items}, headers=H)).json()
+        assert r["created"] and r["added"] == 3
+        assert [i["shortname"] for i in bot.db.custom_kit_items("Starter")] == ["rifle.ak", "lumberjack hoodie", "ammo.rifle"]
+        r = await (await c.post("/api/kit-builder/custom", json={"kit": "starter", "items": items[:1]}, headers=H)).json()
+        assert not r["created"] and len(bot.db.custom_kit_items("Starter")) == 1  # replaced
+
+        for bad in ({"kit": "", "items": items}, {"kit": "X", "items": []},
+                    {"kit": "X", "items": [{"item": "rifle.ak; quit", "amount": 1}]},
+                    {"kit": "X", "items": [{"item": "rifle.ak", "container": "Pocket"}]},
+                    {"kit": "X", "items": [{"item": "wood"}] * 38}):
+            assert (await c.post("/api/kit-builder/ingame", json=bad, headers=H)).status == 400, bad
+    run(bot, scenario)

@@ -331,6 +331,7 @@ your browser opens automatically; otherwise go to **<http://localhost:8080>**.
 | 📊 Overview | Server status (players, map, uptime, FPS), online players with **kick/ban**, unban, message to the game |
 | ⌨️ Console | **Live server console** and running any RCON command (if `ALLOW_RAW_RCON=true`) |
 | 🎒 Kits | Give kits (player/everyone), view in-game kits, create/edit **custom kits**, create/pause/delete **autokits**, wipe reset, give history |
+| 🧰 Kit builder | **Visual kit builder** (like the Helios kit builder): all 566 RCE items by category with search, 7 wear / 24 inventory / 6 belt slots, click or drag items in, drag to move/swap, amount & condition per slot. Generates the `kit add` commands (copy), **creates the in-game kit on the server** or **saves it as a custom kit**. Load existing kits from the server, save kits in the browser, export/import share codes, import pasted `kit add` commands |
 | 🎫 Tickets | All tickets with status, **transcripts of closed tickets**, DeepSeek balance |
 | 🏆 Stats | Leaderboard (kills, deaths, K/D, playtime), platform, last seen |
 | 🎉 Community | Giveaways (end early, reroll), **edit rules**, overview of the community settings |
