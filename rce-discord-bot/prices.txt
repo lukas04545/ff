@@ -1,0 +1,72 @@
+# Price list for custom kits bought in tickets
+#
+# The ticket AI uses it to tell players the price of their custom kit, and the bot approves a purchase by
+# itself when the player's Tip4Serv payment covers the price (Settings -> Tip4Serv store).
+# Edit it in the web interface (Shop -> Price list) or here. Changes apply immediately.
+#
+#   currency EUR
+#   item, item = PRICE / AMOUNT                    price per AMOUNT, rounded up to full bundles
+#                                                  e.g. "metal.refined = 1 / 200": 1,000 HQM = 5
+#   item = PRICE / 1 with item, item               the "with" items are included for free,
+#                                                  up to the same amount (e.g. armour with an AK kit)
+#   cap N: item, item                              at most N of these items together
+#   cap N each: item, item                         at most N of each of these items
+#   timer 30h = 0                                  claim timer (cooldown) options; the one costing 0 is
+#                                                  the default
+#
+# Items without a price can still be requested, but then staff has to approve the purchase.
+
+currency EUR
+
+# Rockets & explosives
+ammo.rocket.basic, ammo.rocket.fire = 2 / 1
+ammo.rocket.hv = 0.25 / 1
+explosive.timed = 2.5 / 1
+ammo.rifle.explosive = 3 / 250
+samsite = 3 / 1
+ammo.rocket.sam = 1 / 10
+
+# Kits, ammo & materials (a full metal AK kit = AK + metal armour)
+rifle.ak = 5 / 1 with metal.facemask, metal.plate.torso, roadsign.kilt, hoodie, pants, shoes.boots, tactical.gloves
+lmg.m249 = 6 / 1
+ammo.rifle, ammo.rifle.hv, ammo.rifle.incendiary = 1 / 250
+ammo.pistol, ammo.pistol.hv, ammo.pistol.fire = 1 / 500
+lowgradefuel, wood = 1 / 1000
+metal.fragments, stones = 1 / 500
+metal.refined = 1 / 200
+gears, metalpipe, metalspring, riflebody, semibody, smgbody, roadsigns, sheetmetal, techparts, rope, tarp, sewingkit, propanetank, metalblade, fuse, cctv.camera, targeting.computer = 1 / 20
+
+# Building & utility
+door.hinged.toptier, door.double.hinged.toptier, wall.frame.garagedoor, door.hinged.metal, door.double.hinged.metal, door.hinged.wood, door.double.hinged.wood = 1 / 1
+syringe.medical = 5 / 150
+maxhealthtea, maxhealthtea.advanced, maxhealthtea.pure, healingtea, healingtea.advanced, healingtea.pure, oretea, oretea.advanced, oretea.pure, woodtea, woodtea.advanced, woodtea.pure, scraptea, scraptea.advanced, scraptea.pure, radiationresisttea, radiationresisttea.advanced, radiationresisttea.pure, radiationremovetea, radiationremovetea.advanced, radiationremovetea.pure = 10 / 30
+
+# Additional items
+scrap = 0.5 / 100
+shotgun.m4 = 3.5 / 1
+multiplegrenadelauncher = 1.5 / 1
+autoturret = 1 / 1
+workbench3 = 1 / 1
+electric.generator.small = 3 / 1
+ammo.shotgun, ammo.shotgun.slug, ammo.shotgun.fire = 3 / 250
+ammo.handmade.shell = 2 / 500
+guntrap = 3 / 5
+apple, blueberries, black.raspberries, blue.berry, green.berry, red.berry, white.berry, yellow.berry, corn, potato, pumpkin, mushroom, cactusflesh, can.beans, can.tuna, granolabar, chicken.cooked, bearmeat.cooked, deermeat.cooked, horsemeat.cooked, meat.pork.cooked, wolfmeat.cooked, fish.cooked = 3 / 1000
+ladder.wooden.wall = 3 / 20
+
+# Kit claim timer (30 hours included)
+timer 30h = 0
+timer 24h = 150
+timer 12h = 300
+timer 6h = 500
+
+# Custom kit caps
+cap 2000000 each: wood, stones, metal.fragments, metal.refined, lowgradefuel, cloth, leather, sulfur, charcoal, fat.animal, crude.oil
+cap 5000000 each: gunpowder
+cap 1000 each: gears, metalpipe, metalspring, riflebody, semibody, smgbody, roadsigns, sheetmetal, techparts, rope, tarp, sewingkit, propanetank, metalblade, fuse, cctv.camera, targeting.computer
+cap 1000: ammo.rocket.basic, ammo.rocket.fire, ammo.rocket.hv
+cap 1000: explosive.timed
+cap 50000: ammo.rifle.explosive
+cap 100000 each: ammo.rifle, ammo.rifle.hv, ammo.rifle.incendiary, ammo.pistol, ammo.pistol.hv, ammo.pistol.fire, ammo.shotgun, ammo.shotgun.slug, ammo.shotgun.fire, ammo.handmade.shell
+cap 15000: ammo.grenadelauncher.he, ammo.grenadelauncher.buckshot, ammo.grenadelauncher.smoke
+cap 100000: scrap

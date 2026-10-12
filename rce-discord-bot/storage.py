@@ -6,6 +6,7 @@ player list, stats are counted per name. Name change = new entry.
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 LEADERBOARD_COLUMNS = {
@@ -18,6 +19,10 @@ LEADERBOARD_COLUMNS = {
 
 DEFAULT_CLAIM_COOLDOWN = 1440  # minutes (24 h) – default cooldown for self-service custom kit claims
 CLAIM_SOURCE = "claim"         # kit_claims.source prefix of self-service claims
+
+
+class _Rollback(Exception):
+    """Aborts a `with db:` transaction."""
 
 
 class Storage:
@@ -242,6 +247,21 @@ class Storage:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 decided_at TEXT
             );
+            -- Tip4Serv purchases ("rcebot ..." commands), one row per command; used once by a kit request
+            CREATE TABLE IF NOT EXISTS store_payments (
+                id TEXT PRIMARY KEY,                   -- "<payment id>:<command id>"
+                payment_id TEXT NOT NULL,
+                amount REAL,
+                currency TEXT,
+                discord_id INTEGER,
+                player TEXT,                           -- in-game name from the command ({PlayerName})
+                username TEXT,                         -- buyer fields Tip4Serv sends
+                customer TEXT,
+                command TEXT,
+                received_at INTEGER NOT NULL,
+                used_by INTEGER,                       -- kit request that used this payment
+                used_at INTEGER
+            );
             CREATE TABLE IF NOT EXISTS custom_kit_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
@@ -291,6 +311,14 @@ class Storage:
         if "items" not in columns:
             # Requests for a NEW custom kit carry its items (JSON)
             self._db.execute("ALTER TABLE kit_requests ADD COLUMN items TEXT")
+        for column, kind in (("source", "TEXT NOT NULL DEFAULT 'purchase'"),   # purchase / giveaway
+                             ("price", "REAL"), ("currency", "TEXT"),         # price list quote (new kits)
+                             ("cooldown_minutes", "INTEGER"),                 # bought claim timer
+                             ("checkout_name", "TEXT"),                       # name used on the store
+                             ("payment_ids", "TEXT"),                         # matching store payments
+                             ("pay_note", "TEXT")):                           # payment check result
+            if column not in columns:
+                self._db.execute(f"ALTER TABLE kit_requests ADD COLUMN {column} {kind}")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 
@@ -948,11 +976,54 @@ class Storage:
     # ------------------------------------------------------------ Kit purchase requests
 
     def add_kit_request(self, ticket_id: int | None, user_id: int, kit: str, days: int, proof: str,
-                        items: str | None = None) -> int:
-        cur = self._db.execute("INSERT INTO kit_requests (ticket_id, user_id, kit, days, proof, items) "
-                               "VALUES (?, ?, ?, ?, ?, ?)", (ticket_id, user_id, kit, days, proof, items))
+                        items: str | None = None, *, source: str = "purchase", price: float | None = None,
+                        currency: str | None = None, cooldown_minutes: int | None = None,
+                        checkout_name: str | None = None) -> int:
+        cur = self._db.execute(
+            "INSERT INTO kit_requests (ticket_id, user_id, kit, days, proof, items, source, price, currency, "
+            "cooldown_minutes, checkout_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ticket_id, user_id, kit, days, proof, items, source, price, currency, cooldown_minutes, checkout_name))
         self._db.commit()
         return int(cur.lastrowid)
+
+    def set_kit_request_payment(self, request_id: int, payment_ids: list[str], note: str) -> None:
+        self._db.execute("UPDATE kit_requests SET payment_ids = ?, pay_note = ? WHERE id = ?",
+                         (",".join(payment_ids) or None, note, request_id))
+        self._db.commit()
+
+    # ------------------------------------------------------------ Store payments (Tip4Serv)
+
+    def add_store_payment(self, row_id: str, payment_id: str, *, amount: float | None, currency: str | None,
+                          discord_id: int | None, player: str | None, username: str | None, customer: str | None,
+                          command: str) -> bool:
+        """False if it was stored before (Tip4Serv re-sends until the command is marked executed)."""
+        cur = self._db.execute(
+            "INSERT OR IGNORE INTO store_payments (id, payment_id, amount, currency, discord_id, player, username, "
+            "customer, command, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (row_id, payment_id, amount, currency, discord_id, player, username, customer, command, int(time.time())))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def store_payments(self, *, unused: bool = False, since: int = 0, limit: int = 200) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM store_payments WHERE received_at >= ?" + (" AND used_by IS NULL" if unused else "")
+        return self._db.execute(sql + " ORDER BY received_at DESC LIMIT ?", (since, limit)).fetchall()
+
+    def use_store_payments(self, row_ids: list[str], request_id: int) -> bool:
+        """Marks payments as used by a request – all or nothing (each payment confirms only one purchase)."""
+        try:
+            with self._db:
+                for rid in row_ids:
+                    cur = self._db.execute("UPDATE store_payments SET used_by = ?, used_at = ? "
+                                           "WHERE id = ? AND used_by IS NULL", (request_id, int(time.time()), rid))
+                    if cur.rowcount != 1:
+                        raise _Rollback
+        except _Rollback:
+            return False
+        return bool(row_ids)
+
+    def release_store_payments(self, request_id: int) -> None:
+        self._db.execute("UPDATE store_payments SET used_by = NULL, used_at = NULL WHERE used_by = ?", (request_id,))
+        self._db.commit()
 
     def set_kit_request_message(self, request_id: int, channel_id: int, message_id: int) -> None:
         self._db.execute("UPDATE kit_requests SET channel_id = ?, message_id = ? WHERE id = ?",
