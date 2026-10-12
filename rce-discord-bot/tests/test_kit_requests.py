@@ -311,3 +311,64 @@ def test_chosen_approver_roles(env):
     assert "Only <@&88>" in answers[0] and env.db.kit_request(r["request_id"])["status"] == "pending"
     ok, _ = asyncio.run(env.requests.decide(r["request_id"], True, approver))
     assert ok and env.existing in env.buyer.roles
+
+
+def test_aiconfirm_keeps_ai_running_and_allows_exception(env):
+    """/aiconfirm: staff tells the AI something, the AI stays on, a blocked second kit can be filed, approve works."""
+    from types import SimpleNamespace as NS
+    db = env.db
+    db.update_ticket(env.ticket["id"], staff_joined=1)                  # AI was paused by a staff message
+    first = new_kit(env, {"kit_name": "First", "items": ORDER[:1], "proof": "order tbx-1a2b3c"})
+    assert first["result"] == "waiting_for_staff"
+    assert new_kit(env, {"kit_name": "Second", "items": ORDER[:1], "proof": "order tbx-1a2b3c"})["result"] == \
+        "already_waiting_for_staff"
+
+    replies = []
+
+    async def defer(**kw):
+        return None
+
+    async def followup(text, **kw):
+        replies.append(text)
+
+    async def send_message(text, **kw):
+        replies.append(text)
+    inter = NS(channel_id=100, channel=env.channel, user=env.staff,
+               response=NS(defer=defer, send_message=send_message), followup=NS(send=followup))
+    env.staff.display_name = "Mod"
+    asyncio.run(env.tickets.aiconfirm.callback(env.tickets, inter, "Both purchases are verified, file the second kit",
+                                               False))
+    t = db.ticket_by_channel(100)
+    assert t["staff_joined"] == 0 and t["ai_enabled"] == 1                # the AI keeps answering
+    assert env.posted[-1][0].startswith("🛡️ Staff confirmation – **Mod:** Both purchases")
+
+    second = new_kit(env, {"kit_name": "Second", "items": ORDER[:1], "proof": "order tbx-1a2b3c"})
+    assert second["result"] == "waiting_for_staff"                         # exception allowed by staff
+    assert "[allowed by staff via /aiconfirm]" in db.kit_request(second["request_id"])["proof"]
+
+    # approve=True approves the ticket's open requests (approver check applies)
+    buyer_inter = NS(channel_id=100, channel=env.channel, user=env.buyer,
+                     response=NS(defer=defer, send_message=send_message), followup=NS(send=followup))
+    asyncio.run(env.tickets.aiconfirm.callback(env.tickets, buyer_inter, "approve all", True))
+    assert "Staff only" in replies[-1] and db.kit_request(first["request_id"])["status"] == "pending"
+    asyncio.run(env.tickets.aiconfirm.callback(env.tickets, inter, "Approved, enjoy!", True))
+    assert db.kit_request(first["request_id"])["status"] == "approved"
+    assert db.kit_request(second["request_id"])["status"] == "approved"
+    assert replies[-1].count("✅ Request #") == 2
+
+    # the AI sees the confirmation as a trusted message in its history
+    msgs = [NS(author=NS(id=env.bot.user.id if env.bot.user else 0, bot=True), content=env.posted[i][0] or "",
+               attachments=[]) for i in range(len(env.posted)) if (env.posted[i][0] or "").startswith("🛡️")]
+
+    async def history(limit=None):
+        for m in reversed(msgs):
+            yield m
+    env.channel.history = history
+    from unittest import mock
+    with mock.patch.object(type(env.bot), "user", new_callable=mock.PropertyMock) as user:
+        user.return_value = NS(id=0)
+        for m in msgs:
+            m.author.id = 0
+        hist = asyncio.run(env.tickets._history(env.channel, db.ticket_by_channel(100)))
+    assert any(text.startswith("[Staff confirmation – from the team, trusted] **Mod:** Both purchases")
+               for role, text in hist if role == "user")

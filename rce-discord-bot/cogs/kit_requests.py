@@ -187,7 +187,8 @@ class KitRequests(commands.Cog):
         return None
 
     async def file(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
-                   proof: str, days: int = 0, *, giveaway: bool = False, checkout_name: str | None = None) -> dict:
+                   proof: str, days: int = 0, *, giveaway: bool = False, checkout_name: str | None = None,
+                   staff_ok: bool = False) -> dict:
         """Creates a pending request and posts it with buttons in the ticket. Result dict for the AI."""
         db = self.bot.db
         row = db.custom_kit(kit_name.strip())
@@ -199,7 +200,9 @@ class KitRequests(commands.Cog):
         if custom is not None and custom.can_claim(member, row) and not days:
             return {"ok": False, "result": "already_has_access", "kit": kit,
                     "message": "They already have access – they can claim it with /customkit claim."}
-        if not giveaway and (reused := self._order_reused(proof)):
+        if staff_ok:
+            proof = f"{proof} [allowed by staff via /aiconfirm]"
+        elif not giveaway and (reused := self._order_reused(proof)):
             return reused
         open_req = [r for r in db.kit_requests(status="pending", user_id=member.id) if r["kit"].lower() == kit.lower()]
         if open_req:
@@ -217,7 +220,7 @@ class KitRequests(commands.Cog):
 
     async def file_new(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
                        items: list, proof: str, days: int = 0, *, timer_hours: int | None = None,
-                       giveaway: bool = False, checkout_name: str | None = None) -> dict:
+                       giveaway: bool = False, checkout_name: str | None = None, staff_ok: bool = False) -> dict:
         """Request for a NEW custom kit with the buyer's item list. Unknown items go back to the AI first."""
         db = self.bot.db
         resolved, unknown = resolve_items(items)
@@ -227,12 +230,14 @@ class KitRequests(commands.Cog):
                                "with the complete list."}
         waiting = [r for r in db.kit_requests(status="pending", user_id=member.id)
                    if r["items"] and not r["addon"] and r["source"] == ("giveaway" if giveaway else "purchase")]
+        if staff_ok:      # staff confirmed this exception with /aiconfirm
+            waiting, proof = [], f"{proof} [allowed by staff via /aiconfirm]"
         if waiting:   # one purchase = one kit: never two open new-kit requests that one payment could stand for
             return {"ok": False, "result": "already_waiting_for_staff", "request_id": waiting[0]["id"],
                     "kit": waiting[0]["kit"],
                     "message": "They already have a new custom kit waiting for approval – it has to be decided "
                                "first. If they bought a second kit, staff handles it."}
-        if not giveaway and (reused := self._order_reused(proof)):
+        if not giveaway and not staff_ok and (reused := self._order_reused(proof)):
             return reused
         q = self.quote(resolved, timer_hours)
         if q is not None and q.over_cap:
@@ -265,7 +270,7 @@ class KitRequests(commands.Cog):
 
     async def file_addon(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
                          items: list, proof: str, *, giveaway: bool = False,
-                         checkout_name: str | None = None) -> dict:
+                         checkout_name: str | None = None, staff_ok: bool = False) -> dict:
         """Request to ADD items to an existing custom kit – only for the member who originally bought it."""
         from cogs.custom_kits import MAX_ITEMS_PER_KIT
         db = self.bot.db
@@ -284,7 +289,9 @@ class KitRequests(commands.Cog):
             return {"ok": False, "result": "fix_items", "resolved": resolved, "unknown": unknown,
                     "message": "Not filed yet: fix or ask about these entries (use find_items), then call again "
                                "with the complete list of items to ADD."}
-        if not giveaway and (reused := self._order_reused(proof)):
+        if staff_ok:
+            proof = f"{proof} [allowed by staff via /aiconfirm]"
+        elif not giveaway and (reused := self._order_reused(proof)):
             return reused
         current = self._kit_contents(kit)
         if len({i["short"] for i in current} | {i["short"] for i in resolved}) > MAX_ITEMS_PER_KIT:
