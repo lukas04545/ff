@@ -139,6 +139,10 @@ class Config:
     # Points & shop (economy)
     economy_enabled: bool
     tip4serv_key: str                    # Tip4Serv server key (empty = store connection off)
+    ai_mod_channel_ids: frozenset[int]   # channels the AI moderates (empty = off)
+    ai_mod_timeout_after: int            # warnings in 24 h -> timeout (0 = never)
+    ai_mod_timeout_minutes: int
+    ai_mod_delete: bool                  # delete severe messages
     tip4serv_channel_id: int | None      # channel where Tip4Serv's Discord bot announces purchases
     tip4serv_auto_approve: bool          # paid + priced new custom kits are approved by the bot
     tip4serv_name_match: bool            # payments may be matched by in-game name (not only Discord ID)
@@ -211,6 +215,8 @@ def required_intents(cfg: Config) -> dict[str, list[str]]:
         message_content.append("Support tickets")
         if getattr(cfg, "giveaway_win_channel_id", None):
             message_content.append("Giveaway wins (ticket AI)")
+    if getattr(cfg, "ai_mod_channel_ids", None):
+        message_content.append("AI chat moderation")
     if getattr(cfg, "tip4serv_channel_id", None):
         message_content.append("Tip4Serv purchase messages")
     if cfg.discord_log_channel_id:
@@ -295,6 +301,10 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         giveaway_prize_days=max(0, _int("GIVEAWAY_PRIZE_DAYS", 0)),
         economy_enabled=_bool("ECONOMY_ENABLED", True),
         tip4serv_key=_get("TIP4SERV_KEY").strip(),
+        ai_mod_channel_ids=_id_set("AI_MOD_CHANNEL_IDS"),
+        ai_mod_timeout_after=max(0, _int("AI_MOD_TIMEOUT_AFTER", 3)),
+        ai_mod_timeout_minutes=max(1, min(_int("AI_MOD_TIMEOUT_MINUTES", 10), 40320)),
+        ai_mod_delete=_bool("AI_MOD_DELETE", False),
         tip4serv_channel_id=_int("TIP4SERV_CHANNEL_ID"),
         tip4serv_auto_approve=_bool("TIP4SERV_AUTO_APPROVE", True),
         tip4serv_name_match=_bool("TIP4SERV_NAME_MATCH", True),

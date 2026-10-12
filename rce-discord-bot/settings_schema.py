@@ -124,6 +124,16 @@ FIELDS: list[Field] = [
     Field("SUPPORT_KNOWLEDGE_FILE", "Knowledge base file", "tickets", advanced=True,
           placeholder="support_knowledge.md"),
     # Community
+    Field("AI_MOD_CHANNEL_IDS", "AI moderation: channels", "community", "ids", pick="text_channel",
+          help="The AI (DeepSeek, needs the API key) reads these channels, e.g. #general, and warns members who are "
+               "clearly offensive (insults at someone, slurs, hate, threats, harassment) – swearing, banter and "
+               "game trash talk are fine. Staff is never checked. Every warning goes to the admin log. Messages "
+               "there are sent to DeepSeek. Empty = off."),
+    Field("AI_MOD_TIMEOUT_AFTER", "AI moderation: timeout after … warnings (24 h)", "community", "int",
+          placeholder="3", help="0 = only warn, never time out."),
+    Field("AI_MOD_TIMEOUT_MINUTES", "AI moderation: timeout length (minutes)", "community", "int", placeholder="10"),
+    Field("AI_MOD_DELETE", "AI moderation: delete severe messages", "community", "bool",
+          help="Off (default): only warn. On: slurs, threats etc. are also deleted (the bot needs Manage Messages)."),
     Field("WELCOME_CHANNEL_ID", "Welcome channel", "community", "id", pick="text_channel"),
     Field("WELCOME_MESSAGE", "Welcome message", "community", "textarea",
           help="Placeholders: {member} {server} {count} {rules}"),
