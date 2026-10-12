@@ -16,6 +16,8 @@ import asyncio
 import itertools
 import json
 import logging
+import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -80,6 +82,9 @@ class RconClient:
         self._timeouts = 0
         self.last_error: str | None = None   # last connection error (for the web interface)
         self.failed_attempts = 0              # failed attempts since the last successful connection
+        # Commands the bot itself sent recently (time, command) – e.g. to tell the bot's own item gives apart
+        # from admins spawning items in the server log
+        self.recent_commands: deque[tuple[float, str]] = deque(maxlen=500)
         self._message_listeners: list[MessageListener] = []
         self._state_listeners: list[StateListener] = []
 
@@ -152,6 +157,7 @@ class RconClient:
             except (ConnectionResetError, aiohttp.ClientError, RuntimeError) as exc:
                 raise RconNotConnected(f"Send failed: {exc}") from exc
 
+            self.recent_commands.append((time.monotonic(), cmd))
             log.debug("-> [%s] %s", ident, cmd)
             # Without an expected reply only wait briefly – otherwise e.g. every item give would take seconds
             wait = timeout or (self.command_timeout if expect_response else 1.5)

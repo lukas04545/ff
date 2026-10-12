@@ -38,6 +38,7 @@ GROUPS = [
     ("economy", "🪙 Points & shop"),
     ("wipe", "🧹 Wipe"),
     ("alerts", "🚨 Alerts & backups"),
+    ("abuse", "🛡️ Admin abuse protection"),
     ("web", "🌐 Web interface"),
     ("updates", "🔄 Updates"),
     ("templates", "🧩 Command templates (experts)"),
@@ -159,6 +160,22 @@ FIELDS: list[Field] = [
     Field("WIPE_RESET_POINTS", "Reset points at the wipe", "wipe", "bool", help="Default off."),
     Field("REPORT_CHANNEL_ID", "Channel for /report and watchlist alerts", "alerts", "id", pick="text_channel",
           help="Empty = alert channel (or admin log). Support roles are pinged."),
+    # Admin abuse protection
+    Field("ABUSE_PROTECTION", "Punish admins who spawn raid items", "abuse", "bool",
+          help="On (default): when someone who is NOT allowed spawns rockets or C4, the bot removes their admin and "
+               "kills them in-game, and pings staff. Only active once you set who IS allowed (the next two fields) – "
+               "so the owner can never be hit by accident."),
+    Field("ABUSE_EXEMPT_ROLE_IDS", "Allowed Discord roles (owner, co-owner)", "abuse", "ids", pick="role",
+          help="Members with one of these roles may spawn – the bot knows their in-game name from /customkit link."),
+    Field("ABUSE_EXEMPT_PLAYERS", "Allowed in-game names", "abuse", placeholder="e.g. MyGamertag, CoOwnerPSN",
+          help="Comma-separated, upper/lower case doesn't matter. Works without linking – put the owner's name here."),
+    Field("ABUSE_ITEMS", "Forbidden items", "abuse", advanced=True, placeholder="rocket,c4,timed explosive,explosive.timed",
+          help="Comma-separated words matched in the spawned item's name (rocket launchers don't count)."),
+    Field("ABUSE_REMOVE_ADMIN_COMMANDS", "Commands to remove admin", "abuse", advanced=True,
+          placeholder='removeowner "{name}";removemoderator "{name}"',
+          help="Separated by ; – {name} = player. Test them first with /rcon on a test account; the server's reply is "
+               "shown in the alert."),
+    Field("ABUSE_KILL_COMMAND", "Kill command", "abuse", advanced=True, placeholder='global.killplayer "{name}"'),
     # Alerts & backups
     Field("SERVER_DOWN_ALERT_MINUTES", "Server-down alert after … minutes", "alerts", "int", placeholder="10",
           help="Pings staff once when there has been no RCON connection for this long, and again when the server is "

@@ -149,6 +149,14 @@ class Config:
     # Reports
     report_channel_id: int | None         # /report + watchlist alerts (empty = alert channel / admin log)
 
+    # Admin abuse protection (raid items spawned by admins)
+    abuse_protection: bool
+    abuse_exempt_role_ids: frozenset[int]  # Discord roles (owner, co-owner) – their linked players may spawn
+    abuse_exempt_players: frozenset[str]   # in-game names that may spawn (lowercase)
+    abuse_items: tuple[str, ...]           # keywords of forbidden items (lowercase)
+    abuse_remove_admin_commands: tuple[str, ...]   # templates with {name}
+    abuse_kill_command: str                # template with {name}
+
     # Staff alerts & backups
     server_down_alert_minutes: int        # ping staff after the server is offline this long (0 = off)
     alert_channel_id: int | None          # empty = admin log channel
@@ -276,6 +284,14 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         wipe_reset_stats=_bool("WIPE_RESET_STATS", False),
         wipe_reset_points=_bool("WIPE_RESET_POINTS", False),
         report_channel_id=_int("REPORT_CHANNEL_ID"),
+        abuse_protection=_bool("ABUSE_PROTECTION", True),
+        abuse_exempt_role_ids=_id_set("ABUSE_EXEMPT_ROLE_IDS"),
+        abuse_exempt_players=frozenset(p.strip().lower() for p in _get("ABUSE_EXEMPT_PLAYERS").split(",") if p.strip()),
+        abuse_items=tuple(k.strip().lower() for k in (_get("ABUSE_ITEMS") or
+                          "rocket,c4,timed explosive,explosive.timed").split(",") if k.strip()),
+        abuse_remove_admin_commands=tuple(c.strip() for c in (_get("ABUSE_REMOVE_ADMIN_COMMANDS") or
+                                          'removeowner "{name}";removemoderator "{name}"').split(";") if c.strip()),
+        abuse_kill_command=_get("ABUSE_KILL_COMMAND", 'global.killplayer "{name}"'),
         server_down_alert_minutes=max(0, _int("SERVER_DOWN_ALERT_MINUTES", 10)),
         alert_channel_id=_int("ALERT_CHANNEL_ID"),
         alert_role_ids=_id_set("ALERT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),
