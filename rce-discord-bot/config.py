@@ -127,6 +127,17 @@ class Config:
     giveaway_auto_ticket: bool            # /giveaway ended -> prize ticket per winner, AI redeems the prize
     giveaway_prize_days: int              # kit prize without "lifetime"/duration -> role for N days (0 = staff)
 
+    # Points & shop (economy)
+    economy_enabled: bool
+    points_name: str                      # e.g. "points", "coins", "scrap"
+    points_per_hour: int                  # for linked players while online
+    points_per_kill: int                  # PvP kill of a linked player
+    daily_points: int                     # /daily
+    daily_streak_bonus: int               # extra per streak day (max. 7 days)
+    playtime_reward_hours: int            # every N hours online -> reward (0 = off)
+    playtime_reward_kit: str              # custom kit for the reward (empty = none)
+    playtime_reward_points: int           # points for the reward
+
     # Staff alerts & backups
     server_down_alert_minutes: int        # ping staff after the server is offline this long (0 = off)
     alert_channel_id: int | None          # empty = admin log channel
@@ -238,6 +249,15 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         giveaway_win_channel_id=_int("GIVEAWAY_WIN_CHANNEL_ID", 1558525305004757032),
         giveaway_auto_ticket=_bool("GIVEAWAY_AUTO_TICKET", True),
         giveaway_prize_days=max(0, _int("GIVEAWAY_PRIZE_DAYS", 0)),
+        economy_enabled=_bool("ECONOMY_ENABLED", True),
+        points_name=_get("POINTS_NAME", "points") or "points",
+        points_per_hour=max(0, _int("POINTS_PER_HOUR", 10)),
+        points_per_kill=max(0, _int("POINTS_PER_KILL", 5)),
+        daily_points=max(0, _int("DAILY_POINTS", 50)),
+        daily_streak_bonus=max(0, _int("DAILY_STREAK_BONUS", 10)),
+        playtime_reward_hours=max(0, _int("PLAYTIME_REWARD_HOURS", 0)),
+        playtime_reward_kit=_get("PLAYTIME_REWARD_KIT"),
+        playtime_reward_points=max(0, _int("PLAYTIME_REWARD_POINTS", 0)),
         server_down_alert_minutes=max(0, _int("SERVER_DOWN_ALERT_MINUTES", 10)),
         alert_channel_id=_int("ALERT_CHANNEL_ID"),
         alert_role_ids=_id_set("ALERT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),

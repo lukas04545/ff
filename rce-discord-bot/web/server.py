@@ -40,6 +40,7 @@ from rce.diagnostics import diagnose_rcon
 from logbuffer import memory_log
 from web import tunnel as tunnelmod
 from web.users import OWNER, UserError, UserStore
+from cogs.economy import SHOP_KINDS
 from permcheck import check_permissions, explain_forbidden
 from rce import items as itemlist
 from rce import kits as kitparse
@@ -310,6 +311,11 @@ class WebInterface:
         r.add_put("/api/rules", self.put_rules)
         r.add_get("/api/community", self.community)
         r.add_post("/api/giveaways/{giveaway_id:\\d+}/{action:end|reroll}", self.giveaway_action)
+        r.add_get("/api/shop", self.shop)
+        r.add_post("/api/shop/items", self.create_shop_item)
+        r.add_put("/api/shop/items/{item_id:\\d+}", self.update_shop_item)
+        r.add_delete("/api/shop/items/{item_id:\\d+}", self.delete_shop_item)
+        r.add_post("/api/points", self.change_points)
         r.add_get("/api/timed-roles", self.timed_roles)
         r.add_delete("/api/timed-roles/{row_id:\\d+}", self.delete_timed_role)
         r.add_get("/api/backups", self.list_backups)
@@ -1262,6 +1268,91 @@ class WebInterface:
         winners = await cog.finish(row, reroll=action == "reroll")
         self._audit(f"Giveaway #{row['id']} {'ended' if action == 'end' else 'rerolled'}")
         return web.json_response({"ok": True, "winners": [str(w) for w in winners]})
+
+    # ------------------------------------------------------------ Points & shop
+
+    async def shop(self, request: web.Request) -> web.Response:
+        eco = self._cog("Economy")
+        guild = eco.guild()
+        items = [{**dict(r), "summary": eco.describe_item(r, guild)} for r in self.bot.db.shop_items()]
+        wallets = []
+        for w in self.bot.db.top_wallets(50):
+            member = guild.get_member(w["user_id"]) if guild else None
+            wallets.append({"user_id": str(w["user_id"]), "user": member.display_name if member else str(w["user_id"]),
+                            "player": self.bot.db.linked_player(w["user_id"]), "points": w["points"],
+                            "earned_total": w["earned_total"], "daily_streak": w["daily_streak"]})
+        roles = [{"id": str(r.id), "name": r.name} for r in reversed(guild.roles)
+                 if not r.managed and not r.is_default() and r < guild.me.top_role] if guild else []
+        cfg = self.bot.config
+        return web.json_response({
+            "enabled": eco.enabled, "points_name": cfg.points_name, "items": items, "wallets": wallets,
+            "kinds": SHOP_KINDS, "roles": roles, "custom_kits": [r["name"] for r in self.bot.db.custom_kits()],
+            "earning": {"per_hour": cfg.points_per_hour, "per_kill": cfg.points_per_kill, "daily": cfg.daily_points,
+                        "streak_bonus": cfg.daily_streak_bonus, "reward_hours": cfg.playtime_reward_hours,
+                        "reward_kit": cfg.playtime_reward_kit, "reward_points": cfg.playtime_reward_points}})
+
+    def _shop_fields(self, data: dict, eco) -> dict:
+        kind = self._text(data, "kind", limit=20)
+        amount = self._int(data, "amount", 1, 0, 100_000)
+        price = self._int(data, "price", 0, 0, 10_000_000)
+        try:
+            target = eco.validate_item(kind, self._text(data, "target", limit=100), amount, price)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        return {"kind": kind, "target": target, "amount": amount, "price": price,
+                "description": self._text(data, "description", required=False, limit=300) or None}
+
+    async def create_shop_item(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        eco = self._cog("Economy")
+        name = self._text(data, "name", limit=60)
+        if self.bot.db.shop_item_by_name(name):
+            raise ApiError(f"There already is an item called {name}.")
+        fields = self._shop_fields(data, eco)
+        item_id = self.bot.db.add_shop_item(name, **fields)
+        self._audit(f"Shop item added: {name} ({fields['price']} {self.bot.config.points_name})")
+        return web.json_response({"ok": True, "id": item_id})
+
+    async def update_shop_item(self, request: web.Request) -> web.Response:
+        item_id = int(request.match_info["item_id"])
+        row = self.bot.db.shop_item(item_id)
+        if row is None:
+            raise ApiError("Item not found.", 404)
+        data = await self._json(request)
+        fields: dict = {}
+        if "enabled" in data:
+            fields["enabled"] = int(bool(data["enabled"]))
+        if "kind" in data:
+            fields.update(self._shop_fields({**dict(row), **data}, self._cog("Economy")))
+        if "name" in data:
+            name = self._text(data, "name", limit=60)
+            other = self.bot.db.shop_item_by_name(name)
+            if other is not None and other["id"] != item_id:
+                raise ApiError(f"There already is an item called {name}.")
+            fields["name"] = name
+        self.bot.db.update_shop_item(item_id, **fields)
+        self._audit(f"Shop item changed: {fields.get('name', row['name'])}")
+        return web.json_response({"ok": True})
+
+    async def delete_shop_item(self, request: web.Request) -> web.Response:
+        row = self.bot.db.shop_item(int(request.match_info["item_id"]))
+        if row is None or not self.bot.db.delete_shop_item(row["id"]):
+            raise ApiError("Item not found.", 404)
+        self._audit(f"Shop item deleted: {row['name']}")
+        return web.json_response({"ok": True})
+
+    async def change_points(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        user_id = self._text(data, "user_id", limit=25)
+        if not user_id.isdigit():
+            raise ApiError("Invalid user ID.")
+        delta = self._int(data, "delta", 0, -1_000_000, 1_000_000)
+        if not delta:
+            raise ApiError("Enter a number other than 0.")
+        reason = self._text(data, "reason", required=False, limit=150) or "web interface"
+        balance = self.bot.db.add_points(int(user_id), delta, f"by {_current_user.get()} (web): {reason}")
+        self._audit(f"Points {'+' if delta > 0 else ''}{delta} for <@{user_id}> ({reason})")
+        return web.json_response({"ok": True, "balance": balance})
 
     async def timed_roles(self, request: web.Request) -> web.Response:
         rows = []

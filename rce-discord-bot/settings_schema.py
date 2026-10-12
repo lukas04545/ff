@@ -35,6 +35,7 @@ GROUPS = [
     ("kits", "🎒 Kits"),
     ("tickets", "🎫 Tickets & AI"),
     ("community", "🎉 Community"),
+    ("economy", "🪙 Points & shop"),
     ("alerts", "🚨 Alerts & backups"),
     ("web", "🌐 Web interface"),
     ("updates", "🔄 Updates"),
@@ -126,6 +127,23 @@ FIELDS: list[Field] = [
           placeholder="Rust Console Edition (Xbox & PlayStation)"),
     Field("RUST_SERVER_WIPE", "Wipe schedule (for /rust)", "community", placeholder="e.g. Thursdays 6 pm"),
     Field("RULES_FILE", "Rules file", "community", advanced=True, placeholder="rules.md"),
+    # Points & shop
+    Field("ECONOMY_ENABLED", "Points & shop", "economy", "bool",
+          help="On (default): members with a linked player (/customkit link) earn points for playtime, kills and "
+               "/daily and spend them in /shop. Shop items are set up in the web interface → 🪙 Shop."),
+    Field("POINTS_NAME", "Name of the points", "economy", placeholder="points",
+          help="Shown everywhere, e.g. coins, scrap, RP."),
+    Field("POINTS_PER_HOUR", "Points per hour online", "economy", "int", placeholder="10"),
+    Field("POINTS_PER_KILL", "Points per PvP kill", "economy", "int", placeholder="5",
+          help="The same killer/victim pair counts at most once every 10 minutes (no farming)."),
+    Field("DAILY_POINTS", "Points for /daily", "economy", "int", placeholder="50"),
+    Field("DAILY_STREAK_BONUS", "Extra points per day in a row", "economy", "int", placeholder="10",
+          help="/daily on consecutive days (max. 48 h apart) adds this per day, up to 7 days."),
+    Field("PLAYTIME_REWARD_HOURS", "Playtime reward every … hours", "economy", "int", placeholder="0",
+          help="Every N hours online (linked players) the player gets the kit and/or points below. 0 = off."),
+    Field("PLAYTIME_REWARD_KIT", "Playtime reward: custom kit", "economy", placeholder="e.g. Starter",
+          help="Name of a custom kit, sent in-game. Empty = no kit."),
+    Field("PLAYTIME_REWARD_POINTS", "Playtime reward: points", "economy", "int", placeholder="0"),
     # Alerts & backups
     Field("SERVER_DOWN_ALERT_MINUTES", "Server-down alert after … minutes", "alerts", "int", placeholder="10",
           help="Pings staff once when there has been no RCON connection for this long, and again when the server is "

@@ -133,6 +133,34 @@ class Storage:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (guild_id, user_id, role_id)
             );
+            -- Points (economy): balance per Discord account, earned with the linked player
+            CREATE TABLE IF NOT EXISTS wallets (
+                user_id INTEGER PRIMARY KEY,
+                points INTEGER NOT NULL DEFAULT 0,
+                earned_total INTEGER NOT NULL DEFAULT 0,
+                daily_last INTEGER,                    -- Unix time of the last /daily
+                daily_streak INTEGER NOT NULL DEFAULT 0,
+                playtime_progress INTEGER NOT NULL DEFAULT 0   -- online seconds towards the next playtime reward
+            );
+            CREATE TABLE IF NOT EXISTS point_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                delta INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_point_log_user ON point_log (user_id, id);
+            CREATE TABLE IF NOT EXISTS shop_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                kind TEXT NOT NULL,                    -- custom_kit / kit / item / role
+                target TEXT NOT NULL,                  -- kit name, item shortname or role ID
+                amount INTEGER NOT NULL DEFAULT 1,     -- items: amount, role: days (0 = permanent)
+                price INTEGER NOT NULL,
+                description TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS custom_kit_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
@@ -571,6 +599,97 @@ class Storage:
             (",".join(str(w) for w in winner_ids), giveaway_id),
         )
         self._db.commit()
+
+    # ------------------------------------------------------------ Points & shop
+
+    def wallet(self, user_id: int) -> sqlite3.Row:
+        self._db.execute("INSERT OR IGNORE INTO wallets (user_id) VALUES (?)", (user_id,))
+        return self._db.execute("SELECT * FROM wallets WHERE user_id = ?", (user_id,)).fetchone()
+
+    def add_points(self, user_id: int, delta: int, reason: str, *, log: bool = True) -> int:
+        """Adds (or with a negative delta removes, never below 0) points. Returns the new balance.
+        log=False: not in the history (e.g. the many small playtime payouts)."""
+        self.wallet(user_id)
+        earned = max(delta, 0)
+        self._db.execute("UPDATE wallets SET points = MAX(points + ?, 0), earned_total = earned_total + ? "
+                         "WHERE user_id = ?", (delta, earned, user_id))
+        if log:
+            self._db.execute("INSERT INTO point_log (user_id, delta, reason) VALUES (?, ?, ?)",
+                             (user_id, delta, reason[:200]))
+        self._db.commit()
+        return int(self.wallet(user_id)["points"])
+
+    def spend_points(self, user_id: int, cost: int, reason: str) -> int | None:
+        """Takes `cost` points if the balance is high enough (atomic). New balance, or None if too few points."""
+        self.wallet(user_id)
+        cur = self._db.execute("UPDATE wallets SET points = points - ? WHERE user_id = ? AND points >= ?",
+                               (cost, user_id, cost))
+        if cur.rowcount == 0:
+            self._db.commit()
+            return None
+        self._db.execute("INSERT INTO point_log (user_id, delta, reason) VALUES (?, ?, ?)", (user_id, -cost, reason[:200]))
+        self._db.commit()
+        return int(self.wallet(user_id)["points"])
+
+    def top_wallets(self, limit: int = 10) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM wallets WHERE points > 0 OR earned_total > 0 "
+                                "ORDER BY points DESC, earned_total DESC LIMIT ?", (limit,)).fetchall()
+
+    def point_history(self, user_id: int, limit: int = 10) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM point_log WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                                (user_id, limit)).fetchall()
+
+    def set_daily(self, user_id: int, when: int, streak: int) -> None:
+        self.wallet(user_id)
+        self._db.execute("UPDATE wallets SET daily_last = ?, daily_streak = ? WHERE user_id = ?", (when, streak, user_id))
+        self._db.commit()
+
+    def add_playtime_progress(self, user_id: int, seconds: int) -> int:
+        """Adds online seconds towards the playtime reward; returns the new total."""
+        self.wallet(user_id)
+        self._db.execute("UPDATE wallets SET playtime_progress = playtime_progress + ? WHERE user_id = ?",
+                         (seconds, user_id))
+        self._db.commit()
+        return int(self.wallet(user_id)["playtime_progress"])
+
+    def reset_points(self) -> int:
+        """Sets every balance to 0 (e.g. on a wipe). The history stays."""
+        cur = self._db.execute("UPDATE wallets SET points = 0 WHERE points != 0")
+        self._db.commit()
+        return cur.rowcount
+
+    _SHOP_FIELDS = ("name", "kind", "target", "amount", "price", "description", "enabled")
+
+    def shop_items(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM shop_items" + (" WHERE enabled = 1" if enabled_only else "")
+        return self._db.execute(sql + " ORDER BY price, name").fetchall()
+
+    def shop_item(self, item_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM shop_items WHERE id = ?", (item_id,)).fetchone()
+
+    def shop_item_by_name(self, name: str) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM shop_items WHERE name = ?", (name.strip(),)).fetchone()
+
+    def add_shop_item(self, name: str, kind: str, target: str, amount: int, price: int,
+                      description: str | None) -> int:
+        cur = self._db.execute("INSERT INTO shop_items (name, kind, target, amount, price, description) "
+                               "VALUES (?, ?, ?, ?, ?, ?)", (name, kind, target, amount, price, description))
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def update_shop_item(self, item_id: int, **fields) -> bool:
+        fields = {k: v for k, v in fields.items() if k in self._SHOP_FIELDS}
+        if not fields:
+            return False
+        cur = self._db.execute(f"UPDATE shop_items SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
+                               (*fields.values(), item_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def delete_shop_item(self, item_id: int) -> bool:
+        cur = self._db.execute("DELETE FROM shop_items WHERE id = ?", (item_id,))
+        self._db.commit()
+        return cur.rowcount > 0
 
     # ------------------------------------------------------------ Timed roles
 
