@@ -190,6 +190,7 @@ rce-discord-bot/
 │   ├── abuse.py           # Admin abuse protection (raid items spawned without permission)
 │   ├── kit_requests.py    # Bought custom kits: AI request → staff approve button → kit role
 │   ├── store.py           # Tip4Serv purchases (polled every minute) → automatic approval
+│   ├── automod.py         # AI chat moderation: warns offensive members in chosen channels
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
@@ -690,6 +691,17 @@ from your knowledge base. If it can't help, it **pings the support roles**.
 - The user clicks **🔔 Call staff**.
 - The AI is unreachable (e.g. no balance left) or the reply limit per ticket has been reached.
 - Without a `DEEPSEEK_API_KEY`, every new ticket goes straight to staff.
+
+**AI chat moderation:** pick the channels to watch in **Settings → 🎉 Community → AI moderation: channels**
+(`AI_MOD_CHANNEL_IDS`, e.g. #general). The AI checks new messages there in batches (about every 15 s, one request
+for all of them) and only flags clearly offensive ones – insults or harassment aimed at someone, slurs, hate
+speech, threats, sexual harassment, private data. Swearing, banter and game trash talk ("ez", "get raided lol") are
+fine; when unsure it does nothing. A flagged member gets a reply *"⚠️ @name, please keep it respectful – reason
+(warning 1/3)"* (at most one per minute), and every case goes to the admin log with the message and a link.
+Optional: delete severe messages (`AI_MOD_DELETE`, needs *Manage Messages*) and a Discord timeout after
+`AI_MOD_TIMEOUT_AFTER` warnings in 24 h (default 3, 0 = never) for `AI_MOD_TIMEOUT_MINUTES` (default 10, needs
+*Timeout Members*). Staff and bots are never checked. `/automod warnings @member` and `/automod clear @member`
+(staff). Needs the DeepSeek API key and the Message Content intent; the watched messages are sent to DeepSeek.
 
 **The AI learns from staff answers:** when a ticket is closed, the bot sends the staff answers of that ticket
 (including `/aiconfirm` messages; the player's messages only as context) to the AI and asks for **general, new**

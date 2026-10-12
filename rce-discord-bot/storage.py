@@ -270,6 +270,19 @@ class Storage:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 decided_at TEXT
             );
+            -- AI chat moderation warnings
+            CREATE TABLE IF NOT EXISTS ai_warnings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                channel_id INTEGER,
+                message_id INTEGER,
+                severity TEXT,
+                reason TEXT,
+                content TEXT,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_ai_warnings_user ON ai_warnings (guild_id, user_id, created_at);
             -- Tip4Serv purchases ("rcebot ..." commands), one row per command; used once by a kit request
             CREATE TABLE IF NOT EXISTS store_payments (
                 id TEXT PRIMARY KEY,                   -- "<payment id>:<command id>"
@@ -1070,6 +1083,28 @@ class Storage:
     def store_payments(self, *, unused: bool = False, since: int = 0, limit: int = 200) -> list[sqlite3.Row]:
         sql = "SELECT * FROM store_payments WHERE received_at >= ?" + (" AND used_by IS NULL" if unused else "")
         return self._db.execute(sql + " ORDER BY received_at DESC LIMIT ?", (since, limit)).fetchall()
+
+    # ------------------------------------------------------------ AI chat moderation
+
+    def add_ai_warning(self, guild_id: int, user_id: int, channel_id: int, message_id: int, severity: str,
+                       reason: str, content: str) -> None:
+        self._db.execute("INSERT INTO ai_warnings (guild_id, user_id, channel_id, message_id, severity, reason, "
+                         "content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                         (guild_id, user_id, channel_id, message_id, severity, reason, content, int(time.time())))
+        self._db.commit()
+
+    def count_ai_warnings(self, guild_id: int, user_id: int, *, since: int = 0) -> int:
+        return int(self._db.execute("SELECT COUNT(*) FROM ai_warnings WHERE guild_id = ? AND user_id = ? "
+                                    "AND created_at >= ?", (guild_id, user_id, since)).fetchone()[0])
+
+    def ai_warnings(self, guild_id: int, user_id: int, limit: int = 10) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM ai_warnings WHERE guild_id = ? AND user_id = ? "
+                                "ORDER BY created_at DESC, id DESC LIMIT ?", (guild_id, user_id, limit)).fetchall()
+
+    def clear_ai_warnings(self, guild_id: int, user_id: int) -> int:
+        cur = self._db.execute("DELETE FROM ai_warnings WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+        self._db.commit()
+        return cur.rowcount
 
     def store_payment_known(self, payment_id: str, *, source: str | None = None) -> bool:
         """source "webhook": only payments that came via the webhook."""
