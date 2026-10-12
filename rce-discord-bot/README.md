@@ -505,6 +505,7 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/ticket open`, `/ticket close` | everyone | Open a ticket or close your own ticket |
 | `/ticket ai`, `/ticket add` | Staff | Turn the AI on/off in a ticket, add a member |
 | `/ticket panel`, `/ticket ai-status`, `/ticket ai-test` | Admins | Post the ticket panel, show DeepSeek balance, test the AI |
+| `/aiconfirm message [approve]` | Staff | Tell the ticket AI something (e.g. purchase verified) without pausing it; optionally approve the ticket's kit requests |
 | `/ping`, `/rust`, `/rules` | everyone | Bot/RCON latency, server info (platform, wipe, live status), rules |
 | `/mod timeout`, `/mod untimeout` | "Timeout Members" | Time out a Discord member (max. 28 days) or remove the timeout |
 | `/mod kick`, `/mod ban`, `/mod unban` | "Kick Members"/"Ban Members" | Kick/ban a Discord member (with a DM to the user), unban by user ID |
@@ -689,6 +690,14 @@ from your knowledge base. If it can't help, it **pings the support roles**.
 - The user clicks **🔔 Call staff**.
 - The AI is unreachable (e.g. no balance left) or the reply limit per ticket has been reached.
 - Without a `DEEPSEEK_API_KEY`, every new ticket goes straight to staff.
+
+**Talk to the AI without pausing it – `/aiconfirm`:** staff can tell the ticket AI something with
+`/aiconfirm message:"Both purchases are verified, file the second kit"`. The bot posts it as
+*"🛡️ Staff confirmation – Name: …"*, the AI treats it as true, answers the player and **stays active** (it even
+switches back on if a staff message had paused it). For 30 minutes the AI may then file what the "one purchase =
+one kit" checks would otherwise block (a second kit, an order ID used before); those requests are marked
+"allowed by staff via /aiconfirm". With `approve:True` the command also approves all open kit requests of the
+ticket (only for the approver roles). Staff-only command.
 
 When a staff member writes in the ticket, **the AI pauses automatically**. Use
 `/ticket ai enabled:true` to turn it back on. On close, a **transcript** is posted as a text

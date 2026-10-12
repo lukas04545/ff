@@ -42,6 +42,8 @@ log = logging.getLogger("rce.tickets")
 AI_PREFIX = "🤖 "             # Marks AI replies (important for the conversation history)
 CLAIM_PREFIX = "✅ 🎁 "        # Kit claimed by the AI tool (also part of the history)
 PRIZE_PREFIX = "🎉 Giveaway won: "   # Prize notice in an already open ticket (also part of the history)
+STAFF_PREFIX = "🛡️ Staff confirmation – "   # /aiconfirm: staff instruction for the AI (AI keeps running)
+STAFF_OK_SECONDS = 1800       # after /aiconfirm the AI may file what the "one kit per purchase" rules would block
 DEBOUNCE_SECONDS = 3.0        # answer several quick messages in one go
 HISTORY_LIMIT = 40            # number of messages the AI gets as history
 STAFF_REPING_SECONDS = 600    # "Call staff" again only after 10 minutes
@@ -268,6 +270,7 @@ class Tickets(commands.Cog):
         self._knowledge_cache: tuple[float, str] | None = None
         self._last_owner_msg: dict[int, float] = {}   # channel -> monotonic time of the player's last message
         self._resolve_asked: dict[int, int] = {}      # channel -> message id of the open "resolved?" question
+        self._staff_ok: dict[int, float] = {}         # channel -> monotonic time until /aiconfirm allows exceptions
 
     async def cog_load(self) -> None:
         self.bot.add_view(TicketPanelView(self))
@@ -536,6 +539,9 @@ class Tickets(commands.Cog):
                     history.append(("assistant", m.content[len(AI_PREFIX):].strip()))
                 elif m.content.startswith(CLAIM_PREFIX):
                     history.append(("assistant", "[Kit claimed via claim_kit] " + m.content[len(CLAIM_PREFIX):]))
+                elif m.content.startswith(STAFF_PREFIX):
+                    history.append(("user", "[Staff confirmation – from the team, trusted] "
+                                    + m.content[len(STAFF_PREFIX):]))
                 elif m.content.startswith(PRIZE_PREFIX):
                     history.append(("user", "[System] I won the giveaway: " + m.content[len(PRIZE_PREFIX):]
                                     + " Please redeem my prize."))
@@ -778,7 +784,8 @@ class Tickets(commands.Cog):
             return await requests.file(channel, ticket, member, str(args.get("kit") or ""),
                                        str(args.get("proof") or "")[:500], days,
                                        giveaway=bool(args.get("won_in_giveaway")),
-                                       checkout_name=str(args.get("checkout_name") or "") or None)
+                                       checkout_name=str(args.get("checkout_name") or "") or None,
+                                       staff_ok=self._staff_ok_active(channel))
         if name == "request_new_custom_kit":
             requests = self.bot.get_cog("KitRequests")
             if requests is None:
@@ -794,7 +801,8 @@ class Tickets(commands.Cog):
                                            str(args.get("proof") or "")[:500], days,
                                            timer_hours=_int_or_none(args.get("claim_timer_hours")),
                                            giveaway=bool(args.get("won_in_giveaway")),
-                                           checkout_name=str(args.get("checkout_name") or "") or None)
+                                           checkout_name=str(args.get("checkout_name") or "") or None,
+                                           staff_ok=self._staff_ok_active(channel))
         if name == "request_kit_addon":
             requests = self.bot.get_cog("KitRequests")
             items = args.get("items")
@@ -805,7 +813,8 @@ class Tickets(commands.Cog):
             return await requests.file_addon(channel, ticket, member, str(args.get("kit") or ""), items,
                                              str(args.get("proof") or "")[:500],
                                              giveaway=bool(args.get("won_in_giveaway")),
-                                             checkout_name=str(args.get("checkout_name") or "") or None)
+                                             checkout_name=str(args.get("checkout_name") or "") or None,
+                                             staff_ok=self._staff_ok_active(channel))
         if name == "quote_custom_kit":
             requests = self.bot.get_cog("KitRequests")
             items = args.get("items")
@@ -1111,6 +1120,48 @@ class Tickets(commands.Cog):
         self.bot.db.update_ticket(ticket["id"], ai_enabled=int(enabled), staff_joined=0 if enabled else 1)
         await interaction.response.send_message(
             "🤖 AI assistant is active again in this ticket." if enabled else "⏸️ AI assistant paused.")
+
+    def _staff_ok_active(self, channel) -> bool:
+        return time.monotonic() < self._staff_ok.get(getattr(channel, "id", 0), 0)
+
+    @app_commands.command(name="aiconfirm",
+                          description="Staff: tell the ticket AI something (e.g. a purchase is verified) – it keeps running.")
+    @app_commands.describe(message="What the AI should know or do, e.g. 'Both purchases are verified, file the "
+                                   "second kit'",
+                           approve="Also approve the open kit requests of this ticket (approver roles only)")
+    @app_commands.guild_only()
+    async def aiconfirm(self, interaction: discord.Interaction, message: app_commands.Range[str, 1, 1000],
+                        approve: bool = False) -> None:
+        ticket = self.bot.db.ticket_by_channel(interaction.channel_id)
+        if ticket is None or not self.is_staff(interaction.user):
+            await interaction.response.send_message("Staff only, and only in open tickets.", ephemeral=True)
+            return
+        requests = self.bot.get_cog("KitRequests")
+        if approve and (requests is None or not requests.can_decide(interaction.user)):
+            await interaction.response.send_message("⛔ You can't approve kit requests – leave `approve` off.",
+                                                    ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        channel = interaction.channel
+        # The AI keeps (or starts) answering: staff speaking through /aiconfirm doesn't take the ticket over
+        self.bot.db.update_ticket(ticket["id"], staff_joined=0, ai_enabled=1)
+        self._staff_ok[channel.id] = time.monotonic() + STAFF_OK_SECONDS
+        await channel.send(f"{STAFF_PREFIX}**{safe_md(interaction.user.display_name)}:** {safe_md(message)}",
+                           allowed_mentions=discord.AllowedMentions.none())
+        results = []
+        if approve:
+            for req in reversed(self.bot.db.kit_requests(status="pending", limit=200)):
+                if req["ticket_id"] == ticket["id"]:
+                    ok, text = await requests.decide(req["id"], True, interaction.user)
+                    results.append(("✅ " if ok else "⚠️ ") + text[:300])
+        self.bot.audit(f"🛡️ {safe_md(str(interaction.user))} /aiconfirm in ticket #{ticket['id']}: "
+                       f"{safe_md(message[:200])}" + (f" ({len(results)} requests approved)" if approve else ""))
+        if self.ai.enabled:
+            self._schedule_ai(channel, delay=1.0)
+        await interaction.followup.send(
+            "✅ Sent to the AI – it answers the player and stays active."
+            + ("\n" + "\n".join(results) if results else "\nNo open kit requests in this ticket." if approve else ""),
+            ephemeral=True)
 
     @ticket.command(name="add", description="Adds a member to this ticket (staff).")
     @app_commands.describe(member="Who should be able to see the ticket?")
