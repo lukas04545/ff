@@ -34,7 +34,17 @@ async function api(path, { method = "GET", body } = {}) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body || {});
   }
-  const res = await fetch(path, opts);
+  // Clear message instead of the browser's bare "Failed to fetch"
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 90000);
+  let res;
+  try {
+    res = await fetch(path, { ...opts, signal: ctrl.signal });
+  } catch (e) {
+    throw new Error(e.name === "AbortError"
+      ? "The bot did not answer within 90 s. If you clicked into the bot window, press Esc there (Windows pauses a program while text is selected in its window)."
+      : "No connection to the bot. Is the bot window still open? If you use the public link: it changes when the bot window is closed – take the current one from the bot window or PUBLIC_LINK.txt and reload.");
+  } finally { clearTimeout(timer); }
   let data = {};
   try { data = await res.json(); } catch { /* empty response */ }
   if (res.status === 401 && path !== "/api/login") { showLogin(); throw new Error("Not logged in"); }
