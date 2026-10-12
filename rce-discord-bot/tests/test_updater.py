@@ -26,8 +26,14 @@ def _zip(files: dict[str, str]) -> bytes:
 def _fake_github(files, sha=SHA, calls=None):
     def http_get(url, **kwargs):
         (calls if calls is not None else []).append(url)
-        if url.startswith("https://api.github.com/repos/lukas04545/ff/commits/main"):
-            return json.dumps({"sha": sha, "commit": {"message": "Better tickets\n\ndetails"}}).encode()
+        if url == "https://github.com/lukas04545/ff.git/info/refs?service=git-upload-pack":
+            return (b"001e# service=git-upload-pack\n0000015" + b"b" * 40 + b" HEAD\x00multi_ack symref=HEAD:refs/heads/main\n"
+                    b"003f" + sha.encode() + b" refs/heads/main\n003f" + b"c" * 40 + b" refs/heads/other\n0000")
+        if url == "https://github.com/lukas04545/ff/commits/main.atom":
+            return (b"<feed><entry><id>tag:github.com,2008:Grit::Commit/" + sha.encode() + b"</id>"
+                    b"<title>\n   Better tickets &amp; more\n  </title></entry></feed>")
+        if url.startswith("https://api.github.com/"):
+            raise AssertionError("the rate-limited GitHub API must not be used")
         if url == f"https://codeload.github.com/lukas04545/ff/zip/{sha}":
             return _zip(files)
         raise AssertionError(url)
@@ -60,7 +66,7 @@ def test_zip_update_keeps_own_files(tmp_path):
                      ".env": "DISCORD_TOKEN=from-the-zip\n", "data/bot.db": "zip-db", "rules.md": "new default rules\n",
                      "support_knowledge.md": "new default kb\n", "start.bat": "@echo off\nREM update-safe\n"}))
     r = up.check()
-    assert r.status == "updated" and r.restart_needed and r.sha == SHA and r.title == "Better tickets"
+    assert r.status == "updated" and r.restart_needed and r.sha == SHA and r.title == "Better tickets & more"
     assert sorted(r.changed) == ["bot.py", "cogs/new.py", "requirements.txt", "support_knowledge.md"]
     assert before == ["print('old')\n"]                                   # backup hook ran before writing
     assert r.removed == ["cogs/stale.py"] and r.requirements_changed and pip == ["discord.py\naiohttp\n"]
@@ -76,7 +82,7 @@ def test_zip_update_keeps_own_files(tmp_path):
 
     calls = []
     up.http_get = _fake_github({}, calls=calls)
-    assert up.check().status == "up_to_date" and len(calls) == 1                            # no second download
+    assert up.check().status == "up_to_date" and not any("codeload" in u for u in calls)  # no second download
 
 
 def test_zip_update_checks_before_writing(tmp_path):

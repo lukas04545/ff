@@ -20,6 +20,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -154,6 +155,41 @@ class Updater:
         return result
 
     def latest_commit(self) -> tuple[str, str]:
+        """Newest commit (sha, title) of the branch.
+
+        Uses git's own protocol (what `git ls-remote` does) – unlike the GitHub API it has no limit of 60
+        requests per hour per IP, which shared networks (university, VPN) run into quickly. The title comes from
+        the commits feed; the API is only the last fallback."""
+        try:
+            sha = self._ls_remote()
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            if isinstance(exc, urllib.error.HTTPError) and exc.code in (401, 404):
+                raise UpdateError(f"GitHub: repository {self.repo} not found (private repositories are not "
+                                  "supported).") from exc
+            log.debug("ls-remote failed (%s) – trying the GitHub API", exc)
+            return self._latest_commit_api()
+        return sha, self._title(sha)
+
+    def _ls_remote(self) -> str:
+        raw = self.http_get(f"https://github.com/{self.repo}.git/info/refs?service=git-upload-pack", timeout=20)
+        m = re.search(rb"([0-9a-f]{40}) refs/heads/" + re.escape(self.branch.encode()) + rb"[\x00\n]", raw)
+        if not m:
+            raise UpdateError(f"GitHub: branch {self.branch} not found in {self.repo}.")
+        return m.group(1).decode()
+
+    def _title(self, sha: str) -> str:
+        """Commit title from the public commits feed (best effort – empty if unavailable)."""
+        try:
+            feed = self.http_get(f"https://github.com/{self.repo}/commits/{self.branch}.atom", timeout=10)
+        except (urllib.error.URLError, OSError, ValueError):
+            return ""
+        m = re.search(rb"Commit/" + sha.encode() + rb"</id>.*?<title>\s*(.*?)\s*</title>", feed, re.DOTALL)
+        if not m:
+            return ""
+        import html
+        return html.unescape(m.group(1).decode(errors="replace")).splitlines()[0][:200]
+
+    def _latest_commit_api(self) -> tuple[str, str]:
         url = f"https://api.github.com/repos/{self.repo}/commits/{self.branch}"
         try:
             data = json.loads(self.http_get(url, timeout=20, accept="application/vnd.github+json"))
