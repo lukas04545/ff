@@ -31,9 +31,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("rce.abuse")
 
-OWN_GIVE_WINDOW = 60         # seconds: an item line this soon after the bot's own give to that player is the bot's
+OWN_GIVE_WINDOW = 15         # seconds: an item line this soon after the bot's own give to that player is the bot's
 RESPAWN_WAIT = 3600         # on-respawn commands only within 1 hour after the punishment
-PUNISH_COOLDOWN = 120        # one punishment per player (a spawn of several stacks makes several lines)
+PUNISH_COOLDOWN = 10         # one spawn of several stacks makes several lines within a second – handle it once
 IGNORED_WORDS = ("launcher",)   # "Rocket Launcher" is not a rocket
 
 
@@ -58,10 +58,12 @@ class AbuseGuard(commands.Cog):
         return any(k in name for k in self.bot.config.abuse_items) and not any(w in name for w in IGNORED_WORDS)
 
     def bot_gave(self, player: str) -> bool:
-        """Did the bot itself just send this player something (shop, kit, reward, /rcon)?"""
+        """Did the bot itself just give this player items (shop, kit, reward, /rcon)? Only give commands count –
+        not e.g. the bot's own removeowner/killplayer/sleep for this player."""
         quoted = f'"{player.lower()}"'
         cutoff = time.monotonic() - OWN_GIVE_WINDOW
-        return any(ts >= cutoff and quoted in cmd.lower() for ts, cmd in reversed(self.bot.rcon.recent_commands))
+        return any(ts >= cutoff and quoted in cmd.lower() and "give" in cmd.lower().split(quoted)[0]
+                   for ts, cmd in reversed(self.bot.rcon.recent_commands))
 
     async def exempt(self, player: str) -> str | None:
         """Why this player may spawn (or None)."""

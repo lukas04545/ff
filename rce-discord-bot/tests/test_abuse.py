@@ -167,3 +167,16 @@ def test_commands_go_out_at_once_in_order(guard):
     assert t.monotonic() - start < 2.5                                 # not 4 × 1 s one after another
     assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.god 0 "RogueAdmin"',
                           'global.killplayer "RogueAdmin"']
+
+
+def test_punished_again_when_they_do_it_again(guard):
+    """Admin given back, rockets spawned again right away -> punished again (the bot's own removeowner/killplayer/
+    sleep commands for this player don't count as "the bot gave items")."""
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
+    asyncio.run(guard.cog.on_rce_respawn(lp.parse_line("RogueAdmin [SCARLETT] has entered the game")))  # sleep
+    asyncio.run(guard.bot.rcon.command('ownerid "RogueAdmin"'))       # staff gives admin back via /rcon
+    guard.sent.clear()
+    guard.cog._punished.clear()                                         # > 10 s later (one spawn = one punishment)
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
+    assert 'global.killplayer "RogueAdmin"' in guard.sent
+    assert len(guard.bot.db.abuse_cases()) == 2                         # second case for the deletion
