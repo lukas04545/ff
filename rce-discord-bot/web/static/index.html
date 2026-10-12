@@ -3,51 +3,93 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>RCE Bot Panel</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    // Apply the saved theme before the first paint (no flash)
+    try { const t = localStorage.getItem("rce-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) { /* storage blocked */ }
+  </script>
+  <link rel="stylesheet" href="/static/style.css?v=3">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛢️</text></svg>">
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="logo" viewBox="0 0 24 24"><path fill="currentColor" d="M6 3h12a1 1 0 0 1 1 1v1.2c0 .5-.3.9-.7 1A13 13 0 0 0 19 9v6c0 1 .1 2 .3 2.8.4.1.7.5.7 1V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1.2c0-.5.3-.9.7-1A13 13 0 0 1 5 15V9c0-1-.1-2-.3-2.8a1 1 0 0 1-.7-1V4a1 1 0 0 1 1-1Zm1.2 6.5v1.6h9.6V9.5H7.2Zm0 3.4v1.6h9.6v-1.6H7.2Z"/></symbol>
+  </svg>
+
   <div id="login" class="login hidden">
-    <form id="login-form" class="card login-card">
-      <h1>🛢️ RCE Bot Panel</h1>
-      <input id="login-username" type="text" placeholder="Username" autocomplete="username" value="owner" required>
-      <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required>
-      <p class="muted" style="margin:0;font-size:.85rem">Server owner: username <code>owner</code> + <code>WEB_PASSWORD</code>.
-        Other admins: the account the owner created for you.</p>
-      <button type="submit" class="primary">Log in</button>
+    <form id="login-form" class="login-card">
+      <div class="login-brand">
+        <span class="logo logo-lg"><svg><use href="#logo"/></svg></span>
+        <div>
+          <h1>RCE Bot Panel</h1>
+          <p class="muted">Rust Console Edition server control</p>
+        </div>
+      </div>
+      <label class="stack">Username
+        <input id="login-username" type="text" placeholder="Username" autocomplete="username" value="owner" required>
+      </label>
+      <label class="stack">Password
+        <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="primary block">Log in</button>
       <p id="login-error" class="error"></p>
+      <p class="login-hint">Server owner: username <code>owner</code> + <code>WEB_PASSWORD</code>.
+        Other admins: the account the owner created for you.</p>
     </form>
   </div>
 
   <div id="app" class="app hidden">
     <aside class="sidebar">
-      <div class="brand">🛢️ <span>RCE Bot</span></div>
+      <div class="brand">
+        <span class="logo"><svg><use href="#logo"/></svg></span>
+        <div class="brand-text"><strong>RCE Bot</strong><small>Control panel</small></div>
+      </div>
       <nav id="nav">
-        <a href="#overview" data-view="overview">📊 <span>Overview</span></a>
-        <a href="#console" data-view="console">⌨️ <span>Console</span></a>
-        <a href="#kits" data-view="kits">🎒 <span>Kits</span></a>
-        <a href="#kitbuilder" data-view="kitbuilder">🧰 <span>Kit builder</span></a>
-        <a href="#tickets" data-view="tickets">🎫 <span>Tickets</span></a>
-        <a href="#stats" data-view="stats">🏆 <span>Stats</span></a>
-        <a href="#community" data-view="community">🎉 <span>Community</span></a>
-        <a href="#knowledge" data-view="knowledge">📚 <span>Knowledge base</span></a>
-        <a href="#botlog" data-view="botlog">🧾 <span>Bot log</span></a>
-        <a href="#users" data-view="users" data-owner>👥 <span>Users</span></a>
-        <a href="#settings" data-view="settings" data-owner>⚙️ <span>Settings</span></a>
+        <div class="nav-group">
+          <div class="nav-label">Server</div>
+          <a href="#overview" data-view="overview"><i>📊</i><span>Overview</span></a>
+          <a href="#console" data-view="console"><i>⌨️</i><span>Console</span></a>
+          <a href="#botlog" data-view="botlog"><i>🧾</i><span>Bot log</span></a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Kits</div>
+          <a href="#kits" data-view="kits"><i>🎒</i><span>Kits</span></a>
+          <a href="#kitbuilder" data-view="kitbuilder"><i>🧰</i><span>Kit builder</span></a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Community</div>
+          <a href="#tickets" data-view="tickets"><i>🎫</i><span>Tickets</span></a>
+          <a href="#knowledge" data-view="knowledge"><i>📚</i><span>Knowledge base</span></a>
+          <a href="#stats" data-view="stats"><i>🏆</i><span>Stats</span></a>
+          <a href="#community" data-view="community"><i>🎉</i><span>Community</span></a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Admin</div>
+          <a href="#users" data-view="users" data-owner><i>👥</i><span>Users</span></a>
+          <a href="#settings" data-view="settings" data-owner><i>⚙️</i><span>Settings</span></a>
+        </div>
       </nav>
       <div class="sidebar-footer">
-        <div id="conn-rcon" class="pill">RCON …</div>
-        <div id="conn-discord" class="pill">Discord …</div>
-        <div id="whoami" class="muted" style="font-size:.85rem"></div>
-        <button id="account" class="ghost hidden">🔑 My password</button>
-        <button id="logout" class="ghost">Log out</button>
+        <div class="conn">
+          <div id="conn-rcon" class="pill">RCON …</div>
+          <div id="conn-discord" class="pill">Discord …</div>
+        </div>
+        <div class="me">
+          <span id="avatar" class="avatar">?</span>
+          <div id="whoami" class="whoami"></div>
+          <button id="theme" class="icon-btn" type="button" title="Theme: auto">🌓</button>
+        </div>
+        <div class="row tight">
+          <button id="account" class="ghost small hidden" title="My password">🔑 <span>My password</span></button>
+          <button id="logout" class="ghost small">Log out</button>
+        </div>
       </div>
     </aside>
     <main id="main"></main>
   </div>
 
   <div id="toasts" class="toasts"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>
