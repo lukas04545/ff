@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from typing import TYPE_CHECKING
 
 import discord
@@ -39,6 +40,7 @@ class AbuseGuard(commands.Cog):
         self.bot = bot
         self._punished: dict[str, float] = {}
         self._noted: dict[str, float] = {}      # spawns reported but not punished (allowed / not set up)
+        self.recent: deque[dict] = deque(maxlen=15)   # last raid item spawns seen (web interface status box)
 
     @property
     def active(self) -> bool:
@@ -89,20 +91,45 @@ class AbuseGuard(commands.Cog):
                for seen in (self._punished, self._noted)):
             return   # already handled (one spawn = several lines)
         if not self.bot.config.abuse_protection:
+            self._remember(player, what, "protection switched off")
             return
         if not self.active:
+            self._remember(player, what, "not punished – waiting for setup (no allowed roles/names)")
             self._note(player, f"🛡️ **{safe_md(player)}** spawned **{safe_md(what)}** with the admin panel – "
                                "**not punished: the protection is waiting for setup.** Set the allowed Discord roles "
                                "or in-game names under ⚙️ Settings → 🛡️ Admin abuse protection.")
             return
         if self.bot_gave(player):
+            self._remember(player, what, "ignored – the bot itself just gave this player items")
             return
         reason = await self.exempt(player)
         if reason:
+            self._remember(player, what, f"allowed ({reason})")
             self._note(player, f"🛡️ **{safe_md(player)}** spawned **{safe_md(what)}** – allowed ({safe_md(reason)}).")
             return
         self._punished[player.lower()] = now
-        await self.punish(player, ev.item, ev.amount)
+        results = await self.punish(player, ev.item, ev.amount)
+        self._remember(player, what, "PUNISHED: " + " · ".join(f"{c} → {r}" for c, r in results))
+
+    def _remember(self, player: str, what: str, result: str) -> None:
+        self.recent.appendleft({"ts": int(time.time()), "player": player, "what": what, "result": result})
+
+    def status(self) -> dict:
+        """For the web interface: is it active, who is allowed, what happened recently."""
+        cfg = self.bot.config
+        guild = (self.bot.get_guild(cfg.guild_id) if cfg.guild_id else None) or \
+            (self.bot.guilds[0] if self.bot.guilds else None)
+        roles = []
+        member_list = bool(getattr(getattr(self.bot, "intents", None), "members", False))
+        for rid in cfg.abuse_exempt_role_ids:
+            role = guild.get_role(rid) if guild else None
+            members = list(getattr(role, "members", [])) if role else []
+            linked = [p for p in (self.bot.db.linked_player(m.id) for m in members) if p]
+            roles.append({"name": role.name if role else str(rid), "members": len(members) if member_list else None,
+                          "linked_players": linked})
+        return {"enabled": cfg.abuse_protection, "active": self.active, "roles": roles,
+                "players": sorted(cfg.abuse_exempt_players), "items": list(cfg.abuse_items),
+                "recent": list(self.recent)}
 
     def _note(self, player: str, text: str) -> None:
         """Admin log entry for a spawn that was NOT punished (once per player and spawn)."""

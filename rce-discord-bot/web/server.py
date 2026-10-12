@@ -325,6 +325,7 @@ class WebInterface:
         r.add_post("/api/watchlist", self.add_watch)
         r.add_delete("/api/watchlist/{player}", self.remove_watch)
         r.add_get("/api/population", self.population)
+        r.add_get("/api/abuse", self.abuse_status)
         r.add_get("/api/shop", self.shop)
         r.add_post("/api/shop/items", self.create_shop_item)
         r.add_put("/api/shop/items/{item_id:\\d+}", self.update_shop_item)
@@ -1413,6 +1414,9 @@ class WebInterface:
             raise ApiError("Not on the watchlist.", 404)
         self._audit(f"Watchlist: {player} removed")
         return web.json_response({"ok": True})
+
+    async def abuse_status(self, request: web.Request) -> web.Response:
+        return web.json_response(self._cog("AbuseGuard").status())
 
     async def population(self, request: web.Request) -> web.Response:
         try:
