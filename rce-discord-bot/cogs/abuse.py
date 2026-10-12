@@ -125,7 +125,7 @@ class AbuseGuard(commands.Cog):
         if since is None or time.monotonic() - since > RESPAWN_WAIT:
             return
         name = sanitize_player_name(ev.player.strip())
-        results = [await self._run(t, name) for t in self.bot.config.abuse_on_respawn_commands]
+        results = await self._run_all(self.bot.config.abuse_on_respawn_commands, name)
         text = " · ".join(f"{c} → {r}" for c, r in results)
         self._remember(ev.player.strip(), "respawned", "on respawn: " + text)
         log.warning("Admin abuse: %s respawned – %s", ev.player, text)
@@ -170,16 +170,21 @@ class AbuseGuard(commands.Cog):
             reply = f"failed: {exc}"
         return cmd, reply
 
+    async def _run_all(self, templates, name: str) -> list[tuple[str, str]]:
+        """Sends all commands right away, in this order (one RCON connection, sent one after another without
+        waiting for replies in between) – then collects the replies."""
+        return list(await asyncio.gather(*(self._run(t, name) for t in templates)))
+
     async def punish(self, player: str, item: str, amount: float | None) -> list[tuple[str, str]]:
         """Removes admin, god mode off, kill (+ after-kill commands) – automatically. The approval commands
         (entity.deleteby …) become a case that staff approves or rejects. Returns (command, reply) of what ran."""
         cfg = self.bot.config
         name = sanitize_player_name(player)
-        results = [await self._run(t, name) for t in (*cfg.abuse_remove_admin_commands, *cfg.abuse_before_kill_commands,
-                                                       cfg.abuse_kill_command)]
+        results = await self._run_all((*cfg.abuse_remove_admin_commands, *cfg.abuse_before_kill_commands,
+                                       cfg.abuse_kill_command), name)
         if cfg.abuse_after_kill_commands:
             await asyncio.sleep(1)       # let the kill go through first
-            results += [await self._run(t, name) for t in cfg.abuse_after_kill_commands]
+            results += await self._run_all(cfg.abuse_after_kill_commands, name)
         if cfg.abuse_on_respawn_commands:
             self._await_respawn[name.lower()] = time.monotonic()
         what = f"{amount:g} × {item}" if amount else item
@@ -235,7 +240,7 @@ class AbuseGuard(commands.Cog):
         text = "rejected – nothing deleted"
         if approve:
             name = sanitize_player_name(row["player"])
-            results = [await self._run(t, name) for t in self.bot.config.abuse_approval_commands]
+            results = await self._run_all(self.bot.config.abuse_approval_commands, name)
             text = " · ".join(f"{c} → {r}" for c, r in results) or "nothing to run"
             self.bot.db.set_abuse_result(case_id, text)
         row = self.bot.db.abuse_case(case_id)

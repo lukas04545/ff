@@ -151,3 +151,19 @@ def test_allowed_spawn_is_logged(guard):
     spawn(guard, "[ServerVar] giving OwnerGT 3 x Rocket")
     spawn(guard, "[ServerVar] giving OwnerGT 3 x Rocket")
     assert guard.sent == [] and len(guard.audit) == 1 and "allowed (allowed in-game name)" in guard.audit[0]
+
+
+def test_commands_go_out_at_once_in_order(guard):
+    """The server often doesn't answer: the kill must not wait for the replies to the commands before it."""
+    async def slow(cmd, **kw):
+        guard.sent.append(cmd)
+        await asyncio.sleep(1)          # no reply for a while
+        return ""
+    guard.bot.rcon.command = slow
+    guard.cfg.abuse_on_respawn_commands = ()
+    import time as t
+    start = t.monotonic()
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
+    assert t.monotonic() - start < 2.5                                 # not 4 × 1 s one after another
+    assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.god 0 "RogueAdmin"',
+                          'global.killplayer "RogueAdmin"']
