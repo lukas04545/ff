@@ -225,7 +225,7 @@ def test_ai_redeems_lifetime_kit_win(setup):
 
     assert run("redeem_giveaway_win", {"message_id": "502"})["result"] == "not_your_win"
     assert run("redeem_giveaway_win", {"message_id": "503"})["result"] == "needs_staff"   # store credit
-    assert run("redeem_giveaway_win", {"message_id": "504"})["reason"] == "Kit prize is not lifetime"
+    assert run("redeem_giveaway_win", {"message_id": "504"})["reason"] == "Timed roles are not available"
     r = run("redeem_giveaway_win", {"message_id": "501"})
     assert r["ok"] and r["action"] == "role VIP given" and granted[0][0] == "VIP"
     assert "redeemed" in s.posted[-1] and "VIP" in s.posted[-1]

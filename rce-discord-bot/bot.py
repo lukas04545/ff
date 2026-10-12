@@ -37,7 +37,7 @@ EXIT_UPDATED = 4
 BASE_DIR = Path(__file__).resolve().parent
 
 COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits", "cogs.tickets",
-        "cogs.community", "cogs.moderation", "cogs.giveaways", "cogs.updates")
+        "cogs.community", "cogs.moderation", "cogs.giveaways", "cogs.updates", "cogs.timed_roles", "cogs.monitor")
 
 # Event class -> Discord event name (listeners are then called on_<name>)
 EVENT_NAMES: dict[type, str] = {
@@ -399,11 +399,13 @@ def main() -> None:
 def restart_after_update(launched_by_script: bool) -> None:
     """Starts the freshly installed version: via start.bat/start.sh, or by replacing this process."""
     if launched_by_script:
+        from web.tunnel import detach_tunnel
         log.warning("Restarting with the new version …")
+        detach_tunnel()      # the new process takes over the running tunnel – same link
         sys.exit(EXIT_UPDATED)
-    from web.tunnel import stop_tunnel
+    from web.tunnel import detach_tunnel
     log.warning("Restarting with the new version (python bot.py) …")
-    stop_tunnel()
+    detach_tunnel()      # the new process takes over the running tunnel – same link
     logging.shutdown()
     os.execv(sys.executable, [sys.executable, str(BASE_DIR / "bot.py")])
 

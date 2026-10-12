@@ -91,17 +91,17 @@ def format_duration(seconds: float) -> str:
     return f"{minutes} min"
 
 
-_DURATION_UNITS = {"d": 1440, "h": 60, "m": 1}
+_DURATION_UNITS = {"w": 10080, "d": 1440, "h": 60, "m": 1}
 
 
 def parse_duration(text: str) -> int | None:
-    """Duration like "90", "90m", "12h", "1d 12h" or "off"/"0" -> minutes. None = invalid."""
+    """Duration like "90", "90m", "12h", "1d 12h", "2w" or "off"/"0" -> minutes. None = invalid."""
     text = text.strip().lower().replace(" ", "")
     if text in ("0", "off", "none", "no"):
         return 0
     if text.isdigit():
         return int(text)
-    parts = re.fullmatch(r"(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m(?:in)?)?", text)
+    parts = re.fullmatch(r"(?:(\d+)w)?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m(?:in)?)?", text)
     if not parts or not any(parts.groups()):
         return None
     return sum(int(v) * unit for v, unit in zip(parts.groups(), _DURATION_UNITS.values()) if v)

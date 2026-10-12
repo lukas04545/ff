@@ -85,12 +85,14 @@ def _http_get(url: str, *, timeout: int = 60, accept: str | None = None) -> byte
 class Updater:
     def __init__(self, repo: str, branch: str = "main", *, base_dir: Path = BASE_DIR,
                  http_get: Callable[..., bytes] = _http_get,
-                 pip_install: Callable[[Path], None] | None = None) -> None:
+                 pip_install: Callable[[Path], None] | None = None,
+                 before_apply: Callable[[], None] | None = None) -> None:
         self.repo = repo.strip().strip("/")
         self.branch = branch.strip() or "main"
         self.base = Path(base_dir)
         self.http_get = http_get
         self.pip_install = pip_install or self._pip_install
+        self.before_apply = before_apply      # e.g. a backup right before files are replaced
         self.last_check: float | None = None
         self.last_result: Result | None = None
 
@@ -216,6 +218,7 @@ class Updater:
                 req.write_bytes(new_files["requirements.txt"])
                 self.pip_install(req)
 
+        self._before_apply()
         for rel in changed:
             target = self.base / rel
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -266,11 +269,19 @@ class Updater:
                 req = Path(tmp) / "requirements.txt"
                 req.write_text(self._git(root, "show", f"{new}:{prefix}requirements.txt"), encoding="utf-8")
                 self.pip_install(req)
+        self._before_apply()
         self._git(root, "merge", "--ff-only", "--quiet", new)
         return Result("updated", f"Updated to {new[:7]} ({len(changed)} changed file(s)).", new, title, changed,
                       requirements_changed=req_changed)
 
     # ------------------------------------------------------------ Helpers
+
+    def _before_apply(self) -> None:
+        if self.before_apply is not None:
+            try:
+                self.before_apply()
+            except Exception as exc:  # a failed backup must not block the update
+                log.warning("Before update: %s", exc)
 
     @staticmethod
     def _git(root: Path, *args: str, timeout: int = 30) -> str:

@@ -77,13 +77,14 @@ KIT_ACTIONS = """- You have tools for the player who opened this ticket – and 
 GIVEAWAY_ACTIONS = """- Giveaway wins (this server's /giveaway and the winners channel) – again ONLY the ticket owner's:
   * get_my_giveaway_wins: their wins with prize, date, whether it is lifetime, the matching kit + role and
     whether it was already redeemed.
-  * redeem_giveaway_win: for a LIFETIME kit prize it gives them the kit's Discord role (once per win).
+  * redeem_giveaway_win: for a kit prize it gives them the kit's Discord role (once per win) – for good if the
+    prize is lifetime, otherwise for the prize's duration (e.g. "7 days"); copy until_discord into your reply.
   When the player asks about a giveaway prize, call get_my_giveaway_wins first. Redeem only a win the player
-  asks about. If the result is needs_staff (e.g. store credit, money, a non-lifetime kit, unknown prize) or the
+  asks about. If the result is needs_staff (e.g. store credit, money, a kit without duration, unknown prize) or the
   win is not found: say so honestly, include the prize and link, and set escalate = true so staff can handle it.
   already_redeemed: tell them it was redeemed before (no second time). Never invent wins.
   A ticket that starts with "I won the giveaway" was opened automatically for a winner: congratulate them,
-  call get_my_giveaway_wins and redeem that win right away if it is a lifetime kit – otherwise call staff."""
+  call get_my_giveaway_wins and redeem that win right away if it is a kit prize – otherwise call staff."""
 
 
 def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None,

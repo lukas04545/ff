@@ -52,7 +52,9 @@ def test_zip_update_keeps_own_files(tmp_path):
     (tmp_path / "data/update_state.json").write_text(json.dumps({"sha": "b" * 40, "files": {
         "support_knowledge.md": hashlib.sha256(b"default kb\n").hexdigest(), "cogs/stale.py": "x"}}))
     pip = []
+    before = []
     up = Updater("lukas04545/ff", base_dir=tmp_path, pip_install=lambda req: pip.append(req.read_text()),
+                 before_apply=lambda: before.append((tmp_path / "bot.py").read_text()),
                  http_get=_fake_github({
                      "bot.py": "print('new')\n", "cogs/new.py": "y = 2\n", "requirements.txt": "discord.py\naiohttp\n",
                      ".env": "DISCORD_TOKEN=from-the-zip\n", "data/bot.db": "zip-db", "rules.md": "new default rules\n",
@@ -60,6 +62,7 @@ def test_zip_update_keeps_own_files(tmp_path):
     r = up.check()
     assert r.status == "updated" and r.restart_needed and r.sha == SHA and r.title == "Better tickets"
     assert sorted(r.changed) == ["bot.py", "cogs/new.py", "requirements.txt", "support_knowledge.md"]
+    assert before == ["print('old')\n"]                                   # backup hook ran before writing
     assert r.removed == ["cogs/stale.py"] and r.requirements_changed and pip == ["discord.py\naiohttp\n"]
     read = lambda rel: (tmp_path / rel).read_text(encoding="utf-8")
     assert read("bot.py") == "print('new')\n" and read("cogs/new.py") == "y = 2\n"

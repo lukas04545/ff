@@ -125,6 +125,14 @@ class Config:
     giveaway_winner_role_id: int | None
     giveaway_win_channel_id: int | None   # channel where another bot (Helios, Kryvon …) announces winners
     giveaway_auto_ticket: bool            # /giveaway ended -> prize ticket per winner, AI redeems the prize
+    giveaway_prize_days: int              # kit prize without "lifetime"/duration -> role for N days (0 = staff)
+
+    # Staff alerts & backups
+    server_down_alert_minutes: int        # ping staff after the server is offline this long (0 = off)
+    alert_channel_id: int | None          # empty = admin log channel
+    alert_role_ids: frozenset[int]        # pinged on alerts (empty = admin roles)
+    backup_enabled: bool
+    backup_keep_days: int
 
     # Web interface
     web_enabled: bool
@@ -229,6 +237,12 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         # Default: this server's Helios winner channel (change or clear it in the settings)
         giveaway_win_channel_id=_int("GIVEAWAY_WIN_CHANNEL_ID", 1558525305004757032),
         giveaway_auto_ticket=_bool("GIVEAWAY_AUTO_TICKET", True),
+        giveaway_prize_days=max(0, _int("GIVEAWAY_PRIZE_DAYS", 0)),
+        server_down_alert_minutes=max(0, _int("SERVER_DOWN_ALERT_MINUTES", 10)),
+        alert_channel_id=_int("ALERT_CHANNEL_ID"),
+        alert_role_ids=_id_set("ALERT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),
+        backup_enabled=_bool("BACKUP_ENABLED", True),
+        backup_keep_days=max(1, _int("BACKUP_KEEP_DAYS", 7)),
         web_enabled=_bool("WEB_ENABLED", True),
         web_host=_get("WEB_HOST", "127.0.0.1"),
         web_port=_int("WEB_PORT", 8080),

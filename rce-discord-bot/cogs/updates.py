@@ -21,8 +21,14 @@ class Updates(commands.Cog):
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
         cfg = bot.config
-        self.updater = Updater(cfg.auto_update_repo, cfg.auto_update_branch)
+        self.updater = Updater(cfg.auto_update_repo, cfg.auto_update_branch, before_apply=self._backup)
         self._lock = asyncio.Lock()
+
+    def _backup(self) -> None:
+        """Runs in the update thread right before files are replaced."""
+        if self.bot.config.backup_enabled:
+            import backups
+            backups.make_backup(self.bot.config.database_path, label="pre-update")
 
     async def cog_load(self) -> None:
         if self.bot.config.auto_update:

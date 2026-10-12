@@ -121,6 +121,18 @@ class Storage:
                 player TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            -- Discord roles that are removed again automatically (e.g. VIP for 7 days)
+            CREATE TABLE IF NOT EXISTS timed_roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                role_id INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,           -- Unix time
+                reason TEXT,
+                granted_by TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (guild_id, user_id, role_id)
+            );
             CREATE TABLE IF NOT EXISTS custom_kit_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
@@ -559,6 +571,39 @@ class Storage:
             (",".join(str(w) for w in winner_ids), giveaway_id),
         )
         self._db.commit()
+
+    # ------------------------------------------------------------ Timed roles
+
+    def timed_role(self, guild_id: int, user_id: int, role_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM timed_roles WHERE guild_id = ? AND user_id = ? AND role_id = ?",
+                                (guild_id, user_id, role_id)).fetchone()
+
+    def set_timed_role(self, guild_id: int, user_id: int, role_id: int, expires_at: int, reason: str | None,
+                       granted_by: str | None) -> None:
+        self._db.execute(
+            "INSERT INTO timed_roles (guild_id, user_id, role_id, expires_at, reason, granted_by) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (guild_id, user_id, role_id) DO UPDATE SET "
+            "expires_at = excluded.expires_at, reason = excluded.reason, granted_by = excluded.granted_by",
+            (guild_id, user_id, role_id, expires_at, reason, granted_by))
+        self._db.commit()
+
+    def timed_roles(self, *, user_id: int | None = None) -> list[sqlite3.Row]:
+        if user_id is None:
+            return self._db.execute("SELECT * FROM timed_roles ORDER BY expires_at").fetchall()
+        return self._db.execute("SELECT * FROM timed_roles WHERE user_id = ? ORDER BY expires_at",
+                                (user_id,)).fetchall()
+
+    def timed_role_by_id(self, row_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM timed_roles WHERE id = ?", (row_id,)).fetchone()
+
+    def due_timed_roles(self, now: int) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM timed_roles WHERE expires_at <= ? ORDER BY expires_at",
+                                (now,)).fetchall()
+
+    def delete_timed_role(self, row_id: int) -> bool:
+        cur = self._db.execute("DELETE FROM timed_roles WHERE id = ?", (row_id,))
+        self._db.commit()
+        return cur.rowcount > 0
 
     def close(self) -> None:
         self._db.close()
