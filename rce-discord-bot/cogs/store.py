@@ -81,9 +81,12 @@ class Store(commands.Cog):
         else:
             reply = interaction.response.send_message
         st, problem = self.status(), self.problem()
-        server = (self.bot.config.tip4serv_key.split(".")[0][:20] if self.bot.config.tip4serv_key else None)
+        key = self.bot.config.tip4serv_key
+        server = key.split(".")[0][:20] if key else None
         lines = [f"**Connection:** {'❌ ' + problem if problem else '✅ working'}",
-                 f"**Server number in the key:** `{safe_md(server)}`" if server else "**Key:** not set",
+                 "**Key:** not set" if not server else
+                 "**Key:** store API key (wrong type – a server key is needed)" if server.startswith("eyJ") else
+                 f"**Server number in the key:** `{safe_md(server)}`",
                  f"**Last check:** <t:{int(st['last_ok'])}:R>" if st["last_ok"] else "**Last check:** never",
                  f"**Purchases received:** {st['stored_total']}"]
         if st["ignored"]:

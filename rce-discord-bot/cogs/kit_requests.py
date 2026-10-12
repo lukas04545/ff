@@ -180,6 +180,23 @@ class KitRequests(commands.Cog):
 
     # ------------------------------------------------------------ Filing (ticket AI)
 
+    def same_order(self, req) -> list:
+        """Other purchase requests (waiting or approved) with an order ID of this one."""
+        ids = order_ids(req["proof"])
+        if not ids or req["source"] != "purchase":
+            return []
+        return [r for r in self.bot.db.kit_requests(limit=1000)
+                if r["id"] != req["id"] and r["source"] == "purchase" and r["status"] in ("pending", "approved")
+                and ids & order_ids(r["proof"])]
+
+    def _dupe_warning(self, request_id: int) -> dict:
+        done = [r for r in self.same_order(self.bot.db.kit_request(request_id)) if r["status"] == "approved"]
+        if not done:
+            return {}
+        return {"warning": f"This order already gave the kit {done[0]['kit']} (request #{done[0]['id']}) – this "
+                           "request can't be approved (one purchase = one kit). Tell the player and staff; cancel "
+                           "it unless it's really a different purchase with its own order ID."}
+
     def _order_reused(self, proof: str) -> dict | None:
         """One purchase = one kit: an order ID that another pending/approved purchase request already used."""
         ids = order_ids(proof)
@@ -224,6 +241,7 @@ class KitRequests(commands.Cog):
         result = {"ok": True, "result": "waiting_for_staff", "request_id": request_id, "kit": kit,
                   "message": "Posted for staff approval. Tell the player staff will check it and confirm."}
         result.update(await self.check_payment(request_id))
+        result.update(self._dupe_warning(request_id))
         return result
 
     async def file_new(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
@@ -274,6 +292,7 @@ class KitRequests(commands.Cog):
         if q is not None:
             result["price"] = self.quote_for_ai(q)
         result.update(await self.check_payment(request_id))
+        result.update(self._dupe_warning(request_id))
         return result
 
     async def file_addon(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
@@ -327,6 +346,7 @@ class KitRequests(commands.Cog):
         if q is not None:
             result["price"] = self.quote_for_ai(q)
         result.update(await self.check_payment(request_id))
+        result.update(self._dupe_warning(request_id))
         return result
 
     # ------------------------------------------------------------ Tip4Serv payments
@@ -572,6 +592,10 @@ class KitRequests(commands.Cog):
             embed.add_field(name="Name on the store", value=safe_md(req["checkout_name"]))
         if req["pay_note"]:
             embed.add_field(name="💳 Tip4Serv", value=safe_md(req["pay_note"])[:1024], inline=False)
+        if status == "pending" and (dupes := self.same_order(req)):
+            embed.add_field(name="⚠️ Same order ID as", inline=False, value="\n".join(
+                f"#{r['id']} **{safe_md(r['kit'])}** – {STATUS_TEXT[r['status']]}" for r in dupes[:5])
+                + "\nOne purchase gives one kit – an order that already got a kit can't be approved again.")
         if req["proof"]:
             embed.add_field(name="Their info (check it!)", value=safe_md(req["proof"])[:1024], inline=False)
         if new:
@@ -629,6 +653,13 @@ class KitRequests(commands.Cog):
         if req is None:
             return False, "Request not found."
         by_name = str(by)
+        if approve and req["status"] == "pending":
+            done = [r for r in self.same_order(req) if r["status"] == "approved"]
+            if done:           # one purchase = one kit: this order already got a kit
+                ids = ", ".join(sorted(order_ids(req["proof"]) & order_ids(done[0]["proof"])))
+                return False, (f"Not approved: order {ids} already gave the kit {done[0]['kit']} (request "
+                               f"#{done[0]['id']}) – one purchase gives one kit. Reject this request; a second "
+                               "purchase needs its own order ID.")
         if approve and by_name != AUTO_BY and req["status"] == "pending" and req["payment_ids"]:
             taken = db.store_payments_used_elsewhere(req["payment_ids"].split(","), request_id)
             if taken:          # one purchase = one kit: that payment already paid for another request
