@@ -96,6 +96,12 @@ _TOKEN = re.compile(r'"([^"]*)"|(\S+)')
 _SHORTNAME = re.compile(r"[a-z0-9][a-z0-9._-]*")
 
 
+def valid_shortname(item: str) -> bool:
+    """Shortname syntax check; spaces only for the few real RCE items that have one ("lumberjack hoodie")."""
+    from rce.items import COMMON_ITEMS
+    return bool(_SHORTNAME.fullmatch(item)) or (" " in item and item in COMMON_ITEMS)
+
+
 def parse_kit_add_commands(text: str) -> tuple[list[KitAddLine], list[str]]:
     """Parses kit builder output like
 
@@ -110,9 +116,9 @@ def parse_kit_add_commands(text: str) -> tuple[list[KitAddLine], list[str]]:
     for line in text.replace("\\n", "\n").splitlines():
         for segment in _KIT_ADD.split(line)[1:]:  # text before the first "kit add" is not a command
             tokens = [m[1] if m[1] is not None else m[2] for m in _TOKEN.finditer(segment)]
-            item = tokens[1].strip().lower() if len(tokens) > 1 else ""
+            item = " ".join(tokens[1].split()).lower() if len(tokens) > 1 else ""
             amount = tokens[2] if len(tokens) > 2 else "1"
-            if len(tokens) < 2 or not tokens[0].strip() or not _SHORTNAME.fullmatch(item) or not amount.isdigit():
+            if (len(tokens) < 2 or not tokens[0].strip() or not valid_shortname(item) or not amount.isdigit()):
                 errors.append(("kit add" + segment).strip()[:120])
                 continue
             condition = tokens[3] if len(tokens) > 3 and tokens[3].isdigit() else None

@@ -257,7 +257,7 @@ class CustomKits(commands.Cog):
         if row is None:
             await self._missing(interaction, kit)
             return
-        short = kitparse.clean_arg(item).replace(" ", "").lower()
+        short = itemlist.normalize_shortname(kitparse.clean_arg(item))
         if not short:
             await interaction.response.send_message("Please enter an item shortname.", ephemeral=True)
             return
@@ -272,17 +272,22 @@ class CustomKits(commands.Cog):
         await interaction.response.send_message(
             f"➕ Added `{short}` × {amount} to **{safe_md(row['name'])}**.{hint}", ephemeral=True)
 
-    @customkit.command(name="import", description="Creates/fills custom kits from kit builder commands (kit add ...).")
-    @app_commands.describe(
-        file="Optional: .txt file with the commands (otherwise a text box opens)",
-        kit="Optional: put everything into this kit instead of the names in the commands",
-        replace="Replace the existing items of the kit (default: yes)")
+    @customkit.command(name="import", description="Paste kit builder commands (kit add ...) to create/fill custom kits.")
+    @app_commands.describe(kit="Optional: put everything into this kit instead of the names in the commands",
+                           replace="Replace the existing items of the kit (default: yes)")
     @admin_only()
-    async def import_cmd(self, interaction: discord.Interaction, file: discord.Attachment | None = None,
-                         kit: str | None = None, replace: bool = True) -> None:
-        if file is None:
-            await interaction.response.send_modal(ImportModal(self, kit, replace))
-            return
+    async def import_cmd(self, interaction: discord.Interaction, kit: str | None = None,
+                         replace: bool = True) -> None:
+        # Opens a text box – Discord slash options can't hold multi-line text
+        await interaction.response.send_modal(ImportModal(self, kit, replace))
+
+    @customkit.command(name="import-file", description="Upload a .txt file with kit builder commands (for big kits).")
+    @app_commands.describe(file=".txt file with the kit add commands",
+                           kit="Optional: put everything into this kit instead of the names in the commands",
+                           replace="Replace the existing items of the kit (default: yes)")
+    @admin_only()
+    async def import_file(self, interaction: discord.Interaction, file: discord.Attachment,
+                          kit: str | None = None, replace: bool = True) -> None:
         if file.size > MAX_IMPORT_BYTES:
             await interaction.response.send_message("The file is too big (max. 200 KB).", ephemeral=True)
             return
