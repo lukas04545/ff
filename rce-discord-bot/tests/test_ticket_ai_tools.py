@@ -43,7 +43,7 @@ def setup(tmp_path, monkeypatch):
     db.update_ticket(tid, channel_id=100)
 
     member = SimpleNamespace(id=7, roles=[SimpleNamespace(id=55)], mention="<@7>", __str__=lambda: "Bob")
-    guild = SimpleNamespace(get_member=lambda uid: member if uid == 7 else None,
+    guild = SimpleNamespace(id=1, get_member=lambda uid: member if uid == 7 else None,
                             get_role=lambda rid: SimpleNamespace(name="VIP") if rid == 55 else None)
     posted = []
 
@@ -215,3 +215,105 @@ def test_ai_redeems_lifetime_kit_win(setup):
     assert run("redeem_giveaway_win", {"message_id": "501"})["result"] == "already_redeemed"  # only once
     assert len(granted) == 1
     assert run("get_my_kits")["claimable_kits"][0]["kit"] == "VIP"             # role now unlocks the kit
+
+
+# ------------------------------------------------------------ Own /giveaway -> prize ticket -> AI
+
+def _own_giveaway(db, prize, winners, mid=777):
+    gid = db.create_giveaway(1, 2, prize, len(winners), 3, ends_at=1000)
+    db.set_giveaway_message(gid, mid)
+    db.finish_giveaway(gid, winners)
+    return gid
+
+
+def test_ai_redeems_own_giveaway_win(setup):
+    s = setup
+    vip_role = SimpleNamespace(id=55, name="VIP")
+    member = s.channel.guild.get_member(7)
+    member.roles, member.name = [], "bob"
+
+    async def add_roles(role, reason=None):
+        member.roles.append(role)
+    member.add_roles = add_roles
+    s.channel.guild.get_channel = lambda cid: None            # Helios channel missing: own wins still work
+    s.channel.guild.get_role = lambda rid: vip_role if rid == 55 else None
+    _own_giveaway(s.bot.db, "VIP Kit (Lifetime)", [7, 8])
+    run = lambda name, args=None: asyncio.run(s.tickets._run_tool(_call(name, args), s.ticket, s.channel))
+
+    assert {t["function"]["name"] for t in s.tickets._ai_tools()} >= {"get_my_giveaway_wins", "redeem_giveaway_win"}
+    wins = run("get_my_giveaway_wins")["wins"]
+    assert [(w["message_id"], w["kit"], w["lifetime"], w["link"]) for w in wins] == [
+        ("777", "VIP", True, "https://discord.com/channels/1/2/777")]
+    r = run("redeem_giveaway_win", {"message_id": "777"})
+    assert r["ok"] and vip_role in member.roles
+    assert run("redeem_giveaway_win", {"message_id": "777"})["result"] == "already_redeemed"
+    # The second winner of the same giveaway can still redeem theirs
+    assert s.bot.db.giveaway_redemption(777, 7) and s.bot.db.giveaway_redemption(777, 8) is None
+
+
+def test_finished_giveaway_opens_prize_ticket(setup):
+    from cogs.giveaways import Giveaways
+    s = setup
+    opened, sent = [], []
+
+    async def open_prize_ticket(guild, winner_id, prize, link):
+        opened.append((winner_id, prize, link))
+    s.tickets.open_prize_ticket = open_prize_ticket
+
+    async def fetch_message(mid):
+        return SimpleNamespace(jump_url=f"https://discord.com/channels/1/2/{mid}", edit=_noop)
+
+    async def send(content=None, **kwargs):
+        sent.append(content)
+    import discord
+
+    class FakeChannel(discord.abc.Messageable):                  # passes the isinstance check in finish()
+        guild = s.channel.guild
+
+        async def _get_channel(self):
+            return self
+    channel = FakeChannel()
+    channel.fetch_message, channel.send = fetch_message, send
+    s.bot.get_channel = lambda cid: channel if cid == 2 else None
+    cog = Giveaways(s.bot)
+    gid = s.bot.db.create_giveaway(1, 2, "VIP Kit (Lifetime)", 1, 3, ends_at=1000)
+    s.bot.db.set_giveaway_message(gid, 900)
+    s.bot.db.add_giveaway_entry(gid, 7)
+    assert asyncio.run(cog.finish(s.bot.db.giveaway(gid))) == [7]
+    assert opened == [(7, "VIP Kit (Lifetime)", "https://discord.com/channels/1/2/900")]
+    assert "Congratulations" in sent[0]
+
+
+async def _noop(*args, **kwargs):
+    return None
+
+
+def test_prize_in_open_ticket_goes_to_existing_ticket(setup):
+    from cogs.tickets import PRIZE_PREFIX
+    s = setup
+    escalated = []
+
+    async def escalate(channel, ticket, reason, **kwargs):
+        escalated.append(reason)
+    s.tickets._escalate = escalate
+    s.channel.guild.get_channel = lambda cid: s.channel if cid == 100 else None
+    asyncio.run(s.tickets.open_prize_ticket(s.channel.guild, 7, "VIP Kit (Lifetime)", "https://x/1"))
+    assert s.posted[-1].startswith(PRIZE_PREFIX) and "VIP Kit (Lifetime)" in s.posted[-1]
+    assert escalated == ["Giveaway prize to hand out: VIP Kit (Lifetime)"]     # no AI key -> staff is pinged
+    assert s.bot.db.open_ticket_of_user(7)["channel_id"] == 100                   # no second ticket
+
+
+def test_redemption_table_migration(tmp_path):
+    import sqlite3
+    from storage import Storage
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE giveaway_redemptions (message_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, "
+                "prize TEXT NOT NULL, action TEXT NOT NULL, redeemed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+    con.execute("INSERT INTO giveaway_redemptions (message_id, user_id, prize, action) VALUES (1, 7, 'VIP', 'x')")
+    con.commit()
+    con.close()
+    db = Storage(path)
+    assert db.giveaway_redemption(1, 7)["prize"] == "VIP"
+    assert db.record_giveaway_redemption(1, 8, "VIP", "y") and not db.record_giveaway_redemption(1, 7, "VIP", "z")
+    db.close()

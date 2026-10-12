@@ -106,12 +106,14 @@ class Storage:
                 PRIMARY KEY (giveaway_id, user_id)
             );
             -- Giveaway wins redeemed through a ticket (each winner message only once)
+            -- Redeemed giveaway wins: once per winner per giveaway message
             CREATE TABLE IF NOT EXISTS giveaway_redemptions (
-                message_id INTEGER PRIMARY KEY,
+                message_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 prize TEXT NOT NULL,
                 action TEXT NOT NULL,
-                redeemed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                redeemed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (message_id, user_id)
             );
             -- Verified link Discord account <-> in-game player (one each, for self-service kit claims)
             CREATE TABLE IF NOT EXISTS linked_players (
@@ -144,6 +146,19 @@ class Storage:
         if "cooldown_minutes" not in columns:
             self._db.execute(f"ALTER TABLE custom_kits ADD COLUMN cooldown_minutes INTEGER NOT NULL "
                              f"DEFAULT {DEFAULT_CLAIM_COOLDOWN}")
+        pk = [row["name"] for row in self._db.execute("PRAGMA table_info(giveaway_redemptions)") if row["pk"]]
+        if pk == ["message_id"]:
+            # Older layout allowed only one redemption per giveaway (wrong with several winners)
+            self._db.executescript("""
+                ALTER TABLE giveaway_redemptions RENAME TO giveaway_redemptions_old;
+                CREATE TABLE giveaway_redemptions (
+                    message_id INTEGER NOT NULL, user_id INTEGER NOT NULL, prize TEXT NOT NULL,
+                    action TEXT NOT NULL, redeemed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (message_id, user_id));
+                INSERT INTO giveaway_redemptions SELECT message_id, user_id, prize, action, redeemed_at
+                    FROM giveaway_redemptions_old;
+                DROP TABLE giveaway_redemptions_old;
+            """)
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_claims)")}
         if "user_id" not in columns:
             # Discord user who claimed the kit (self-service claims)
@@ -381,8 +396,9 @@ class Storage:
 
     # ------------------------------------------------------------ Giveaway wins (other bots)
 
-    def giveaway_redemption(self, message_id: int) -> sqlite3.Row | None:
-        return self._db.execute("SELECT * FROM giveaway_redemptions WHERE message_id = ?", (message_id,)).fetchone()
+    def giveaway_redemption(self, message_id: int, user_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM giveaway_redemptions WHERE message_id = ? AND user_id = ?",
+                                (message_id, user_id)).fetchone()
 
     def record_giveaway_redemption(self, message_id: int, user_id: int, prize: str, action: str) -> bool:
         cur = self._db.execute("INSERT OR IGNORE INTO giveaway_redemptions (message_id, user_id, prize, action) "
@@ -507,6 +523,12 @@ class Storage:
         if active_only:
             sql += " AND ended = 0"
         return self._db.execute(sql + " ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+    def ended_giveaways(self, guild_id: int, *, limit: int = 200) -> list[sqlite3.Row]:
+        """Finished giveaways with at least one winner (newest first) – the ticket AI looks up wins here."""
+        return self._db.execute(
+            "SELECT * FROM giveaways WHERE guild_id = ? AND ended = 1 AND winner_ids != '' "
+            "AND message_id IS NOT NULL ORDER BY ends_at DESC LIMIT ?", (guild_id, limit)).fetchall()
 
     def due_giveaways(self, now: int) -> list[sqlite3.Row]:
         return self._db.execute(
