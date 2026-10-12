@@ -704,7 +704,9 @@ kits. Replies are sent without @mentions.
 **Bought custom kits:** when a player writes in their ticket that they bought a custom kit (e.g. "I bought the Ak
 Kit, Tebex order #1234"), the AI files a **purchase request**: the bot posts *"🛒 Kit purchase – staff approval
 needed"* in the ticket with the kit contents and what the player said, pings the support roles and shows
-**✅ Approve** / **✖️ Reject** (staff only). Nothing is given before that. On **Approve** the bot gives the kit a
+**✅ Approve** / **✖️ Reject** (staff only). To let only certain roles decide purchases (e.g. a "Store team"), set
+**Roles that approve kit purchases** (`KIT_APPROVER_ROLE_IDS`, Settings → Tickets): then those roles are pinged
+instead, get access to the ticket automatically, and only they and bot admins can press the buttons. Nothing is given before that. On **Approve** the bot gives the kit a
 Discord role – the kit's claim role if it has one, otherwise an existing role with the kit's name (e.g. your
 "Ak Kit" role), otherwise it **creates a new role** named like the kit – links it as the kit's claim role and gives
 it to the buyer (for N days if the purchase was time-limited, via timed roles). The player then claims the kit with

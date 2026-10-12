@@ -117,6 +117,7 @@ class Config:
     support_knowledge_file: Path
     ticket_ai_max_replies: int
     ticket_ai_kit_tools: bool   # AI may check/claim the ticket owner's kits
+    kit_approver_role_ids: frozenset[int]   # may approve bought kits (empty = support roles)
 
     # Community (welcome, auto role, Discord logs, rules, giveaways)
     welcome_channel_id: int | None
@@ -264,6 +265,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         support_knowledge_file=Path(_get("SUPPORT_KNOWLEDGE_FILE", "support_knowledge.md")),
         ticket_ai_max_replies=max(1, _int("TICKET_AI_MAX_REPLIES", 20)),
         ticket_ai_kit_tools=_bool("TICKET_AI_KIT_TOOLS", True),
+        kit_approver_role_ids=_id_set("KIT_APPROVER_ROLE_IDS"),
         welcome_channel_id=_int("WELCOME_CHANNEL_ID"),
         welcome_message=_get("WELCOME_MESSAGE",
                              "Welcome {member} to **{server}**! Please read the rules{rules} – have fun!"),

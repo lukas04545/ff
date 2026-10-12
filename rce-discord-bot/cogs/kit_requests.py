@@ -68,8 +68,10 @@ class KitRequestView(discord.ui.View):
         self.cog = cog
 
     async def _decide(self, interaction: discord.Interaction, approve: bool) -> None:
-        if not self.cog.is_staff(interaction.user):
-            await interaction.response.send_message("⛔ Only staff can decide kit purchases.", ephemeral=True)
+        if not self.cog.can_decide(interaction.user):
+            roles = " ".join(f"<@&{r}>" for r in self.cog.approver_role_ids()) or "staff"
+            await interaction.response.send_message(f"⛔ Only {roles} can decide kit purchases.", ephemeral=True,
+                                                    allowed_mentions=discord.AllowedMentions.none())
             return
         row = self.cog.bot.db.kit_request_by_message(interaction.message.id) if interaction.message else None
         if row is None:
@@ -100,6 +102,17 @@ class KitRequests(commands.Cog):
         if tickets is not None:
             return tickets.is_staff(user)
         return is_admin(self.bot, user)
+
+    def approver_role_ids(self) -> frozenset[int]:
+        cfg = self.bot.config
+        return cfg.kit_approver_role_ids or cfg.support_role_ids
+
+    def can_decide(self, user: discord.abc.User) -> bool:
+        """Approve/Reject: the chosen approver roles (KIT_APPROVER_ROLE_IDS) + bot admins; otherwise staff."""
+        if not self.bot.config.kit_approver_role_ids:
+            return self.is_staff(user)
+        roles = {r.id for r in getattr(user, "roles", [])}
+        return bool(roles & self.bot.config.kit_approver_role_ids) or is_admin(self.bot, user)
 
     # ------------------------------------------------------------ Filing (ticket AI)
 
@@ -152,7 +165,15 @@ class KitRequests(commands.Cog):
 
     async def _post(self, channel, request_id: int) -> None:
         guild = getattr(channel, "guild", None)
-        roles = [r for rid in self.bot.config.support_role_ids if guild and (r := guild.get_role(rid))]
+        roles = [r for rid in sorted(self.approver_role_ids()) if guild and (r := guild.get_role(rid))]
+        overwrites = getattr(channel, "overwrites", None)
+        for role in roles if overwrites is not None else []:       # approvers must be able to see the ticket
+            if role not in overwrites:
+                try:
+                    await channel.set_permissions(role, view_channel=True, send_messages=True,
+                                                  read_message_history=True, reason="Kit purchase approvers")
+                except discord.HTTPException as exc:
+                    log.warning("Could not add approver role %s to %s: %s", role.id, channel.id, exc)
         msg = await channel.send(content=" ".join(r.mention for r in roles) or None,
                                  embed=self.embed(self.bot.db.kit_request(request_id)), view=KitRequestView(self),
                                  allowed_mentions=discord.AllowedMentions(roles=roles))
