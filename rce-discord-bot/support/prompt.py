@@ -35,10 +35,15 @@ RULES
   to close the ticket (e.g. "it's resolved", "all fixed, thanks", "you can close it", "problem solved"). Then
   "reply" is a short goodbye – the bot closes the ticket. Never for questions ("is it resolved?"), "not
   resolved yet", a plain "ok"/"thanks" while they still wait for something, or messages from staff.
+  If the ticket is kept open on request (see TICKET), only close when they now explicitly ask to close it.
+- Set "keep_open": true when the ticket owner asks to keep the ticket open (e.g. "keep it open", "don't close
+  it yet", "I'll test it later", "leave it open until the wipe"). Confirm in "reply" that it stays open until
+  they close it or say it's done. Never set "close" and "keep_open" together.
 
 TICKET
 Topic: {topic}
 In-game name: {ingame_name}
+Kept open on request: {keep_open}
 
 LIVE SERVER STATUS
 {status}
@@ -48,7 +53,7 @@ KNOWLEDGE BASE
 
 OUTPUT FORMAT
 Reply only with a JSON object in exactly this format:
-{{"reply": "Text for the player", "escalate": false, "reason": "", "close": false}}
+{{"reply": "Text for the player", "escalate": false, "reason": "", "close": false, "keep_open": false}}
 "reason" is a short explanation for staff (only when escalate is true), e.g.:
 {{"reply": "I have notified the team, someone will get back to you shortly.", "escalate": true, "reason": "Ban appeal"}}
 """
@@ -60,6 +65,7 @@ class AiAnswer:
     escalate: bool
     reason: str
     close: bool = False      # the player said the issue is resolved -> the bot closes the ticket
+    keep_open: bool = False  # the player asked to keep the ticket open -> no "resolved?" question / auto-close
 
 
 NO_ACTIONS = """- You CANNOT perform any actions (no giving kits/items, no unbanning, no refunds,
@@ -122,7 +128,7 @@ PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
 
 def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None,
                         status: str, knowledge: str, kit_tools: bool = False, giveaway_tools: bool = False,
-                        purchase_tools: bool = False) -> str:
+                        purchase_tools: bool = False, keep_open: bool = False) -> str:
     actions = NO_ACTIONS
     if kit_tools:
         actions = KIT_ACTIONS + ("\n" + GIVEAWAY_ACTIONS if giveaway_tools else "") + \
@@ -132,6 +138,7 @@ def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None
         server_name=server_name or "Rust Console Server",
         topic=topic,
         ingame_name=ingame_name or "not provided",
+        keep_open="yes – the player asked to keep this ticket open" if keep_open else "no",
         status=status or "unknown",
         knowledge=knowledge.strip() or "(no knowledge base provided – call staff for server-specific questions)",
     )
@@ -176,7 +183,12 @@ def parse_answer(raw: str) -> AiAnswer:
     reason = str(data.get("reason") or "").strip()[:300]
     if escalate and not reason:
         reason = "AI requested staff" if reply else "AI had no answer"
-    close = data.get("close")
-    if isinstance(close, str):
-        close = close.strip().lower() in ("true", "yes", "1")
-    return AiAnswer(reply[:MAX_REPLY_CHARS], escalate, reason, close=bool(close) and not escalate)
+    close, keep_open = (_flag(data.get(k)) for k in ("close", "keep_open"))
+    return AiAnswer(reply[:MAX_REPLY_CHARS], escalate, reason, close=close and not escalate and not keep_open,
+                    keep_open=keep_open)
+
+
+def _flag(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "1")
+    return bool(value)

@@ -163,3 +163,46 @@ def test_player_says_resolved_but_purchase_pending(setup, monkeypatch):
     assert env.closed == [] and "waiting for staff approval" in env.posted[-1][0]
     owner_says(env, "yes")                                         # typed yes doesn't close either
     assert env.closed == []
+
+
+def test_parse_keep_open_flag():
+    from support.prompt import build_system_prompt, parse_answer
+    a = parse_answer('{"reply": "Sure, it stays open.", "escalate": false, "keep_open": true}')
+    assert a.keep_open and not a.close
+    both = parse_answer('{"reply": "x", "escalate": false, "keep_open": true, "close": true}')
+    assert both.keep_open and not both.close                       # keeping open wins over a mixed answer
+    prompt = build_system_prompt(server_name="S", topic="t", ingame_name=None, status="", knowledge="",
+                                 keep_open=True)
+    assert "Kept open on request: yes" in prompt and '"keep_open"' in prompt
+
+
+def test_player_asks_to_keep_open(setup, monkeypatch):
+    env = setup
+    ask(env)                                                       # an open "resolved?" question …
+    _ai_says(env, monkeypatch, '{"reply": "No problem, I will keep it open.", "escalate": false, '
+                               '"reason": "", "keep_open": true}')
+    assert env.db.ticket_by_channel(100)["keep_open"] == 1
+    assert env.channel.id not in env.tickets._resolve_asked and env.edits[-1][1] is None   # … loses its buttons
+    n = len(env.posted)
+    ask(env)
+    assert len(env.posted) == n and env.closed == []               # no more questions
+    # Later they explicitly ask to close -> closes
+    _ai_says(env, monkeypatch, '{"reply": "Closing it now, bye!", "escalate": false, "reason": "", "close": true}')
+    assert env.closed and env.closed[0][2] == "Resolved (confirmed by the player)"
+
+
+def test_keep_open_button(setup):
+    env = setup
+    ask(env)
+    answers = []
+
+    async def edit_message(content=None, view="same", **kw):
+        answers.append((content, view))
+    interaction = SimpleNamespace(user=env.buyer, channel_id=env.channel.id, channel=env.channel,
+                                  response=SimpleNamespace(edit_message=edit_message))
+    asyncio.run(env.tickets.resolve_answer(interaction, None))
+    assert "stays open" in answers[-1][0] and answers[-1][1] is None and env.closed == []
+    assert env.db.ticket_by_channel(100)["keep_open"] == 1
+    n = len(env.posted)
+    ask(env)
+    assert len(env.posted) == n

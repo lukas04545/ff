@@ -692,7 +692,7 @@ file to `TICKET_LOG_CHANNEL_ID`, the user gets a DM, and the channel is deleted.
 
 **Auto-close when resolved:** when the AI has answered and the player hasn't written for **5 minutes**
 (setting *Ask "Is it resolved?" after*, `TICKET_RESOLVE_MINUTES`, `0` = off), the AI asks *"❓ Is your issue
-resolved?"* with **✅ Yes, close the ticket** / **✖️ No, I still need help** buttons. Yes – or a short typed answer
+resolved?"* with **✅ Yes, close the ticket** / **✖️ No, I still need help** / **📌 Keep it open** buttons. Yes – or a short typed answer
 like "yes", "yep thanks", "ja", "resolved" – closes the ticket (transcript and DM as usual, reason "Resolved").
 Anything else keeps it open and the AI carries on. It asks once per answer and never while staff has taken over,
 staff was called, or a kit purchase in the ticket waits for approval.
@@ -700,6 +700,10 @@ The player doesn't have to wait for the question: if they write on their own tha
 thanks", "it's resolved", "you can close it"), the AI says goodbye and closes the ticket right away. Questions
 like "is it resolved?" or "not resolved yet" don't count. A ticket with a kit purchase that still waits for
 approval stays open. `/ticket ai-test` shows "Would close the ticket" when the AI would close it.
+**Keeping a ticket open:** if the player asks for it ("keep it open", "don't close it yet, I'll test later") or
+presses **📌 Keep it open** under the question, the ticket is marked *kept open*: no more "Is it resolved?"
+questions, and the AI only closes it when the player explicitly asks to close it later. This is saved, so it
+survives restarts.
 
 **Security:** The AI can only reply and call staff. It has **no access to RCON**, so it can't
 give kits, unban anyone or run commands, no matter what's written in the ticket. It only gets the

@@ -204,6 +204,11 @@ class ResolveView(discord.ui.View):
     async def no(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         await self.cog.resolve_answer(interaction, False)
 
+    @discord.ui.button(label="Keep it open", emoji="📌", style=discord.ButtonStyle.secondary,
+                       custom_id="rce:ticket:keepopen")
+    async def keep(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.resolve_answer(interaction, None)
+
 
 class Tickets(commands.Cog):
     ticket = app_commands.Group(name="ticket", description="Support tickets", guild_only=True)
@@ -521,7 +526,7 @@ class Tickets(commands.Cog):
                                      ingame_name=ticket["ingame_name"], status=self._status_text(),
                                      knowledge=self._knowledge(), kit_tools=bool(tools),
                                      giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools),
-                purchase_tools=any(t in PURCHASE_TOOLS for t in tools))
+                purchase_tools=any(t in PURCHASE_TOOLS for t in tools), keep_open=bool(ticket["keep_open"]))
         messages = build_messages(system, await self._history(channel, ticket))
         try:
             async with channel.typing():
@@ -550,6 +555,8 @@ class Tickets(commands.Cog):
         if answer.reply:
             await channel.send(AI_PREFIX + answer.reply, allowed_mentions=discord.AllowedMentions.none())
             self.bot.db.increment_ticket_ai_replies(ticket["id"])
+        if answer.keep_open:
+            await self._keep_open(channel, ticket)
         if answer.close and not answer.escalate:
             if self._purchase_pending(ticket):
                 await channel.send(AI_PREFIX + "A kit purchase in this ticket is still waiting for staff approval, "
@@ -575,7 +582,7 @@ class Tickets(commands.Cog):
             return  # the player (or staff) wrote again – a newer reply schedules its own check
         ticket = self.bot.db.ticket_by_channel(channel.id)
         if (ticket is None or not ticket["ai_enabled"] or ticket["staff_joined"] or ticket["escalated"]
-                or not self.bot.config.ticket_resolve_minutes):
+                or ticket["keep_open"] or not self.bot.config.ticket_resolve_minutes):
             return
         if self._purchase_pending(ticket):
             return  # waiting for staff to approve a purchase
@@ -587,6 +594,15 @@ class Tickets(commands.Cog):
             return
         self._resolve_asked[channel.id] = msg.id
 
+    async def _keep_open(self, channel: discord.TextChannel, ticket) -> None:
+        """The player wants the ticket open: no more "resolved?" questions (saved, survives restarts)."""
+        if not ticket["keep_open"]:
+            self.bot.db.update_ticket(ticket["id"], keep_open=1)
+            log.info("Ticket #%s: kept open on the player's request", ticket["id"])
+        question = self._resolve_asked.pop(channel.id, None)
+        if question is not None:
+            await self._clear_resolve_buttons(channel, question)
+
     def _purchase_pending(self, ticket) -> bool:
         return any(r["ticket_id"] == ticket["id"] for r in self.bot.db.kit_requests(status="pending", limit=500))
 
@@ -597,7 +613,8 @@ class Tickets(commands.Cog):
         except discord.HTTPException:
             pass
 
-    async def resolve_answer(self, interaction: discord.Interaction, resolved: bool) -> None:
+    async def resolve_answer(self, interaction: discord.Interaction, resolved: bool | None) -> None:
+        """Yes = close, No = carry on, None = keep the ticket open (no more questions)."""
         ticket = self.bot.db.ticket_by_channel(interaction.channel_id)
         if ticket is None:
             await interaction.response.send_message("This ticket is no longer open.", ephemeral=True)
@@ -606,6 +623,12 @@ class Tickets(commands.Cog):
             await interaction.response.send_message("Only the ticket creator can answer this.", ephemeral=True)
             return
         self._resolve_asked.pop(interaction.channel_id, None)
+        if resolved is None:
+            self.bot.db.update_ticket(ticket["id"], keep_open=1)
+            await interaction.response.edit_message(
+                content=AI_PREFIX + "📌 Okay, this ticket stays open – close it with the 🔒 button or tell me when "
+                                    "it's done.", view=None)
+            return
         if not resolved:
             await interaction.response.edit_message(
                 content=AI_PREFIX + "❓ Is your issue resolved? → **No** – okay, tell me what is still missing.",
@@ -1096,6 +1119,7 @@ class Tickets(commands.Cog):
         text = (f"**Answer:**\n{answer.reply or '–'}\n\n**Call staff:** "
                 f"{'yes – ' + answer.reason if answer.escalate else 'no'}"
                 f"{chr(10) + '**Would close the ticket:** yes (player said it is resolved)' if answer.close else ''}"
+                f"{chr(10) + '**Would keep the ticket open:** yes (player asked for it)' if answer.keep_open else ''}"
                 f"\n**Tools the AI used:**\n{actions}")
         footer = f"\n-# Model: {self.ai.model} · Knowledge base {knowledge} · {mode}"
         await interaction.followup.send(text[:2000 - len(footer) - 1].rstrip() + footer,

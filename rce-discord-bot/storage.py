@@ -81,6 +81,7 @@ class Storage:
                 escalated INTEGER NOT NULL DEFAULT 0,     -- staff was pinged
                 staff_joined INTEGER NOT NULL DEFAULT 0,  -- staff has written -> AI paused
                 ai_replies INTEGER NOT NULL DEFAULT 0,
+                keep_open INTEGER NOT NULL DEFAULT 0,     -- player asked to keep it open: no auto-close
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 closed_at TEXT,
                 closed_by TEXT,
@@ -259,6 +260,8 @@ class Storage:
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(tickets)")}
         if "transcript" not in columns:
             self._db.execute("ALTER TABLE tickets ADD COLUMN transcript TEXT")
+        if "keep_open" not in columns:
+            self._db.execute("ALTER TABLE tickets ADD COLUMN keep_open INTEGER NOT NULL DEFAULT 0")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(custom_kits)")}
         if "claim_role_ids" not in columns:
             # Roles whose members may claim the kit themselves (comma-separated IDs, empty = admins only)
@@ -560,7 +563,7 @@ class Storage:
 
     # ------------------------------------------------------------ Tickets
 
-    _TICKET_FIELDS = {"channel_id", "ai_enabled", "escalated", "staff_joined", "ai_replies"}
+    _TICKET_FIELDS = {"channel_id", "ai_enabled", "escalated", "staff_joined", "ai_replies", "keep_open"}
 
     def create_ticket(self, user_id: int, topic: str, ingame_name: str | None) -> int:
         cur = self._db.execute(
