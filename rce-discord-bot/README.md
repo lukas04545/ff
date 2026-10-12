@@ -696,8 +696,8 @@ from your knowledge base. If it can't help, it **pings the support roles**.
 (`AI_MOD_CHANNEL_IDS`, e.g. #general). The AI checks new messages there in batches (about every 15 s, one request
 for all of them) and only flags clearly offensive ones – insults or harassment aimed at someone, slurs, hate
 speech, threats, sexual harassment, private data. Swearing, banter and game trash talk ("ez", "get raided lol") are
-fine; when unsure it does nothing. A flagged member gets a reply *"⚠️ @name, please keep it respectful – reason
-(warning 1/3)"* (at most one per minute), and every case goes to the admin log with the message and a link.
+fine; when unsure it does nothing. A flagged member gets a reply the AI writes for that message, in the language they wrote in (e.g. *"⚠️ @name
+Calling other players worthless isn't okay here – please keep it respectful. `1/3`"*; at most one per minute), and every case goes to the admin log with the message and a link.
 Optional: delete severe messages (`AI_MOD_DELETE`, needs *Manage Messages*) and a Discord timeout after
 `AI_MOD_TIMEOUT_AFTER` warnings in 24 h (default 3, 0 = never) for `AI_MOD_TIMEOUT_MINUTES` (default 10, needs
 *Timeout Members*). Staff and bots are never checked. `/automod warnings @member` and `/automod clear @member`
