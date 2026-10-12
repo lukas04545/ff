@@ -352,9 +352,18 @@ def test_aiconfirm_keeps_ai_running_and_allows_exception(env):
     asyncio.run(env.tickets.aiconfirm.callback(env.tickets, buyer_inter, "approve all", True))
     assert "Staff only" in replies[-1] and db.kit_request(first["request_id"])["status"] == "pending"
     asyncio.run(env.tickets.aiconfirm.callback(env.tickets, inter, "Approved, enjoy!", True))
-    assert db.kit_request(first["request_id"])["status"] == "approved"
+    assert "several open requests" in replies[-1]                        # one purchase = one kit
+    assert db.kit_request(first["request_id"])["status"] == "pending"
+    # the AI cancels the old one (as staff asked), then approve:True approves the single open request
+    call = {"id": "c", "type": "function", "function": {"name": "cancel_kit_request",
+                                                        "arguments": json.dumps({"request_id": first["request_id"]})}}
+    res = asyncio.run(env.tickets._run_tool(call, env.ticket, env.channel))
+    assert res["result"] == "cancelled" and db.kit_request(first["request_id"])["status"] == "cancelled"
+    assert "Mod's /aiconfirm" in db.kit_request(first["request_id"])["decided_by"]
+    assert env.edits[-1][1] is None and "Cancelled" in env.edits[-1][0].title          # buttons removed
+    asyncio.run(env.tickets.aiconfirm.callback(env.tickets, inter, "Approved, enjoy!", True))
     assert db.kit_request(second["request_id"])["status"] == "approved"
-    assert replies[-1].count("✅ Request #") == 2
+    assert replies[-1].count("✅ Request #") == 1
 
     # the AI sees the confirmation as a trusted message in its history
     msgs = [NS(author=NS(id=env.bot.user.id if env.bot.user else 0, bot=True), content=env.posted[i][0] or "",
@@ -372,3 +381,26 @@ def test_aiconfirm_keeps_ai_running_and_allows_exception(env):
         hist = asyncio.run(env.tickets._history(env.channel, db.ticket_by_channel(100)))
     assert any(text.startswith("[Staff confirmation – from the team, trusted] **Mod:** Both purchases")
                for role, text in hist if role == "user")
+
+
+
+def test_cancel_only_own_pending_requests(env):
+    r = tool(env, {"kit": "Ak Kit", "proof": "Tebex #1"})
+    call = lambda rid: {"id": "c", "type": "function", "function": {  # noqa: E731
+        "name": "cancel_kit_request", "arguments": json.dumps({"request_id": rid})}}
+    other = env.db.add_kit_request(None, 99, "Mega raid kit", 0, "someone else")
+    res = asyncio.run(env.tickets._run_tool(call(other), env.ticket, env.channel))
+    assert res["result"] == "not_cancellable" and env.db.kit_request(other)["status"] == "pending"
+    assert [o["request_id"] for o in res["open_requests"]] == [r["request_id"]]
+    res = asyncio.run(env.tickets._run_tool(call(r["request_id"]), env.ticket, env.channel))
+    assert res["result"] == "cancelled"
+    assert asyncio.run(env.tickets._run_tool(call(r["request_id"]), env.ticket, env.channel))["result"] == \
+        "not_cancellable"                                                   # only once
+    assert not asyncio.run(env.requests.decide(r["request_id"], True, env.staff))[0]   # can't approve it now
+
+
+def test_order_ids_with_label():
+    from cogs.kit_requests import order_ids
+    assert order_ids("Receipt/order ID 1110065 (store purchase)") == {"1110065"}
+    assert order_ids("T4s, order ID #1110065") == {"1110065"}
+    assert order_ids("I bought 50000 hqm and 10 aks for 25 EUR on 12.10.2026") == set()

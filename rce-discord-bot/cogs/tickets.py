@@ -141,6 +141,14 @@ PURCHASE_TOOLS = [
             "checkout_name": {"type": "string", "description": "Name/gamertag they entered when paying on the store"}},
             "required": ["kit", "items", "proof"]}}},
     {"type": "function", "function": {
+        "name": "cancel_kit_request",
+        "description": "Cancels one of the ticket owner's OWN kit requests that still waits for staff – e.g. a "
+                       "duplicate, an old version they replaced, or when they or a staff confirmation ask to remove "
+                       "it. Nothing is given. get_my_kits lists their open_kit_requests.",
+        "parameters": {"type": "object", "properties": {
+            "request_id": {"type": "integer", "description": "The request number, e.g. 9"}},
+            "required": ["request_id"]}}},
+    {"type": "function", "function": {
         "name": "verify_payment",
         "description": "Looks up a Tip4Serv order/receipt ID among the purchases the bot received and checks the "
                        "ticket owner's open kit request with it. If staff told you via /aiconfirm to approve when "
@@ -769,6 +777,9 @@ class Tickets(commands.Cog):
             bought = self.bot.db.kits_bought_by(member.id)
             if bought:
                 overview["kits_you_bought"] = bought    # add-ons (request_kit_addon) only for these
+            requests = self.bot.get_cog("KitRequests")
+            if requests is not None and (open_reqs := requests.open_requests(member.id)):
+                overview["open_kit_requests"] = open_reqs
             return overview
         if name == "claim_kit":
             outcome = await custom.claim_for(member, str(args.get("kit") or ""), via=f"ticket #{ticket['id']} (AI)")
@@ -824,6 +835,17 @@ class Tickets(commands.Cog):
                                              giveaway=bool(args.get("won_in_giveaway")),
                                              checkout_name=str(args.get("checkout_name") or "") or None,
                                              staff_ok=self._staff_ok_active(channel))
+        if name == "cancel_kit_request":
+            requests = self.bot.get_cog("KitRequests")
+            if requests is None:
+                return {"error": "Kit requests aren't available."}
+            try:
+                rid = int(args.get("request_id"))
+            except (TypeError, ValueError):
+                return {"error": "request_id must be a number", "open_requests": requests.open_requests(member.id)}
+            by = self._staff_ok_by(channel)
+            return await requests.cancel(rid, member, f"cancelled in ticket #{ticket['id']} (AI"
+                                                      + (f", on {by}'s /aiconfirm)" if by else ", player's wish)"))
         if name == "verify_payment":
             requests = self.bot.get_cog("KitRequests")
             if requests is None:
@@ -1220,10 +1242,14 @@ class Tickets(commands.Cog):
                            allowed_mentions=discord.AllowedMentions.none())
         results = []
         if approve:
-            for req in reversed(self.bot.db.kit_requests(status="pending", limit=200)):
-                if req["ticket_id"] == ticket["id"]:
-                    ok, text = await requests.decide(req["id"], True, interaction.user)
-                    results.append(("✅ " if ok else "⚠️ ") + text[:300])
+            open_reqs = [r for r in self.bot.db.kit_requests(status="pending", limit=200) if r["ticket_id"] == ticket["id"]]
+            if len(open_reqs) > 1:     # one purchase = one kit: don't approve a pile of duplicates in one go
+                results.append("⚠️ Not approved: this ticket has several open requests ("
+                               + ", ".join(f"#{r['id']} {r['kit']}" for r in open_reqs)
+                               + ") – approve the right one with its button; the AI can cancel the others.")
+            for req in open_reqs if len(open_reqs) == 1 else []:
+                ok, text = await requests.decide(req["id"], True, interaction.user)
+                results.append(("✅ " if ok else "⚠️ ") + text[:300])
         self.bot.audit(f"🛡️ {safe_md(str(interaction.user))} /aiconfirm in ticket #{ticket['id']}: "
                        f"{safe_md(message[:200])}" + (f" ({len(results)} requests approved)" if approve else ""))
         if self.ai.enabled:
@@ -1373,6 +1399,9 @@ class Tickets(commands.Cog):
             used.append(f"request_kit_addon **{safe_md(kit)}** – would add: "
                         + ", ".join(f"{i['short']} ×{i['amount']:,}" for i in resolved)[:800])
             return {"ok": True, "result": "waiting_for_staff", "items": resolved, **note}
+        if name == "cancel_kit_request":
+            used.append(f"cancel_kit_request #{safe_md(str(args.get('request_id')))} – would cancel it")
+            return {"ok": True, "result": "cancelled", **note}
         if name == "verify_payment":
             order = str(args.get("order_id") or "")
             rows = self.bot.db.find_store_payments(order)

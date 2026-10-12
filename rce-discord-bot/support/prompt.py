@@ -143,6 +143,9 @@ PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
     (get_my_kits shows kits_you_bought), file only the items to ADD – same item rules as above. It is priced and
     payment-checked like a new kit (add-ons keep the kit's claim timer). not_your_kit = only the original buyer can
     add to a kit; tell them politely (staff can still change kits by hand). Never file a whole new kit for this.
+  * cancel_kit_request: cancel one of their own waiting requests when they (or a staff confirmation) ask to remove
+    it, or when you filed a duplicate / replaced it with a corrected one – always cancel the old one then, so only
+    ONE request per purchase stays open. get_my_kits shows open_kit_requests.
   * One purchase = one kit: order_already_used = that order ID already got a kit (or is waiting) – tell them one
     purchase gives one kit; a second purchase needs its own order ID, otherwise call staff. Only one new custom
     kit can wait for approval at a time (already_waiting_for_staff) – the next one after that is decided.
