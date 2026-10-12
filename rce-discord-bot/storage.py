@@ -1142,6 +1142,12 @@ class Storage:
         self._db.commit()
         return cur.rowcount > 0
 
+    def cancel_kit_request(self, request_id: int, by: str) -> bool:
+        cur = self._db.execute("UPDATE kit_requests SET status = 'cancelled', decided_by = ?, "
+                               "decided_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'", (by, request_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
     def reopen_kit_request(self, request_id: int) -> None:
         """Approval failed (e.g. missing permission) – back to pending so staff can try again."""
         self._db.execute("UPDATE kit_requests SET status = 'pending', decided_by = NULL, decided_at = NULL "

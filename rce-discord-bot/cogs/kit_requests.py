@@ -40,7 +40,8 @@ log = logging.getLogger("rce.kit_requests")
 COLOUR = discord.Colour(0xE0A23B)
 MAX_NEW_KIT_ITEMS = 40
 MAX_AMOUNT = 1_000_000
-STATUS_TEXT = {"pending": "⏳ Waiting for staff", "approved": "✅ Approved", "rejected": "✖️ Rejected"}
+STATUS_TEXT = {"pending": "⏳ Waiting for staff", "approved": "✅ Approved", "rejected": "✖️ Rejected",
+               "cancelled": "🚫 Cancelled"}
 AUTO_BY = "Tip4Serv (automatic)"
 PAYMENT_MAX_AGE_DAYS = 30        # only payments from the last 30 days can confirm a request
 
@@ -52,11 +53,17 @@ class KitRequestError(Exception):
 _DATE = re.compile(r"\d{1,4}([-./]\d{1,2}){1,2}([-./]\d{2,4})?")
 
 
+_LABELLED = re.compile(r"(?:order|receipt|transaction|payment|invoice|id|#)[\s:#.\-/]*(?:id|no|nr|number)?"
+                       r"[\s:#.\-]*([A-Za-z0-9-]{5,})", re.I)
+
+
 def order_ids(text: str) -> set[str]:
-    """Order / transaction IDs in what the player wrote (e.g. tbx-1a2b3c4d, 5RX12345AB678901C): at least 6
-    characters with letters and digits, or 8+ digits. Dates and amounts don't count."""
-    found = set()
-    for tok in re.findall(r"[A-Za-z0-9-]{6,}", text or ""):
+    """Order / transaction IDs in what the player wrote (e.g. tbx-1a2b3c4d, 5RX12345AB678901C, "order ID 1110065",
+    "#1110065"): letters+digits (6+), 8+ digits, or 5+ digits right after "order/receipt/transaction/ID/#".
+    Dates and plain amounts don't count."""
+    found = {m.lower() for m in _LABELLED.findall(text or "")
+             if any(c.isdigit() for c in m) and not _DATE.fullmatch(m)}
+    for tok in re.findall(r"[A-Za-z0-9-]{6,}", text or ""):  # unlabelled: only clearly ID-like tokens
         if _DATE.fullmatch(tok):
             continue
         has_digit, has_alpha = any(c.isdigit() for c in tok), any(c.isalpha() for c in tok)
@@ -486,6 +493,30 @@ class KitRequests(commands.Cog):
         return {"ok": True, "result": "approved", "request_id": req["id"], **info,
                 "message": "Payment found and the request is approved – tell the player; they claim with "
                            "/customkit claim (after /customkit link if not linked)."}
+
+    async def cancel(self, request_id: int, member: discord.abc.User, by: str) -> dict:
+        """Withdraws one of the member's own pending requests (e.g. a duplicate) – nothing is given."""
+        db = self.bot.db
+        req = db.kit_request(request_id)
+        mine = [{"request_id": r["id"], "kit": r["kit"], "kind": "add-on" if r["addon"] else
+                 "new kit" if r["items"] else "existing kit"}
+                for r in db.kit_requests(status="pending", user_id=member.id)]
+        if req is None or req["user_id"] != member.id or req["status"] != "pending":
+            return {"ok": False, "result": "not_cancellable", "open_requests": mine,
+                    "message": "Only the ticket owner's own requests that still wait for staff can be cancelled."}
+        if not db.cancel_kit_request(request_id, by):
+            return {"ok": False, "result": "not_cancellable", "open_requests": mine}
+        db.release_store_payments(request_id)
+        await self._update(request_id)
+        self.bot.audit(f"🚫 Kit request #{request_id} ({safe_md(req['kit'])}) of <@{member.id}> cancelled – {safe_md(by)}")
+        return {"ok": True, "result": "cancelled", "request_id": request_id, "kit": req["kit"],
+                "open_requests": [r for r in mine if r["request_id"] != request_id]}
+
+    def open_requests(self, user_id: int) -> list[dict]:
+        return [{"request_id": r["id"], "kit": r["kit"], "kind": "add-on" if r["addon"] else
+                 "new kit" if r["items"] else "existing kit", "giveaway": r["source"] == "giveaway",
+                 "filed": r["created_at"]}
+                for r in self.bot.db.kit_requests(status="pending", user_id=user_id)]
 
     async def on_new_payments(self) -> None:
         """New Tip4Serv payments arrived: re-check the open purchase requests."""

@@ -811,6 +811,12 @@ a second ticket with the same ID gets "order already used". A member can only ha
 approval at a time. And if staff tries to approve a request whose payment was used by another request in the
 meantime, the bot refuses ("one purchase gives one kit") and shows the current payment state instead.
 
+**Cancelling duplicates:** the AI can cancel the ticket owner's own waiting requests (`cancel_kit_request`) – when
+the player asks, when a staff confirmation says so ("remove the old request"), or when it filed a corrected
+version. The request shows *🚫 Cancelled* and its buttons disappear; nothing is given. `/aiconfirm approve:True`
+only approves when exactly **one** request is open in the ticket – with several, approve the right one with its
+button. Order numbers written like "order ID 1110065" or "#1110065" also count for the one-purchase-one-kit check.
+
 **Add-ons for a bought kit:** the member who originally bought a custom kit (through a ticket) can buy extra items
 for it later ("add 3 more M249 and 10 C4 to my kit"). The AI files a **➕ Kit add-on** request with only the new
 items; it's priced with the price list (add-ons keep the kit's claim timer, no timer is charged again), the caps
