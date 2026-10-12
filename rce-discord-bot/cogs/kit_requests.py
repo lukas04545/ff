@@ -118,9 +118,13 @@ class KitRequests(commands.Cog):
             self._prices = (mtime, pricing.load(path))
         return self._prices[1]
 
-    def quote(self, resolved: list[dict], timer_hours: int | None) -> pricing.Quote | None:
+    def quote(self, resolved: list[dict], timer_hours: int | None,
+              existing: list[dict] | None = None) -> pricing.Quote | None:
         prices = self.price_list()
-        return pricing.quote(prices, resolved, timer_hours) if prices else None
+        return pricing.quote(prices, resolved, timer_hours, existing) if prices else None
+
+    def _kit_contents(self, kit: str) -> list[dict]:
+        return [{"short": i["shortname"], "amount": i["amount"]} for i in self.bot.db.custom_kit_items(kit)]
 
     @staticmethod
     def quote_for_ai(q: pricing.Quote) -> dict:
@@ -217,6 +221,55 @@ class KitRequests(commands.Cog):
         result.update(await self.check_payment(request_id))
         return result
 
+    async def file_addon(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
+                         items: list, proof: str, *, giveaway: bool = False,
+                         checkout_name: str | None = None) -> dict:
+        """Request to ADD items to an existing custom kit – only for the member who originally bought it."""
+        from cogs.custom_kits import MAX_ITEMS_PER_KIT
+        db = self.bot.db
+        mine = db.kits_bought_by(member.id)
+        row = db.custom_kit(kit_name.strip())
+        if row is None:
+            return {"ok": False, "result": "unknown_kit", "kits_you_bought": mine,
+                    "message": "There is no custom kit with that name – ask which of their kits they mean."}
+        kit = row["name"]
+        if db.kit_buyer(kit) != member.id:
+            return {"ok": False, "result": "not_your_kit", "kits_you_bought": mine,
+                    "message": "Only the member who originally bought this kit can buy add-ons for it. Tell them "
+                               "that – staff can still change kits by hand."}
+        resolved, unknown = resolve_items(items)
+        if unknown or not resolved:
+            return {"ok": False, "result": "fix_items", "resolved": resolved, "unknown": unknown,
+                    "message": "Not filed yet: fix or ask about these entries (use find_items), then call again "
+                               "with the complete list of items to ADD."}
+        current = self._kit_contents(kit)
+        if len({i["short"] for i in current} | {i["short"] for i in resolved}) > MAX_ITEMS_PER_KIT:
+            return {"ok": False, "result": "too_many_items",
+                    "message": f"A custom kit can hold at most {MAX_ITEMS_PER_KIT} different items."}
+        q = self.quote(resolved, None, existing=current)       # add-ons keep the kit's claim timer
+        if q is not None and q.over_cap:
+            return {"ok": False, "result": "over_limits", "over_limits": q.over_cap, "price": self.quote_for_ai(q),
+                    "message": "Not filed: with these items the kit would exceed the server's custom kit limits – "
+                               "tell the player the limits and ask them to lower the amounts."}
+        if any(r["kit"].lower() == kit.lower() and r["addon"]
+               for r in db.kit_requests(status="pending", user_id=member.id)):
+            return {"ok": False, "result": "already_waiting_for_staff", "kit": kit,
+                    "message": "An add-on for this kit is already waiting for approval – wait until it is decided."}
+        request_id = db.add_kit_request(
+            ticket["id"] if ticket else None, member.id, kit, 0, proof.strip()[:500], json.dumps(resolved),
+            source="giveaway" if giveaway else "purchase", price=q.total if q else None,
+            currency=q.currency if q else None, checkout_name=(checkout_name or "").strip()[:64] or None, addon=True)
+        await self._post(channel, request_id)
+        self.bot.audit(f"➕ Kit add-on request #{request_id}: <@{member.id}> → **{safe_md(kit)}** (+{len(resolved)} "
+                       "items" + (f", {pricing.format_money(q.total, q.currency)}" if q else "")
+                       + f"{', giveaway prize' if giveaway else ''}) – waiting for staff")
+        result = {"ok": True, "result": "waiting_for_staff", "request_id": request_id, "kit": kit, "items": resolved,
+                  "message": "Posted for staff approval. After approval the items are added to their kit."}
+        if q is not None:
+            result["price"] = self.quote_for_ai(q)
+        result.update(await self.check_payment(request_id))
+        return result
+
     # ------------------------------------------------------------ Tip4Serv payments
 
     def _matching_payments(self, req) -> list:
@@ -244,6 +297,9 @@ class KitRequests(commands.Cog):
         new = self.new_items(req)
         if not new:
             return None
+        if req["addon"]:
+            current = self._kit_contents(req["kit"])
+            return self.quote(new, None, existing=current)
         return self.quote(new, req["cooldown_minutes"] // 60 if req["cooldown_minutes"] else None)
 
     async def check_payment(self, request_id: int) -> dict:
@@ -290,8 +346,10 @@ class KitRequests(commands.Cog):
                 ok, text = await self.decide(request_id, True, AUTO_BY)
                 if ok:
                     return {"payment": "approved_automatically", "paid": money(paid), "price": money(price),
-                            "tell_player": "Payment found and it covers the price – the kit is approved and created, "
-                                           "they got its role. They claim it with /customkit claim."}
+                            "tell_player": ("Payment found and it covers the price – the items were added to their "
+                                            "kit." if req["addon"] else "Payment found and it covers the price – "
+                                            "the kit is approved and created, they got its role.")
+                                           + " They claim it with /customkit claim."}
                 db.release_store_payments(request_id)
                 note = f"⚠️ Paid {money(paid)} – covers the price, but approving failed: {text[:300]} – staff, " \
                        "please fix it and approve."
@@ -335,11 +393,13 @@ class KitRequests(commands.Cog):
     def embed(self, req) -> discord.Embed:
         status = req["status"]
         new = self.new_items(req)
-        what = (f"a **new custom kit** – it will be created as **{safe_md(req['kit'])}**" if new
+        addon = bool(req["addon"])
+        what = (f"an **add-on** for their custom kit **{safe_md(req['kit'])}**" if addon
+                else f"a **new custom kit** – it will be created as **{safe_md(req['kit'])}**" if new
                 else f"**{safe_md(req['kit'])}**")
         prize = req["source"] == "giveaway"
-        embed = discord.Embed(title=f"{'🎉 Giveaway prize' if prize else '🛒 Kit purchase'} #{req['id']} – "
-                                    f"{STATUS_TEXT[status]}",
+        kind = "🎉 Giveaway prize" if prize else "➕ Kit add-on" if addon else "🛒 Kit purchase"
+        embed = discord.Embed(title=f"{kind} #{req['id']} – {STATUS_TEXT[status]}",
                               colour=COLOUR if status == "pending" else discord.Colour.dark_grey(),
                               description=f"<@{req['user_id']}> says they " + (f"won {what} in a giveaway." if prize
                                                                                else f"bought {what}."))
@@ -364,7 +424,8 @@ class KitRequests(commands.Cog):
                 chunk = f"{chunk}\n{line}" if chunk else line
             chunks.append(chunk)
             for n, value in enumerate(chunks):
-                embed.add_field(name=f"Items of the new kit ({len(new)}) – check them!" if n == 0 else "​",
+                embed.add_field(name=(f"Items to add ({len(new)}) – check them!" if addon else
+                                      f"Items of the new kit ({len(new)}) – check them!") if n == 0 else "​",
                                 value=value, inline=False)
         else:
             items = self.bot.db.custom_kit_items(req["kit"])
@@ -372,7 +433,9 @@ class KitRequests(commands.Cog):
                 embed.add_field(name="Kit contents", inline=False, value=", ".join(
                     f"{i['shortname']} ×{i['amount']}" for i in items[:15])[:1024])
         if status == "pending":
-            embed.set_footer(text=("Approve = the kit is created with these items (edit it later in the web interface → "
+            embed.set_footer(text=("Approve = these items are added to the kit (amounts of items it already has "
+                                   "go up)." if addon else
+                                   "Approve = the kit is created with these items (edit it later in the web interface → "
                                    "Kits), gets a role and the buyer gets it." if new else
                                    "Approve = the buyer gets the kit's role and can claim it with /customkit claim.")
                              + (" Giveaway prizes are always approved by staff." if prize else ""))
@@ -423,10 +486,24 @@ class KitRequests(commands.Cog):
         if req["payment_ids"] and by_name != AUTO_BY:     # staff approved: the found payment is used up too
             db.use_store_payments(req["payment_ids"].split(","), req["id"])
         await self._update(req["id"])
-        what = "Prize" if req["source"] == "giveaway" else "Purchase"
+        what = "Prize" if req["source"] == "giveaway" else "Add-on" if req["addon"] else "Purchase"
         await self._say(channel, f"✅ 🎁 {what} confirmed by {safe_md(by_name)}: {text} – claim it with "
                                  f"`/customkit claim {req['kit']}` while you're online in-game.")
         return True, f"Request #{request_id} approved: {text}"
+
+    def _add_items(self, req, items: list[dict], by: str) -> str:
+        from cogs.custom_kits import MAX_ITEMS_PER_KIT
+        db = self.bot.db
+        if db.custom_kit(req["kit"]) is None:
+            raise KitRequestError("The kit no longer exists.")
+        have = {i["short"] for i in self._kit_contents(req["kit"])}
+        if len(have | {i["short"] for i in items}) > MAX_ITEMS_PER_KIT:
+            raise KitRequestError(f"The kit would hold more than {MAX_ITEMS_PER_KIT} different items.")
+        for item in items:
+            db.increase_custom_kit_item(req["kit"], item["short"], int(item["amount"]))
+        self.bot.audit(f"➕ {len(items)} items added to custom kit **{safe_md(req['kit'])}** (add-on #{req['id']}, "
+                       f"approved by {safe_md(by)})")
+        return f"{len(items)} items were added to **{safe_md(req['kit'])}** for <@{req['user_id']}>"
 
     async def _grant(self, req, by: str) -> str:
         channel = self.bot.get_channel(req["channel_id"]) if req["channel_id"] else None
@@ -434,6 +511,8 @@ class KitRequests(commands.Cog):
         if guild is None:
             raise KitRequestError("The Discord server is not available.")
         new = self.new_items(req)
+        if req["addon"]:
+            return self._add_items(req, new or [], by)
         if new is not None:
             marker = f"Bought by user {req['user_id']} (request #{req['id']})"
             existing = self.bot.db.custom_kit(req["kit"])

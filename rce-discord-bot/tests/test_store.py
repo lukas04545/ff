@@ -197,3 +197,63 @@ def test_quote_tool(shop):
     r = asyncio.run(env.tickets._run_tool(call, env.ticket, env.channel))
     assert r["price"]["total_price"] == "€362.00" and r["price"]["items_without_price"] == ["rug"]
     assert env.posted == [] and env.db.kit_requests() == []              # nothing filed
+
+
+# ------------------------------------------------------------------ add-ons for a kit the member bought
+
+def addon(env, args):
+    call = {"id": "c", "type": "function", "function": {"name": "request_kit_addon", "arguments": json.dumps(args)}}
+    return asyncio.run(env.tickets._run_tool(call, env.ticket, env.channel))
+
+
+def bought_kit(env, name="Zim raid"):
+    pay(env, "FIRST", 400)
+    r = new_kit(env, {"kit_name": name, "items": PRICED, "proof": "paid"})
+    assert r["payment"] == "approved_automatically"
+    return name
+
+
+def test_addon_paid_merges_items(shop):
+    env = shop
+    kit = bought_kit(env)
+    call = {"id": "c", "type": "function", "function": {"name": "get_my_kits", "arguments": "{}"}}
+    assert asyncio.run(env.tickets._run_tool(call, env.ticket, env.channel))["kits_you_bought"] == [kit]
+
+    r = addon(env, {"kit": "zim RAID", "proof": "add-on order",
+                    "items": [{"item": "lmg.m249", "amount": 3}, {"item": "explosive.timed", "amount": 10}]})
+    assert r["result"] == "waiting_for_staff" and r["price"]["total_price"] == "€43.00"   # 3×6 + 10×2.5, no timer
+    assert r["payment"] == "not_found_yet" and env.edits[-1][0].title.startswith("➕ Kit add-on")
+    pay(env, "ADDON", 43)
+    asyncio.run(env.requests.on_new_payments())
+    assert env.db.kit_request(r["request_id"])["status"] == "approved"
+    items = {i["shortname"]: i["amount"] for i in env.db.custom_kit_items(kit)}
+    assert items["lmg.m249"] == 5 and items["explosive.timed"] == 10 and items["metal.refined"] == 50000
+    assert len(env.db.custom_kit_items(kit)) == 4                          # merged, no duplicate M249 row
+    assert "Add-on confirmed" in env.posted[-1][0]
+
+
+def test_addon_only_for_original_buyer_and_caps(shop):
+    env = shop
+    r = addon(env, {"kit": "Ak Kit", "proof": "x", "items": [{"item": "lmg.m249", "amount": 1}]})
+    assert r["result"] == "not_your_kit"                                   # made by hand: nobody bought it
+    kit = bought_kit(env)
+    other = env.db.kit_requests(status="approved")[0]
+    env.db._db.execute("UPDATE kit_requests SET user_id = 99 WHERE id = ?", (other["id"],))   # someone else bought it
+    env.db._db.commit()
+    assert addon(env, {"kit": kit, "proof": "x", "items": [{"item": "lmg.m249", "amount": 1}]})["result"] == "not_your_kit"
+    env.db._db.execute("UPDATE kit_requests SET user_id = 7 WHERE id = ?", (other["id"],))
+    env.db._db.commit()
+    over = addon(env, {"kit": kit, "proof": "x", "items": [{"item": "ammo.rocket.basic", "amount": 960}]})
+    assert over["result"] == "over_limits" and "after adding" in over["over_limits"][0]   # 50 + 960 > 1000
+
+
+def test_addon_won_in_giveaway_needs_staff(shop):
+    env = shop
+    kit = bought_kit(env)
+    pay(env, "SPARE", 1000)
+    r = addon(env, {"kit": kit, "proof": "won the add-on", "won_in_giveaway": True,
+                    "items": [{"item": "samsite", "amount": 2}]})
+    assert "payment" not in r and env.db.kit_request(r["request_id"])["status"] == "pending"
+    ok, _ = asyncio.run(env.requests.decide(r["request_id"], True, env.staff))
+    assert ok and {i["shortname"]: i["amount"] for i in env.db.custom_kit_items(kit)}["samsite"] == 2
+    assert "Prize confirmed" in env.posted[-1][0]

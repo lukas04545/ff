@@ -771,6 +771,13 @@ in-game name* is on (`TIP4SERV_NAME_MATCH`, default) – by their linked player 
 ⚠️ Names aren't verified (linking has no in-game check), so for real money turn name matching off and let Tip4Serv
 collect the Discord ID. Only the owner can change the price list.
 
+**Add-ons for a bought kit:** the member who originally bought a custom kit (through a ticket) can buy extra items
+for it later ("add 3 more M249 and 10 C4 to my kit"). The AI files a **➕ Kit add-on** request with only the new
+items; it's priced with the price list (add-ons keep the kit's claim timer, no timer is charged again), the caps
+count the kit's total after adding, and it's approved automatically by a covering Tip4Serv payment or by staff.
+On approval the items are added to the kit – amounts of items it already has go up. Anyone else gets "only the
+original buyer can add to this kit"; kits made by hand have no buyer, so only staff changes those.
+
 **Custom kits won in a giveaway:** the player says they won it – the AI files the same request marked
 **🎉 Giveaway prize**: no payment check, staff always approves it with the buttons.
 
