@@ -141,6 +141,15 @@ PURCHASE_TOOLS = [
             "checkout_name": {"type": "string", "description": "Name/gamertag they entered when paying on the store"}},
             "required": ["kit", "items", "proof"]}}},
     {"type": "function", "function": {
+        "name": "verify_payment",
+        "description": "Looks up a Tip4Serv order/receipt ID among the purchases the bot received and checks the "
+                       "ticket owner's open kit request with it. If staff told you via /aiconfirm to approve when "
+                       "the payment is found, the request is approved by this tool. Use it whenever staff asks you "
+                       "to check a payment, or the player gives an order ID after filing.",
+        "parameters": {"type": "object", "properties": {
+            "order_id": {"type": "string", "description": "Order / receipt / transaction ID, e.g. 1110065"}},
+            "required": ["order_id"]}}},
+    {"type": "function", "function": {
         "name": "quote_custom_kit",
         "description": "Prices an item list with the server's price list (and checks the custom kit limits) WITHOUT "
                        "filing anything – use it when a player asks what a kit would cost.",
@@ -270,7 +279,7 @@ class Tickets(commands.Cog):
         self._knowledge_cache: tuple[float, str] | None = None
         self._last_owner_msg: dict[int, float] = {}   # channel -> monotonic time of the player's last message
         self._resolve_asked: dict[int, int] = {}      # channel -> message id of the open "resolved?" question
-        self._staff_ok: dict[int, float] = {}         # channel -> monotonic time until /aiconfirm allows exceptions
+        self._staff_ok: dict[int, tuple[float, str]] = {}   # channel -> (until, staff name) after /aiconfirm
 
     async def cog_load(self) -> None:
         self.bot.add_view(TicketPanelView(self))
@@ -815,6 +824,12 @@ class Tickets(commands.Cog):
                                              giveaway=bool(args.get("won_in_giveaway")),
                                              checkout_name=str(args.get("checkout_name") or "") or None,
                                              staff_ok=self._staff_ok_active(channel))
+        if name == "verify_payment":
+            requests = self.bot.get_cog("KitRequests")
+            if requests is None:
+                return {"error": "Kit purchases can't be handled here – call staff."}
+            return await requests.verify_payment(ticket, member, str(args.get("order_id") or ""),
+                                                 authorized_by=self._staff_ok_by(channel))
         if name == "quote_custom_kit":
             requests = self.bot.get_cog("KitRequests")
             items = args.get("items")
@@ -1172,7 +1187,12 @@ class Tickets(commands.Cog):
             "🤖 AI assistant is active again in this ticket." if enabled else "⏸️ AI assistant paused.")
 
     def _staff_ok_active(self, channel) -> bool:
-        return time.monotonic() < self._staff_ok.get(getattr(channel, "id", 0), 0)
+        return self._staff_ok_by(channel) is not None
+
+    def _staff_ok_by(self, channel) -> str | None:
+        """Name of the staff member whose /aiconfirm (last 30 min) authorises exceptions in this ticket."""
+        until, name = self._staff_ok.get(getattr(channel, "id", 0), (0, ""))
+        return name if time.monotonic() < until else None
 
     @app_commands.command(name="aiconfirm",
                           description="Staff: tell the ticket AI something (e.g. a purchase is verified) – it keeps running.")
@@ -1195,7 +1215,7 @@ class Tickets(commands.Cog):
         channel = interaction.channel
         # The AI keeps (or starts) answering: staff speaking through /aiconfirm doesn't take the ticket over
         self.bot.db.update_ticket(ticket["id"], staff_joined=0, ai_enabled=1)
-        self._staff_ok[channel.id] = time.monotonic() + STAFF_OK_SECONDS
+        self._staff_ok[channel.id] = (time.monotonic() + STAFF_OK_SECONDS, interaction.user.display_name)
         await channel.send(f"{STAFF_PREFIX}**{safe_md(interaction.user.display_name)}:** {safe_md(message)}",
                            allowed_mentions=discord.AllowedMentions.none())
         results = []
@@ -1353,6 +1373,11 @@ class Tickets(commands.Cog):
             used.append(f"request_kit_addon **{safe_md(kit)}** – would add: "
                         + ", ".join(f"{i['short']} ×{i['amount']:,}" for i in resolved)[:800])
             return {"ok": True, "result": "waiting_for_staff", "items": resolved, **note}
+        if name == "verify_payment":
+            order = str(args.get("order_id") or "")
+            rows = self.bot.db.find_store_payments(order)
+            used.append(f"verify_payment `{safe_md(order)}` → " + (f"found ({len(rows)})" if rows else "not received"))
+            return {"result": "found" if rows else "not_found", **note}
         if name == "quote_custom_kit":
             used.append("quote_custom_kit")
             return self._quote_dry(args)

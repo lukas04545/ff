@@ -428,6 +428,65 @@ class KitRequests(commands.Cog):
         return {"payment": "found", "paid": money(paid), "price": money(price) if price is not None else None,
                 "payment_note": note, "tell_player": "Staff will check the purchase and confirm."}
 
+    async def verify_payment(self, ticket, member: discord.abc.User, order_id: str, *,
+                             authorized_by: str | None = None) -> dict:
+        """AI tool: look up an order ID and check the member's open request with it.
+        authorized_by = staff name from /aiconfirm in this ticket: then a found payment is given to the member and
+        their request approved (one payment -> one kit)."""
+        db = self.bot.db
+        order = order_id.strip().lstrip("#").strip()
+        if len(order) < 4:
+            return {"ok": False, "result": "invalid_order_id", "message": "Ask for the full order / receipt ID."}
+        store = self.bot.get_cog("Store")
+        open_reqs = [r for r in reversed(db.kit_requests(status="pending", user_id=member.id))
+                     if r["source"] == "purchase" and (ticket is None or r["ticket_id"] in (None, ticket["id"]))]
+        rows = db.find_store_payments(order)
+        if not rows:
+            problem = store.problem() if store is not None else "the store connection is not loaded"
+            return {"ok": False, "result": "not_received", "order_id": order, "store_problem": problem,
+                    "message": f"The bot has not received order {order} from Tip4Serv"
+                               + (f" – {problem}" if problem else " (maybe paid before the bot's command was set "
+                                  "up, or it's still on its way)") + ". Tell staff they have to check and approve it "
+                               "with the button; don't promise anything."}
+        unused = [r for r in rows if not r["used_by"]]
+        if not unused:
+            return {"ok": False, "result": "already_used", "used_for_request": rows[0]["used_by"],
+                    "message": "This payment already confirmed another request – one purchase gives one kit."}
+        pay = unused[0]
+        same = [r for r in unused if r["payment_id"] == pay["payment_id"]]
+        amount = sum(r["amount"] or 0 for r in same)
+        info = {"order_id": order, "paid": pricing.format_money(amount, pay["currency"] or "EUR"),
+                "buyer_on_store": pay["player"] or pay["username"] or pay["customer"]}
+        if pay["discord_id"] and pay["discord_id"] != member.id:
+            return {"ok": False, "result": "other_buyer", **info,
+                    "message": "Tip4Serv says another Discord account paid this order – staff has to check."}
+        if not open_reqs:
+            return {"ok": True, "result": "found_no_open_request", **info,
+                    "message": "Payment found. File the kit request now with this order ID in proof."}
+        req = open_reqs[0]
+        db.add_kit_request_proof(req["id"], f"order {order}")      # order-ID matching for the payment check
+        if authorized_by:
+            db.assign_store_payment(pay["payment_id"], member.id)
+        result = await self.check_payment(req["id"])
+        if db.kit_request(req["id"])["status"] == "approved":
+            return {"ok": True, "result": "approved", "request_id": req["id"], **info, **result}
+        if not authorized_by:
+            return {"ok": True, "result": "found_staff_decides", "request_id": req["id"], **info, **result,
+                    "message": "Payment found and attached to the request; staff approves it (or ask staff to "
+                               "confirm with /aiconfirm)."}
+        ids = [r["id"] for r in same]
+        if not db.use_store_payments(ids, req["id"]):
+            return {"ok": False, "result": "already_used", "message": "The payment was just used for another request."}
+        db.set_kit_request_payment(req["id"], ids, f"✅ Order {order} found ({info['paid']}) – approved on "
+                                                   f"{authorized_by}'s /aiconfirm.")
+        ok, text = await self.decide(req["id"], True, f"{authorized_by} (via AI, /aiconfirm)")
+        if not ok:
+            db.release_store_payments(req["id"])
+            return {"ok": False, "result": "approval_failed", **info, "message": text[:300]}
+        return {"ok": True, "result": "approved", "request_id": req["id"], **info,
+                "message": "Payment found and the request is approved – tell the player; they claim with "
+                           "/customkit claim (after /customkit link if not linked)."}
+
     async def on_new_payments(self) -> None:
         """New Tip4Serv payments arrived: re-check the open purchase requests."""
         for req in reversed(self.bot.db.kit_requests(status="pending", limit=200)):
