@@ -77,6 +77,7 @@ RCE tools use exactly this WebRCON interface. Also G-Portal's wiki article
 | **Reports & watchlist** | Discord + player list | `/report` for members, staff pinged with a ✅ Handled button; watchlist pings staff when a watched player joins |
 | **Team leaderboard** | Team log lines | `/teams top`, `/teams of` – teams named after their leader, current members' stats summed up |
 | **Population graph** | `serverinfo` every 5 min | Players online over 24 h / 7 / 30 days and the busiest hours (web interface → Overview) |
+| **Admin abuse protection** | Item spawn log line + RCON | Someone not allowed spawns rockets/C4 → admin removed, killed with `global.killplayer`, staff pinged. See [Admin abuse protection](#admin-abuse-protection). |
 | **Timed roles** | Discord + database | `/temprole`: roles that end by themselves (e.g. VIP for 7 days) – also for giveaway prizes. See [Timed roles](#timed-roles-eg-vip-for-7-days). |
 | **Alerts & backups** | Bot | Staff ping when the server is offline, daily backups. See [Alerts & backups](#alerts--backups). |
 | **Automatic updates** | GitHub | Installs new versions by itself. See [Automatic updates](#automatic-updates). |
@@ -186,6 +187,7 @@ rce-discord-bot/
 │   ├── wipe.py            # /wipe: countdown, announcements, resets
 │   ├── schedule.py        # /schedule: messages every N minutes
 │   ├── reports.py         # /report and /watch
+│   ├── abuse.py           # Admin abuse protection (raid items spawned without permission)
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
@@ -838,6 +840,31 @@ Giveaway prizes use this too: the ticket AI gives a kit prize like **"VIP 7 days
 lifetime (e.g. "Vip Standard") gets the role for *Days for kit prizes without a duration*
 (`GIVEAWAY_PRIZE_DAYS`) – or goes to staff if that is 0 (default). Someone who already has the role
 for good keeps it – no timer is added.
+
+### Admin abuse protection
+
+When someone spawns **rockets or C4** and isn't allowed to, the bot immediately runs
+`removeowner "<name>"`, `removemoderator "<name>"` and `global.killplayer "<name>"`, writes it to the admin log
+and pings `ALERT_ROLE_IDS` in the alert channel – with the server's reply to each command.
+
+**Who is allowed** (⚙️ Settings → 🛡️ Admin abuse protection):
+- `ABUSE_EXEMPT_ROLE_IDS` – Discord roles such as *Owner* and *Co-Owner*. The bot recognises their in-game
+  name through `/customkit link`, so owners/co-owners should link their player.
+- `ABUSE_EXEMPT_PLAYERS` – in-game names, comma-separated (works without linking – put the owner's gamertag
+  here to be safe).
+
+The protection **only runs once at least one of the two is set**, so the owner can't be hit by accident.
+
+Good to know:
+- Detection uses the server log line `giving <player> 3 x Rocket`. Items the bot hands out itself (shop,
+  custom kits, rewards, `/rcon`) never count. Rocket launchers don't count, only the ammo
+  (`ABUSE_ITEMS`, default `rocket,c4,timed explosive,explosive.timed`).
+- The log line doesn't say **who** gave the item. Admins spawn items for themselves, so that's the admin –
+  but if an admin gives rockets to another player, the log shows (and the bot punishes) that player. The
+  alert reminds staff to check.
+- The commands to remove admin can differ per server. **Test them once** with `/rcon removeowner "TestName"`
+  on a test account and adjust `ABUSE_REMOVE_ADMIN_COMMANDS` (several separated by `;`) if needed; the
+  alert always shows what the server answered.
 
 ### Alerts & backups
 

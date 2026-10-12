@@ -122,6 +122,9 @@ class TeamEvent:
 class AdminActionEvent:
     kind: str  # kit / item / command
     text: str
+    player: str | None = None    # item: who received it
+    item: str | None = None
+    amount: float | None = None
 
 
 @dataclass(slots=True)
@@ -182,7 +185,8 @@ def parse_line(line: str) -> Event | None:
     if m := PATTERNS["kit_give"].search(line):
         return AdminActionEvent("kit", f"{m['admin']} gives {m['player']} kit `{m['kit']}`")
     if m := PATTERNS["item_spawn"].search(line):
-        return AdminActionEvent("item", f"{m['player']} receives {m['amount']} × {m['item']}")
+        return AdminActionEvent("item", f"{m['player']} receives {m['amount']} × {m['item']}",
+                                player=m["player"].strip(), item=m["item"].strip(), amount=float(m["amount"]))
     if m := PATTERNS["command"].search(line):
         return AdminActionEvent("command", m["command"])
 
