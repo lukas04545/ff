@@ -48,6 +48,16 @@ VERIFY_SKIP_CATEGORIES = ("_responses_",)  # "Yes", "Hello", ... are sent too of
 
 
 @dataclass
+class ClaimOutcome:
+    ok: bool
+    code: str            # claimed / no_access / not_linked / cooldown / offline / empty
+    message: str         # Discord text for the member
+    kit: str | None = None
+    player: str | None = None
+    ready_at: int | None = None  # Unix time when the cooldown ends
+
+
+@dataclass
 class PendingLink:
     user_id: int
     phrases: list[str]
@@ -552,52 +562,75 @@ class CustomKits(commands.Cog):
     @app_commands.describe(kit="Custom kit")
     @app_commands.autocomplete(kit=_claimable_ac)
     async def claim(self, interaction: discord.Interaction, kit: str) -> None:
+        await interaction.response.defer(ephemeral=True)
+        outcome = await self.claim_for(interaction.user, kit, via="/customkit claim")
+        await interaction.followup.send(outcome.message, ephemeral=True)
+
+    # ------------------------------------------------------------ Shared by /customkit claim and the ticket AI
+
+    def kit_overview(self, member: discord.abc.User) -> dict:
+        """What this member may claim, when they last claimed it and when they can claim again."""
+        player = self.bot.db.linked_player(member.id)
+        online = player is not None and any(n.lower() == player.lower() for n in self.bot.online_players)
+        kits = []
+        for row in self.bot.db.custom_kits():
+            if not self.can_claim(member, row):
+                continue
+            cooldown = int(row["cooldown_minutes"])
+            since = self.bot.db.minutes_since_custom_claim(row["name"], player) if player else None
+            ready_at = int(time.time() + (cooldown - since) * 60) if cooldown and since is not None \
+                and since < cooldown else None
+            kits.append({
+                "kit": row["name"],
+                "items": [f"{i['shortname']} x{i['amount']}" for i in self.bot.db.custom_kit_items(row["name"])],
+                "cooldown": format_minutes(cooldown),
+                "last_claimed": (f"{format_minutes(max(1, int(since)))} ago" if since is not None else "never"),
+                "can_claim_now": ready_at is None,
+                "can_claim_again_discord": f"<t:{ready_at}:R>" if ready_at else None,
+            })
+        return {"linked_player": player, "player_online": online, "claimable_kits": kits}
+
+    async def claim_for(self, member: discord.abc.User, kit: str, *, via: str) -> ClaimOutcome:
+        """Claims a custom kit for this member – same rules for everyone (role, linked player, online, cooldown).
+        The kit only ever goes to the player linked (and verified) for this Discord account."""
         row = self._resolve(kit)
-        if row is None or not self.can_claim(interaction.user, row):
-            claimable = [r["name"] for r in self.bot.db.custom_kits() if self.can_claim(interaction.user, r)]
+        if row is None or not self.can_claim(member, row):
+            claimable = [r["name"] for r in self.bot.db.custom_kits() if self.can_claim(member, r)]
             hint = (f"Kits you can claim: {', '.join(f'**{safe_md(n)}**' for n in claimable)}" if claimable
                     else "Your roles don't give you access to any custom kit.")
-            await interaction.response.send_message(
-                f"⛔ You can't claim **{safe_md(kit)}**.\n{hint}", ephemeral=True)
-            return
-        # The kit only ever goes to the player linked (and verified) for this Discord account
-        player = self.bot.db.linked_player(interaction.user.id)
+            return ClaimOutcome(False, "no_access", f"⛔ You can't claim **{safe_md(kit)}**.\n{hint}")
+        player = self.bot.db.linked_player(member.id)
         if player is None:
-            await interaction.response.send_message(
-                "🔗 First link your in-game player with `/customkit link` – the kit can only be sent to "
-                "your own account.", ephemeral=True)
-            return
+            return ClaimOutcome(False, "not_linked", "🔗 First link your in-game player with `/customkit link` – "
+                                                     "the kit can only be sent to your own account.", row["name"])
 
         async with self._claim_locks[player.lower()]:  # no double claims by clicking twice
             cooldown = int(row["cooldown_minutes"])
             since = self.bot.db.minutes_since_custom_claim(row["name"], player)
             if cooldown and since is not None and since < cooldown:
                 ready_at = int(time.time() + (cooldown - since) * 60)
-                await interaction.response.send_message(
+                return ClaimOutcome(
+                    False, "cooldown",
                     f"⏱️ **{safe_md(player)}** already claimed **{safe_md(row['name'])}**. You can claim it again "
-                    f"<t:{ready_at}:R> (cooldown: {format_minutes(cooldown)}).", ephemeral=True)
-                return
+                    f"<t:{ready_at}:R> (cooldown: {format_minutes(cooldown)}).", row["name"], player, ready_at)
             # Must be online: items given to an offline player are lost
             online = next((n for n in self.bot.online_players if n.lower() == player.lower()), None)
             if online is None:
-                await interaction.response.send_message(
-                    f"🎮 **{safe_md(player)}** is not online on the server right now. Join the game first, "
-                    "then claim the kit (the player list updates every minute).", ephemeral=True)
-                return
+                return ClaimOutcome(
+                    False, "offline", f"🎮 **{safe_md(player)}** is not online on the server right now. Join the "
+                    "game first, then claim the kit (the player list updates every minute).", row["name"], player)
             if not self.bot.db.custom_kit_items(row["name"]):
-                await interaction.response.send_message("This kit is empty – please tell an admin.", ephemeral=True)
-                return
-
-            await interaction.response.defer(ephemeral=True)
+                return ClaimOutcome(False, "empty", "This kit is empty – please tell an admin.", row["name"], player)
             sent, total = await self.deliver(row["name"], online)
-            self.bot.db.record_custom_claim(row["name"], player, interaction.user.id, str(interaction.user))
+            self.bot.db.record_custom_claim(row["name"], player, member.id, str(member))
 
-        self._audit(interaction, f"claimed custom kit **{safe_md(row['name'])}** as **{safe_md(online)}** "
-                                 f"({self._delivery_text(sent, total)})")
+        feed = self.bot.feed(self.bot.config.admin_log_channel_id)
+        if feed:
+            feed.add_line(f"🔒 {member.mention} ({safe_md(str(member))}) claimed custom kit **{safe_md(row['name'])}** "
+                          f"as **{safe_md(online)}** via {via} ({self._delivery_text(sent, total)})")
         next_claim = f" Next claim in {format_minutes(cooldown)}." if cooldown else ""
-        await interaction.followup.send(
-            f"🎁 **{safe_md(row['name'])}** sent to **{safe_md(online)}** in-game "
-            f"({self._delivery_text(sent, total)}).{next_claim}", ephemeral=True)
+        return ClaimOutcome(True, "claimed", f"🎁 **{safe_md(row['name'])}** sent to **{safe_md(online)}** in-game "
+                                             f"({self._delivery_text(sent, total)}).{next_claim}", row["name"], online)
 
     @customkit.command(name="access", description="Allows or removes a role that may claim a custom kit.")
     @app_commands.describe(kit="Custom kit", role="Role whose members may claim the kit",

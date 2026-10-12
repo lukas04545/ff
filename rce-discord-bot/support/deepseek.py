@@ -81,6 +81,33 @@ class DeepSeekClient:
             raise DeepSeekError("Unexpected response format from /user/balance.")
         return data
 
+    async def chat(self, messages: list[dict], *, tools: list[dict] | None = None, json_mode: bool = True,
+                   max_tokens: int = 1200, temperature: float = 0.4) -> dict:
+        """One chat round. Returns the assistant message: {"content": str, "tool_calls": [...]}.
+
+        With tools (OpenAI-compatible function calling) the model may answer with tool_calls instead of text;
+        the caller runs them and sends the results back as role "tool" messages.
+        """
+        payload: dict = {"model": self.model, "messages": messages, "max_tokens": max_tokens,
+                         "temperature": temperature, "stream": False}
+        if tools:
+            payload["tools"] = tools
+        elif json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        data = await self._request("POST", "/chat/completions", payload)
+        try:
+            message = data["choices"][0]["message"]
+            finish = data["choices"][0].get("finish_reason")
+        except (KeyError, IndexError, TypeError) as exc:
+            raise DeepSeekError("Unexpected response format from DeepSeek.") from exc
+        if not isinstance(message, dict):
+            raise DeepSeekError("Unexpected response format from DeepSeek.")
+        content = message.get("content") or ""
+        calls = message.get("tool_calls") or []
+        if not content.strip() and not calls:
+            raise DeepSeekError(f"Empty response (finish_reason={finish}).")
+        return {"content": content, "tool_calls": calls}
+
     async def chat_json(self, messages: list[dict], *, max_tokens: int = 1200, temperature: float = 0.4) -> str:
         """Sends the chat and returns the reply text (a JSON string)."""
         payload = {
