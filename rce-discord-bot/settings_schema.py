@@ -110,6 +110,11 @@ FIELDS: list[Field] = [
           help="On (default): the AI can look up which custom kits the ticket owner's Discord roles allow, "
                "when they last claimed them, and claim one for them – same rules as /customkit claim "
                "(role, cooldown, linked player). Never for anyone else."),
+    Field("TICKET_AI_LEARN", "AI learns from staff answers", "tickets", "bool",
+          help="On (default): when a ticket is closed, general information staff gave in it (rules, how things "
+               "work, prices, times …) is added to the knowledge base under \"Learned from tickets\" – nothing "
+               "personal or case-specific, and never what players said. Each entry is posted in the admin log; "
+               "edit or delete it on the Knowledge base page."),
     Field("KIT_APPROVER_ROLE_IDS", "Roles that approve kit purchases", "tickets", "ids", pick="role",
           help="When a player says they bought a kit, the approve request in the ticket pings these roles and only "
                "they (and bot admins) can press Approve / Reject. They also get access to that ticket. "

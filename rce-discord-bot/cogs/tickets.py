@@ -30,7 +30,7 @@ from permcheck import explain_forbidden
 from rce import items as itemlist
 from support.deepseek import PLATFORM_KEYS_URL, PLATFORM_USAGE_URL, DeepSeekClient, DeepSeekError
 from support.giveaway_wins import GiveawayWin, match_kit, parse_win, prize_duration_minutes
-from support import pricing
+from support import learning, pricing
 from support.prompt import build_messages, build_system_prompt, parse_answer
 from utils import admin_only, format_duration, is_admin, safe_md, strip_rich_text
 
@@ -1033,6 +1033,49 @@ class Tickets(commands.Cog):
         await interaction.edit_original_response(content="🔒 Closing ticket …", view=None)
         await self._close(interaction.channel, ticket, interaction.user, reason)
 
+    # ------------------------------------------------------------ Learning from staff answers
+
+    async def _learning_conversation(self, channel: discord.TextChannel, ticket) -> list[tuple[str, str]]:
+        """STAFF lines (staff members + /aiconfirm) and PLAYER lines (ticket owner) – AI replies are left out."""
+        out: list[tuple[str, str]] = [("PLAYER", f"(ticket topic) {ticket['topic']}")]
+        async for m in channel.history(limit=300, oldest_first=True):
+            text = (m.content or "").strip()
+            if not text:
+                continue
+            if self.bot.user and m.author.id == self.bot.user.id:
+                if text.startswith(STAFF_PREFIX):
+                    out.append(("STAFF", text[len(STAFF_PREFIX):]))
+            elif m.author.bot:
+                continue
+            elif m.author.id == ticket["user_id"]:
+                out.append(("PLAYER", text))
+            elif self.is_staff(m.author):
+                out.append(("STAFF", text))
+        return out
+
+    async def _learn(self, conversation: list[tuple[str, str]], ticket_id: int) -> list[dict]:
+        """Asks the AI for new, general facts in the staff answers and adds them to the knowledge base."""
+        path: Path = self.bot.config.support_knowledge_file
+        try:
+            raw = await self.ai.chat_json(learning.build_messages(self._knowledge(), conversation,
+                                                                  "the language of the knowledge base"),
+                                          max_tokens=800, temperature=0.2)
+        except DeepSeekError as exc:
+            log.warning("Learning from ticket #%s failed: %s", ticket_id, exc)
+            return []
+        facts = learning.parse_facts(raw)
+        written = learning.append_facts(path, facts, ticket_id, max_chars=KNOWLEDGE_MAX_CHARS) if facts else []
+        if written:
+            self._knowledge_cache = None
+            self.bot.audit(f"📚 Knowledge base learned {len(written)} new fact(s) from ticket #{ticket_id}: "
+                           + "; ".join(f"**{safe_md(f['question'])}** {safe_md(f['answer'])}" for f in written)[:1500]
+                           + " – edit/delete on the web Knowledge base page")
+            log.info("Ticket #%s: %s fact(s) added to the knowledge base", ticket_id, len(written))
+        elif len(facts) > len(written):
+            log.warning("Facts from ticket #%s not added: already known or the knowledge base is full (%s "
+                        "characters)", ticket_id, KNOWLEDGE_MAX_CHARS)
+        return written
+
     async def _transcript(self, channel: discord.TextChannel) -> str:
         lines = []
         async for m in channel.history(limit=2000, oldest_first=True):
@@ -1049,6 +1092,13 @@ class Tickets(commands.Cog):
                      reason: str | None) -> None:
         transcript = await self._transcript(channel)
         self.bot.db.close_ticket(ticket["id"], str(closer), reason, transcript)
+        if self.bot.config.ticket_ai_learn and self.ai.enabled:
+            try:
+                conversation = await self._learning_conversation(channel, ticket)
+            except discord.HTTPException:
+                conversation = []
+            if any(who == "STAFF" for who, _ in conversation):
+                asyncio.create_task(self._learn(conversation, ticket["id"]))
 
         embed = discord.Embed(title=f"🔒 Ticket #{ticket['id']} closed", colour=discord.Colour.dark_grey())
         embed.add_field(name="Creator", value=f"<@{ticket['user_id']}>")

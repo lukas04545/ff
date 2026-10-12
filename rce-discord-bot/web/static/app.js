@@ -1303,7 +1303,8 @@ views.knowledge = async (main) => {
     h("div", { class: "card" }, info, area,
       h("div", { class: "row", style: "margin-top:.75rem" },
         h("button", { class: "primary", text: "Save", onclick: () => act(() => api("/api/knowledge", { method: "PUT", body: { text: area.value } }), "Saved – applies from the next AI reply") }),
-        h("span", { class: "muted", text: "Don't put anything secret here – the AI may pass on anything in it to players." }))));
+        h("span", { class: "muted", text: "Don't put anything secret here – the AI may pass on anything in it to players." })),
+      h("p", { class: "muted", style: "margin:.6rem 0 0", text: "📚 The AI adds general facts from staff answers in closed tickets at the end, under \"Learned from tickets\" (switch: ⚙️ Settings → Tickets & AI). Check them now and then – edit or delete anything here." })));
   const r = await act(() => api("/api/knowledge"));
   area.value = r.text;
   info.textContent = `File: ${r.path}`;
