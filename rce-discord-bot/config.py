@@ -138,6 +138,17 @@ class Config:
     playtime_reward_kit: str              # custom kit for the reward (empty = none)
     playtime_reward_points: int           # points for the reward
 
+    # Wipe manager
+    wipe_timezone: str                    # for /wipe set (e.g. Europe/Berlin)
+    wipe_channel_id: int | None           # announcements (empty = events channel)
+    wipe_ping_role_id: int | None         # role pinged at "wipe in 1 hour" and "wiped"
+    wipe_reset_kits: bool                 # reset autokit + custom kit cooldowns at the wipe
+    wipe_reset_stats: bool                # reset kills/deaths/playtime at the wipe
+    wipe_reset_points: bool               # reset point balances at the wipe
+
+    # Reports
+    report_channel_id: int | None         # /report + watchlist alerts (empty = alert channel / admin log)
+
     # Staff alerts & backups
     server_down_alert_minutes: int        # ping staff after the server is offline this long (0 = off)
     alert_channel_id: int | None          # empty = admin log channel
@@ -258,6 +269,13 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         playtime_reward_hours=max(0, _int("PLAYTIME_REWARD_HOURS", 0)),
         playtime_reward_kit=_get("PLAYTIME_REWARD_KIT"),
         playtime_reward_points=max(0, _int("PLAYTIME_REWARD_POINTS", 0)),
+        wipe_timezone=_get("WIPE_TIMEZONE", "Europe/Berlin") or "UTC",
+        wipe_channel_id=_int("WIPE_ANNOUNCE_CHANNEL_ID"),
+        wipe_ping_role_id=_int("WIPE_PING_ROLE_ID"),
+        wipe_reset_kits=_bool("WIPE_RESET_KITS", True),
+        wipe_reset_stats=_bool("WIPE_RESET_STATS", False),
+        wipe_reset_points=_bool("WIPE_RESET_POINTS", False),
+        report_channel_id=_int("REPORT_CHANNEL_ID"),
         server_down_alert_minutes=max(0, _int("SERVER_DOWN_ALERT_MINUTES", 10)),
         alert_channel_id=_int("ALERT_CHANNEL_ID"),
         alert_role_ids=_id_set("ALERT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),

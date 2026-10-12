@@ -36,6 +36,7 @@ GROUPS = [
     ("tickets", "🎫 Tickets & AI"),
     ("community", "🎉 Community"),
     ("economy", "🪙 Points & shop"),
+    ("wipe", "🧹 Wipe"),
     ("alerts", "🚨 Alerts & backups"),
     ("web", "🌐 Web interface"),
     ("updates", "🔄 Updates"),
@@ -144,6 +145,20 @@ FIELDS: list[Field] = [
     Field("PLAYTIME_REWARD_KIT", "Playtime reward: custom kit", "economy", placeholder="e.g. Starter",
           help="Name of a custom kit, sent in-game. Empty = no kit."),
     Field("PLAYTIME_REWARD_POINTS", "Playtime reward: points", "economy", "int", placeholder="0"),
+    # Wipe
+    Field("WIPE_TIMEZONE", "Time zone of the wipe time", "wipe", placeholder="Europe/Berlin",
+          help="Time zone for /wipe set and the web interface, e.g. Europe/Berlin, Europe/London, America/New_York."),
+    Field("WIPE_ANNOUNCE_CHANNEL_ID", "Wipe announcement channel", "wipe", "id", pick="text_channel",
+          help="Countdown posts 24 h and 1 h before and \"Server wiped!\". Empty = events channel."),
+    Field("WIPE_PING_ROLE_ID", "Role to ping for the wipe", "wipe", "id", pick="role",
+          help="Pinged 1 h before and at the wipe. Empty = no ping."),
+    Field("WIPE_RESET_KITS", "Reset kit cooldowns at the wipe", "wipe", "bool",
+          help="On (default): autokit claims and custom kit cooldowns start fresh."),
+    Field("WIPE_RESET_STATS", "Reset leaderboard at the wipe", "wipe", "bool",
+          help="Kills, deaths and playtime back to 0 (a backup is made first). Default off."),
+    Field("WIPE_RESET_POINTS", "Reset points at the wipe", "wipe", "bool", help="Default off."),
+    Field("REPORT_CHANNEL_ID", "Channel for /report and watchlist alerts", "alerts", "id", pick="text_channel",
+          help="Empty = alert channel (or admin log). Support roles are pinged."),
     # Alerts & backups
     Field("SERVER_DOWN_ALERT_MINUTES", "Server-down alert after … minutes", "alerts", "int", placeholder="10",
           help="Pings staff once when there has been no RCON connection for this long, and again when the server is "

@@ -1,3 +1,5 @@
 discord.py>=2.4,<3
 python-dotenv>=1.0
-# aiohttp (WebSocket-Client für RCON) wird von discord.py mitinstalliert
+# Time zones for the wipe schedule (Windows has no built-in time zone database)
+tzdata>=2023.3
+# aiohttp (WebSocket client for RCON, web interface) is installed together with discord.py

@@ -275,6 +275,132 @@ views.account = async (main) => {
 
 // ------------------------------------------------------------------ Overview
 
+// ------------------------------------------------------------------ Population chart (Overview)
+
+const SVGNS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs = {}, ...children) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) el.setAttribute(k, v);
+  for (const c of children.flat()) if (c) el.append(c);
+  return el;
+}
+const niceMax = (v) => { if (v <= 5) return 5; const p = 10 ** Math.floor(Math.log10(v)); return Math.ceil(v / p) * p; };
+
+// Line chart: players over time, crosshair + tooltip
+function lineChart(points, days) {
+  const W = 720, H = 220, L = 34, R = 10, T = 12, B = 26;
+  const wrap = h("div", { class: "chart" });
+  if (points.length < 2) { wrap.append(h("p", { class: "muted", text: "Not enough data yet – the bot records the player count every 5 minutes." })); return wrap; }
+  const t0 = points[0][0], t1 = points[points.length - 1][0];
+  const step = niceMax(Math.max(...points.map((p) => p[1]), 1) / 4);
+  const max = step * Math.max(1, Math.ceil(Math.max(...points.map((p) => p[1]), 1) / step));
+  const x = (t) => L + (t - t0) / Math.max(t1 - t0, 1) * (W - L - R);
+  const y = (v) => T + (1 - v / max) * (H - T - B);
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img", "aria-label": "Players online over time" });
+  for (let v = 0; v <= max; v += step) {
+    const yy = y(v);
+    root.append(svg("line", { x1: L, x2: W - R, y1: yy, y2: yy, class: "grid" }));
+    const t = svg("text", { x: L - 6, y: yy + 4, class: "tick", "text-anchor": "end" }); t.textContent = Math.round(v); root.append(t);
+  }
+  const fmtX = (ts) => { const d = new Date(ts * 1000); return days === 1 ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString([], { day: "numeric", month: "short" }); };
+  for (let i = 0; i <= 4; i++) {
+    const ts = t0 + (t1 - t0) * i / 4;
+    const t = svg("text", { x: x(ts), y: H - 6, class: "tick", "text-anchor": i === 0 ? "start" : i === 4 ? "end" : "middle" }); t.textContent = fmtX(ts); root.append(t);
+  }
+  const line = points.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+  root.append(svg("path", { d: `${line}L${x(t1)},${y(0)}L${x(t0)},${y(0)}Z`, class: "area" }), svg("path", { d: line, class: "line" }));
+  const last = points[points.length - 1];
+  root.append(svg("circle", { cx: x(last[0]), cy: y(last[1]), r: 4, class: "dot" }));
+  const cross = svg("line", { y1: T, y2: H - B, class: "cross", visibility: "hidden" });
+  const hover = svg("circle", { r: 4, class: "dot", visibility: "hidden" });
+  root.append(cross, hover);
+  const tip = h("div", { class: "chart-tip hidden" });
+  root.addEventListener("pointermove", (ev) => {
+    const box = root.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    let best = points[0];
+    for (const p of points) if (Math.abs(x(p[0]) - px) < Math.abs(x(best[0]) - px)) best = p;
+    cross.setAttribute("x1", x(best[0])); cross.setAttribute("x2", x(best[0])); cross.setAttribute("visibility", "visible");
+    hover.setAttribute("cx", x(best[0])); hover.setAttribute("cy", y(best[1])); hover.setAttribute("visibility", "visible");
+    tip.replaceChildren(h("strong", { text: `${best[1]} players` }), h("span", { class: "muted", text: new Date(best[0] * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + (days > 1 ? " (avg)" : "") }));
+    tip.classList.remove("hidden");
+    const left = x(best[0]) / W * box.width;
+    tip.style.left = `${Math.min(Math.max(left, 70), box.width - 70)}px`;
+  });
+  root.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hover.setAttribute("visibility", "hidden"); tip.classList.add("hidden"); });
+  wrap.append(root, tip);
+  return wrap;
+}
+
+// Column chart: average players per hour of the day (local time of this browser)
+function hoursChart(points) {
+  const sums = Array(24).fill(0), counts = Array(24).fill(0);
+  for (const [ts, v] of points) { const hr = new Date(ts * 1000).getHours(); sums[hr] += v; counts[hr]++; }
+  const avg = sums.map((s, i) => counts[i] ? s / counts[i] : null);
+  const wrap = h("div", { class: "chart" });
+  if (avg.filter((v) => v !== null).length < 3) return wrap;
+  const W = 720, H = 150, L = 34, R = 10, T = 18, B = 22;
+  const max = niceMax(Math.max(...avg.map((v) => v || 0), 1));
+  const slot = (W - L - R) / 24, bw = Math.min(24, slot - 2);
+  const y = (v) => T + (1 - v / max) * (H - T - B);
+  const peak = avg.indexOf(Math.max(...avg.map((v) => v ?? -1)));
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img", "aria-label": "Average players per hour of the day" });
+  root.append(svg("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), class: "grid" }));
+  const tip = h("div", { class: "chart-tip hidden" });
+  avg.forEach((v, hr) => {
+    const cx = L + slot * hr + slot / 2;
+    if (hr % 3 === 0) { const t = svg("text", { x: cx, y: H - 6, class: "tick", "text-anchor": "middle" }); t.textContent = `${String(hr).padStart(2, "0")}:00`; root.append(t); }
+    if (v === null) return;
+    const top = y(v), x0 = cx - bw / 2, base = y(0), r = Math.min(4, (base - top) / 2);
+    const bar = svg("path", { class: "bar" + (hr === peak ? " peak" : ""), tabindex: 0,
+      d: `M${x0},${base}V${top + r}Q${x0},${top} ${x0 + r},${top}H${x0 + bw - r}Q${x0 + bw},${top} ${x0 + bw},${top + r}V${base}Z` });
+    const show = () => {
+      tip.replaceChildren(h("strong", { text: `${v.toFixed(1)} players` }), h("span", { class: "muted", text: `on average ${String(hr).padStart(2, "0")}:00–${String((hr + 1) % 24).padStart(2, "0")}:00` }));
+      tip.classList.remove("hidden"); tip.style.left = `${cx / W * 100}%`;
+    };
+    bar.addEventListener("pointerenter", show); bar.addEventListener("focus", show);
+    bar.addEventListener("pointerleave", () => tip.classList.add("hidden")); bar.addEventListener("blur", () => tip.classList.add("hidden"));
+    root.append(svg("rect", { x: cx - slot / 2, y: T, width: slot, height: H - T - B, fill: "transparent" }), bar);
+    if (hr === peak) { const t = svg("text", { x: cx, y: top - 5, class: "tick strong", "text-anchor": "middle" }); t.textContent = v.toFixed(0); root.append(t); }
+  });
+  root.querySelectorAll("rect").forEach((hit, i) => { const bars = root.querySelectorAll("path.bar"); hit.addEventListener("pointerenter", () => bars[i]?.dispatchEvent(new Event("pointerenter"))); hit.addEventListener("pointerleave", () => tip.classList.add("hidden")); });
+  const table = h("details", { class: "chart-table" }, h("summary", { text: "Show as table" }),
+    h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", { text: "Hour" }), h("th", { text: "Average players" }))),
+      h("tbody", {}, avg.map((v, hr) => v === null ? null : h("tr", {}, h("td", { text: `${String(hr).padStart(2, "0")}:00` }), h("td", { text: v.toFixed(1) })))))));
+  wrap.append(root, tip, table);
+  return wrap;
+}
+
+function populationCard() {
+  const card = h("div", { class: "card" });
+  const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  let days = 1;
+  const buttons = [[1, "24 h"], [7, "7 days"], [30, "30 days"]].map(([d, label]) => {
+    const b = h("button", { class: "small" + (d === 1 ? " active" : ""), text: label });
+    b.addEventListener("click", () => { days = d; buttons.forEach((x) => x.classList.toggle("active", x === b)); load(); });
+    return b;
+  });
+  card.append(h("div", { class: "row", style: "justify-content:space-between;margin-bottom:.4rem" },
+    h("h2", { text: "📈 Players online", style: "margin:0" }), h("div", { class: "seg" }, buttons)), body);
+  const load = async () => {
+    body.style.opacity = ".55";
+    const r = await api(`/api/population?days=${days}`).catch(() => null);
+    body.style.opacity = "";
+    if (!r) return;
+    const vals = r.points.map((p) => p[1]);
+    const peakIdx = vals.indexOf(Math.max(...vals));
+    const summary = vals.length ? h("div", { class: "row muted", style: "font-size:.88rem;gap:1.2rem;margin-bottom:.3rem" },
+      h("span", {}, "Now ", h("strong", { text: String(r.online_now) })),
+      h("span", {}, "Peak ", h("strong", { text: String(Math.round(vals[peakIdx])) }), ` (${new Date(r.points[peakIdx][0] * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })})`),
+      h("span", {}, "Average ", h("strong", { text: (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) }))) : null;
+    body.replaceChildren(summary || "", lineChart(r.points, days),
+      days > 1 ? h("h3", { style: "margin:1rem 0 .3rem", text: "Busiest hours (your local time)" }) : null,
+      days > 1 ? hoursChart(r.points) : null);
+  };
+  load();
+  return card;
+}
+
 views.overview = (main) => {
   const stats = h("div", { class: "grid" });
   const playersBody = h("tbody");
@@ -341,6 +467,7 @@ views.overview = (main) => {
     intentCard,
     permCard,
     stats,
+    populationCard(),
     h("div", { class: "card" },
       h("h2", { text: "📢 Message to the game" }),
       h("form", { class: "row", onsubmit: async (e) => {
@@ -1090,11 +1217,29 @@ async function showTicket(id, target) {
 views.stats = (main) => {
   const cat = h("select", {}, [["kills", "Kills"], ["deaths", "Deaths"], ["kd", "K/D"], ["playtime", "Playtime"]].map(([v, t]) => h("option", { value: v, text: t })));
   const body = h("tbody");
+  const tCat = h("select", {}, [["kills", "Kills"], ["kd", "K/D"], ["playtime", "Playtime"], ["members", "Members"]].map(([v, t]) => h("option", { value: v, text: t })));
+  const tBody = h("tbody");
   main.append(h("h1", { text: "Stats" }), h("div", { class: "card" },
     h("div", { class: "row", style: "margin-bottom:.5rem" }, h("h2", { text: "🏆 Leaderboard", style: "margin:0" }), cat),
     h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, ["#", "Player", "Kills", "Deaths", "K/D", "Playtime", "Platform", "Last seen (UTC)"].map((t) => h("th", { text: t })))),
-      body))));
+      body))),
+    h("div", { class: "card" },
+      h("div", { class: "row", style: "margin-bottom:.5rem" }, h("h2", { text: "👥 Teams", style: "margin:0" }), tCat),
+      h("p", { class: "muted", style: "margin-top:0", text: "Teams with at least 2 members, named after their leader – learned from the server log since the bot runs. Stats of the current members summed up." }),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["#", "Team", "Members", "Kills", "Deaths", "K/D", "Playtime"].map((t) => h("th", { text: t })))),
+        tBody))));
+  const loadTeams = async () => {
+    const r = await api(`/api/leaderboard?teams=1&category=${tCat.value}`).catch(() => ({ rows: [] }));
+    tBody.replaceChildren(...(r.rows.length ? r.rows.map((t, i) => h("tr", {},
+      h("td", { text: i + 1 }), h("td", {}, h("strong", { text: `Team ${t.leader || t.team_id}` }), h("div", { class: "muted", style: "font-size:.82rem", text: t.names })),
+      h("td", { text: t.members }), h("td", { text: t.kills }), h("td", { text: t.deaths }),
+      h("td", { text: (t.kills / Math.max(t.deaths, 1)).toFixed(2) }), h("td", { text: fmtDuration(t.playtime) })))
+      : [h("tr", {}, h("td", { colspan: 7, class: "muted", text: "No teams known yet." }))]));
+  };
+  tCat.addEventListener("change", loadTeams);
+  loadTeams();
   const load = async () => {
     const r = await act(() => api(`/api/leaderboard?category=${cat.value}`));
     body.replaceChildren(...r.rows.map((p, i) => h("tr", {},
@@ -1211,6 +1356,108 @@ views.shop = async (main) => {
   function reload() { route(); }
 };
 
+// ------------------------------------------------------------------ Community: wipe + scheduled messages
+
+function wipeCard() {
+  const card = h("div", { class: "card" }, h("h2", { text: "🧹 Wipe" }), h("p", { class: "muted", text: "Loading …" }));
+  const load = async () => {
+    const w = await api("/api/wipe").catch((e) => ({ error: e.message }));
+    if (w.error) { card.replaceChildren(h("h2", { text: "🧹 Wipe" }), h("p", { class: "error", text: w.error })); return; }
+    const when = h("input", { type: "datetime-local", value: w.local || "" });
+    const repeat = h("select", {}, Object.entries(w.repeats).map(([k, t]) => h("option", { value: k, text: t, selected: k === w.repeat })));
+    const resets = Object.entries(w.resets).filter(([, on]) => on).map(([k]) => ({ kits: "kit cooldowns", stats: "leaderboard", points: "points" }[k]));
+    card.replaceChildren(h("h2", { text: "🧹 Wipe" }),
+      w.next ? h("p", { style: "margin-top:0" }, "Next wipe: ", h("strong", { text: new Date(w.next * 1000).toLocaleString() }),
+        h("span", { class: "muted", text: ` (in ${fmtDuration(w.next - Date.now() / 1000)}, ${w.repeat_text})` }))
+        : h("p", { class: "muted", style: "margin-top:0", text: "No wipe planned." }),
+      h("p", { class: "muted", style: "font-size:.85rem", text: `Countdown in the status message and /rust, posts 24 h and 1 h before, in-game 1 h and 10 min before. At the wipe: ${resets.join(", ") || "nothing is reset"} (change in ⚙️ Settings → 🧹 Wipe). Time zone: ${w.timezone}.` }),
+      h("form", { class: "row", onsubmit: async (ev) => {
+        ev.preventDefault();
+        await act(() => api("/api/wipe", { method: "PUT", body: { when: when.value, repeat: repeat.value } }), "Wipe planned"); load();
+      } }, when, repeat, h("button", { class: "primary", text: "Save" }),
+        w.next ? h("button", { type: "button", class: "ghost", text: "Clear", onclick: async () => { await act(() => api("/api/wipe", { method: "DELETE" }), "Cleared"); load(); } }) : null,
+        h("button", { type: "button", class: "small", text: "🧹 Wipe done now", title: "Runs the resets and posts \"Server wiped!\"", onclick: async () => {
+          if (!confirm("Mark the wipe as done now? This runs the resets and posts the announcement.")) return;
+          await act(() => api("/api/wipe/done", { method: "POST" }), "Wipe done"); load();
+        } })));
+  };
+  load();
+  return card;
+}
+
+function scheduleCard() {
+  const card = h("div", { class: "card" }, h("h2", { text: "🔁 Scheduled messages" }));
+  const body = h("tbody");
+  const text = h("input", { placeholder: "Message, e.g. Join our Discord: discord.gg/… (in-game rich text allowed)", maxlength: 400 });
+  const minutes = h("input", { type: "number", min: 5, value: 30, style: "max-width:100px", title: "Every … minutes" });
+  const target = h("select");
+  const channel = h("select");
+  const syncChannel = () => { channel.style.display = target.value === "game" ? "none" : ""; };
+  target.addEventListener("change", syncChannel);
+  card.append(h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Message", "Every", "Where", "Last sent", ""].map((t) => h("th", { text: t })))), body)),
+    h("form", { class: "row", style: "margin-top:.8rem", onsubmit: async (ev) => {
+      ev.preventDefault();
+      await act(() => api("/api/schedules", { method: "POST", body: { text: text.value, minutes: Number(minutes.value), target: target.value, channel_id: channel.value } }), "Message scheduled");
+      text.value = ""; load();
+    } }, text, minutes, h("span", { class: "muted", text: "min" }), target, channel, h("button", { class: "primary", text: "Add" })));
+  const load = async () => {
+    const r = await api("/api/schedules").catch(() => null);
+    if (!r) return;
+    if (!target.options.length) {
+      target.replaceChildren(...Object.entries(r.targets).map(([k, t]) => h("option", { value: k, text: t })));
+      channel.replaceChildren(...(r.channels.length ? r.channels.map((c) => h("option", { value: c.id, text: "#" + c.name })) : [h("option", { value: "", text: "(Discord not connected)" })]));
+      syncChannel();
+    }
+    body.replaceChildren(...(r.rows.length ? r.rows.map((m) => h("tr", {},
+      h("td", { text: m.text }), h("td", { text: fmtDuration(m.interval_minutes * 60) }),
+      h("td", { text: r.targets[m.target] + (m.channel ? ` ${m.channel}` : "") }),
+      h("td", { class: "muted", text: m.last_sent ? new Date(m.last_sent * 1000).toLocaleTimeString() : "–" }),
+      h("td", {}, h("button", { class: "small", text: m.enabled ? "⏸️ Pause" : "▶️ Resume", onclick: async () => { await act(() => api(`/api/schedules/${m.id}`, { method: "PUT", body: { enabled: !m.enabled } })); load(); } }), " ",
+        h("button", { class: "small danger", text: "Delete", onclick: async () => { if (!confirm("Delete this message?")) return; await act(() => api(`/api/schedules/${m.id}`, { method: "DELETE" }), "Deleted"); load(); } }))))
+      : [h("tr", {}, h("td", { colspan: 5, class: "muted", text: "No scheduled messages yet." }))]));
+  };
+  load();
+  return card;
+}
+
+// ------------------------------------------------------------------ Reports & watchlist
+
+views.reports = async (main) => {
+  const rBody = h("tbody"), wBody = h("tbody");
+  const filter = h("select", {}, h("option", { value: "open", text: "Open" }), h("option", { value: "", text: "All" }));
+  const wPlayer = h("input", { placeholder: "In-game name (exact)", maxlength: 64 });
+  const wReason = h("input", { placeholder: "Why (e.g. ban evader)", maxlength: 300 });
+  main.append(h("h1", { text: "Reports" }),
+    h("div", { class: "card" }, h("div", { class: "row", style: "margin-bottom:.5rem" }, h("h2", { text: "🚩 Player reports", style: "margin:0" }), filter),
+      h("p", { class: "muted", style: "margin-top:0", text: "Members report players with /report in Discord. Staff closes them here or with the ✅ button in Discord." }),
+      h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Player", "Reason", "By", "When (UTC)", ""].map((t) => h("th", { text: t })))), rBody))),
+    h("div", { class: "card" }, h("h2", { text: "👀 Watchlist" }),
+      h("p", { class: "muted", style: "margin-top:0", text: "Staff gets pinged when one of these players joins the server (at most every 30 minutes)." }),
+      h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Why", "Added by", ""].map((t) => h("th", { text: t })))), wBody)),
+      h("form", { class: "row", style: "margin-top:.8rem", onsubmit: async (ev) => {
+        ev.preventDefault();
+        await act(() => api("/api/watchlist", { method: "POST", body: { player: wPlayer.value, reason: wReason.value } }), "Added to the watchlist");
+        wPlayer.value = wReason.value = ""; load();
+      } }, wPlayer, wReason, h("button", { class: "primary", text: "Watch" }))));
+  const load = async () => {
+    const r = await api(`/api/reports?status=${filter.value}`);
+    rBody.replaceChildren(...(r.reports.length ? r.reports.map((x) => h("tr", {},
+      h("td", { text: x.id }), h("td", {}, h("strong", { text: x.player }), x.online ? h("span", { class: "pill ok", style: "margin-left:.4rem", text: "online" }) : null),
+      h("td", { text: x.reason }), h("td", { class: "muted", text: x.reporter }), h("td", { class: "muted", text: x.created_at }),
+      h("td", {}, x.status === "open"
+        ? h("button", { class: "small", text: "✅ Handled", onclick: async () => { await act(() => api(`/api/reports/${x.id}/handled`, { method: "POST" }), "Report closed"); load(); } })
+        : h("span", { class: "muted", text: `handled by ${x.handled_by}` }))))
+      : [h("tr", {}, h("td", { colspan: 6, class: "muted", text: filter.value ? "No open reports. 🎉" : "No reports yet." }))]));
+    wBody.replaceChildren(...(r.watchlist.length ? r.watchlist.map((w) => h("tr", {},
+      h("td", {}, h("strong", { text: w.player }), w.online ? h("span", { class: "pill warn", style: "margin-left:.4rem", text: "online now" }) : null),
+      h("td", { text: w.reason || "–" }), h("td", { class: "muted", text: w.added_by || "–" }),
+      h("td", {}, h("button", { class: "small danger", text: "Remove", onclick: async () => { await act(() => api(`/api/watchlist/${encodeURIComponent(w.player)}`, { method: "DELETE" }), "Removed"); load(); } }))))
+      : [h("tr", {}, h("td", { colspan: 4, class: "muted", text: "Nobody on the watchlist." }))]));
+  };
+  filter.addEventListener("change", load);
+  every(20000, () => load().catch(() => {}));
+};
+
 // ------------------------------------------------------------------ Community
 
 views.community = async (main) => {
@@ -1218,7 +1465,7 @@ views.community = async (main) => {
   const gBody = h("tbody");
   const tBody = h("tbody");
   const rulesArea = h("textarea", { rows: 12 });
-  main.append(h("h1", { text: "Community" }), info,
+  main.append(h("h1", { text: "Community" }), info, wipeCard(), scheduleCard(),
     h("div", { class: "card" }, h("h2", { text: "⏳ Timed roles" }),
       h("p", { class: "muted", text: "Roles that end by themselves – give one with /temprole give in Discord (e.g. VIP for 7d). Giveaway prizes like \"VIP 7 days\" land here too." }),
       h("div", { class: "table-wrap" }, h("table", {},

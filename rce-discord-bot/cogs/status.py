@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("rce.status")
 
 STATUS_MSG_KEY = "status_message_id"
+POPULATION_EVERY = 300   # seconds between samples for the population graph
 
 
 def _parse_json(raw: str):
@@ -46,6 +47,7 @@ class Status(commands.Cog):
         self._status_message: discord.Message | None = None
         self._parse_warned = False
         self._poll_lock = asyncio.Lock()  # prevents duplicate join/leave messages
+        self._last_sample = 0.0
 
     async def cog_load(self) -> None:
         self.poll_players.change_interval(seconds=self.bot.config.playerlist_interval)
@@ -142,10 +144,24 @@ class Status(commands.Cog):
             try:
                 raw = await self.bot.rcon.command("serverinfo")
                 self.bot.server_info = _parse_json(raw)
+                self._sample_population()
             except (RconError, json.JSONDecodeError) as exc:
                 log.debug("serverinfo failed: %s", exc)
         await self._update_presence()
         await self._update_status_message()
+
+    def _sample_population(self) -> None:
+        """Player count every 5 minutes for the population graph (web interface → Overview)."""
+        now = time.time()
+        info = self.bot.server_info or {}
+        if now - self._last_sample < POPULATION_EVERY or "Players" not in info:
+            return
+        self._last_sample = now
+        try:
+            self.bot.db.add_population_sample(int(now // 60 * 60), int(info.get("Players") or 0),
+                                              int(info.get("MaxPlayers") or 0) or None, int(info.get("Queued") or 0))
+        except (TypeError, ValueError):
+            pass
 
     async def _update_presence(self) -> None:
         if not self.bot.is_ready():
@@ -197,6 +213,10 @@ class Status(commands.Cog):
                 if len(listing) > 1000:
                     listing = listing[:1000].rsplit(",", 1)[0] + " …"
                 embed.add_field(name=f"Online ({len(names)})", value=listing, inline=False)
+        wipe = self.bot.get_cog("Wipe")
+        next_wipe = wipe.next_text() if wipe else None
+        if next_wipe:
+            embed.add_field(name="🧹 Next wipe", value=next_wipe, inline=False)
         embed.set_footer(text="Last updated")
         return embed
 

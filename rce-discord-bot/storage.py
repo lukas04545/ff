@@ -161,6 +161,55 @@ class Storage:
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            -- Messages posted automatically every N minutes (in-game and/or Discord)
+            CREATE TABLE IF NOT EXISTS scheduled_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                interval_minutes INTEGER NOT NULL,
+                target TEXT NOT NULL DEFAULT 'game',   -- game / discord / both
+                channel_id INTEGER,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_sent INTEGER,
+                created_by TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            -- Player reports (/report) and the staff watchlist
+            CREATE TABLE IF NOT EXISTS reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reporter_id INTEGER NOT NULL,
+                player TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',   -- open / handled
+                handled_by TEXT,
+                channel_id INTEGER,
+                message_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                handled_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS watchlist (
+                player TEXT PRIMARY KEY COLLATE NOCASE,
+                reason TEXT,
+                added_by TEXT,
+                last_alert INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            -- In-game teams (from the team log lines) for the team leaderboard
+            CREATE TABLE IF NOT EXISTS teams (
+                team_id INTEGER PRIMARY KEY,
+                leader TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS team_members (
+                player TEXT PRIMARY KEY COLLATE NOCASE,
+                team_id INTEGER NOT NULL
+            );
+            -- Player count over time (population graph)
+            CREATE TABLE IF NOT EXISTS population (
+                ts INTEGER PRIMARY KEY,
+                players INTEGER NOT NULL,
+                max_players INTEGER,
+                queued INTEGER NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS custom_kit_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
@@ -690,6 +739,173 @@ class Storage:
         cur = self._db.execute("DELETE FROM shop_items WHERE id = ?", (item_id,))
         self._db.commit()
         return cur.rowcount > 0
+
+    # ------------------------------------------------------------ Wipe resets
+
+    def reset_stats(self) -> int:
+        """Clears kills, deaths and playtime of all players (wipe reset). Platform and names stay."""
+        cur = self._db.execute("UPDATE players SET kills = 0, deaths = 0, suicides = 0, playtime_seconds = 0")
+        self._db.commit()
+        return cur.rowcount
+
+    def reset_all_custom_claims(self) -> int:
+        """Resets the self-service cooldowns of all custom kits (wipe)."""
+        cur = self._db.execute("UPDATE kit_claims SET source = 'reset-' || source WHERE source LIKE ?",
+                               (CLAIM_SOURCE + ":%",))
+        self._db.commit()
+        return cur.rowcount
+
+    # ------------------------------------------------------------ Scheduled messages
+
+    def scheduled_messages(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM scheduled_messages" + (" WHERE enabled = 1" if enabled_only else "")
+        return self._db.execute(sql + " ORDER BY id").fetchall()
+
+    def scheduled_message(self, msg_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM scheduled_messages WHERE id = ?", (msg_id,)).fetchone()
+
+    def add_scheduled_message(self, text: str, interval_minutes: int, target: str, channel_id: int | None,
+                              created_by: str, now: int) -> int:
+        cur = self._db.execute("INSERT INTO scheduled_messages (text, interval_minutes, target, channel_id, "
+                               "created_by, last_sent) VALUES (?, ?, ?, ?, ?, ?)",
+                               (text, interval_minutes, target, channel_id, created_by, now))
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def set_scheduled_enabled(self, msg_id: int, enabled: bool) -> bool:
+        cur = self._db.execute("UPDATE scheduled_messages SET enabled = ? WHERE id = ?", (int(enabled), msg_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def mark_scheduled_sent(self, msg_id: int, when: int) -> None:
+        self._db.execute("UPDATE scheduled_messages SET last_sent = ? WHERE id = ?", (when, msg_id))
+        self._db.commit()
+
+    def delete_scheduled_message(self, msg_id: int) -> bool:
+        cur = self._db.execute("DELETE FROM scheduled_messages WHERE id = ?", (msg_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    # ------------------------------------------------------------ Reports & watchlist
+
+    def add_report(self, reporter_id: int, player: str, reason: str) -> int:
+        cur = self._db.execute("INSERT INTO reports (reporter_id, player, reason) VALUES (?, ?, ?)",
+                               (reporter_id, player, reason))
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def set_report_message(self, report_id: int, channel_id: int, message_id: int) -> None:
+        self._db.execute("UPDATE reports SET channel_id = ?, message_id = ? WHERE id = ?",
+                         (channel_id, message_id, report_id))
+        self._db.commit()
+
+    def report(self, report_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+
+    def report_by_message(self, message_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM reports WHERE message_id = ?", (message_id,)).fetchone()
+
+    def reports(self, *, status: str | None = None, limit: int = 100) -> list[sqlite3.Row]:
+        sql, args = "SELECT * FROM reports", []
+        if status:
+            sql += " WHERE status = ?"
+            args.append(status)
+        return self._db.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+
+    def handle_report(self, report_id: int, handled_by: str) -> bool:
+        cur = self._db.execute("UPDATE reports SET status = 'handled', handled_by = ?, handled_at = CURRENT_TIMESTAMP "
+                               "WHERE id = ? AND status = 'open'", (handled_by, report_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def reports_by_player(self, player: str) -> int:
+        row = self._db.execute("SELECT COUNT(*) AS n FROM reports WHERE player = ? COLLATE NOCASE", (player,)).fetchone()
+        return int(row["n"])
+
+    def watch(self, player: str, reason: str | None, added_by: str) -> bool:
+        cur = self._db.execute("INSERT OR REPLACE INTO watchlist (player, reason, added_by) VALUES (?, ?, ?)",
+                               (player, reason, added_by))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def unwatch(self, player: str) -> bool:
+        cur = self._db.execute("DELETE FROM watchlist WHERE player = ?", (player,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def watched(self, player: str) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM watchlist WHERE player = ?", (player,)).fetchone()
+
+    def watchlist(self) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM watchlist ORDER BY created_at DESC").fetchall()
+
+    def mark_watch_alert(self, player: str, when: int) -> None:
+        self._db.execute("UPDATE watchlist SET last_alert = ? WHERE player = ?", (when, player))
+        self._db.commit()
+
+    # ------------------------------------------------------------ Teams
+
+    def team_event(self, kind: str, player: str, team_id: int, other: str | None = None) -> None:
+        """Keeps team membership up to date from the team log lines (create / join / leave / promote)."""
+        if kind == "create":
+            self._db.execute("INSERT OR REPLACE INTO teams (team_id, leader) VALUES (?, ?)", (team_id, player))
+            self._db.execute("INSERT OR REPLACE INTO team_members (player, team_id) VALUES (?, ?)", (player, team_id))
+        elif kind == "join":
+            self._db.execute("INSERT OR IGNORE INTO teams (team_id, leader) VALUES (?, ?)", (team_id, other))
+            self._db.execute("INSERT OR REPLACE INTO team_members (player, team_id) VALUES (?, ?)", (player, team_id))
+            if other:
+                self._db.execute("INSERT OR IGNORE INTO team_members (player, team_id) VALUES (?, ?)", (other, team_id))
+        elif kind == "leave":
+            self._db.execute("DELETE FROM team_members WHERE player = ? AND team_id = ?", (player, team_id))
+            left = self._db.execute("SELECT player FROM team_members WHERE team_id = ? LIMIT 1", (team_id,)).fetchone()
+            if left is None:
+                self._db.execute("DELETE FROM teams WHERE team_id = ?", (team_id,))
+            elif self._db.execute("SELECT 1 FROM teams WHERE team_id = ? AND leader = ? COLLATE NOCASE",
+                                  (team_id, player)).fetchone():
+                self._db.execute("UPDATE teams SET leader = ? WHERE team_id = ?", (left["player"], team_id))
+        elif kind == "promote" and other:
+            self._db.execute("UPDATE teams SET leader = ? WHERE team_id = ?", (other, team_id))
+        self._db.commit()
+
+    def team_of(self, player: str) -> tuple[sqlite3.Row, list[str]] | None:
+        row = self._db.execute("SELECT t.* FROM team_members m JOIN teams t ON t.team_id = m.team_id "
+                               "WHERE m.player = ?", (player,)).fetchone()
+        if row is None:
+            return None
+        members = [r["player"] for r in self._db.execute(
+            "SELECT player FROM team_members WHERE team_id = ? ORDER BY player", (row["team_id"],))]
+        return row, members
+
+    TEAM_ORDER = {"kills": "kills DESC", "kd": "CAST(kills AS REAL) / MAX(deaths, 1) DESC, kills DESC",
+                  "playtime": "playtime DESC", "members": "members DESC, kills DESC"}
+
+    def team_leaderboard(self, category: str = "kills", limit: int = 10) -> list[sqlite3.Row]:
+        order = self.TEAM_ORDER[category]
+        return self._db.execute(
+            "SELECT t.team_id, t.leader, COUNT(m.player) AS members, COALESCE(SUM(p.kills), 0) AS kills, "
+            "COALESCE(SUM(p.deaths), 0) AS deaths, COALESCE(SUM(p.playtime_seconds), 0) AS playtime, "
+            "GROUP_CONCAT(m.player, ', ') AS names "
+            "FROM teams t JOIN team_members m ON m.team_id = t.team_id LEFT JOIN players p ON p.name = m.player "
+            f"GROUP BY t.team_id HAVING members > 1 ORDER BY {order} LIMIT ?", (limit,)).fetchall()
+
+    # ------------------------------------------------------------ Population
+
+    def add_population_sample(self, ts: int, players: int, max_players: int | None, queued: int) -> None:
+        self._db.execute("INSERT OR REPLACE INTO population (ts, players, max_players, queued) VALUES (?, ?, ?, ?)",
+                         (ts, players, max_players, queued))
+        self._db.execute("DELETE FROM population WHERE ts < ?", (ts - 40 * 86400,))
+        self._db.commit()
+
+    def population(self, since: int, bucket: int = 0) -> list[tuple[int, float, int]]:
+        """(ts, players, max_players) since `since`; bucket > 0 = averages per bucket seconds."""
+        if bucket:
+            rows = self._db.execute(
+                "SELECT (ts / ?) * ? AS t, AVG(players) AS p, MAX(max_players) AS m FROM population WHERE ts >= ? "
+                "GROUP BY ts / ? ORDER BY t", (bucket, bucket, since, bucket)).fetchall()
+        else:
+            rows = self._db.execute("SELECT ts AS t, players AS p, max_players AS m FROM population WHERE ts >= ? "
+                                    "ORDER BY ts", (since,)).fetchall()
+        return [(int(r["t"]), round(float(r["p"]), 1), int(r["m"] or 0)) for r in rows]
 
     # ------------------------------------------------------------ Timed roles
 
