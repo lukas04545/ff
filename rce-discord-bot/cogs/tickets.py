@@ -27,6 +27,7 @@ from discord.ext import commands
 
 from cogs.kits import ConfirmView
 from permcheck import explain_forbidden
+from rce import items as itemlist
 from support.deepseek import PLATFORM_KEYS_URL, PLATFORM_USAGE_URL, DeepSeekClient, DeepSeekError
 from support.giveaway_wins import GiveawayWin, match_kit, parse_win, prize_duration_minutes
 from support.prompt import build_messages, build_system_prompt, parse_answer
@@ -77,6 +78,29 @@ PURCHASE_TOOLS = [
             "days": {"type": "integer", "description": "Only if the purchase is time-limited: number of days. "
                                                        "0 = permanent (default)"}},
             "required": ["kit", "proof"]}}},
+    {"type": "function", "function": {
+        "name": "request_new_custom_kit",
+        "description": "The ticket owner BOUGHT a kit with their OWN item list (not an existing custom kit): files a "
+                       "request with the items that staff approves or rejects with a button. On approval the bot "
+                       "creates the custom kit with these items, creates its Discord role and gives it to them. "
+                       "Returns fix_items with candidates if an item is unknown – then call again with the full list.",
+        "parameters": {"type": "object", "properties": {
+            "kit_name": {"type": "string", "description": "Optional name for the kit (default: '<their name> kit')"},
+            "items": {"type": "array", "description": "Every item of the kit",
+                      "items": {"type": "object", "properties": {
+                          "item": {"type": "string", "description": "Rust shortname (e.g. rifle.ak) or item name"},
+                          "amount": {"type": "integer", "description": "Amount, e.g. 50000 for 50k"}},
+                          "required": ["item", "amount"]}},
+            "proof": {"type": "string", "description": "What they told you: store, order/transaction ID, date, price"},
+            "days": {"type": "integer", "description": "Only if the purchase is time-limited: number of days. "
+                                                       "0 = permanent (default)"}},
+            "required": ["items", "proof"]}}},
+    {"type": "function", "function": {
+        "name": "find_items",
+        "description": "Searches the Rust item list by name or shortname, e.g. 'door', 'rocket', 'l96'. Returns up to "
+                       "10 matches as 'shortname (name)'.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Part of an item name or shortname"}}, "required": ["query"]}}},
 ]
 
 GIVEAWAY_TOOLS = [
@@ -557,6 +581,23 @@ class Tickets(commands.Cog):
                 days = 0
             return await requests.file(channel, ticket, member, str(args.get("kit") or ""),
                                        str(args.get("proof") or "")[:500], days)
+        if name == "request_new_custom_kit":
+            requests = self.bot.get_cog("KitRequests")
+            if requests is None:
+                return {"error": "Kit purchases can't be handled here – call staff."}
+            items = args.get("items")
+            if not isinstance(items, list) or not items:
+                return {"error": "items must be a non-empty list of {item, amount}"}
+            try:
+                days = max(0, min(int(args.get("days") or 0), 3650))
+            except (TypeError, ValueError):
+                days = 0
+            return await requests.file_new(channel, ticket, member, str(args.get("kit_name") or ""), items,
+                                           str(args.get("proof") or "")[:500], days)
+        if name == "find_items":
+            query = str(args.get("query") or "").strip()[:60]
+            hits = itemlist.suggestions(query, limit=10) if query else []
+            return {"matches": [f"{short} ({label})" for short, label in hits] or "no match – try another word"}
         return {"error": f"Unknown tool {name}"}
 
     # ------------------------------------------------------------ Giveaway wins (own /giveaway + Helios, Kryvon …)

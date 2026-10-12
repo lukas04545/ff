@@ -711,6 +711,15 @@ it to the buyer (for N days if the purchase was time-limited, via timed roles). 
 `/customkit claim` (linked player, cooldown as usual). Every request can only be decided once and survives restarts;
 everything is in the admin log. The bot needs *Manage Roles* to create and give roles.
 
+**Bought kits with their own item list:** if a player bought a kit by listing items ("M249 x2, 50 rockets, 50k hqm,
+10 armoured doors …") instead of naming an existing kit, the AI turns the list into Rust shortnames and exact amounts
+(`50k hqm` → `metal.refined ×50000`), looks up unclear items in the item list and asks the player about anything
+still ambiguous (e.g. what "metal kit" means). It then files a **new custom kit request**: the staff message lists
+every item with its shortname and amount – check them! On **Approve** the bot **creates the custom kit** with those
+items (named as the player asked, or "<name> kit", numbered if taken), creates its role and gives it to the buyer as
+above. You can edit the kit later in the web interface → Kits. If staff approves but the role can't be given (e.g.
+missing permission), the request stays open and approving again reuses the kit that was already created.
+
 **Giveaway prizes in tickets:** the AI knows the ticket owner's giveaway wins from two sources:
 - the bot's own **`/giveaway`** (straight from the database), and
 - another bot that announces winners in a channel (setting *Channel with giveaway winners*, preset to

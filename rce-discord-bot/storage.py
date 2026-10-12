@@ -232,6 +232,7 @@ class Storage:
                 kit TEXT NOT NULL,
                 days INTEGER NOT NULL DEFAULT 0,       -- 0 = permanent
                 proof TEXT,
+                items TEXT,                            -- JSON: new kit's items (NULL = existing kit)
                 status TEXT NOT NULL DEFAULT 'pending',   -- pending / approved / rejected
                 decided_by TEXT,
                 role_id INTEGER,
@@ -283,6 +284,10 @@ class Storage:
             # Discord user who claimed the kit (self-service claims)
             self._db.execute("ALTER TABLE kit_claims ADD COLUMN user_id INTEGER")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_kit_claims_user ON kit_claims (user_id, kit)")
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_requests)")}
+        if "items" not in columns:
+            # Requests for a NEW custom kit carry its items (JSON)
+            self._db.execute("ALTER TABLE kit_requests ADD COLUMN items TEXT")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 
@@ -939,9 +944,10 @@ class Storage:
 
     # ------------------------------------------------------------ Kit purchase requests
 
-    def add_kit_request(self, ticket_id: int | None, user_id: int, kit: str, days: int, proof: str) -> int:
-        cur = self._db.execute("INSERT INTO kit_requests (ticket_id, user_id, kit, days, proof) VALUES (?, ?, ?, ?, ?)",
-                               (ticket_id, user_id, kit, days, proof))
+    def add_kit_request(self, ticket_id: int | None, user_id: int, kit: str, days: int, proof: str,
+                        items: str | None = None) -> int:
+        cur = self._db.execute("INSERT INTO kit_requests (ticket_id, user_id, kit, days, proof, items) "
+                               "VALUES (?, ?, ?, ?, ?, ?)", (ticket_id, user_id, kit, days, proof, items))
         self._db.commit()
         return int(cur.lastrowid)
 

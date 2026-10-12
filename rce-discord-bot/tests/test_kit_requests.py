@@ -143,3 +143,85 @@ def test_reject(env):
     assert ok and env.buyer.roles == [] and "not confirmed" in env.posted[-1][0]
     assert env.db.kit_request(r["request_id"])["status"] == "rejected"
     assert not env.requests.is_staff(env.buyer) and env.requests.is_staff(env.staff)
+
+
+def new_kit(env, args):
+    call = {"id": "c", "type": "function", "function": {"name": "request_new_custom_kit",
+                                                        "arguments": json.dumps(args)}}
+    return asyncio.run(env.tickets._run_tool(call, env.ticket, env.channel))
+
+
+ORDER = [{"item": "m249", "amount": 2}, {"item": "ammo.rocket.basic", "amount": 50},
+         {"item": "High Quality Metal", "amount": 50000}, {"item": "rifle.l96", "amount": 5},
+         {"item": "door.hinged.toptier", "amount": 10}, {"item": "wall.frame.garagedoor", "amount": 20}]
+
+
+def test_find_items_and_unknown_entries(env):
+    names = {t["function"]["name"] for t in env.tickets._ai_tools()}
+    assert {"request_new_custom_kit", "find_items"} <= names
+    call = {"id": "c", "type": "function", "function": {"name": "find_items", "arguments": '{"query": "garage"}'}}
+    assert "wall.frame.garagedoor (Garage Door)" in asyncio.run(env.tickets._run_tool(call, env.ticket, env.channel))[
+        "matches"]
+
+    r = new_kit(env, {"items": ORDER + [{"item": "metal kit", "amount": 10}, {"item": "hv", "amount": 30},
+                                        {"item": "rifle.ak", "amount": 0}], "proof": "Tebex #77"})
+    assert r["result"] == "fix_items" and len(r["resolved"]) == len(ORDER)
+    problems = {u["item"]: u for u in r["unknown"]}
+    assert set(problems) == {"metal kit", "hv", "rifle.ak"}
+    assert "ammo.rocket.hv (High Velocity Rocket)" in problems["hv"]["candidates"]
+    assert "amount" in problems["rifle.ak"]["problem"]
+    assert env.posted == [] and env.db.kit_requests(status="pending") == []         # nothing filed
+    assert "error" in new_kit(env, {"items": [], "proof": "x"})
+
+
+def test_new_kit_created_on_approval(env):
+    r = new_kit(env, {"kit_name": "Zim raid kit", "items": ORDER, "proof": "Tebex order #555, 40 EUR"})
+    assert r["result"] == "waiting_for_staff" and r["kit"] == "Zim raid kit"
+    content, embed, view = env.posted[-1]
+    assert content == "<@&42>" and view is not None and "new custom kit" in embed.description
+    items_text = "\n".join(f.value for f in embed.fields)
+    assert "(`lmg.m249`) ×2" in items_text and "(`metal.refined`) ×50,000" in items_text
+    assert env.db.custom_kit("Zim raid kit") is None and env.buyer.roles == []      # nothing before approval
+
+    # same name again while pending -> numbered
+    assert new_kit(env, {"kit_name": "Zim raid kit", "items": ORDER[:1], "proof": "2nd order"})["kit"] == \
+        "Zim raid kit 2"
+
+    ok, text = asyncio.run(env.requests.decide(r["request_id"], True, env.staff))
+    assert ok, text
+    kit = env.db.custom_kit("Zim raid kit")
+    assert kit is not None
+    assert {(i["shortname"], i["amount"]) for i in env.db.custom_kit_items("Zim raid kit")} == {
+        (i["item"] if "." in i["item"] else {"m249": "lmg.m249", "High Quality Metal": "metal.refined"}[i["item"]],
+         i["amount"]) for i in ORDER}
+    role = env.created[-1]
+    assert role.name == "Zim raid kit" and role in env.buyer.roles
+    assert env.db.claim_roles(kit) == [role.id]
+    assert env.bot.get_cog("CustomKits").can_claim(env.buyer, kit)
+    assert "/customkit claim Zim raid kit" in env.posted[-1][0]
+
+
+def test_new_kit_name_taken_meanwhile(env):
+    r = new_kit(env, {"kit_name": "Late kit", "items": ORDER[:2], "proof": "order 1"})
+    env.db.create_custom_kit("Late kit", "made by an admin", "admin")
+    ok, text = asyncio.run(env.requests.decide(r["request_id"], True, env.staff))
+    assert not ok and "exists by now" in text and env.buyer.roles == []
+    assert env.db.kit_request(r["request_id"])["status"] == "pending"               # reopened for staff
+    assert env.db.custom_kit_items("Late kit") == []                                # admin's kit untouched
+
+
+def test_new_kit_retry_after_failed_role_step(env, monkeypatch):
+    r = new_kit(env, {"items": ORDER[:2], "proof": "order 2"})
+    assert r["kit"] == "Bob kit"
+    import discord
+
+    async def forbidden(guild, kit):
+        raise discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Missing Permissions")
+    real = env.requests.kit_role
+    monkeypatch.setattr(env.requests, "kit_role", forbidden)
+    ok, text = asyncio.run(env.requests.decide(r["request_id"], True, env.staff))
+    assert not ok and env.db.kit_request(r["request_id"])["status"] == "pending"
+    monkeypatch.setattr(env.requests, "kit_role", real)
+    ok, text = asyncio.run(env.requests.decide(r["request_id"], True, env.staff))    # staff fixed it, approves again
+    assert ok, text
+    assert len(env.db.custom_kit_items("Bob kit")) == 2 and env.created[-1] in env.buyer.roles
