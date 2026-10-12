@@ -188,6 +188,7 @@ rce-discord-bot/
 │   ├── schedule.py        # /schedule: messages every N minutes
 │   ├── reports.py         # /report and /watch
 │   ├── abuse.py           # Admin abuse protection (raid items spawned without permission)
+│   ├── kit_requests.py    # Bought custom kits: AI request → staff approve button → kit role
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
@@ -699,6 +700,16 @@ kits. Replies are sent without @mentions.
 - It follows exactly the same rules as `/customkit claim` (role, cooldown, linked + online player) and
   can never claim for anyone else or give other kits – so nobody can talk it into more than they could
   claim themselves. Not linked yet? It explains `/customkit link`.
+
+**Bought custom kits:** when a player writes in their ticket that they bought a custom kit (e.g. "I bought the Ak
+Kit, Tebex order #1234"), the AI files a **purchase request**: the bot posts *"🛒 Kit purchase – staff approval
+needed"* in the ticket with the kit contents and what the player said, pings the support roles and shows
+**✅ Approve** / **✖️ Reject** (staff only). Nothing is given before that. On **Approve** the bot gives the kit a
+Discord role – the kit's claim role if it has one, otherwise an existing role with the kit's name (e.g. your
+"Ak Kit" role), otherwise it **creates a new role** named like the kit – links it as the kit's claim role and gives
+it to the buyer (for N days if the purchase was time-limited, via timed roles). The player then claims the kit with
+`/customkit claim` (linked player, cooldown as usual). Every request can only be decided once and survives restarts;
+everything is in the admin log. The bot needs *Manage Roles* to create and give roles.
 
 **Giveaway prizes in tickets:** the AI knows the ticket owner's giveaway wins from two sources:
 - the bot's own **`/giveaway`** (straight from the database), and

@@ -89,10 +89,23 @@ GIVEAWAY_ACTIONS = """- Giveaway wins (this server's /giveaway and the winners c
   call get_my_giveaway_wins and redeem that win right away if it is a kit prize – otherwise call staff."""
 
 
+PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
+  * request_kit_access: when they say they BOUGHT a custom kit (store, order ID …), ask for the kit name and their
+    order details if missing, then file the request. Staff checks the purchase and approves it with a button –
+    you can NEVER approve or promise it yourself. Tell them staff will confirm; after approval they get the kit's
+    role and claim it with /customkit claim. If the result is unknown_kit, ask which of the listed kits they mean.
+    already_has_access: tell them to use /customkit claim."""
+
+
 def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None,
-                        status: str, knowledge: str, kit_tools: bool = False, giveaway_tools: bool = False) -> str:
+                        status: str, knowledge: str, kit_tools: bool = False, giveaway_tools: bool = False,
+                        purchase_tools: bool = False) -> str:
+    actions = NO_ACTIONS
+    if kit_tools:
+        actions = KIT_ACTIONS + ("\n" + GIVEAWAY_ACTIONS if giveaway_tools else "") + \
+            ("\n" + PURCHASE_ACTIONS if purchase_tools else "")
     return SYSTEM_TEMPLATE.format(
-        actions=(KIT_ACTIONS + ("\n" + GIVEAWAY_ACTIONS if giveaway_tools else "")) if kit_tools else NO_ACTIONS,
+        actions=actions,
         server_name=server_name or "Rust Console Server",
         topic=topic,
         ingame_name=ingame_name or "not provided",
