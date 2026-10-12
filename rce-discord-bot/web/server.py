@@ -55,6 +55,7 @@ log = logging.getLogger("rce.web")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 SESSION_COOKIE = "rce_session"
+PUBLIC_LINK_FILE = "PUBLIC_LINK.txt"  # current public address (Cloudflare tunnel), next to start.bat
 SESSION_TTL = 12 * 3600
 LOGIN_ATTEMPTS_PER_MINUTE = 5
 CSRF_HEADER = "X-Requested-With"
@@ -192,7 +193,7 @@ def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
         port = 8080
     return WebSettings(enabled=flag("WEB_ENABLED", True), host=(env.get("WEB_HOST") or "127.0.0.1").strip(),
                        port=port, password=(env.get("WEB_PASSWORD") or "").strip(),
-                       open_browser=flag("WEB_OPEN_BROWSER", True), tunnel=flag("WEB_TUNNEL", False),
+                       open_browser=flag("WEB_OPEN_BROWSER", True), tunnel=flag("WEB_TUNNEL", True),
                        tunnel_token=(env.get("WEB_TUNNEL_TOKEN") or "").strip(),
                        public_url=(env.get("WEB_PUBLIC_URL") or "").strip())
 
@@ -228,6 +229,7 @@ class WebInterface:
         self._runner: web.AppRunner | None = None
         self.tunnel: tunnelmod.Tunnel | None = None
         self.tunnel_problem: str | None = None
+        self.generated_password: str | None = None  # shown once in the bot window
         self.restart_required = False
         self.app = self._build_app()
 
@@ -316,6 +318,7 @@ class WebInterface:
         except OSError as exc:
             log.error("Web interface could not open port %s (%s) – choose a different WEB_PORT.", ws.port, exc)
             return False
+        self._start_tunnel()  # may create WEB_PASSWORD, so before the login hints below
         shown_host = "localhost" if ws.host in ("127.0.0.1", "0.0.0.0", "") else ws.host
         url = f"http://{shown_host}:{ws.port}"
         login_url = f"{url}/auth?token={self.login_token}"
@@ -329,7 +332,6 @@ class WebInterface:
         if ws.host not in ("127.0.0.1", "localhost"):
             log.warning("Web interface is reachable on the network (WEB_HOST=%s). Do not expose it to the internet!",
                         ws.host)
-        self._start_tunnel()
         if ws.open_browser if open_browser is None else open_browser:
             try:
                 webbrowser.open(login_url)
@@ -343,21 +345,42 @@ class WebInterface:
         if not ws.tunnel:
             tunnelmod.stop_tunnel()
             return
-        if not ws.password and not self.users.list():
-            self.tunnel_problem = ("Not started: set a WEB_PASSWORD first (Settings → Web interface) – "
-                                   "otherwise the public address would only be protected by a random password.")
-            log.error("Cloudflare tunnel %s", self.tunnel_problem)
-            tunnelmod.stop_tunnel()
-            return
+        if not ws.password:
+            # Public address without a fixed password: create a strong one and keep it in the .env
+            password = secrets.token_urlsafe(12)
+            try:
+                update_env(self.env_path, {"WEB_PASSWORD": password})
+            except OSError as exc:
+                self.tunnel_problem = f"Not started: could not save a WEB_PASSWORD to the .env ({exc})."
+                log.error("Cloudflare tunnel %s", self.tunnel_problem)
+                tunnelmod.stop_tunnel()
+                return
+            ws.password = self.password = self.generated_password = password
+            log.warning("Created a web interface password (saved in .env as WEB_PASSWORD): %s", password)
+        log.info("Setting up the Cloudflare tunnel – the link follows in a few seconds …")
         self.tunnel = tunnelmod.ensure_tunnel(ws.port, token=ws.tunnel_token, public_url=ws.public_url)
         loop = asyncio.get_running_loop()
         self.tunnel.on_online = lambda url: loop.call_soon_threadsafe(self._tunnel_online, url)
-        if self.tunnel.state == "online":
-            log.warning("🌍 Web interface reachable from anywhere: %s", self.tunnel.url or ws.public_url)
+        if self.tunnel.state == "online":  # already running (restart from the web interface)
+            self._tunnel_online(self.tunnel.url, announce=False)
 
-    def _tunnel_online(self, url: str | None) -> None:
-        if self.bot is not None:
-            self.bot.audit(f"🌍 Web interface reachable from anywhere: {url or self.ws.public_url or '(fixed address)'}")
+    def _tunnel_online(self, url: str | None, announce: bool = True) -> None:
+        url = url or self.ws.public_url or "(your fixed tunnel address)"
+        login = (f"owner / {self.generated_password}   (new password, saved in .env as WEB_PASSWORD)"
+                 if self.generated_password else "owner / your WEB_PASSWORD   (other admins: their own account)")
+        bar = "=" * 72
+        for line in ("", bar, "  🌍 YOUR WEB INTERFACE LINK – works from anywhere (phone, other PCs):", "",
+                     f"     {url}", "", f"  Login: {login}", "  The link is also saved in PUBLIC_LINK.txt "
+                     "and posted in the admin log channel.", bar, ""):
+            log.warning(line)
+        try:
+            (self.env_path.parent / PUBLIC_LINK_FILE).write_text(
+                f"{url}\n\nLogin: owner + your WEB_PASSWORD (in the .env), other admins: their own account.\n"
+                "This address changes when the bot window is closed.\n", encoding="utf-8")
+        except OSError:
+            pass
+        if announce and self.bot is not None:
+            self.bot.audit(f"🌍 Web interface reachable from anywhere: {url}")
 
     @property
     def public_url(self) -> str | None:
