@@ -1251,6 +1251,7 @@ views.settings = async (main) => {
     }
     if (g.id === "discord") card.append(discordTester(inputs));
     if (g.id === "rcon") card.append(rconTester(inputs));
+    if (g.id === "updates" && !data.setup_mode) card.firstChild.after(updateStatus());
     if (g.id === "templates") { card.classList.add("hidden"); advancedCards.push(card); }
     main.append(card);
   }
@@ -1318,6 +1319,40 @@ views.settings = async (main) => {
   }
   main.append(bar);
 };
+
+// Installed version + "Check now" (settings page, group "Updates")
+function updateStatus() {
+  const box = h("div", { class: "update-box" }, h("span", { class: "muted", text: "Loading version …" }));
+  const ago = (ts) => ts ? fmtDuration(Date.now() / 1000 - ts) + " ago" : "not yet";
+  const render = (u) => {
+    if (u.available === false) { box.replaceChildren(h("span", { class: "muted", text: "Updates module not loaded." })); return; }
+    const cur = u.current || {};
+    const state = u.last_status === "error" || u.last_status === "skipped"
+      ? h("span", { class: "pill warn", text: u.last_message })
+      : u.last_status ? h("span", { class: "pill ok", text: u.last_status === "updated" ? "Updated – restarting" : "Up to date" }) : null;
+    const btn = h("button", { class: "small", text: "🔄 Check now", onclick: async () => {
+      btn.disabled = true; btn.textContent = "Checking …";
+      try {
+        const r = await api("/api/update/check", { method: "POST" });
+        render(r);
+        if (r.restarting) { toast("New version installed – the bot restarts …"); waitForBot(location.hash || "#settings"); }
+        else toast(r.status === "up_to_date" ? "Already the newest version" : r.message, r.status === "error");
+      } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "🔄 Check now"; }
+    } });
+    box.replaceChildren(
+      h("div", { class: "row" },
+        h("strong", { text: "Installed version: " }),
+        cur.sha ? h("code", { text: cur.sha.slice(0, 7) }) : h("span", { class: "muted", text: "unknown (first check pending)" }),
+        cur.title ? h("span", { class: "muted", text: cur.title }) : null),
+      h("div", { class: "row muted", style: "font-size:.85rem" },
+        `${u.enabled ? `Auto-update on – every ${u.interval} min` : "Auto-update off"} · from ${u.repo} (${u.branch}) · ` +
+        `${u.mode === "git" ? "git checkout" : "ZIP install"} · last check: ${ago(u.last_check)}`, state),
+      u.launcher ? null : h("p", { class: "muted", style: "font-size:.85rem;margin:.2rem 0 0", text: "Tip: start the bot with start.bat / start.sh – then it restarts by itself after an update." }),
+      h("div", { class: "row", style: "margin-top:.4rem" }, btn));
+  };
+  api("/api/update").then(render).catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
+  return box;
+}
 
 function restartButton() {
   return h("button", { class: "primary small", text: "Restart bot now", onclick: async (ev) => {

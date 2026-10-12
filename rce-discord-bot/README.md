@@ -170,7 +170,8 @@ rce-discord-bot/
 │   ├── tickets.py         # Support tickets with AI: /ticket …
 │   ├── community.py       # /ping /rust /rules, welcome, auto role, Discord log
 │   ├── moderation.py      # /mod timeout/kick/ban/unban/purge (Discord members)
-│   └── giveaways.py       # /giveaway … (persisted in the database)
+│   ├── giveaways.py       # /giveaway … (persisted in the database)
+│   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
 │   └── prompt.py          # System prompt, history, parsing the AI reply
@@ -182,7 +183,8 @@ rce-discord-bot/
 ├── logbuffer.py           # Recent log lines for the web interface
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
 ├── envfile.py             # Read/write .env (comments are preserved)
-├── start.bat              # Windows: double-click = set up + start + auto-restart
+├── updater.py             # Downloads + installs new versions from GitHub (ZIP install or git checkout)
+├── start.bat              # Windows: double-click = set up + start + auto-restart (also after updates)
 ├── start.sh               # Linux/macOS: the same
 ├── rcon_test.bat          # Windows: test the RCON connection step by step (tools/rcon_test.py)
 ├── tools/mock_rcon_server.py  # Simulated RCE server for testing
@@ -318,6 +320,35 @@ The bot runs fine on a normal Windows, Linux or Mac PC:
 - **Logs:** everything is also written to `logs/bot.log` (rotated automatically, max. ~8 MB).
 - **Backups:** only `.env`, `data/bot.db` (stats, kits, tickets) and `support_knowledge.md`
   matter. Copy these three files = full backup; you can also use them to move to another PC.
+
+---
+
+## Automatic updates
+
+The bot keeps itself up to date: every 5 minutes it checks the `main` branch of
+[lukas04545/ff](https://github.com/lukas04545/ff) on GitHub. When there is a new version it installs it and
+restarts – about 10 seconds offline. The admin log channel shows `🔄 Update installed: <version> …`.
+
+- **Never touched:** `.env`, `data/` (database, web logins), `logs/`, `bin/`, `.venv/` and
+  `PUBLIC_LINK.txt`. `rules.md` and `support_knowledge.md` are only replaced if you never edited them.
+- **Safe:** the new version is checked first (Python syntax; new packages are installed with pip). If
+  anything fails, nothing is changed and the bot keeps running the old version – the reason is in the bot
+  window and under ⚙️ Settings → 🔄 Updates.
+- **ZIP install** (downloaded from GitHub): the changed files are replaced, files removed in the new version
+  are deleted (only files that came with an earlier update, never your own).
+- **Git checkout** (`git clone`): the bot runs `git fetch` + a fast-forward merge. If you changed bot files
+  yourself, it doesn't touch them and asks you to update with `git pull`.
+- **Restart:** start the bot with `start.bat` / `start.sh` – they start the new version right away. (Started
+  with `python bot.py`, the bot replaces its own process instead.)
+- **Settings** (⚙️ Settings → 🔄 Updates): turn it off (`AUTO_UPDATE=false`), change how often it checks
+  (`AUTO_UPDATE_INTERVAL`, minutes) or the source (`AUTO_UPDATE_REPO`, `AUTO_UPDATE_BRANCH`, advanced).
+  **Check now** shows the installed version and updates immediately.
+- The quick Cloudflare link (`….trycloudflare.com`) changes with every restart, so also after an update – the
+  new one is posted in the admin log channel and written to `PUBLIC_LINK.txt` as usual.
+
+> **One-time step:** versions from before this feature can't update themselves. Update once by hand
+> (close the bot window, copy the new files over the old ones – including `start.bat` – and start it again).
+> From then on it updates by itself.
 
 ---
 

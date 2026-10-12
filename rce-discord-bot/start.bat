@@ -1,8 +1,8 @@
 @echo off
 REM ==================================================================
 REM  Start the RCE Discord bot (Windows)
-REM  Just double-click: sets everything up on the first start and
-REM  restarts the bot automatically after crashes.
+REM  Just double-click: sets everything up on the first start,
+REM  restarts the bot after crashes and after automatic updates.
 REM ==================================================================
 chcp 65001 >nul
 cd /d "%~dp0"
@@ -50,25 +50,36 @@ if not exist ".env" (
     echo If no browser opens: copy the link from this window.
 )
 
-REM --- Start the bot, restart it after a crash ---
+REM --- Start the bot, restart it after a crash or an automatic update ---
+REM update-safe: the loop below is ONE block. cmd reads it completely before running it, so an automatic
+REM update may replace this file while the bot runs. Exit code 3 = configuration error, 4 = update installed.
+set "RCE_LAUNCHER=1"
+setlocal EnableDelayedExpansion
 :loop
-echo.
-echo Starting bot ... (keep this window open, stop with Ctrl+C)
-".venv\Scripts\python.exe" bot.py
-set "CODE=%errorlevel%"
-if "%CODE%"=="3" (
+(
     echo.
-    echo [ERROR] The bot stopped because of a configuration error - see the message above.
-    echo Please fix the .env and run start.bat again.
-    pause
-    exit /b 3
+    echo Starting bot ... ^(keep this window open, stop with Ctrl+C^)
+    ".venv\Scripts\python.exe" bot.py
+    set "CODE=!errorlevel!"
+    if "!CODE!"=="3" (
+        echo.
+        echo [ERROR] The bot stopped because of a configuration error - see the message above.
+        echo Please fix the .env and run start.bat again.
+        pause
+        exit /b 3
+    )
+    if "!CODE!"=="0" (
+        echo Bot stopped.
+        pause
+        exit /b 0
+    )
+    if "!CODE!"=="4" (
+        echo.
+        echo Update installed - starting the new version ...
+    ) else (
+        echo.
+        echo Bot stopped unexpectedly ^(code !CODE!^). Restarting in 10 seconds ... ^(Ctrl+C to cancel^)
+        timeout /t 10 /nobreak >nul
+    )
+    goto :loop
 )
-if "%CODE%"=="0" goto :end
-echo.
-echo Bot stopped unexpectedly (code %CODE%). Restarting in 10 seconds ... (Ctrl+C to cancel)
-timeout /t 10 /nobreak >nul
-goto :loop
-
-:end
-echo Bot stopped.
-pause

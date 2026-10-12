@@ -32,10 +32,12 @@ log = logging.getLogger("rce.bot")
 
 # Exit code for errors a restart won't fix (start.bat/start.sh then don't restart)
 EXIT_FATAL = 3
+# Exit code after an automatic update – start.bat/start.sh start the new version right away
+EXIT_UPDATED = 4
 BASE_DIR = Path(__file__).resolve().parent
 
 COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits", "cogs.tickets",
-        "cogs.community", "cogs.moderation", "cogs.giveaways")
+        "cogs.community", "cogs.moderation", "cogs.giveaways", "cogs.updates")
 
 # Event class -> Discord event name (listeners are then called on_<name>)
 EVENT_NAMES: dict[type, str] = {
@@ -81,6 +83,8 @@ class RceBot(commands.Bot):
         self._console_ids = itertools.count(1)
         self.web = None  # web.server.WebInterface, if enabled
         self.restart_requested = False
+        self.update_restart = False   # new version installed -> restart the whole process
+        self.launched_by_script = os.environ.get("RCE_LAUNCHER") == "1"   # start.bat/start.sh restart us
         self._first_start = True
         # Result of the last automatic RCON diagnosis (for the web interface)
         self.rcon_diagnosis: dict | None = None
@@ -160,6 +164,11 @@ class RceBot(commands.Bot):
         """Shuts the bot down cleanly; main() then starts it again with the reloaded .env."""
         self.restart_requested = True
         asyncio.get_running_loop().call_later(0.5, lambda: asyncio.ensure_future(self.close()))
+
+    def request_update_restart(self) -> None:
+        """A new version was installed: shut down, main() then restarts the process (new code is loaded)."""
+        self.update_restart = True
+        asyncio.get_running_loop().call_later(2, lambda: asyncio.ensure_future(self.close()))
 
     async def close(self) -> None:
         if self.web is not None:
@@ -379,10 +388,24 @@ def main() -> None:
             log.error("No connection to Discord (%s). Retrying in 30 seconds …", exc)
             time.sleep(30)
             continue
+        if bot.update_restart:
+            restart_after_update(bot.launched_by_script)
         if bot.restart_requested:
             log.info("Restarting with new settings …")
             continue
         break
+
+
+def restart_after_update(launched_by_script: bool) -> None:
+    """Starts the freshly installed version: via start.bat/start.sh, or by replacing this process."""
+    if launched_by_script:
+        log.warning("Restarting with the new version …")
+        sys.exit(EXIT_UPDATED)
+    from web.tunnel import stop_tunnel
+    log.warning("Restarting with the new version (python bot.py) …")
+    stop_tunnel()
+    logging.shutdown()
+    os.execv(sys.executable, [sys.executable, str(BASE_DIR / "bot.py")])
 
 
 if __name__ == "__main__":

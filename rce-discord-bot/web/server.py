@@ -60,7 +60,7 @@ SESSION_TTL = 12 * 3600
 LOGIN_ATTEMPTS_PER_MINUTE = 5
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
-OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users")
+OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -274,6 +274,8 @@ class WebInterface:
             r.add_post("/api/setup/continue", self.setup_continue)
             return app
         r.add_post("/api/restart", self.restart)
+        r.add_get("/api/update", self.update_info)
+        r.add_post("/api/update/check", self.update_check)
         r.add_get("/api/console", self.console)
         r.add_post("/api/command", self.command)
         r.add_post("/api/say", self.say)
@@ -798,6 +800,17 @@ class WebInterface:
         self._audit("Bot restart requested")
         self.bot.request_restart()
         return web.json_response({"ok": True, **(preflight or {})})
+
+    async def update_info(self, request: web.Request) -> web.Response:
+        updates = self.bot.get_cog("Updates")
+        return web.json_response(updates.info() if updates else {"available": False})
+
+    async def update_check(self, request: web.Request) -> web.Response:
+        updates = self._cog("Updates")
+        self._audit("Update check requested")
+        result = await updates.check_now()
+        return web.json_response({"status": result.status, "message": result.message, "sha": result.sha,
+                                  "title": result.title, "restarting": result.restart_needed, **updates.info()})
 
     async def setup_continue(self, request: web.Request) -> web.Response:
         """Setup: start the bot with the saved configuration (e.g. after enabling intents)."""
