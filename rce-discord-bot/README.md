@@ -801,7 +801,8 @@ The wipe itself is still done by G-Portal. If it happens at another time, use `/
   alert channel, then admin log) with a ping for the support roles and a **✅ Handled** button. All reports
   are in the web interface (🚩 Reports) – also with the number of earlier reports about the same player.
 - **Watchlist:** `/watch add <player> <reason>` (or 🚩 Reports in the web interface) – when that exact
-  name joins the server, staff is pinged (at most every 30 minutes per player). Handy for ban evaders with
+  name joins the server, staff is pinged (at most every 30 minutes per player) in `WATCHLIST_CHANNEL_ID`
+  (⚙️ Settings → 🚨 Alerts & backups → *Channel for watchlist alerts*; empty = the report channel). Handy for ban evaders with
   a known name.
 - **Team leaderboard:** the bot follows the team log lines (create, join, leave, new leader). `/teams top`
   ranks teams with at least two members by kills, K/D, playtime or size; `/teams of <player>` shows the

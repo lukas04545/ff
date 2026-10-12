@@ -68,9 +68,10 @@ class Reports(commands.Cog):
         roles = {r.id for r in getattr(user, "roles", [])}
         return bool(roles & set(self.bot.config.support_role_ids))
 
-    def _channel(self) -> discord.abc.Messageable | None:
+    def _channel(self, *, watchlist: bool = False) -> discord.abc.Messageable | None:
         cfg = self.bot.config
-        channel_id = cfg.report_channel_id or cfg.alert_channel_id or cfg.admin_log_channel_id
+        channel_id = ((cfg.watchlist_channel_id if watchlist else None) or cfg.report_channel_id
+                      or cfg.alert_channel_id or cfg.admin_log_channel_id)
         channel = self.bot.get_channel(channel_id) if channel_id else None
         return channel if isinstance(channel, discord.abc.Messageable) else None
 
@@ -148,7 +149,7 @@ class Reports(commands.Cog):
         if row is None or (row["last_alert"] and now - row["last_alert"] < WATCH_ALERT_EVERY):
             return
         self.bot.db.mark_watch_alert(row["player"], now)
-        channel = self._channel()
+        channel = self._channel(watchlist=True)
         if channel is None:
             return
         embed = discord.Embed(title="👀 Watched player joined", colour=discord.Colour.orange(),

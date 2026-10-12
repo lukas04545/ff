@@ -148,6 +148,7 @@ class Config:
 
     # Reports
     report_channel_id: int | None         # /report + watchlist alerts (empty = alert channel / admin log)
+    watchlist_channel_id: int | None      # watchlist alerts only (empty = report channel)
 
     # Admin abuse protection (raid items spawned by admins)
     abuse_protection: bool
@@ -284,6 +285,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         wipe_reset_stats=_bool("WIPE_RESET_STATS", False),
         wipe_reset_points=_bool("WIPE_RESET_POINTS", False),
         report_channel_id=_int("REPORT_CHANNEL_ID"),
+        watchlist_channel_id=_int("WATCHLIST_CHANNEL_ID"),
         abuse_protection=_bool("ABUSE_PROTECTION", True),
         abuse_exempt_role_ids=_id_set("ABUSE_EXEMPT_ROLE_IDS"),
         abuse_exempt_players=frozenset(p.strip().lower() for p in _get("ABUSE_EXEMPT_PLAYERS").split(",") if p.strip()),
