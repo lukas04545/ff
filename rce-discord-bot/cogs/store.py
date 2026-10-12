@@ -74,8 +74,16 @@ class Store(commands.Cog):
         if not self._allowed(interaction.user):
             await interaction.response.send_message("⛔ Staff only.", ephemeral=True)
             return
+        if self.bot.config.tip4serv_key:      # check right now instead of waiting for the next minute
+            await interaction.response.defer(ephemeral=True)
+            await self.poll()
+            reply = interaction.followup.send
+        else:
+            reply = interaction.response.send_message
         st, problem = self.status(), self.problem()
+        server = (self.bot.config.tip4serv_key.split(".")[0][:20] if self.bot.config.tip4serv_key else None)
         lines = [f"**Connection:** {'❌ ' + problem if problem else '✅ working'}",
+                 f"**Server number in the key:** `{safe_md(server)}`" if server else "**Key:** not set",
                  f"**Last check:** <t:{int(st['last_ok'])}:R>" if st["last_ok"] else "**Last check:** never",
                  f"**Purchases received:** {st['stored_total']}"]
         if st["ignored"]:
@@ -85,8 +93,7 @@ class Store(commands.Cog):
             lines.append("\n**Latest:**")
             lines += [f"• `{safe_md(p['payment_id'])}` {_money(p)} – {_who(p)} – <t:{p['received_at']}:R> – "
                       + (f"used by request #{p['used_by']}" if p["used_by"] else "unused") for p in recent]
-        await interaction.response.send_message("\n".join(lines)[:1900], ephemeral=True,
-                                                allowed_mentions=discord.AllowedMentions.none())
+        await reply("\n".join(lines)[:1900], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @tip4serv.command(name="find", description="Looks up a Tip4Serv order the bot received.")
     @app_commands.describe(order="Order / payment ID, e.g. 1110065")

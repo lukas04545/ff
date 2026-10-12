@@ -772,7 +772,9 @@ missing permission), the request stays open and approving again reuses the kit t
 
 **Tip4Serv: automatic purchase check.** The bot can see your [Tip4Serv](https://tip4serv.com) store's purchases
 and approve paid custom kits by itself:
-1. On tip4serv.com add a **server for the bot** and copy its **key** (three parts separated by dots) into
+1. On tip4serv.com add a **server for the bot** with the **plugin connection** (game Rust / Oxide – *not*
+   "Connect with RCON", and *not* the store API key from Dashboard → API keys) and copy its **key** (three parts
+   separated by dots, the first is the server's number) into
    **Settings → 💳 Tip4Serv store → Tip4Serv server key** (`TIP4SERV_KEY`).
 2. Give your custom kit product (the one where players pay the total) this command **on that server**:
    `rcebot {discord_id} {total_paid} {currency} {PlayerName}`. Tip4Serv fills in the buyer's Discord ID, the amount,
