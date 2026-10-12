@@ -136,6 +136,12 @@ class Config:
     web_tunnel_token: str     # optional: named tunnel (fixed address)
     web_public_url: str       # optional: fixed address of the named tunnel
 
+    # Automatic updates from GitHub (updater.py)
+    auto_update: bool
+    auto_update_interval: int   # minutes between checks
+    auto_update_repo: str       # owner/name on GitHub
+    auto_update_branch: str
+
     database_path: Path
 
 
@@ -231,6 +237,10 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         web_tunnel=_bool("WEB_TUNNEL", True),
         web_tunnel_token=_get("WEB_TUNNEL_TOKEN"),
         web_public_url=_get("WEB_PUBLIC_URL"),
+        auto_update=_bool("AUTO_UPDATE", True),
+        auto_update_interval=max(1, _int("AUTO_UPDATE_INTERVAL", 5)),
+        auto_update_repo=_get("AUTO_UPDATE_REPO", "lukas04545/ff"),
+        auto_update_branch=_get("AUTO_UPDATE_BRANCH", "main"),
         database_path=Path(_get("DATABASE_PATH", "data/bot.db")),
     )
 

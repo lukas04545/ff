@@ -5,6 +5,7 @@ convenient front end for it. Defaults live in config.py.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 # Field kinds: text, secret, int, bool, textarea, id (one Discord ID), ids (several IDs)
@@ -35,6 +36,7 @@ GROUPS = [
     ("tickets", "🎫 Tickets & AI"),
     ("community", "🎉 Community"),
     ("web", "🌐 Web interface"),
+    ("updates", "🔄 Updates"),
     ("templates", "🧩 Command templates (experts)"),
 ]
 
@@ -138,6 +140,15 @@ FIELDS: list[Field] = [
     Field("WEB_OPEN_BROWSER", "Open browser on start", "web", "bool"),
     Field("WEB_ENABLED", "Web interface enabled", "web", "bool",
           help="Careful: turning this off locks you out of the web interface (then only via .env)."),
+    # Updates
+    Field("AUTO_UPDATE", "Update automatically", "updates", "bool",
+          help="On (default): the bot checks GitHub regularly, installs a new version by itself and restarts "
+               "(about 10 seconds offline). Your .env, data/, logs/ and edited rules/knowledge base are never "
+               "touched."),
+    Field("AUTO_UPDATE_INTERVAL", "Check every … minutes", "updates", "int", placeholder="5"),
+    Field("AUTO_UPDATE_REPO", "GitHub repository", "updates", advanced=True, placeholder="lukas04545/ff",
+          help="owner/name of the public repository the bot updates from."),
+    Field("AUTO_UPDATE_BRANCH", "Branch", "updates", advanced=True, placeholder="main"),
     # Templates
     Field("KICK_COMMAND_TEMPLATE", "Kick command", "templates", placeholder='kick "{name}"'),
     Field("BAN_COMMAND_TEMPLATE", "Ban command", "templates", placeholder='banid "{name}"'),
@@ -177,6 +188,10 @@ def validate(key: str, value: str) -> str | None:
         return f'"{f.label}": allowed values are {", ".join(f.choices)}.'
     if key == "RCON_HOST" and (":" in value or "/" in value):
         return 'Enter the server IP without a port and without "/".'
+    if key == "AUTO_UPDATE_REPO" and not re.fullmatch(r"[\w.-]+/[\w.-]+", value):
+        return f'"{f.label}" must look like owner/repository.'
+    if key == "AUTO_UPDATE_BRANCH" and not re.fullmatch(r"[\w./-]+", value):
+        return f'"{f.label}" is not a valid branch name.'
     if key == "WEB_PUBLIC_URL" and not value.startswith(("https://", "http://")):
         return f'"{f.label}" must start with https://'
     if "\n" in value and f.kind != "textarea":
