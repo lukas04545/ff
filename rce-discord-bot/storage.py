@@ -210,6 +210,20 @@ class Storage:
                 max_players INTEGER,
                 queued INTEGER NOT NULL DEFAULT 0
             );
+            -- Admin abuse cases: steps that wait for staff approval (e.g. entity.deleteby)
+            CREATE TABLE IF NOT EXISTS abuse_cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player TEXT NOT NULL,
+                what TEXT NOT NULL,
+                done TEXT NOT NULL DEFAULT '',          -- commands already run automatically (with replies)
+                status TEXT NOT NULL DEFAULT 'pending', -- pending / approved / rejected
+                decided_by TEXT,
+                result TEXT,
+                channel_id INTEGER,
+                message_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                decided_at TEXT
+            );
             CREATE TABLE IF NOT EXISTS custom_kit_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
@@ -906,6 +920,42 @@ class Storage:
             rows = self._db.execute("SELECT ts AS t, players AS p, max_players AS m FROM population WHERE ts >= ? "
                                     "ORDER BY ts", (since,)).fetchall()
         return [(int(r["t"]), round(float(r["p"]), 1), int(r["m"] or 0)) for r in rows]
+
+    # ------------------------------------------------------------ Admin abuse cases
+
+    def add_abuse_case(self, player: str, what: str, done: str) -> int:
+        cur = self._db.execute("INSERT INTO abuse_cases (player, what, done) VALUES (?, ?, ?)", (player, what, done))
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def set_abuse_message(self, case_id: int, channel_id: int, message_id: int) -> None:
+        self._db.execute("UPDATE abuse_cases SET channel_id = ?, message_id = ? WHERE id = ?",
+                         (channel_id, message_id, case_id))
+        self._db.commit()
+
+    def abuse_case(self, case_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM abuse_cases WHERE id = ?", (case_id,)).fetchone()
+
+    def abuse_case_by_message(self, message_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM abuse_cases WHERE message_id = ?", (message_id,)).fetchone()
+
+    def abuse_cases(self, *, status: str | None = None, limit: int = 20) -> list[sqlite3.Row]:
+        sql, args = "SELECT * FROM abuse_cases", []
+        if status:
+            sql += " WHERE status = ?"
+            args.append(status)
+        return self._db.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+
+    def decide_abuse_case(self, case_id: int, status: str, decided_by: str) -> bool:
+        """pending -> approved/rejected (only once – two staff clicking at the same time can't both run it)."""
+        cur = self._db.execute("UPDATE abuse_cases SET status = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP "
+                               "WHERE id = ? AND status = 'pending'", (status, decided_by, case_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def set_abuse_result(self, case_id: int, result: str) -> None:
+        self._db.execute("UPDATE abuse_cases SET result = ? WHERE id = ?", (result, case_id))
+        self._db.commit()
 
     # ------------------------------------------------------------ Timed roles
 

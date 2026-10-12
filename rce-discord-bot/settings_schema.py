@@ -183,10 +183,13 @@ FIELDS: list[Field] = [
           help="Run right before the kill (default: switch god mode off so the kill works). Separated by ; – "
                "{name} = player, - = nothing."),
     Field("ABUSE_KILL_COMMAND", "Kill command", "abuse", advanced=True, placeholder='global.killplayer "{name}"'),
-    Field("ABUSE_AFTER_KILL_COMMANDS", "Commands after the kill", "abuse", advanced=True,
+    Field("ABUSE_AFTER_KILL_COMMANDS", "Commands right after the kill", "abuse", advanced=True, placeholder="-",
+          help="Run automatically right after the kill, separated by ; – {name} = player. Default: nothing."),
+    Field("ABUSE_APPROVAL_COMMANDS", "Commands only after staff approval", "abuse", advanced=True,
           placeholder='entity.deleteby "{name}"',
-          help="Run right after the kill, separated by ; – {name} = player. Default entity.deleteby deletes everything "
-               "the player owns (bases, deployables). Enter - to run nothing."),
+          help="NOT run automatically: staff approves or rejects them with the buttons on the Discord alert or here in "
+               "the web interface. Default entity.deleteby deletes everything the player owns (bases, deployables). "
+               "Separated by ; – {name} = player, - = nothing."),
     Field("ABUSE_ON_RESPAWN_COMMANDS", "Commands when they respawn", "abuse", advanced=True,
           placeholder='global.sleep "{name}"',
           help="Run once the punished player respawns (\"has entered the game\" in the log, within 1 hour). "

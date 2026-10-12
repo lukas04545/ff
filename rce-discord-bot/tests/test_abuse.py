@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cogs.abuse import AbuseGuard
+from cogs.abuse import AbuseGuard, CaseView
 from rce import log_parser as lp
 from storage import Storage
 
@@ -20,7 +20,7 @@ def guard(tmp_path):
                           abuse_remove_admin_commands=('removeowner "{name}"', 'removemoderator "{name}"'),
                           abuse_before_kill_commands=('global.god 0 "{name}"',),
                           abuse_kill_command='global.killplayer "{name}"',
-                          abuse_after_kill_commands=('entity.deleteby "{name}"',),
+                          abuse_after_kill_commands=(), abuse_approval_commands=('entity.deleteby "{name}"',),
                           abuse_on_respawn_commands=('global.sleep "{name}"',), guild_id=1, alert_channel_id=9,
                           admin_log_channel_id=None, alert_role_ids=frozenset({42}))
 
@@ -30,9 +30,19 @@ def guard(tmp_path):
         return "Removed" if cmd.startswith("remove") else ""
     rcon = SimpleNamespace(command=command, recent_commands=deque(maxlen=500))
 
+    views = []
+
     class Channel:
         async def send(self, content=None, embed=None, **kw):
             alerts.append((content, embed))
+            views.append(kw.get("view"))
+            return SimpleNamespace(id=777, channel=SimpleNamespace(id=9))
+
+        async def fetch_message(self, mid):
+            async def edit(embed=None, view="unchanged"):
+                alerts.append(("edited", embed))
+                views.append(view)
+            return SimpleNamespace(id=mid, edit=edit)
     import discord
     old = discord.abc.Messageable
     discord.abc.Messageable = Channel
@@ -48,7 +58,7 @@ def guard(tmp_path):
     db.link_player(7, "RogueAdmin")
     bot = SimpleNamespace(config=cfg, rcon=rcon, db=db, audit=audit.append, get_channel=lambda cid: Channel(),
                           get_guild=lambda gid: guild, guilds=[guild])
-    yield SimpleNamespace(cog=AbuseGuard(bot), bot=bot, sent=sent, alerts=alerts, audit=audit, cfg=cfg)
+    yield SimpleNamespace(cog=AbuseGuard(bot), bot=bot, sent=sent, alerts=alerts, audit=audit, cfg=cfg, views=views)
     discord.abc.Messageable = old
     db.close()
 
@@ -62,20 +72,32 @@ def spawn(guard, line):
 def test_rogue_admin_is_punished_once(guard):
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
     assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.god 0 "RogueAdmin"',
-                          'global.killplayer "RogueAdmin"', 'entity.deleteby "RogueAdmin"']
+                          'global.killplayer "RogueAdmin"']                 # deletion waits for staff
+    case = guard.bot.db.abuse_cases()[0]
+    assert case["status"] == "pending" and case["player"] == "RogueAdmin" and case["message_id"] == 777
+    content, embed = guard.alerts[0]
+    assert "Waiting for staff" in [f.name for f in embed.fields][-2] and isinstance(guard.views[0], CaseView)
     # Respawn of someone else: nothing; respawn of the punished player: global.sleep once
     asyncio.run(guard.cog.on_rce_respawn(lp.parse_line("Innocent [SCARLETT] has entered the game")))
     asyncio.run(guard.cog.on_rce_respawn(lp.parse_line("RogueAdmin [SCARLETT] has entered the game")))
     asyncio.run(guard.cog.on_rce_respawn(lp.parse_line("RogueAdmin [SCARLETT] has entered the game")))
-    assert guard.sent[5:] == ['global.sleep "RogueAdmin"'] and "respawned" in guard.audit[-1]
-    del guard.sent[5:]
+    assert guard.sent[4:] == ['global.sleep "RogueAdmin"'] and "respawned" in guard.audit[-1]
+    del guard.sent[4:]
+    # Staff approves -> entity.deleteby runs once; a second click can't run it again
+    ok, text = asyncio.run(guard.cog.decide(case["id"], True, "Boss"))
+    assert ok and guard.sent[-1] == 'entity.deleteby "RogueAdmin"'
+    assert not asyncio.run(guard.cog.decide(case["id"], False, "Other"))[0]
+    assert guard.bot.db.abuse_case(case["id"])["status"] == "approved"
+    edited = [e for c, e in guard.alerts if c == "edited"][0]
+    assert edited.fields[-2].name == "✅ Approved by Boss" and guard.views[-1] is None   # buttons removed
+    del guard.sent[4:]
     content, embed = guard.alerts[0]
     assert content == "<@&42>" and "3 × Rocket" in embed.description
-    assert "Removed" in embed.fields[0].value and "<@7>" in embed.fields[1].value
+    assert "Removed" in embed.fields[0].value and "<@7>" in embed.fields[-1].value
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")                       # second stack of the same spawn
-    assert len(guard.sent) == 5
+    assert len(guard.sent) == 4
     spawn(guard, "[ServerVar] giving Someone 1 x Timed Explosive Charge")          # C4
-    assert guard.sent[-2:] == ['global.killplayer "Someone"', 'entity.deleteby "Someone"']
+    assert guard.sent[-1] == 'global.killplayer "Someone"'
     status = guard.cog.status()                                       # web interface status box
     assert status["active"] and status["players"] == ["ownergt"]
     assert status["recent"][0]["player"] == "Someone" and status["recent"][0]["result"].startswith("PUNISHED")
@@ -122,7 +144,7 @@ def test_inactive_without_exemptions(guard):
     guard.cfg.abuse_exempt_players = frozenset({"ownergt"})
     guard.cog._noted.clear()
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
-    assert guard.sent[-2:] == ['global.killplayer "RogueAdmin"', 'entity.deleteby "RogueAdmin"']
+    assert guard.sent[-1] == 'global.killplayer "RogueAdmin"'
 
 
 def test_allowed_spawn_is_logged(guard):
