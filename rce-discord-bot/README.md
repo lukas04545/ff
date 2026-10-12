@@ -636,6 +636,17 @@ kits. Replies are sent without @mentions.
   can never claim for anyone else or give other kits – so nobody can talk it into more than they could
   claim themselves. Not linked yet? It explains `/customkit link`.
 
+**Giveaway prizes in tickets:** if another bot (e.g. Helios) posts "Giveaway Winner" messages in a
+channel (setting *Channel with giveaway winners*, preset to this server's channel), the AI can look up the
+ticket owner's wins there (matched by the @mention or the `Winner: name` line, only messages from bots):
+- **Lifetime kit prize** (prize text names one of your kits and says *lifetime / permanent / perm /
+  forever*): the AI gives the player that kit's **Discord role** – the custom kit's claim role or the
+  required role of a role-locked autokit – so they can claim it from then on. Each win can be redeemed
+  **only once**; it's posted in the ticket and the admin log.
+- **Everything else** (store credit, a kit for a limited time, unknown prize): the AI tells the player and
+  calls staff with the prize and a link to the winner message.
+- The bot needs *Read Message History* in that channel and *Manage Roles* with its role above the kit roles.
+
 ### Setup
 
 1. **DeepSeek platform:** Create an account at [platform.deepseek.com](https://platform.deepseek.com),

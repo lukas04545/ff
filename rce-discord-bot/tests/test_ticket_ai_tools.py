@@ -78,7 +78,7 @@ def test_ai_looks_up_and_claims_kit(setup):
 
     async def fake_chat(messages, *, tools=None, json_mode=True, **kw):
         seen_messages.append([dict(m) for m in messages])
-        assert tools and {t["function"]["name"] for t in tools} == {"get_my_kits", "claim_kit"}
+        assert tools and {"get_my_kits", "claim_kit"} <= {t["function"]["name"] for t in tools}
         return script.pop(0)
     s.tickets.ai.chat = fake_chat
 
@@ -142,3 +142,76 @@ def test_prompt_and_client_with_tools():
         await client.close()
         await runner.cleanup()
     asyncio.run(scenario())
+
+
+# ------------------------------------------------------------ Giveaway wins (Helios)
+
+def _helios(mid, *, winner_id, winner_name, prize, author_bot=True):
+    from datetime import datetime, timezone
+    field = SimpleNamespace(name="Prize", value=prize)
+    embed = SimpleNamespace(title="Giveaway Winner", description=f"Winner: `{winner_name}`", fields=[field])
+    return SimpleNamespace(id=mid, content="<@%d>" % winner_id, embeds=[embed],
+                           mentions=[SimpleNamespace(id=winner_id)], author=SimpleNamespace(bot=author_bot),
+                           created_at=datetime(2026, 10, 12, 17, 15, tzinfo=timezone.utc),
+                           jump_url=f"https://discord.com/channels/1/2/{mid}")
+
+
+def test_parse_helios_winner_message():
+    from support.giveaway_wins import match_kit, parse_win
+    win = parse_win(_helios(1, winner_id=7, winner_name="zimisgood.", prize="Store credit"))
+    assert win.prize == "Store credit" and win.winner_ids == [7] and win.winner_names == ["zimisgood."]
+    assert not win.lifetime and win.won_by(99, {"zimisgood."}) and not win.won_by(99, {"bob"})
+    plain = SimpleNamespace(id=2, content="", mentions=[], created_at=None, jump_url="", embeds=[SimpleNamespace(
+        title="Giveaway Winner", fields=[], description="Winner: `bob`\nPrize\nVIP Kit (Lifetime)")])
+    win2 = parse_win(plain)
+    assert win2.prize == "VIP Kit (Lifetime)" and win2.lifetime and win2.winner_names == ["bob"]
+    assert parse_win(SimpleNamespace(id=3, content="hello", embeds=[], mentions=[])) is None
+    assert match_kit("VIP Kit (Lifetime)", ["VIP", "VIP Plus", "Starter"]) == "VIP"
+    assert match_kit("VIP Plus kit – permanent", ["VIP", "VIP Plus"]) == "VIP Plus"
+    assert match_kit("Store credit", ["VIP"]) is None
+
+
+def test_ai_redeems_lifetime_kit_win(setup):
+    s = setup
+    vip_role = SimpleNamespace(id=55, name="VIP")
+    granted = []
+    member = s.channel.guild.get_member(7)
+    member.roles = []                      # owner doesn't have the VIP role yet
+    member.name, member.global_name, member.display_name = "zimisgood.", "zim", "zim-is-good"
+
+    async def add_roles(role, reason=None):
+        granted.append((role.name, reason))
+        member.roles.append(role)
+    member.add_roles = add_roles
+    history = [
+        _helios(501, winner_id=7, winner_name="zimisgood.", prize="VIP Kit (Lifetime)"),
+        _helios(502, winner_id=8, winner_name="someoneelse", prize="VIP Kit (Lifetime)"),
+        _helios(503, winner_id=7, winner_name="zimisgood.", prize="Store credit"),
+        _helios(504, winner_id=7, winner_name="zimisgood.", prize="VIP Kit 7 days"),
+        _helios(505, winner_id=7, winner_name="zimisgood.", prize="VIP Kit (Lifetime)", author_bot=False),  # fake
+    ]
+
+    class Channel:
+        async def history(self, limit=None):
+            for m in history:
+                yield m
+    s.channel.guild.get_channel = lambda cid: Channel() if cid == 1558525305004757032 else None
+    s.channel.guild.get_role = lambda rid: vip_role if rid == 55 else None
+    run = lambda name, args=None: asyncio.run(s.tickets._run_tool(_call(name, args), s.ticket, s.channel))
+
+    wins = run("get_my_giveaway_wins")["wins"]
+    assert [(w["message_id"], w["prize"], w["lifetime"], w["kit"], w["kit_role"]) for w in wins] == [
+        ("501", "VIP Kit (Lifetime)", True, "VIP", "VIP"),
+        ("503", "Store credit", False, None, None),
+        ("504", "VIP Kit 7 days", False, "VIP", "VIP")]                       # not 502 (other user), not 505 (fake)
+
+    assert run("redeem_giveaway_win", {"message_id": "502"})["result"] == "not_your_win"
+    assert run("redeem_giveaway_win", {"message_id": "503"})["result"] == "needs_staff"   # store credit
+    assert run("redeem_giveaway_win", {"message_id": "504"})["reason"] == "Kit prize is not lifetime"
+    r = run("redeem_giveaway_win", {"message_id": "501"})
+    assert r["ok"] and r["action"] == "role VIP given" and granted[0][0] == "VIP"
+    assert "redeemed" in s.posted[-1] and "VIP" in s.posted[-1]
+    s.tickets._win_cache = None
+    assert run("redeem_giveaway_win", {"message_id": "501"})["result"] == "already_redeemed"  # only once
+    assert len(granted) == 1
+    assert run("get_my_kits")["claimable_kits"][0]["kit"] == "VIP"             # role now unlocks the kit

@@ -123,6 +123,7 @@ class Config:
     rust_server_platform: str
     rust_server_wipe: str
     giveaway_winner_role_id: int | None
+    giveaway_win_channel_id: int | None   # channel where another bot (e.g. Helios) announces winners
 
     # Web interface
     web_enabled: bool
@@ -144,6 +145,8 @@ def required_intents(cfg: Config) -> dict[str, list[str]]:
         message_content.append("Chat bridge")
     if cfg.ticket_category_id:
         message_content.append("Support tickets")
+        if getattr(cfg, "giveaway_win_channel_id", None):
+            message_content.append("Giveaway wins (ticket AI)")
     if cfg.discord_log_channel_id:
         message_content.append("Discord log")
         members.append("Discord log (joins/leaves)")
@@ -216,6 +219,8 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         rust_server_platform=_get("RUST_SERVER_PLATFORM", "Rust Console Edition (Xbox & PlayStation)"),
         rust_server_wipe=_get("RUST_SERVER_WIPE", "See the announcements on Discord"),
         giveaway_winner_role_id=_int("GIVEAWAY_WINNER_ROLE_ID"),
+        # Default: this server's Helios winner channel (change or clear it in the settings)
+        giveaway_win_channel_id=_int("GIVEAWAY_WIN_CHANNEL_ID", 1558525305004757032),
         web_enabled=_bool("WEB_ENABLED", True),
         web_host=_get("WEB_HOST", "127.0.0.1"),
         web_port=_int("WEB_PORT", 8080),
