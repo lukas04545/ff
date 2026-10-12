@@ -103,23 +103,29 @@ def load(path: Path) -> PriceList | None:
     return pl if pl.rules else None
 
 
-def quote(pl: PriceList, items: list[dict], timer_hours: int | None = None) -> Quote:
-    """items: [{"short", "amount"}]. Prices per rule are rounded up to full bundles."""
+def quote(pl: PriceList, items: list[dict], timer_hours: int | None = None,
+          existing: list[dict] | None = None) -> Quote:
+    """items: [{"short", "amount"}]. Prices per rule are rounded up to full bundles.
+    existing: what the kit already holds (add-ons) – counts for the caps, is not priced again."""
     amounts: dict[str, int] = {}
     for i in items:
         amounts[i["short"]] = amounts.get(i["short"], 0) + int(i["amount"])
+    totals = dict(amounts)
+    for i in existing or []:
+        totals[i["short"]] = totals.get(i["short"], 0) + int(i["amount"])
+    after = " in the kit after adding" if existing else ""
 
     over_cap = []
     for cap in pl.caps:
         if cap.each:
             for short in sorted(cap.items):
-                if amounts.get(short, 0) > cap.limit:
-                    over_cap.append(f"{short}: max {cap.limit:,} (requested {amounts[short]:,})")
+                if totals.get(short, 0) > cap.limit:
+                    over_cap.append(f"{short}: max {cap.limit:,} (requested {totals[short]:,}{after})")
         else:
-            total = sum(amounts.get(s, 0) for s in cap.items)
+            total = sum(totals.get(s, 0) for s in cap.items)
             if total > cap.limit:
-                names = ", ".join(sorted(s for s in cap.items if s in amounts))
-                over_cap.append(f"{names}: max {cap.limit:,} together (requested {total:,})")
+                names = ", ".join(sorted(s for s in cap.items if s in totals))
+                over_cap.append(f"{names}: max {cap.limit:,} together (requested {total:,}{after})")
 
     # Free extras ("with"): covered up to the amount of the rule's main items
     remaining = dict(amounts)

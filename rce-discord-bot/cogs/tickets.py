@@ -122,6 +122,23 @@ PURCHASE_TOOLS = [
             "checkout_name": {"type": "string", "description": "Name/gamertag they entered when paying on the store"}},
             "required": ["items", "proof"]}}},
     {"type": "function", "function": {
+        "name": "request_kit_addon",
+        "description": "The ticket owner BOUGHT (or won) extra items for a custom kit THEY originally bought: files a "
+                       "request to ADD these items to that kit. Only works for the original buyer (see "
+                       "kits_you_bought in get_my_kits). Priced and payment-checked like a new kit; staff approves "
+                       "otherwise. Pass only the items to add, not the whole kit.",
+        "parameters": {"type": "object", "properties": {
+            "kit": {"type": "string", "description": "Name of their existing custom kit"},
+            "items": {"type": "array", "description": "Only the items to ADD",
+                      "items": {"type": "object", "properties": {
+                          "item": {"type": "string", "description": "Rust shortname (e.g. rifle.ak) or item name"},
+                          "amount": {"type": "integer", "description": "Amount to add, e.g. 50000 for 50k"}},
+                          "required": ["item", "amount"]}},
+            "proof": {"type": "string", "description": "What they told you: store, order/transaction ID, date, price"},
+            "won_in_giveaway": {"type": "boolean", "description": "true if they WON the add-on in a giveaway"},
+            "checkout_name": {"type": "string", "description": "Name/gamertag they entered when paying on the store"}},
+            "required": ["kit", "items", "proof"]}}},
+    {"type": "function", "function": {
         "name": "quote_custom_kit",
         "description": "Prices an item list with the server's price list (and checks the custom kit limits) WITHOUT "
                        "filing anything – use it when a player asks what a kit would cost.",
@@ -734,6 +751,9 @@ class Tickets(commands.Cog):
                                       "how_to_spend": "/shop list and /shop buy in Discord", "daily": "/daily"}
             if overview["linked_player"] is None:
                 overview["note"] = "Not linked yet: the player must use /customkit link while online in-game."
+            bought = self.bot.db.kits_bought_by(member.id)
+            if bought:
+                overview["kits_you_bought"] = bought    # add-ons (request_kit_addon) only for these
             return overview
         if name == "claim_kit":
             outcome = await custom.claim_for(member, str(args.get("kit") or ""), via=f"ticket #{ticket['id']} (AI)")
@@ -775,6 +795,17 @@ class Tickets(commands.Cog):
                                            timer_hours=_int_or_none(args.get("claim_timer_hours")),
                                            giveaway=bool(args.get("won_in_giveaway")),
                                            checkout_name=str(args.get("checkout_name") or "") or None)
+        if name == "request_kit_addon":
+            requests = self.bot.get_cog("KitRequests")
+            items = args.get("items")
+            if requests is None:
+                return {"error": "Kit purchases can't be handled here – call staff."}
+            if not isinstance(items, list) or not items:
+                return {"error": "items must be a non-empty list of {item, amount}"}
+            return await requests.file_addon(channel, ticket, member, str(args.get("kit") or ""), items,
+                                             str(args.get("proof") or "")[:500],
+                                             giveaway=bool(args.get("won_in_giveaway")),
+                                             checkout_name=str(args.get("checkout_name") or "") or None)
         if name == "quote_custom_kit":
             requests = self.bot.get_cog("KitRequests")
             items = args.get("items")
@@ -1210,6 +1241,17 @@ class Tickets(commands.Cog):
                         "staff approval: " + ", ".join(f"{i['short']} ×{i['amount']:,}" for i in resolved)[:800])
             return {"ok": True, "result": "waiting_for_staff", "items": resolved,
                     **({"price": requests.quote_for_ai(q)} if q else {}), **note}
+        if name == "request_kit_addon":
+            from cogs.kit_requests import resolve_items
+            kit = str(args.get("kit") or "")
+            buyer = self.bot.db.kit_buyer(kit)
+            if buyer != member.id:
+                used.append(f"request_kit_addon **{safe_md(kit)}** → not_your_kit (you didn't buy it)")
+                return {"ok": False, "result": "not_your_kit", "kits_you_bought": self.bot.db.kits_bought_by(member.id)}
+            resolved, _ = resolve_items(args.get("items") if isinstance(args.get("items"), list) else [])
+            used.append(f"request_kit_addon **{safe_md(kit)}** – would add: "
+                        + ", ".join(f"{i['short']} ×{i['amount']:,}" for i in resolved)[:800])
+            return {"ok": True, "result": "waiting_for_staff", "items": resolved, **note}
         if name == "quote_custom_kit":
             used.append("quote_custom_kit")
             return self._quote_dry(args)

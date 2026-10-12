@@ -5,6 +5,7 @@ player list, stats are counted per name. Name change = new entry.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -311,7 +312,8 @@ class Storage:
         if "items" not in columns:
             # Requests for a NEW custom kit carry its items (JSON)
             self._db.execute("ALTER TABLE kit_requests ADD COLUMN items TEXT")
-        for column, kind in (("source", "TEXT NOT NULL DEFAULT 'purchase'"),   # purchase / giveaway
+        for column, kind in (("addon", "INTEGER NOT NULL DEFAULT 0"),           # items for an existing kit
+                             ("source", "TEXT NOT NULL DEFAULT 'purchase'"),   # purchase / giveaway
                              ("price", "REAL"), ("currency", "TEXT"),         # price list quote (new kits)
                              ("cooldown_minutes", "INTEGER"),                 # bought claim timer
                              ("checkout_name", "TEXT"),                       # name used on the store
@@ -978,13 +980,41 @@ class Storage:
     def add_kit_request(self, ticket_id: int | None, user_id: int, kit: str, days: int, proof: str,
                         items: str | None = None, *, source: str = "purchase", price: float | None = None,
                         currency: str | None = None, cooldown_minutes: int | None = None,
-                        checkout_name: str | None = None) -> int:
+                        checkout_name: str | None = None, addon: bool = False) -> int:
         cur = self._db.execute(
             "INSERT INTO kit_requests (ticket_id, user_id, kit, days, proof, items, source, price, currency, "
-            "cooldown_minutes, checkout_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (ticket_id, user_id, kit, days, proof, items, source, price, currency, cooldown_minutes, checkout_name))
+            "cooldown_minutes, checkout_name, addon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ticket_id, user_id, kit, days, proof, items, source, price, currency, cooldown_minutes, checkout_name,
+             int(addon)))
         self._db.commit()
         return int(cur.lastrowid)
+
+    def kit_buyer(self, kit: str) -> int | None:
+        """Discord ID of the member who originally bought this custom kit (approved new-kit request), else None.
+        Kits made by hand have no buyer."""
+        row = self._db.execute("SELECT user_id FROM kit_requests WHERE kit = ? COLLATE NOCASE AND status = 'approved' "
+                               "AND items IS NOT NULL AND addon = 0 ORDER BY id LIMIT 1", (kit,)).fetchone()
+        if row:
+            return int(row["user_id"])
+        kit_row = self.custom_kit(kit)
+        m = re.match(r"Bought by user (\d+)", (kit_row["description"] or "") if kit_row else "")
+        return int(m.group(1)) if m else None
+
+    def kits_bought_by(self, user_id: int) -> list[str]:
+        rows = self._db.execute("SELECT DISTINCT kit FROM kit_requests WHERE user_id = ? AND status = 'approved' "
+                                "AND items IS NOT NULL AND addon = 0", (user_id,)).fetchall()
+        return [r["kit"] for r in rows if self.custom_kit(r["kit"]) is not None]
+
+    def increase_custom_kit_item(self, kit: str, shortname: str, amount: int) -> None:
+        """Adds the amount to the kit's existing row for this item, or adds a new row."""
+        row = self._db.execute("SELECT id FROM custom_kit_items WHERE kit = ? AND shortname = ? ORDER BY id LIMIT 1",
+                               (kit, shortname)).fetchone()
+        if row:
+            self._db.execute("UPDATE custom_kit_items SET amount = amount + ? WHERE id = ?", (amount, row["id"]))
+        else:
+            self._db.execute("INSERT INTO custom_kit_items (kit, shortname, amount) VALUES (?, ?, ?)",
+                             (kit, shortname, amount))
+        self._db.commit()
 
     def set_kit_request_payment(self, request_id: int, payment_ids: list[str], note: str) -> None:
         self._db.execute("UPDATE kit_requests SET payment_ids = ?, pay_note = ? WHERE id = ?",

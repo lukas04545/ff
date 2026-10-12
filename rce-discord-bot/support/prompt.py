@@ -130,6 +130,10 @@ PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
     Claim timer: the kit's claim cooldown; if they bought a shorter one (e.g. 24h, 12h, 6h) pass
     claim_timer_hours. Ask for the name/gamertag they used at checkout if it differs from their in-game name
     (checkout_name). quote_custom_kit tells the price of a list without filing anything ("how much is …?").
+  * request_kit_addon: when they bought (or won) EXTRA items for a custom kit they originally bought themselves
+    (get_my_kits shows kits_you_bought), file only the items to ADD – same item rules as above. It is priced and
+    payment-checked like a new kit (add-ons keep the kit's claim timer). not_your_kit = only the original buyer can
+    add to a kit; tell them politely (staff can still change kits by hand). Never file a whole new kit for this.
   * Giveaway prizes: if they WON a custom kit (existing or their own item list) in a giveaway instead of buying it,
     use the same tools with won_in_giveaway = true – no payment is checked, staff always approves those.
     (For prizes from the bot's giveaways use get_my_giveaway_wins / redeem_giveaway_win first.)
