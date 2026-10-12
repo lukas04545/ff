@@ -224,6 +224,22 @@ class Storage:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 decided_at TEXT
             );
+            -- Bought custom kits reported in a ticket: staff approves -> kit role for the buyer
+            CREATE TABLE IF NOT EXISTS kit_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER,
+                user_id INTEGER NOT NULL,
+                kit TEXT NOT NULL,
+                days INTEGER NOT NULL DEFAULT 0,       -- 0 = permanent
+                proof TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',   -- pending / approved / rejected
+                decided_by TEXT,
+                role_id INTEGER,
+                channel_id INTEGER,
+                message_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                decided_at TEXT
+            );
             CREATE TABLE IF NOT EXISTS custom_kit_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
@@ -920,6 +936,51 @@ class Storage:
             rows = self._db.execute("SELECT ts AS t, players AS p, max_players AS m FROM population WHERE ts >= ? "
                                     "ORDER BY ts", (since,)).fetchall()
         return [(int(r["t"]), round(float(r["p"]), 1), int(r["m"] or 0)) for r in rows]
+
+    # ------------------------------------------------------------ Kit purchase requests
+
+    def add_kit_request(self, ticket_id: int | None, user_id: int, kit: str, days: int, proof: str) -> int:
+        cur = self._db.execute("INSERT INTO kit_requests (ticket_id, user_id, kit, days, proof) VALUES (?, ?, ?, ?, ?)",
+                               (ticket_id, user_id, kit, days, proof))
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def set_kit_request_message(self, request_id: int, channel_id: int, message_id: int) -> None:
+        self._db.execute("UPDATE kit_requests SET channel_id = ?, message_id = ? WHERE id = ?",
+                         (channel_id, message_id, request_id))
+        self._db.commit()
+
+    def kit_request(self, request_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM kit_requests WHERE id = ?", (request_id,)).fetchone()
+
+    def kit_request_by_message(self, message_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM kit_requests WHERE message_id = ?", (message_id,)).fetchone()
+
+    def kit_requests(self, *, status: str | None = None, user_id: int | None = None, limit: int = 50) -> list[sqlite3.Row]:
+        sql, args = "SELECT * FROM kit_requests WHERE 1=1", []
+        if status:
+            sql += " AND status = ?"
+            args.append(status)
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            args.append(user_id)
+        return self._db.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+
+    def decide_kit_request(self, request_id: int, status: str, decided_by: str) -> bool:
+        cur = self._db.execute("UPDATE kit_requests SET status = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP "
+                               "WHERE id = ? AND status = 'pending'", (status, decided_by, request_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def reopen_kit_request(self, request_id: int) -> None:
+        """Approval failed (e.g. missing permission) – back to pending so staff can try again."""
+        self._db.execute("UPDATE kit_requests SET status = 'pending', decided_by = NULL, decided_at = NULL "
+                         "WHERE id = ?", (request_id,))
+        self._db.commit()
+
+    def set_kit_request_role(self, request_id: int, role_id: int) -> None:
+        self._db.execute("UPDATE kit_requests SET role_id = ? WHERE id = ?", (role_id, request_id))
+        self._db.commit()
 
     # ------------------------------------------------------------ Admin abuse cases
 

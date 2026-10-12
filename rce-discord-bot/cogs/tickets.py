@@ -65,6 +65,20 @@ KIT_TOOLS = [
             "kit": {"type": "string", "description": "Exact kit name from get_my_kits"}}, "required": ["kit"]}}},
 ]
 
+PURCHASE_TOOLS = [
+    {"type": "function", "function": {
+        "name": "request_kit_access",
+        "description": "The ticket owner says they BOUGHT a custom kit: files a request that staff approves or rejects "
+                       "with a button. On approval they get the kit's Discord role and can claim the kit with "
+                       "/customkit claim. Nothing is given before staff approves. Use once per kit.",
+        "parameters": {"type": "object", "properties": {
+            "kit": {"type": "string", "description": "Name of the custom kit they bought"},
+            "proof": {"type": "string", "description": "What they told you: store, order/transaction ID, date, price"},
+            "days": {"type": "integer", "description": "Only if the purchase is time-limited: number of days. "
+                                                       "0 = permanent (default)"}},
+            "required": ["kit", "proof"]}}},
+]
+
 GIVEAWAY_TOOLS = [
     {"type": "function", "function": {
         "name": "get_my_giveaway_wins",
@@ -421,7 +435,8 @@ class Tickets(commands.Cog):
         system = build_system_prompt(server_name=self._server_name(), topic=ticket["topic"],
                                      ingame_name=ticket["ingame_name"], status=self._status_text(),
                                      knowledge=self._knowledge(), kit_tools=bool(tools),
-                                     giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools))
+                                     giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools),
+                purchase_tools=any(t in PURCHASE_TOOLS for t in tools))
         messages = build_messages(system, await self._history(channel, ticket))
         try:
             async with channel.typing():
@@ -462,7 +477,8 @@ class Tickets(commands.Cog):
         if not self._kit_tools_enabled():
             return []
         # Giveaway tools always: wins of the bot's own /giveaway are in the database
-        return KIT_TOOLS + GIVEAWAY_TOOLS
+        purchase = PURCHASE_TOOLS if self.bot.get_cog("KitRequests") is not None else []
+        return KIT_TOOLS + GIVEAWAY_TOOLS + purchase
 
     async def _ticket_member(self, channel: discord.TextChannel, ticket) -> discord.Member | None:
         member = channel.guild.get_member(ticket["user_id"])
@@ -531,6 +547,16 @@ class Tickets(commands.Cog):
             return await self._tool_giveaway_wins(channel.guild, member)
         if name == "redeem_giveaway_win":
             return await self._tool_redeem_win(channel, ticket, member, str(args.get("message_id") or ""))
+        if name == "request_kit_access":
+            requests = self.bot.get_cog("KitRequests")
+            if requests is None:
+                return {"error": "Kit purchases can't be handled here – call staff."}
+            try:
+                days = max(0, min(int(args.get("days") or 0), 3650))
+            except (TypeError, ValueError):
+                days = 0
+            return await requests.file(channel, ticket, member, str(args.get("kit") or ""),
+                                       str(args.get("proof") or "")[:500], days)
         return {"error": f"Unknown tool {name}"}
 
     # ------------------------------------------------------------ Giveaway wins (own /giveaway + Helios, Kryvon …)
