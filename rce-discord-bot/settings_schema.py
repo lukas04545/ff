@@ -162,7 +162,8 @@ FIELDS: list[Field] = [
           help="Empty = alert channel (or admin log). Support roles are pinged."),
     # Admin abuse protection
     Field("ABUSE_PROTECTION", "Punish admins who spawn raid items", "abuse", "bool",
-          help="On (default): when someone who is NOT allowed spawns rockets or C4, the bot removes their admin and "
+          help="On (default): when someone who is NOT allowed spawns rockets or C4 with the in-game admin panel, the "
+               "bot removes their admin and "
                "kills them in-game, and pings staff. Only active once you set who IS allowed (the next two fields) – "
                "so the owner can never be hit by accident."),
     Field("ABUSE_EXEMPT_ROLE_IDS", "Allowed Discord roles (owner, co-owner)", "abuse", "ids", pick="role",

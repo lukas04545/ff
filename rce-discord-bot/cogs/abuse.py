@@ -1,8 +1,10 @@
 """Admin abuse protection: someone who isn't allowed spawns raid items (rockets, C4) -> admin removed, killed.
 
-The server log shows item spawns as "giving <player> <amount> x <item>". On Console Edition admins spawn items for
-themselves, so <player> is the admin who did it. When the item matches ABUSE_ITEMS and the player is not allowed,
-the bot runs ABUSE_REMOVE_ADMIN_COMMANDS and ABUSE_KILL_COMMAND (global.killplayer "<player>") and pings staff.
+Only items spawned with the in-game admin panel count – the server logs them as
+"[ServerVar] giving <player> <amount> x <item>". Gives via RCON/console (the bot's shop and kits, /rcon) look
+different ("[ServerVar] SERVER giving …" or without "[ServerVar]") and are ignored. When the item matches
+ABUSE_ITEMS and the player is not allowed, the bot runs ABUSE_REMOVE_ADMIN_COMMANDS and ABUSE_KILL_COMMAND
+(global.killplayer "<player>") and pings staff.
 
 Allowed: players linked (/customkit link) to a Discord member with an ABUSE_EXEMPT_ROLE_IDS role (owner, co-owner)
 and the names in ABUSE_EXEMPT_PLAYERS. Items the bot gives itself (shop, custom kits, rewards) never count.
@@ -78,7 +80,7 @@ class AbuseGuard(commands.Cog):
 
     @commands.Cog.listener()
     async def on_rce_admin_action(self, ev) -> None:
-        if ev.kind != "item" or not ev.player or not ev.item or not self.forbidden(ev.item):
+        if ev.kind != "item" or not ev.admin_panel or not ev.player or not ev.item or not self.forbidden(ev.item):
             return
         if not self.active:
             if self.bot.config.abuse_protection and not self._warned:

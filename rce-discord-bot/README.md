@@ -856,8 +856,9 @@ and pings `ALERT_ROLE_IDS` in the alert channel – with the server's reply to e
 The protection **only runs once at least one of the two is set**, so the owner can't be hit by accident.
 
 Good to know:
-- Detection uses the server log line `giving <player> 3 x Rocket`. Items the bot hands out itself (shop,
-  custom kits, rewards, `/rcon`) never count. Rocket launchers don't count, only the ammo
+- Only spawns with the **in-game admin panel** count – the server logs them as
+  `[ServerVar] giving <player> 3 x Rocket`. Gives via RCON/console (the bot's shop, kits and rewards,
+  `/rcon`, other bots) are logged differently and never count. Rocket launchers don't count, only the ammo
   (`ABUSE_ITEMS`, default `rocket,c4,timed explosive,explosive.timed`).
 - The log line doesn't say **who** gave the item. Admins spawn items for themselves, so that's the admin –
   but if an admin gives rockets to another player, the log shows (and the bot punishes) that player. The
