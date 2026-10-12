@@ -46,6 +46,23 @@ HISTORY_LIMIT = 40            # number of messages the AI gets as history
 STAFF_REPING_SECONDS = 600    # "Call staff" again only after 10 minutes
 KNOWLEDGE_MAX_CHARS = 12000
 DELETE_DELAY_SECONDS = 5
+RESOLVE_QUESTION = "❓ Is your issue resolved? If yes, I'll close this ticket."
+RESOLVED_REASON = "Resolved (confirmed by the player)"
+_YES = {"yes", "y", "yea", "yeah", "yep", "yup", "ye", "ya", "yes!", "ja", "jep", "jo", "joa", "si", "sí", "oui",
+        "da", "tak", "resolved", "solved", "fixed", "done", "works", "👍", "✅", "thanks",
+        "thank", "thx", "ty", "tysm", "danke", "perfect", "great", "nice"}
+_NO = {"no", "nope", "nah", "not", "nein", "nicht", "noch", "but", "aber", "still", "wait", "how", "why", "what",
+       "where", "when", "which", "who", "wie", "wo", "was", "warum", "wann", "problem", "broken", "doesnt", "dont",
+       "don't", "doesn't", "isn't", "didn't", "can't", "won't", "try",
+       "can", "could", "need", "help", "?"}
+
+
+def is_yes(text: str) -> bool:
+    """Short confirmation like "yes", "yep thanks", "ja passt", "resolved ty" – no "no"/"but"/questions."""
+    words = re.findall(r"[\w']+|[👍✅?]", text.lower())
+    if not words or len(words) > 6 or "?" in text:
+        return False
+    return words[0] in _YES and not any(w in _NO for w in words)
 MAX_TOOL_ROUNDS = 5           # AI tool calls per reply (look up kits, claim, …)
 GIVEAWAY_SCAN_LIMIT = 500     # winner messages read from the giveaway channel
 GIVEAWAY_CACHE_SECONDS = 60
@@ -170,6 +187,24 @@ class TicketControlView(discord.ui.View):
         await self.cog.close_flow(interaction, reason=None)
 
 
+class ResolveView(discord.ui.View):
+    """Persistent Yes/No under the AI's "Is your issue resolved?" question."""
+
+    def __init__(self, cog: "Tickets") -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="Yes, close the ticket", emoji="✅", style=discord.ButtonStyle.success,
+                       custom_id="rce:ticket:resolved")
+    async def yes(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.resolve_answer(interaction, True)
+
+    @discord.ui.button(label="No, I still need help", emoji="✖️", style=discord.ButtonStyle.secondary,
+                       custom_id="rce:ticket:notresolved")
+    async def no(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.resolve_answer(interaction, False)
+
+
 class Tickets(commands.Cog):
     ticket = app_commands.Group(name="ticket", description="Support tickets", guild_only=True)
 
@@ -181,10 +216,13 @@ class Tickets(commands.Cog):
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._last_ping: dict[int, float] = {}
         self._knowledge_cache: tuple[float, str] | None = None
+        self._last_owner_msg: dict[int, float] = {}   # channel -> monotonic time of the player's last message
+        self._resolve_asked: dict[int, int] = {}      # channel -> message id of the open "resolved?" question
 
     async def cog_load(self) -> None:
         self.bot.add_view(TicketPanelView(self))
         self.bot.add_view(TicketControlView(self))
+        self.bot.add_view(ResolveView(self))
         if self.bot.config.ticket_category_id and not self.ai.enabled:
             log.warning("Tickets enabled, but no DEEPSEEK_API_KEY – tickets go straight to staff. "
                         "Create an API key: %s", PLATFORM_KEYS_URL)
@@ -399,6 +437,15 @@ class Tickets(commands.Cog):
                     "the AI assistant is paused in this ticket.",
                     allowed_mentions=discord.AllowedMentions.none())
             return
+        if message.author.id == ticket["user_id"]:
+            self._last_owner_msg[message.channel.id] = time.monotonic()
+            question = self._resolve_asked.pop(message.channel.id, None)
+            if question is not None:
+                await self._clear_resolve_buttons(message.channel, question)
+                if is_yes(message.content):
+                    await message.channel.send(AI_PREFIX + "Glad I could help! Closing the ticket. 👋")
+                    await self._close(message.channel, ticket, message.author, RESOLVED_REASON)
+                    return
         if ticket["ai_enabled"] and not ticket["staff_joined"] and self.ai.enabled:
             self._schedule_ai(message.channel)
 
@@ -505,6 +552,57 @@ class Tickets(commands.Cog):
             self.bot.db.increment_ticket_ai_replies(ticket["id"])
         if answer.escalate:
             await self._escalate(channel, ticket, answer.reason, source="AI")
+        elif answer.reply and self.bot.config.ticket_resolve_minutes:
+            asyncio.create_task(self._resolve_check(channel, self._generation[channel.id]))
+
+    # ------------------------------------------------------------ "Is your issue resolved?"
+
+    async def _resolve_check(self, channel: discord.TextChannel, generation: int) -> None:
+        """Waits until the player has been quiet for TICKET_RESOLVE_MINUTES, then asks once."""
+        wait = self.bot.config.ticket_resolve_minutes * 60
+        last = self._last_owner_msg.get(channel.id, time.monotonic())
+        await asyncio.sleep(max(0.0, last + wait - time.monotonic()))
+        if self._generation.get(channel.id) != generation or channel.id in self._resolve_asked:
+            return  # the player (or staff) wrote again – a newer reply schedules its own check
+        ticket = self.bot.db.ticket_by_channel(channel.id)
+        if (ticket is None or not ticket["ai_enabled"] or ticket["staff_joined"] or ticket["escalated"]
+                or not self.bot.config.ticket_resolve_minutes):
+            return
+        if any(r["ticket_id"] == ticket["id"] for r in self.bot.db.kit_requests(status="pending")):
+            return  # waiting for staff to approve a purchase
+        try:
+            msg = await channel.send(AI_PREFIX + RESOLVE_QUESTION, view=ResolveView(self),
+                                     allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException as exc:
+            log.warning("Resolve question in %s failed: %s", channel.id, exc)
+            return
+        self._resolve_asked[channel.id] = msg.id
+
+    async def _clear_resolve_buttons(self, channel: discord.TextChannel, message_id: int) -> None:
+        try:
+            msg = await channel.fetch_message(message_id)
+            await msg.edit(view=None)
+        except discord.HTTPException:
+            pass
+
+    async def resolve_answer(self, interaction: discord.Interaction, resolved: bool) -> None:
+        ticket = self.bot.db.ticket_by_channel(interaction.channel_id)
+        if ticket is None:
+            await interaction.response.send_message("This ticket is no longer open.", ephemeral=True)
+            return
+        if interaction.user.id != ticket["user_id"] and not self.is_staff(interaction.user):
+            await interaction.response.send_message("Only the ticket creator can answer this.", ephemeral=True)
+            return
+        self._resolve_asked.pop(interaction.channel_id, None)
+        if not resolved:
+            await interaction.response.edit_message(
+                content=AI_PREFIX + "❓ Is your issue resolved? → **No** – okay, tell me what is still missing.",
+                view=None)
+            return
+        await interaction.response.edit_message(
+            content=AI_PREFIX + "❓ Is your issue resolved? → **Yes** – glad I could help! Closing the ticket. 👋",
+            view=None)
+        await self._close(interaction.channel, ticket, interaction.user, RESOLVED_REASON)
 
     # ------------------------------------------------------------ AI tools (kits of the ticket owner)
 
@@ -861,6 +959,8 @@ class Tickets(commands.Cog):
         self._generation.pop(channel.id, None)
         self._locks.pop(channel.id, None)
         self._last_ping.pop(channel.id, None)
+        self._last_owner_msg.pop(channel.id, None)
+        self._resolve_asked.pop(channel.id, None)
 
     # ------------------------------------------------------------ Slash commands
 
