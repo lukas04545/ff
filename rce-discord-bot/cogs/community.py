@@ -88,7 +88,8 @@ class Community(commands.Cog):
         info = self.bot.server_info
         embed = discord.Embed(title=self._server_name(interaction.guild)[:256], colour=discord.Colour(0xCE422B))
         embed.add_field(name="Platform", value=cfg.rust_server_platform[:1024])
-        embed.add_field(name="Wipe", value=cfg.rust_server_wipe[:1024])
+        wipe = self.bot.get_cog("Wipe")
+        embed.add_field(name="Wipe", value=(wipe.next_text() if wipe else None) or cfg.rust_server_wipe[:1024])
         if self.bot.rcon.connected and info:
             status = f"🟢 Online – {info.get('Players', '?')}/{info.get('MaxPlayers', '?')} players"
             if info.get("Queued"):

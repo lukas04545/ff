@@ -311,6 +311,19 @@ class WebInterface:
         r.add_put("/api/rules", self.put_rules)
         r.add_get("/api/community", self.community)
         r.add_post("/api/giveaways/{giveaway_id:\\d+}/{action:end|reroll}", self.giveaway_action)
+        r.add_get("/api/wipe", self.get_wipe)
+        r.add_put("/api/wipe", self.put_wipe)
+        r.add_delete("/api/wipe", self.clear_wipe)
+        r.add_post("/api/wipe/done", self.wipe_done)
+        r.add_get("/api/schedules", self.list_schedules)
+        r.add_post("/api/schedules", self.create_schedule)
+        r.add_put("/api/schedules/{msg_id:\\d+}", self.toggle_schedule)
+        r.add_delete("/api/schedules/{msg_id:\\d+}", self.delete_schedule)
+        r.add_get("/api/reports", self.list_reports)
+        r.add_post("/api/reports/{report_id:\\d+}/handled", self.handle_report)
+        r.add_post("/api/watchlist", self.add_watch)
+        r.add_delete("/api/watchlist/{player}", self.remove_watch)
+        r.add_get("/api/population", self.population)
         r.add_get("/api/shop", self.shop)
         r.add_post("/api/shop/items", self.create_shop_item)
         r.add_put("/api/shop/items/{item_id:\\d+}", self.update_shop_item)
@@ -1186,6 +1199,10 @@ class WebInterface:
 
     async def leaderboard(self, request: web.Request) -> web.Response:
         category = request.query.get("category", "kills")
+        if request.query.get("teams"):
+            if category not in self.bot.db.TEAM_ORDER:
+                raise ApiError("Unknown category.")
+            return web.json_response({"rows": [dict(r) for r in self.bot.db.team_leaderboard(category, limit=50)]})
         if category not in LEADERBOARD_COLUMNS:
             raise ApiError("Unknown category.")
         return web.json_response({"rows": [dict(r) for r in self.bot.db.leaderboard(category, limit=50)]})
@@ -1268,6 +1285,129 @@ class WebInterface:
         winners = await cog.finish(row, reroll=action == "reroll")
         self._audit(f"Giveaway #{row['id']} {'ended' if action == 'end' else 'rerolled'}")
         return web.json_response({"ok": True, "winners": [str(w) for w in winners]})
+
+    # ------------------------------------------------------------ Wipe, scheduled messages, reports, population
+
+    async def get_wipe(self, request: web.Request) -> web.Response:
+        wipe = self._cog("Wipe")
+        s = wipe.schedule()
+        local = None
+        if s["next"]:
+            from datetime import datetime
+            local = datetime.fromtimestamp(s["next"], wipe.tz).strftime("%Y-%m-%dT%H:%M")
+        cfg = self.bot.config
+        return web.json_response({**s, "local": local, "repeat_text": wipe.repeat_text(s["repeat"], s["next"]),
+                                  "repeats": {k: wipe.repeat_text(k, s["next"]) for k in ("none", "weekly",
+                                                                                          "biweekly", "monthly")},
+                                  "resets": {"kits": cfg.wipe_reset_kits, "stats": cfg.wipe_reset_stats,
+                                             "points": cfg.wipe_reset_points}})
+
+    async def put_wipe(self, request: web.Request) -> web.Response:
+        from cogs.wipe import REPEATS, parse_when
+        wipe = self._cog("Wipe")
+        data = await self._json(request)
+        ts = parse_when(self._text(data, "when", limit=30), wipe.tz)
+        if ts is None:
+            raise ApiError("Invalid date/time.")
+        if ts <= time.time():
+            raise ApiError("That time is in the past.")
+        repeat = self._text(data, "repeat", required=False, limit=20) or "none"
+        if repeat not in REPEATS:
+            raise ApiError("Unknown repeat.")
+        wipe.set_schedule(ts, repeat)
+        self._audit(f"Next wipe set: <t:{ts}:F> ({wipe.repeat_text(repeat, ts)})")
+        return web.json_response({"ok": True, "next": ts})
+
+    async def clear_wipe(self, request: web.Request) -> web.Response:
+        self._cog("Wipe").set_schedule(None)
+        self._audit("Wipe schedule cleared")
+        return web.json_response({"ok": True})
+
+    async def wipe_done(self, request: web.Request) -> web.Response:
+        reset = await self._cog("Wipe").do_wipe(by=f"{_current_user.get()} (web)")
+        return web.json_response({"ok": True, "reset": reset})
+
+    def _text_channels(self) -> list[dict]:
+        cfg = self.bot.config
+        guild = self.bot.get_guild(cfg.guild_id) if cfg.guild_id else (self.bot.guilds[0] if self.bot.guilds else None)
+        return [{"id": str(c.id), "name": c.name} for c in guild.text_channels] if guild else []
+
+    async def list_schedules(self, request: web.Request) -> web.Response:
+        from cogs.schedule import TARGETS
+        rows = []
+        for r in self.bot.db.scheduled_messages():
+            channel = self.bot.get_channel(r["channel_id"]) if r["channel_id"] else None
+            rows.append({**dict(r), "channel_id": str(r["channel_id"]) if r["channel_id"] else None,
+                         "channel": f"#{channel.name}" if channel else None})
+        return web.json_response({"rows": rows, "targets": TARGETS, "channels": self._text_channels()})
+
+    async def create_schedule(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        channel = self._text(data, "channel_id", required=False, limit=25)
+        try:
+            msg_id = self._cog("Schedule").add(self._text(data, "text", limit=400), self._int(data, "minutes", 0, 0, 100_000),
+                                              self._text(data, "target", limit=10), int(channel) if channel.isdigit() else None,
+                                              f"{_current_user.get()} (web)")
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        self._audit(f"Scheduled message #{msg_id} added")
+        return web.json_response({"ok": True, "id": msg_id})
+
+    async def toggle_schedule(self, request: web.Request) -> web.Response:
+        msg_id = int(request.match_info["msg_id"])
+        if not self.bot.db.set_scheduled_enabled(msg_id, bool((await self._json(request)).get("enabled"))):
+            raise ApiError("Message not found.", 404)
+        return web.json_response({"ok": True})
+
+    async def delete_schedule(self, request: web.Request) -> web.Response:
+        msg_id = int(request.match_info["msg_id"])
+        if not self.bot.db.delete_scheduled_message(msg_id):
+            raise ApiError("Message not found.", 404)
+        self._audit(f"Scheduled message #{msg_id} deleted")
+        return web.json_response({"ok": True})
+
+    async def list_reports(self, request: web.Request) -> web.Response:
+        status = request.query.get("status") or None
+        reports = []
+        for r in self.bot.db.reports(status=status, limit=100):
+            user = self.bot.get_user(r["reporter_id"])
+            reports.append({**dict(r), "reporter_id": str(r["reporter_id"]), "channel_id": None, "message_id": None,
+                            "reporter": str(user) if user else str(r["reporter_id"]),
+                            "online": r["player"] in self.bot.online_players})
+        watch = [{**dict(w), "online": w["player"] in self.bot.online_players} for w in self.bot.db.watchlist()]
+        return web.json_response({"reports": reports, "watchlist": watch})
+
+    async def handle_report(self, request: web.Request) -> web.Response:
+        if not await self._cog("Reports").mark_handled(int(request.match_info["report_id"]),
+                                                        f"{_current_user.get()} (web)"):
+            raise ApiError("Report not found or already handled.", 404)
+        return web.json_response({"ok": True})
+
+    async def add_watch(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        player = self._text(data, "player", limit=64)
+        self.bot.db.watch(player, self._text(data, "reason", required=False, limit=300) or None,
+                          f"{_current_user.get()} (web)")
+        self._audit(f"Watchlist: {player} added")
+        return web.json_response({"ok": True})
+
+    async def remove_watch(self, request: web.Request) -> web.Response:
+        player = request.match_info["player"]
+        if not self.bot.db.unwatch(player):
+            raise ApiError("Not on the watchlist.", 404)
+        self._audit(f"Watchlist: {player} removed")
+        return web.json_response({"ok": True})
+
+    async def population(self, request: web.Request) -> web.Response:
+        try:
+            days = max(1, min(int(request.query.get("days", "1")), 30))
+        except ValueError:
+            raise ApiError("Invalid range.") from None
+        since = int(time.time()) - days * 86400
+        bucket = 0 if days == 1 else (1800 if days <= 7 else 3600)
+        points = self.bot.db.population(since, bucket)
+        return web.json_response({"days": days, "points": points,
+                                  "online_now": len(self.bot.online_players)})
 
     # ------------------------------------------------------------ Points & shop
 

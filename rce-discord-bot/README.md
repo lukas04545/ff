@@ -72,6 +72,11 @@ RCE tools use exactly this WebRCON interface. Also G-Portal's wiki article
 | **Discord log** | Discord | Joins/leaves, deleted and edited messages, moderation, giveaways |
 | **Giveaways** | Discord + database | Enter via button, automatic draw, multiple winners, winner role, reroll; **survive restarts** |
 | **Points & shop** | Bot database + RCON | Points for playtime, PvP kills and `/daily` (streaks), playtime rewards, `/shop` with kits, items and (timed) roles, `/profile`. See [Points & shop](#points--shop). |
+| **Wipe manager** | Bot + Discord + `say` | Next wipe with countdown (status message, `/rust`, `/wipe info`), posts 24 h / 1 h before, in-game warnings, optional resets. See [Wipe manager](#wipe-manager). |
+| **Scheduled messages** | `say` + Discord | Messages every N minutes in-game and/or in a channel (`/schedule`, web) |
+| **Reports & watchlist** | Discord + player list | `/report` for members, staff pinged with a ✅ Handled button; watchlist pings staff when a watched player joins |
+| **Team leaderboard** | Team log lines | `/teams top`, `/teams of` – teams named after their leader, current members' stats summed up |
+| **Population graph** | `serverinfo` every 5 min | Players online over 24 h / 7 / 30 days and the busiest hours (web interface → Overview) |
 | **Timed roles** | Discord + database | `/temprole`: roles that end by themselves (e.g. VIP for 7 days) – also for giveaway prizes. See [Timed roles](#timed-roles-eg-vip-for-7-days). |
 | **Alerts & backups** | Bot | Staff ping when the server is offline, daily backups. See [Alerts & backups](#alerts--backups). |
 | **Automatic updates** | GitHub | Installs new versions by itself. See [Automatic updates](#automatic-updates). |
@@ -178,6 +183,9 @@ rce-discord-bot/
 │   ├── timed_roles.py     # /temprole …: roles that end by themselves
 │   ├── monitor.py         # Server-down alerts, daily backups
 │   ├── economy.py         # Points, /shop, /daily, playtime rewards, /profile
+│   ├── wipe.py            # /wipe: countdown, announcements, resets
+│   ├── schedule.py        # /schedule: messages every N minutes
+│   ├── reports.py         # /report and /watch
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
@@ -368,14 +376,15 @@ your browser opens automatically; otherwise go to **<http://localhost:8080>**.
 
 | Page | Features |
 |---|---|
-| 📊 Overview | Server status (players, map, uptime, FPS), online players with **kick/ban**, unban, message to the game |
+| 📊 Overview | Server status (players, map, uptime, FPS), **population graph** (24 h / 7 / 30 days, busiest hours), online players with **kick/ban**, unban, message to the game |
 | ⌨️ Console | **Live server console** and running any RCON command (if `ALLOW_RAW_RCON=true`) |
 | 🎒 Kits | Give kits (player/everyone), view in-game kits, create/edit **custom kits**, create/pause/delete **autokits**, wipe reset, give history |
 | 🧰 Kit builder | **Visual kit builder** (like the Helios kit builder): all 566 RCE items by category with search, 7 wear / 24 inventory / 6 belt slots, click or drag items in, drag to move/swap, amount & condition per slot. Generates the `kit add` commands (copy), **creates the in-game kit on the server** or **saves it as a custom kit**. Load existing kits from the server, save kits in the browser, export/import share codes, import pasted `kit add` commands |
 | 🪙 Shop | Shop items (custom kit, in-game kit, item, role – optionally for N days), prices, on sale/hidden; all point balances with ± correction; how members earn points |
+| 🚩 Reports | Player reports (open/all, mark handled) and the watchlist (add/remove) |
 | 🎫 Tickets | All tickets with status, **transcripts of closed tickets**, DeepSeek balance |
-| 🏆 Stats | Leaderboard (kills, deaths, K/D, playtime), platform, last seen |
-| 🎉 Community | Giveaways (end early, reroll), **edit rules**, overview of the community settings |
+| 🏆 Stats | Leaderboard (kills, deaths, K/D, playtime), platform, last seen; **team leaderboard** |
+| 🎉 Community | **Wipe** (next date, repeat, wipe done), **scheduled messages**, timed roles, giveaways (end early, reroll), **edit rules**, overview of the community settings |
 | 📚 Knowledge base | Edit `support_knowledge.md` right in the browser (applies immediately) |
 | 🧾 Bot log | The bot's last 500 log lines |
 | ⚙️ Settings | **All settings** from the `.env` as a form: channels and roles as dropdowns (once the bot is connected), **Test RCON**, **Check bot token** (incl. intent status and invite link), then **Restart bot now** with one click |
@@ -499,6 +508,12 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/points balance`, `/points top`, `/points history` | everyone | Your balance, the top 10, your last point changes |
 | `/points give`, `/points take` | Admins | Give or take points |
 | `/profile [member]` | everyone | Linked player, PvP stats, playtime, points, /daily, custom kits with cooldowns, timed roles |
+| `/wipe info` | everyone | Next wipe with countdown |
+| `/wipe set`, `/wipe clear`, `/wipe done` | Admins | Plan the next wipe (with repeat), clear it, or mark it as done now (runs the resets) |
+| `/schedule add/list/toggle/remove` | Admins | Messages posted automatically every N minutes in-game and/or in Discord |
+| `/report <player> <reason>` | everyone | Report an in-game player to the staff |
+| `/watch add/remove/list` | Admins | Get pinged when a watched player joins |
+| `/teams top [category]`, `/teams of <player>` | everyone | Team leaderboard and a player's team |
 | `/temprole give/remove/list` | Admins | Give a Discord role for a limited time (`7d`, `12h`, `2w` …), take it away early, list running ones |
 
 Admin rights for **server commands** (RCON, kits, ticket management) are given only to the
@@ -756,6 +771,39 @@ These features come from the KRYVON bot and have been rebuilt and extended here:
 - Let your community know what gets logged (e.g. in the rules) – privacy.
 - Giveaway prizes are **not** given out in-game automatically (Discord users and in-game names
   are not linked). Hand out prizes e.g. with `/customkit give` or `/kit give`.
+
+### Wipe manager
+
+Plan the next wipe with `/wipe set 2026-10-15 18:00` (or `15.10.2026 18:00`, time in `WIPE_TIMEZONE`,
+default Europe/Berlin) and a repeat – once, every week, every 2 weeks or monthly (the first same
+weekday of the next month, like Rust's forced wipe) – or in the web interface (🎉 Community → 🧹 Wipe).
+Then the bot:
+
+- shows **"Next wipe … (in 2 days)"** in the status message, `/rust` and `/wipe info`,
+- posts **24 hours** and **1 hour** before in `WIPE_ANNOUNCE_CHANNEL_ID` (default: events channel; the
+  1-hour post pings `WIPE_PING_ROLE_ID` if set), and warns **in-game 1 hour and 10 minutes** before,
+- at the wipe time posts **"🧹 Server wiped!"** and starts fresh – after a backup – depending on the
+  settings: kit cooldowns (`WIPE_RESET_KITS`, on), leaderboard (`WIPE_RESET_STATS`, off), points
+  (`WIPE_RESET_POINTS`, off) – then moves on to the next date.
+
+The wipe itself is still done by G-Portal. If it happens at another time, use `/wipe done` (or
+**Wipe done now** in the web interface) to run the resets and the announcement right away.
+
+### Scheduled messages, reports, watchlist, teams
+
+- **Scheduled messages:** `/schedule add "Join our Discord: discord.gg/…" 30m` posts a message every 30
+  minutes in-game (rich text like `<color=orange>` allowed), in a Discord channel or both – first after
+  one interval, at least every 5 minutes. Pause, resume and delete with `/schedule` or in the web interface
+  (🎉 Community).
+- **Reports:** members use `/report <player> <reason>`. The report goes to `REPORT_CHANNEL_ID` (default:
+  alert channel, then admin log) with a ping for the support roles and a **✅ Handled** button. All reports
+  are in the web interface (🚩 Reports) – also with the number of earlier reports about the same player.
+- **Watchlist:** `/watch add <player> <reason>` (or 🚩 Reports in the web interface) – when that exact
+  name joins the server, staff is pinged (at most every 30 minutes per player). Handy for ban evaders with
+  a known name.
+- **Team leaderboard:** the bot follows the team log lines (create, join, leave, new leader). `/teams top`
+  ranks teams with at least two members by kills, K/D, playtime or size; `/teams of <player>` shows the
+  members. Teams are named after their leader and only known from the moment the bot runs.
 
 ### Points & shop
 

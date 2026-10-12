@@ -255,6 +255,25 @@ pre.transcript {
 .steps li.warn::before { content: "⚠️ "; }
 .steps li.info::before { content: "ℹ️ "; }
 
+/* Charts (population) */
+.chart { position: relative; }
+.chart-svg { width: 100%; height: auto; display: block; overflow: visible; touch-action: pan-y; }
+.chart-svg .grid { stroke: var(--border); stroke-width: 1; }
+.chart-svg .tick { fill: var(--muted); font-size: 11px; }
+.chart-svg .tick.strong { fill: var(--text); font-weight: 650; }
+.chart-svg .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-svg .area { fill: var(--accent); opacity: .1; }
+.chart-svg .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.chart-svg .cross { stroke: var(--faint); stroke-width: 1; }
+.chart-svg .bar { fill: var(--accent); opacity: .55; cursor: default; outline: none; }
+.chart-svg .bar.peak, .chart-svg .bar:hover, .chart-svg .bar:focus { opacity: 1; }
+.chart-tip { position: absolute; top: 0; transform: translateX(-50%); pointer-events: none; display: grid; gap: .1rem; padding: .35rem .6rem;
+  background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); font-size: .82rem; white-space: nowrap; z-index: 2; }
+.chart-table { margin-top: .4rem; font-size: .88rem; }
+.seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--border); }
+.seg button { box-shadow: none; border-color: transparent; background: transparent; }
+.seg button.active { background: var(--panel); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+
 /* Updates (settings) */
 .update-box { display: grid; gap: .35rem; padding: .75rem .9rem; margin-bottom: .4rem; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--border); }
 .update-box .pill { white-space: normal; }
