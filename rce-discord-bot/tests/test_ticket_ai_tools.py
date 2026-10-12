@@ -171,6 +171,24 @@ def test_parse_helios_winner_message():
     assert match_kit("Store credit", ["VIP"]) is None
 
 
+def test_parse_kryvon_winner_message():
+    from support.giveaway_wins import parse_win
+    msg = SimpleNamespace(id=9, content="🎉 Congratulations <@11>, <@12>! You won Vip Standard!", embeds=[],
+                          mentions=[SimpleNamespace(id=11), SimpleNamespace(id=12)], created_at=None, jump_url="")
+    win = parse_win(msg)
+    assert win.prize == "Vip Standard" and win.winner_ids == [11, 12] and not win.lifetime
+    assert win.won_by(12, set()) and not win.won_by(13, set())
+    # Copied text without real mentions: matched by name; markdown around the prize is removed
+    plain = SimpleNamespace(id=10, content="🎉 Congratulations @Lambo1645, @⚡ tiktok-vsola-pvg! You won **VIP Kit (Lifetime)**!",
+                            embeds=[], mentions=[], created_at=None, jump_url="")
+    win2 = parse_win(plain)
+    assert win2.prize == "VIP Kit (Lifetime)" and win2.lifetime
+    assert win2.winner_names == ["lambo1645", "⚡ tiktok-vsola-pvg"] and win2.won_by(1, {"lambo1645"})
+    # The bot's own "Congratulations: @x – wins **X**!" and normal chat are not wins
+    assert parse_win(SimpleNamespace(id=11, content="🎉 Congratulations: <@1> – wins **VIP**!", embeds=[], mentions=[])) is None
+    assert parse_win(SimpleNamespace(id=12, content="congratulations on the wipe!", embeds=[], mentions=[])) is None
+
+
 def test_ai_redeems_lifetime_kit_win(setup):
     s = setup
     vip_role = SimpleNamespace(id=55, name="VIP")

@@ -123,7 +123,7 @@ class Config:
     rust_server_platform: str
     rust_server_wipe: str
     giveaway_winner_role_id: int | None
-    giveaway_win_channel_id: int | None   # channel where another bot (e.g. Helios) announces winners
+    giveaway_win_channel_id: int | None   # channel where another bot (Helios, Kryvon …) announces winners
     giveaway_auto_ticket: bool            # /giveaway ended -> prize ticket per winner, AI redeems the prize
 
     # Web interface

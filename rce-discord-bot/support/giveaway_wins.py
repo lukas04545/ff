@@ -1,10 +1,14 @@
-"""Giveaway wins announced by another bot (e.g. Helios) in a Discord channel.
+"""Giveaway wins announced by another bot (e.g. Helios, Kryvon) in a Discord channel.
 
-Expected message (Helios "Giveaway Winner"):
-    content:  @Winner (mention)
-    embed:    title "Giveaway Winner", "Winner: `username`", field "Prize" = "VIP Kit (Lifetime)"
-The parser is tolerant: it reads the mention, the "Winner:" line and the "Prize" field/line from the
-content, embed title/description/fields. The ticket AI uses this to find a ticket owner's wins.
+Supported messages:
+    Helios "Giveaway Winner":
+        content:  @Winner (mention)
+        embed:    title "Giveaway Winner", "Winner: `username`", field "Prize" = "VIP Kit (Lifetime)"
+    Kryvon RCE (plain text):
+        "🎉 Congratulations @Lambo1645, @Someone! You won Vip Standard!"
+The parser is tolerant: it reads the mentions, the "Winner:" line and the "Prize" field/line (or the
+"You won …" sentence) from the content, embed title/description/fields. The ticket AI uses this to find a
+ticket owner's wins.
 """
 from __future__ import annotations
 
@@ -13,6 +17,10 @@ from dataclasses import dataclass
 
 _WINNER = re.compile(r"winners?\s*[:\-]\s*`?@?([^`\n,]+?)`?\s*(?:$|\n|,)", re.IGNORECASE)
 _PRIZE_LINE = re.compile(r"prize\s*[:\-]\s*(.+)", re.IGNORECASE)
+# "Congratulations @a, @b! You won Vip Standard!" – names between "Congratulations" and "!", prize after "won"
+_CONGRATS = re.compile(r"congratulations?\b[\s,:]*(?P<names>[^!\n]*?)\s*!+\s*(?:you|they)\s+(?:have\s+)?won\s+"
+                       r"(?:the\s+)?(?P<prize>[^\n]+)", re.IGNORECASE)
+_MENTION = re.compile(r"<@!?\d+>")
 LIFETIME = re.compile(r"\b(life\s*-?\s*time|perm(?:anent)?|forever|unlimited)\b", re.IGNORECASE)
 
 
@@ -53,7 +61,14 @@ def parse_win(message) -> GiveawayWin | None:
         texts.append(text)
         prize = prize or field_prize
     full = "\n".join(texts)
-    if "winner" not in full.lower():
+    names: list[str] = []
+    congrats = _CONGRATS.search(full)
+    if congrats and prize is None:
+        prize = congrats.group("prize").strip().strip("*_ ").rstrip("!.🎉 ").strip("*_ ")
+        # Names only matter when there are no real mentions (e.g. the user left the server)
+        names = [n.strip().lstrip("@").strip().lower() for n in _MENTION.sub("", congrats.group("names")).split(",")]
+        names = [n for n in names if n]
+    elif "winner" not in full.lower():
         return None
     if prize is None:
         line = _PRIZE_LINE.search(full)
@@ -68,7 +83,7 @@ def parse_win(message) -> GiveawayWin | None:
                     break
     if not prize:
         return None
-    names = [m.group(1).strip().lower() for m in _WINNER.finditer(full) if m.group(1).strip()]
+    names += [m.group(1).strip().lower() for m in _WINNER.finditer(full) if m.group(1).strip()]
     created = getattr(message, "created_at", None)
     return GiveawayWin(
         message_id=message.id, jump_url=getattr(message, "jump_url", ""),
