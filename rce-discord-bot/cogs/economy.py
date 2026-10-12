@@ -69,6 +69,13 @@ class Economy(commands.Cog):
     async def cog_unload(self) -> None:
         self.earn_loop.cancel()
 
+    async def on_config_changed(self, old, new) -> None:
+        if new.economy_enabled and not self.earn_loop.is_running():
+            self._last_tick = None
+            self.earn_loop.start()
+        elif not new.economy_enabled and self.earn_loop.is_running():
+            self.earn_loop.cancel()
+
     async def _disabled(self, interaction: discord.Interaction) -> bool:
         if self.enabled:
             return False

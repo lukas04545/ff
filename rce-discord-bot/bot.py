@@ -166,6 +166,33 @@ class RceBot(commands.Bot):
         self.restart_requested = True
         asyncio.get_running_loop().call_later(0.5, lambda: asyncio.ensure_future(self.close()))
 
+    # Settings that only take effect after a restart (everything else is applied live)
+    RESTART_FIELDS = {"discord_token": "Bot token", "guild_id": "Discord server", "database_path": "Database file",
+                      "web_enabled": "Web interface on/off", "web_host": "Web interface: reachable from",
+                      "web_port": "Web interface port"}
+
+    async def apply_config(self, new: Config) -> list[str]:
+        """Applies changed settings without a restart. Returns what still needs a restart (labels)."""
+        old = self.config
+        needs = [label for key, label in self.RESTART_FIELDS.items() if getattr(old, key) != getattr(new, key)]
+        wanted = required_intents(new)
+        if wanted["message_content"] and not self.intents.message_content:
+            needs.append("Message Content intent (" + ", ".join(wanted["message_content"]) + ")")
+        if wanted["members"] and not self.intents.members:
+            needs.append("Server Members intent (" + ", ".join(wanted["members"]) + ")")
+        self.config = new
+        await self.rcon.reconfigure(new.rcon_host, new.rcon_port, new.rcon_password)
+        # Cogs that keep something from the settings (loops, intervals, AI client …) adjust themselves
+        for cog in list(self.cogs.values()):
+            handler = getattr(cog, "on_config_changed", None)
+            if handler is not None:
+                try:
+                    await handler(old, new)
+                except Exception:
+                    log.exception("Applying new settings in %s failed", type(cog).__name__)
+        log.info("Settings applied without restart%s.", f" (restart needed for: {', '.join(needs)})" if needs else "")
+        return needs
+
     def request_update_restart(self) -> None:
         """A new version was installed: shut down, main() then restarts the process (new code is loaded)."""
         self.update_restart = True

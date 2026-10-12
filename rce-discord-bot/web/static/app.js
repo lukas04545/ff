@@ -1533,7 +1533,7 @@ views.settings = async (main) => {
       fixLink(data.setup_fix_url),
       h("p", { class: "muted", style: "margin:.4rem 0 0", text: "Then click \"Start bot with saved settings\" below (or fill in the required fields and save)." }));
   } else if (data.restart_required) {
-    showBanner("warn", "Changed settings only take effect after a restart. ", restartButton());
+    showBanner("warn", "These saved settings only take effect after a restart: " + (data.restart_for || []).join(", ") + ". ", restartButton());
   } else if (status?.intent_warning) {
     showBanner("warn", h("strong", { text: "Limited mode: " }), status.intent_warning, fixLink(status.intent_fix_url),
       h("p", { class: "muted", style: "margin:.4rem 0 0" }, "After enabling it in the Developer Portal (don't forget \"Save Changes\"): ", restartButton()));
@@ -1645,9 +1645,10 @@ views.settings = async (main) => {
       } else if (r.preflight_error) {
         showBanner("bad", h("strong", { text: "Saved – fix this before restarting: " }), r.preflight_error, fixLink(r.fix_url));
       } else if (r.restart_required) {
-        showBanner("warn", h("strong", { text: "Saved. " }), "Restart the bot for the changes to take effect: ", restartButton());
+        showBanner("warn", h("strong", { text: "Saved and applied. " }), "Only these need a restart: " + r.restart_for.join(", ") + " ", restartButton());
       } else {
-        toast("Saved");
+        banner.replaceChildren();
+        toast(r.applied ? "Saved – active right away, no restart needed" : "Saved");
       }
     } catch (e) {
       const errors = e.data?.errors || {};

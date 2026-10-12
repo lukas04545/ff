@@ -389,7 +389,7 @@ your browser opens automatically; otherwise go to **<http://localhost:8080>**.
 | 🎉 Community | **Wipe** (next date, repeat, wipe done), **scheduled messages**, timed roles, giveaways (end early, reroll), **edit rules**, overview of the community settings |
 | 📚 Knowledge base | Edit `support_knowledge.md` right in the browser (applies immediately) |
 | 🧾 Bot log | The bot's last 500 log lines |
-| ⚙️ Settings | **All settings** from the `.env` as a form: channels and roles as dropdowns (once the bot is connected), **Test RCON**, **Check bot token** (incl. intent status and invite link), then **Restart bot now** with one click |
+| ⚙️ Settings | **All settings** from the `.env` as a form: channels and roles as dropdowns (once the bot is connected), **Test RCON**, **Check bot token** (incl. intent status and invite link). **Saved settings apply right away** – only the bot token, Discord server, database file, web interface address/port and a newly needed privileged intent need **Restart bot now** (the page says which) |
 
 Everything you do in the web interface is posted to the admin log channel in Discord
 ("🌐 Web interface: …"). The interface also works on your phone.
@@ -854,6 +854,8 @@ and pings `ALERT_ROLE_IDS` in the alert channel – with the server's reply to e
   here to be safe).
 
 The protection **only runs once at least one of the two is set**, so the owner can't be hit by accident.
+Every rockets/C4 spawn it sees is in the **admin log**, also when nothing happens – e.g. *"allowed (Discord role
+Owner)"* or *"not punished: the protection is waiting for setup"* – so you can see why.
 
 Good to know:
 - Only spawns with the **in-game admin panel** count – the server logs them as
@@ -889,7 +891,7 @@ Good to know:
 |---|---|
 | `Handshake rejected` or `dropped the connection immediately` | Wrong RCON password or port. Did you restart the server after changing the password? |
 | `RCON Connection failed: … timeout` | Wrong IP/port, server offline, or a firewall is blocking outgoing connections |
-| Changing settings without an editor | Web interface → ⚙️ Settings → Save → "Restart bot now" |
+| Changing settings without an editor | Web interface → ⚙️ Settings → Save – applies right away (a few settings say "restart needed" – then "Restart bot now") |
 | RCON won't connect | The bot tests this **automatically** and shows the cause in the bot window and in the web interface (red card on the Overview page). Saving new RCON details under ⚙️ Settings also runs the test right away. |
 | RCON won't connect – cause unclear | Run **`rcon_test.bat`** (Windows) or `python tools/rcon_test.py`: checks settings, port, WebSocket, password and response step by step and names the cause |
 | `Message Content Intent … disabled` | Developer Portal → Bot → enable Message Content Intent → Save Changes → restart the bot |

@@ -59,6 +59,17 @@ class Status(commands.Cog):
         self.poll_players.cancel()
         self.update_status.cancel()
 
+    async def on_config_changed(self, old, new) -> None:
+        if old.playerlist_interval != new.playerlist_interval:
+            self.poll_players.change_interval(seconds=new.playerlist_interval)
+        if old.status_interval != new.status_interval:
+            self.update_status.change_interval(seconds=new.status_interval)
+        if old.status_channel_id != new.status_channel_id:
+            self._status_message = None
+            self.bot.db.set_value(STATUS_MSG_KEY, "")   # new channel -> new status message
+        if (old.status_channel_id, old.server_display_name) != (new.status_channel_id, new.server_display_name):
+            await self._update_status_message()
+
     # ------------------------------------------------------------ Events
 
     @commands.Cog.listener()

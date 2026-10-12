@@ -38,6 +38,15 @@ class Updates(commands.Cog):
     async def cog_unload(self) -> None:
         self.update_loop.cancel()
 
+    async def on_config_changed(self, old, new) -> None:
+        self.updater.repo, self.updater.branch = new.auto_update_repo.strip().strip("/"), new.auto_update_branch or "main"
+        if new.auto_update_interval != old.auto_update_interval:
+            self.update_loop.change_interval(minutes=new.auto_update_interval)
+        if new.auto_update and not self.update_loop.is_running():
+            self.update_loop.start()
+        elif not new.auto_update and self.update_loop.is_running():
+            self.update_loop.cancel()
+
     @tasks.loop(minutes=5)
     async def update_loop(self) -> None:
         await self.check_now()

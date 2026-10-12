@@ -153,6 +153,14 @@ class Tickets(commands.Cog):
         elif self.ai.enabled:
             asyncio.create_task(self._check_balance_on_start())
 
+    async def on_config_changed(self, old, new) -> None:
+        if (old.deepseek_api_key, old.deepseek_model, old.deepseek_base_url) != \
+                (new.deepseek_api_key, new.deepseek_model, new.deepseek_base_url):
+            await self.ai.close()
+            self.ai = DeepSeekClient(new.deepseek_api_key, model=new.deepseek_model, base_url=new.deepseek_base_url)
+        if old.support_knowledge_file != new.support_knowledge_file:
+            self._knowledge_cache = None
+
     async def _check_balance_on_start(self) -> None:
         try:
             data = await self.ai.balance()
