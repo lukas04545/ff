@@ -18,7 +18,8 @@ def guard(tmp_path):
                           abuse_exempt_players=frozenset({"ownergt"}),
                           abuse_items=("rocket", "c4", "timed explosive", "explosive.timed"),
                           abuse_remove_admin_commands=('removeowner "{name}"', 'removemoderator "{name}"'),
-                          abuse_kill_command='global.killplayer "{name}"', guild_id=1, alert_channel_id=9,
+                          abuse_kill_command='global.killplayer "{name}"',
+                          abuse_after_kill_commands=('entity.deleteby "{name}"',), guild_id=1, alert_channel_id=9,
                           admin_log_channel_id=None, alert_role_ids=frozenset({42}))
 
     async def command(cmd, **kw):
@@ -58,14 +59,15 @@ def spawn(guard, line):
 
 def test_rogue_admin_is_punished_once(guard):
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
-    assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.killplayer "RogueAdmin"']
+    assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.killplayer "RogueAdmin"',
+                          'entity.deleteby "RogueAdmin"']
     content, embed = guard.alerts[0]
     assert content == "<@&42>" and "3 × Rocket" in embed.description
     assert "Removed" in embed.fields[0].value and "<@7>" in embed.fields[1].value
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")                       # second stack of the same spawn
-    assert len(guard.sent) == 3
+    assert len(guard.sent) == 4
     spawn(guard, "[ServerVar] giving Someone 1 x Timed Explosive Charge")          # C4
-    assert guard.sent[-1] == 'global.killplayer "Someone"'
+    assert guard.sent[-2:] == ['global.killplayer "Someone"', 'entity.deleteby "Someone"']
     status = guard.cog.status()                                       # web interface status box
     assert status["active"] and status["players"] == ["ownergt"]
     assert status["recent"][0]["player"] == "Someone" and status["recent"][1]["result"].startswith("PUNISHED")
@@ -111,7 +113,7 @@ def test_inactive_without_exemptions(guard):
     guard.cfg.abuse_exempt_players = frozenset({"ownergt"})
     guard.cog._noted.clear()
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
-    assert guard.sent[-1] == 'global.killplayer "RogueAdmin"'
+    assert guard.sent[-2:] == ['global.killplayer "RogueAdmin"', 'entity.deleteby "RogueAdmin"']
 
 
 def test_allowed_spawn_is_logged(guard):
