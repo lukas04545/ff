@@ -358,6 +358,41 @@ text only. However, the web interface has **no HTTPS** – **never expose it to 
 port forwarding on your router**. For access on the go, use a VPN such as Tailscale or WireGuard
 into your home network instead.
 
+### Accounts for other admins
+
+The server owner logs in with username **`owner`** and the `WEB_PASSWORD`. Under **👥 Users** (owners
+only) you create accounts for your other admins – username + password (🎲 generates a strong one) +
+role:
+
+| Role | Can do |
+|---|---|
+| **Admin** | Everything (overview, console, kits, kit builder, tickets, stats, community, …) **except** Settings, bot restart and user management |
+| **Owner** | Everything, including settings and managing accounts |
+
+- Passwords are stored only as scrypt hashes in `data/web_users.json` (never in plain text).
+- Admins change their own password via **🔑 My password** in the sidebar. The owner can reset
+  passwords, change roles, disable or delete accounts – disabling/deleting/resetting logs that person
+  out immediately.
+- Every action in the web interface is written to the admin log channel **with the username**.
+- Login protection: max. 5 attempts per minute per IP and per account.
+
+**How other admins reach the web interface** (it runs on your PC):
+
+- **Same home network:** Settings → Web interface → *Reachable from* → "Also home network (0.0.0.0)",
+  restart the bot. Others open `http://<your PC's local IP>:8080` (e.g. `http://192.168.1.20:8080`;
+  find the IP with `ipconfig`). Allow the port in the Windows firewall if asked.
+- **From anywhere – use a secure tunnel (recommended):**
+  - **[Tailscale](https://tailscale.com/)** (free, easiest): install it on your PC and on the other
+    admins' devices, invite them to your tailnet, set *Reachable from* to 0.0.0.0. They open
+    `http://<your PC's Tailscale name or 100.x IP>:8080`. The traffic is encrypted, nothing is public.
+  - **[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)**:
+    run `cloudflared tunnel --url http://localhost:8080` on your PC – it prints an `https://….trycloudflare.com`
+    address you can share (for a fixed address use a named tunnel with your own domain). Set *Reachable
+    from* to 0.0.0.0, because with 127.0.0.1 the bot only accepts requests addressed to "localhost".
+    The address is public, so use strong passwords – the login is rate-limited.
+- **Don't** simply forward the port on your router: the web interface speaks plain HTTP, so
+  passwords would travel unencrypted over the internet.
+
 ### Testing without a real server
 
 ```bash

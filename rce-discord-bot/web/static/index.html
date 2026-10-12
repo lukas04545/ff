@@ -11,8 +11,10 @@
   <div id="login" class="login hidden">
     <form id="login-form" class="card login-card">
       <h1>🛢️ RCE Bot Panel</h1>
-      <p class="muted">Password from <code>WEB_PASSWORD</code> in the <code>.env</code></p>
+      <input id="login-username" type="text" placeholder="Username" autocomplete="username" value="owner" required>
       <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <p class="muted" style="margin:0;font-size:.85rem">Server owner: username <code>owner</code> + <code>WEB_PASSWORD</code>.
+        Other admins: the account the owner created for you.</p>
       <button type="submit" class="primary">Log in</button>
       <p id="login-error" class="error"></p>
     </form>
@@ -31,11 +33,14 @@
         <a href="#community" data-view="community">🎉 <span>Community</span></a>
         <a href="#knowledge" data-view="knowledge">📚 <span>Knowledge base</span></a>
         <a href="#botlog" data-view="botlog">🧾 <span>Bot log</span></a>
-        <a href="#settings" data-view="settings">⚙️ <span>Settings</span></a>
+        <a href="#users" data-view="users" data-owner>👥 <span>Users</span></a>
+        <a href="#settings" data-view="settings" data-owner>⚙️ <span>Settings</span></a>
       </nav>
       <div class="sidebar-footer">
         <div id="conn-rcon" class="pill">RCON …</div>
         <div id="conn-discord" class="pill">Discord …</div>
+        <div id="whoami" class="muted" style="font-size:.85rem"></div>
+        <button id="account" class="ghost hidden">🔑 My password</button>
         <button id="logout" class="ghost">Log out</button>
       </div>
     </aside>
