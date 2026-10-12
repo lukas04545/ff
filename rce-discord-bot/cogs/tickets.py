@@ -519,7 +519,7 @@ class Tickets(commands.Cog):
             return await self._tool_redeem_win(channel, ticket, member, str(args.get("message_id") or ""))
         return {"error": f"Unknown tool {name}"}
 
-    # ------------------------------------------------------------ Giveaway wins (own /giveaway + e.g. Helios)
+    # ------------------------------------------------------------ Giveaway wins (own /giveaway + Helios, Kryvon …)
 
     def _own_wins(self, guild: discord.Guild) -> list[GiveawayWin]:
         """Winners of this bot's own /giveaway (from the database – always up to date, no cache)."""
@@ -530,7 +530,7 @@ class Tickets(commands.Cog):
                 for row in self.bot.db.ended_giveaways(guild.id)]
 
     async def _channel_wins(self, guild: discord.Guild) -> list[GiveawayWin]:
-        """Winners announced by another bot (e.g. Helios) in GIVEAWAY_WIN_CHANNEL_ID (cached briefly)."""
+        """Winners announced by another bot (Helios, Kryvon …) in GIVEAWAY_WIN_CHANNEL_ID (cached briefly)."""
         channel_id = self.bot.config.giveaway_win_channel_id
         if not channel_id:
             return []
@@ -542,7 +542,7 @@ class Tickets(commands.Cog):
             raise LookupError("The giveaway winner channel was not found (or the bot can't see it).")
         wins = []
         async for message in channel.history(limit=GIVEAWAY_SCAN_LIMIT):
-            # Only announcements from bots (Helios etc.) – a player can't post a fake win there
+            # Only announcements from bots (Helios, Kryvon …) – a player can't post a fake win there
             if message.author.bot and (win := parse_win(message)):
                 wins.append(win)
         self._win_cache = (time.monotonic(), wins)

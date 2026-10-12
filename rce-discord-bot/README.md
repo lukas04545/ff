@@ -638,9 +638,10 @@ kits. Replies are sent without @mentions.
 
 **Giveaway prizes in tickets:** the AI knows the ticket owner's giveaway wins from two sources:
 - the bot's own **`/giveaway`** (straight from the database), and
-- another bot (e.g. Helios) that posts "Giveaway Winner" messages in a channel (setting *Channel with
-  giveaway winners*, preset to this server's channel, `0` = off) – matched by the @mention or the
-  `Winner: name` line, only messages from bots.
+- another bot that announces winners in a channel (setting *Channel with giveaway winners*, preset to
+  this server's channel, `0` = off): Helios ("Giveaway Winner" embed with a *Prize* field) or Kryvon RCE
+  ("🎉 Congratulations @a, @b! You won Vip Standard!"). Winners are matched by their @mention (or the
+  name in the message); only messages from bots count.
 
 **Automatic prize tickets:** when a `/giveaway` ends (or is rerolled), every winner automatically gets a
 **🎉 Giveaway prize** ticket (setting *Prize ticket for /giveaway winners*, `GIVEAWAY_AUTO_TICKET`, on by
