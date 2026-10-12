@@ -87,6 +87,23 @@ $("#login-form").addEventListener("submit", async (ev) => {
 
 $("#account").addEventListener("click", () => { location.hash = "#account"; });
 
+// Theme: auto (follows the system) -> light -> dark
+const THEMES = { auto: "🌓", light: "☀️", dark: "🌙" };
+function applyTheme(theme) {
+  if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+  $("#theme").textContent = THEMES[theme] || THEMES.auto;
+  $("#theme").title = `Theme: ${theme} (click to change)`;
+}
+let theme = "auto";
+try { theme = localStorage.getItem("rce-theme") || "auto"; } catch { /* storage blocked */ }
+applyTheme(theme);
+$("#theme").addEventListener("click", () => {
+  theme = { auto: "light", light: "dark", dark: "auto" }[theme] || "auto";
+  try { localStorage.setItem("rce-theme", theme); } catch { /* storage blocked */ }
+  applyTheme(theme);
+});
+
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" }).catch(() => {});
   showLogin();
@@ -142,7 +159,8 @@ async function start() {
   setupMode = !!me.setup_mode;
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("hidden",
     (setupMode && a.dataset.view !== "settings") || (a.hasAttribute("data-owner") && !isOwner())));
-  $("#whoami").textContent = `👤 ${me.user} (${me.role})`;
+  $("#whoami").replaceChildren(h("strong", { text: me.user }), h("small", { text: me.role === "owner" ? "Owner" : "Admin" }));
+  $("#avatar").textContent = (me.user || "?").slice(0, 1);
   $("#account").classList.toggle("hidden", me.user === "owner");
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
@@ -364,14 +382,16 @@ views.overview = (main) => {
         d ? renderSteps(d) : h("p", { class: "muted", text: "The automatic diagnosis runs as soon as a connection attempt fails." }));
     }
     const s = status.server || {};
-    const stat = (label, value) => h("div", { class: "stat" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value ?? "–" }));
+    const stat = (icon, label, value, tone) => h("div", { class: "stat " + (tone || "") },
+      h("div", { class: "label" }, icon, " ", label), h("div", { class: "value", text: value ?? "–" }));
+    const hasPlayers = s.players !== undefined && s.players !== null;
     stats.replaceChildren(
-      stat("Server", s.name || (status.rcon_connected ? "connected" : "offline")),
-      stat("Players", s.players !== undefined && s.players !== null ? `${s.players} / ${s.max_players}` + (s.queued ? ` (+${s.queued})` : "") : "–"),
-      stat("Map", s.map),
-      stat("Uptime", fmtDuration(s.uptime)),
-      stat("Server FPS", s.fps),
-      stat("Open tickets", status.tickets_enabled ? status.open_tickets : "off"),
+      stat("🖥️", "Server", s.name || (status.rcon_connected ? "connected" : "offline"), status.rcon_connected ? "ok" : "bad"),
+      stat("👥", "Players", hasPlayers ? `${s.players} / ${s.max_players}` + (s.queued ? ` (+${s.queued})` : "") : "–", hasPlayers ? "accent" : ""),
+      stat("🗺️", "Map", s.map),
+      stat("⏱️", "Uptime", fmtDuration(s.uptime)),
+      stat("⚡", "Server FPS", s.fps, s.fps === undefined || s.fps === null ? "" : s.fps < 20 ? "warn" : "ok"),
+      stat("🎫", "Open tickets", status.tickets_enabled ? status.open_tickets : "off", status.open_tickets ? "warn" : ""),
     );
     playersBody.replaceChildren(...(status.players.length ? status.players.map((p) => h("tr", {},
       h("td", { text: p.name }),
