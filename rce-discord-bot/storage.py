@@ -1071,6 +1071,24 @@ class Storage:
         sql = "SELECT * FROM store_payments WHERE received_at >= ?" + (" AND used_by IS NULL" if unused else "")
         return self._db.execute(sql + " ORDER BY received_at DESC LIMIT ?", (since, limit)).fetchall()
 
+    def store_payment_known(self, payment_id: str, *, source: str | None = None) -> bool:
+        """source "webhook": only payments that came via the webhook."""
+        sql = "SELECT 1 FROM store_payments WHERE payment_id = ?" + (" AND id LIKE '%:webhook'" if source else "")
+        return self._db.execute(sql + " LIMIT 1", (payment_id,)).fetchone() is not None
+
+    def void_store_payment(self, payment_id: str) -> list[sqlite3.Row]:
+        """Refunded: unused rows can't confirm anything any more (used_by = 0). Returns rows that were already used."""
+        used = self._db.execute("SELECT * FROM store_payments WHERE payment_id = ? AND used_by > 0",
+                                (payment_id,)).fetchall()
+        self._db.execute("UPDATE store_payments SET used_by = 0, used_at = ? WHERE payment_id = ? AND used_by IS NULL",
+                         (int(time.time()), payment_id))
+        self._db.commit()
+        return used
+
+    def last_webhook_payment(self) -> int | None:
+        row = self._db.execute("SELECT MAX(received_at) FROM store_payments WHERE id LIKE '%:webhook'").fetchone()
+        return row[0] if row and row[0] else None
+
     def count_store_payments(self) -> int:
         return int(self._db.execute("SELECT COUNT(*) FROM store_payments").fetchone()[0])
 

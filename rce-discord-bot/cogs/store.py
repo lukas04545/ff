@@ -15,7 +15,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from support.tip4serv import Tip4ServClient, Tip4ServError, parse_command
+from support.tip4serv import Tip4ServClient, Tip4ServError, parse_command, parse_webhook, strip_private
 from utils import is_admin, safe_md
 
 if TYPE_CHECKING:
@@ -46,13 +46,17 @@ class Store(commands.Cog):
         """For the web interface."""
         return {"enabled": bool(self.bot.config.tip4serv_key), "last_ok": self.last_ok, "error": self.last_error,
                 "received": self.received, "ignored": self.ignored,
-                "stored_total": self.bot.db.count_store_payments()}
+                "stored_total": self.bot.db.count_store_payments(),
+                "webhook_last": self.bot.db.last_webhook_payment()}
 
     def problem(self) -> str | None:
         """Why purchases may not arrive – for the request message and the AI (None = looks fine)."""
         st = self.status()
+        if st["webhook_last"]:
+            return None                       # live payments arrive via the webhook
         if not st["enabled"]:
-            return "the Tip4Serv store is not connected (no TIP4SERV_KEY)"
+            return ("the Tip4Serv store is not connected – no webhook payment received yet (web → Shop shows the "
+                    "webhook URL for Tip4Serv) and no TIP4SERV_KEY")
         if st["error"]:
             return f"the Tip4Serv connection fails: {st['error'][:200]}"
         if not st["last_ok"]:
@@ -64,6 +68,36 @@ class Store(commands.Cog):
         return None
 
     # ------------------------------------------------------------ Staff commands
+
+    async def on_webhook(self, data) -> dict:
+        """A "live payment" from Tip4Serv's webhook (called by the web interface)."""
+        parsed = parse_webhook(data)
+        if parsed is None:
+            log.info("Tip4Serv webhook without payment ID ignored: %s", json.dumps(data)[:300])
+            return {"ok": True, "stored": False, "reason": "no payment id"}
+        pid = parsed["payment_id"]
+        if parsed["kind"] == "refund":
+            used = self.bot.db.void_store_payment(pid)
+            self.bot.audit(f"💳 Tip4Serv payment {safe_md(pid)} refunded/refused – it can't confirm a kit any more"
+                           + ("" if not used else " ⚠️ it already confirmed request "
+                              + ", ".join(f"#{r['used_by']}" for r in used) + " – check that kit!"))
+            return {"ok": True, "voided": True}
+        if parsed["kind"] != "payment":
+            return {"ok": True, "stored": False, "reason": "event ignored"}
+        if self.bot.db.store_payment_known(pid):          # also came via the server key / sent twice
+            return {"ok": True, "stored": False, "reason": "known"}
+        self.bot.db.add_store_payment(
+            f"{pid}:webhook", pid, amount=parsed["amount"], currency=parsed["currency"],
+            discord_id=parsed["discord_id"], player=parsed["player"], username=None, customer=None,
+            command="webhook", raw=json.dumps(strip_private(data), ensure_ascii=False)[:4000])
+        who = f"<@{parsed['discord_id']}>" if parsed["discord_id"] else safe_md(parsed["player"] or "?")
+        amount = f"{parsed['amount']:.2f} {parsed['currency'] or ''}".strip() if parsed["amount"] is not None else "?"
+        self.bot.audit(f"💳 Tip4Serv payment {safe_md(pid)} (webhook): {who} paid {amount}")
+        self.received += 1
+        requests = self.bot.get_cog("KitRequests")
+        if requests is not None:
+            await requests.on_new_payments()
+        return {"ok": True, "stored": True}
 
     def _allowed(self, user) -> bool:
         requests = self.bot.get_cog("KitRequests")
@@ -88,7 +122,9 @@ class Store(commands.Cog):
                  "**Key:** store API key (wrong type – a server key is needed)" if server.startswith("eyJ") else
                  f"**Server number in the key:** `{safe_md(server)}`",
                  f"**Last check:** <t:{int(st['last_ok'])}:R>" if st["last_ok"] else "**Last check:** never",
-                 f"**Purchases received:** {st['stored_total']}"]
+                 f"**Purchases received:** {st['stored_total']}",
+                 f"**Last webhook payment:** <t:{st['webhook_last']}:R>" if st["webhook_last"] else
+                 "**Webhook:** no payment received yet (URL: web interface → Shop)"]
         if st["ignored"]:
             lines.append(f"**Last command that wasn't for the bot:** `{safe_md(st['ignored'])}`")
         recent = self.bot.db.store_payments(limit=8)
@@ -175,6 +211,10 @@ class Store(commands.Cog):
                     self.ignored = str(cmd.get("str") or "")[:120]
                     continue                      # not for the bot (e.g. a command for the game server)
                 cmd_id = str(cmd.get("id"))
+                done.setdefault(pid, (p.get("action"), []))
+                if self.bot.db.store_payment_known(pid, source="webhook"):
+                    done[pid][1].append(cmd_id)     # already received via the webhook – count it once
+                    continue
                 stored = self.bot.db.add_store_payment(
                     f"{pid}:{cmd_id}", pid, amount=parsed["amount"], currency=parsed["currency"],
                     discord_id=parsed["discord_id"], player=parsed["player"],

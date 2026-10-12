@@ -1408,14 +1408,21 @@ function storeCard() {
   const card = h("div", { class: "card" }, h("h2", { text: "💳 Tip4Serv purchases" }), h("p", { class: "muted", text: "Loading …" }));
   api("/api/store").then((d) => {
     const st = d.status || {};
-    const pill = !st.enabled ? h("span", { class: "pill", text: "off" })
+    const pill = st.webhook_last ? h("span", { class: "pill ok", text: "webhook connected" }) : !st.enabled ? h("span", { class: "pill", text: "off" })
       : st.error ? h("span", { class: "pill bad", text: "error" }) : st.last_ok && st.problem ? h("span", { class: "pill warn", text: "no purchases yet" })
       : st.last_ok ? h("span", { class: "pill ok", text: "connected" })
       : h("span", { class: "pill warn", text: "connecting …" });
     const money = (v, c) => v === null || v === undefined ? "?" : `${Number(v).toFixed(2)} ${c || ""}`.trim();
     const fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "–";
-    card.replaceChildren(...[h("h2", {}, "💳 Tip4Serv purchases ", pill),
-      !st.enabled ? h("p", { class: "muted", style: "margin-top:0" }, "Not connected. Add a server for the bot on tip4serv.com, paste its key in ",
+    const hook = st.webhook_url !== undefined ? h("div", { class: "card", style: "margin:.4rem 0 1rem;box-shadow:none;background:var(--panel-2)" },
+      h("strong", { text: "🔗 Webhook for live payments (recommended)" }),
+      h("p", { class: "muted", style: "margin:.3rem 0 .5rem", text: "tip4serv.com → Dashboard → Create webhook URL for live payments → paste this URL, tick \"Payment successful\" (and \"Payment refunded\" / \"Payment refused\"). Payments then arrive instantly – no product command needed. Keep the URL secret." }),
+      st.webhook_url ? h("div", { class: "row" }, h("input", { value: st.webhook_url, readonly: true, style: "flex:1;font-family:monospace;font-size:.8rem" }),
+        h("button", { class: "small", type: "button", text: "Copy", onclick: () => { navigator.clipboard?.writeText(st.webhook_url).then(() => toast("Copied")); } }))
+        : h("p", { class: "error", text: "The web interface has no public address right now (Settings → Web interface → tunnel), so Tip4Serv can't reach the bot." }),
+      st.webhook_url && !st.webhook_fixed ? h("p", { class: "muted", style: "margin:.4rem 0 0", text: "⚠️ This is a quick-tunnel address: it changes when the bot window is closed – then update the webhook on Tip4Serv, or set up a fixed address (WEB_TUNNEL_TOKEN + WEB_PUBLIC_URL)." }) : null) : null;
+    card.replaceChildren(...[h("h2", {}, "💳 Tip4Serv purchases ", pill), hook,
+      !st.enabled && !st.webhook_last ? h("p", { class: "muted", style: "margin-top:0" }, "Or with a server key: add a server for the bot on tip4serv.com, paste its key in ",
         h("a", { href: "#settings", text: "⚙️ Settings → 💳 Tip4Serv store" }), " and give your custom kit product the command ",
         h("code", { text: "rcebot {discord_id} {total_paid} {currency} {PlayerName}" }), " on that server.") : null,
       st.enabled && st.problem ? h("p", { class: "error", text: "⚠️ " + st.problem }) : null,

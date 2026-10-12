@@ -771,7 +771,18 @@ above. You can edit the kit later in the web interface → Kits. If staff approv
 missing permission), the request stays open and approving again reuses the kit that was already created.
 
 **Tip4Serv: automatic purchase check.** The bot can see your [Tip4Serv](https://tip4serv.com) store's purchases
-and approve paid custom kits by itself:
+and approve paid custom kits by itself. Two ways – use one (or both, payments are counted once):
+
+*A) Webhook (recommended, instant):* web interface → **Shop → 💳 Tip4Serv purchases** shows (to the owner) a
+secret webhook URL. On tip4serv.com → Dashboard → **Create webhook URL for live payments** paste it and tick
+*Payment successful* (plus *Payment refunded* / *Payment refused* – a refunded payment can't confirm a kit any more
+and the admin log warns if it already did). No product command needed; the receipt's order number arrives with the
+payment. Needs the web interface's public address; a quick-tunnel address changes when the bot window is closed –
+then update the URL on Tip4Serv, or set up a fixed address (`WEB_TUNNEL_TOKEN` + `WEB_PUBLIC_URL`).
+Connecting Tip4Serv's Discord bot (`/tiplink`) lets buyers log in with Discord, so payments carry their Discord ID –
+the safest match.
+
+*B) Server key:*
 1. On tip4serv.com add a **server for the bot** with the **plugin connection** (game Rust / Oxide – *not*
    "Connect with RCON", and *not* the store API key from Dashboard → API keys) and copy its **key** (three parts
    separated by dots, the first is the server's number) into

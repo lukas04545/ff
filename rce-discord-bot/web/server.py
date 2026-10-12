@@ -309,6 +309,7 @@ class WebInterface:
         r.add_get("/api/prices", self.get_prices)
         r.add_put("/api/prices", self.put_prices)
         r.add_get("/api/store", self.store_status)
+        r.add_post("/hooks/tip4serv/{token}", self.tip4serv_webhook)   # public: Tip4Serv "live payments"
         r.add_put("/api/knowledge", self.put_knowledge)
         r.add_get("/api/ai", self.ai_status)
         r.add_get("/api/botlog", self.botlog)
@@ -1266,6 +1267,24 @@ class WebInterface:
         return web.json_response({"ok": True, "warnings": pl.warnings, "rules": len(pl.rules),
                                   "unknown_items": unknown})
 
+    @property
+    def webhook_token(self) -> str:
+        """Secret part of the Tip4Serv webhook URL (derived from the web secret, stays the same)."""
+        return hmac.new(self._secret, b"tip4serv-webhook", hashlib.sha256).hexdigest()[:32]
+
+    async def tip4serv_webhook(self, request: web.Request) -> web.Response:
+        if not hmac.compare_digest(request.match_info["token"], self.webhook_token):
+            raise web.HTTPNotFound()
+        try:
+            data = await request.json()
+        except (ValueError, UnicodeDecodeError):
+            form = await request.post()
+            data = dict(form) if form else None
+        store = self.bot.get_cog("Store")
+        if store is None or data is None:
+            return web.json_response({"ok": False}, status=400 if data is None else 503)
+        return web.json_response(await store.on_webhook(data))
+
     async def store_status(self, request: web.Request) -> web.Response:
         store = self.bot.get_cog("Store")
         payments = [dict(p) for p in self.bot.db.store_payments(limit=100)]
@@ -1276,6 +1295,10 @@ class WebInterface:
             p["discord_id"] = str(p["discord_id"]) if p["discord_id"] else None
         status = store.status() if store else {"enabled": False}
         status["problem"] = store.problem() if store else "store module not loaded"
+        if request["role"] == "owner":     # the URL is a secret: only the owner sees it
+            base = self.public_url
+            status["webhook_url"] = f"{base.rstrip('/')}/hooks/tip4serv/{self.webhook_token}" if base else None
+            status["webhook_fixed"] = bool(self.ws.public_url)
         return web.json_response({"status": status,
                                   "payments": payments, "pending": pending})
 

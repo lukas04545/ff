@@ -130,3 +130,72 @@ class Tip4ServClient:
             return
         body = {pid: {"action": action, "cmds": {str(c): EXECUTED for c in cmds}} for pid, (action, cmds) in done.items()}
         await self._request("POST", body)
+
+
+# ------------------------------------------------------------------ Webhooks ("live payments")
+#
+# Tip4Serv → Dashboard → webhooks: "Create webhook URL for live payments" posts every payment to a URL. The bot
+# receives them at /hooks/tip4serv/<token> (web interface). The exact payload isn't documented publicly, so the
+# fields are read flexibly and everything is kept (raw) – an order ID the player gives is searched in all of it.
+
+_PRIVATE_KEYS = ("email", "mail", "ip", "address", "phone", "card", "iban")
+_ID_KEYS = ("payment_id", "order_id", "transaction_id", "invoice_id", "id", "payment", "order")
+_AMOUNT_KEYS = ("total_paid", "amount_paid", "paid", "total", "amount", "price")
+_PLAYER_KEYS = ("playername", "player_name", "gamertag", "rust_username", "ingame_name", "in_game_name", "player",
+                "username", "pseudo", "nickname")
+_REFUND_WORDS = ("refund", "refused", "chargeback", "dispute", "cancel")
+_SUCCESS_WORDS = ("success", "paid", "complete", "free")
+
+
+def _flatten(data, prefix="") -> list[tuple[str, object]]:
+    out = []
+    if isinstance(data, dict):
+        for k, v in data.items():
+            key = str(k).lower()
+            if isinstance(v, (dict, list)):
+                out += _flatten(v, key)
+            else:
+                out.append((key, v))
+    elif isinstance(data, list):
+        for v in data:
+            out += _flatten(v, prefix)
+    return out
+
+
+def strip_private(data):
+    """Drops e-mail, IP, address … before the payload is stored."""
+    if isinstance(data, dict):
+        return {k: strip_private(v) for k, v in data.items() if not any(p in str(k).lower() for p in _PRIVATE_KEYS)}
+    if isinstance(data, list):
+        return [strip_private(v) for v in data]
+    return data
+
+
+def parse_webhook(data) -> dict | None:
+    """-> {"kind": "payment"|"refund"|"other", "payment_id", "amount", "currency", "discord_id", "player"} or None."""
+    if not isinstance(data, (dict, list)):
+        return None
+    flat = _flatten(data)
+
+    def first(keys, test=lambda v: v not in (None, "")):
+        for wanted in keys:
+            for key, value in flat:
+                if key == wanted and test(value):
+                    return value
+        return None
+    event = " ".join(str(v).lower() for k, v in flat if k in ("event", "type", "event_type", "status", "action")
+                     and isinstance(v, str))
+    kind = ("refund" if any(w in event for w in _REFUND_WORDS) else
+            "payment" if not event or any(w in event for w in _SUCCESS_WORDS) else "other")
+    pid = first(_ID_KEYS, lambda v: isinstance(v, (str, int)) and str(v).strip() not in ("", "0"))
+    amount = first(_AMOUNT_KEYS, lambda v: isinstance(v, (int, float)) or (isinstance(v, str) and
+                                                                          re.fullmatch(r"\d+(?:[.,]\d+)?", v.strip())))
+    discord = next((int(v) for k, v in flat if "discord" in k and re.fullmatch(r"\d{17,20}", str(v).strip())), None)
+    currency = first(("currency", "currency_code"), lambda v: isinstance(v, str) and len(v.strip()) == 3)
+    player = first(_PLAYER_KEYS, lambda v: isinstance(v, str) and v.strip() and not v.strip().startswith("{"))
+    if pid is None:
+        return None
+    return {"kind": kind, "payment_id": str(pid).strip().lstrip("#"),
+            "amount": float(str(amount).replace(",", ".")) if amount is not None else None,
+            "currency": currency.strip().upper() if currency else None, "discord_id": discord,
+            "player": str(player).strip()[:64] if player else None}
