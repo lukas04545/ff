@@ -101,6 +101,10 @@ FIELDS: list[Field] = [
           help="On (default): the AI can look up which custom kits the ticket owner's Discord roles allow, "
                "when they last claimed them, and claim one for them – same rules as /customkit claim "
                "(role, cooldown, linked player). Never for anyone else."),
+    Field("KIT_APPROVER_ROLE_IDS", "Roles that approve kit purchases", "tickets", "ids", pick="role",
+          help="When a player says they bought a kit, the approve request in the ticket pings these roles and only "
+               "they (and bot admins) can press Approve / Reject. They also get access to that ticket. "
+               "Empty = support roles."),
     Field("DEEPSEEK_BASE_URL", "DeepSeek API URL", "tickets", advanced=True,
           placeholder="https://api.deepseek.com"),
     Field("SUPPORT_KNOWLEDGE_FILE", "Knowledge base file", "tickets", advanced=True,

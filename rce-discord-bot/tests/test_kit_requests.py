@@ -273,3 +273,39 @@ def test_ai_error_is_never_silent(env, monkeypatch):
     asyncio.run(env.tickets._debounced_reply(env.channel, env.tickets._generation[env.channel.id], 0))
     assert any("ran into an error" in (c or "") for c, _, _ in env.posted)
     assert env.db.ticket_by_channel(100)["escalated"]
+
+
+def test_chosen_approver_roles(env):
+    """KIT_APPROVER_ROLE_IDS: pinged in the ticket, get access to it, and only they (+ admins) can decide."""
+    from dataclasses import replace
+    from cogs.kit_requests import KitRequestView
+    approver_role = FakeRole(88, "Store team", 3)
+    env.channel.guild.roles.append(approver_role)
+    env.bot.config = replace(env.bot.config, kit_approver_role_ids=frozenset({88}))
+    env.channel.overwrites = {}
+    perms = []
+
+    async def set_permissions(target, **kw):
+        perms.append((target, kw))
+        env.channel.overwrites[target] = kw
+    env.channel.set_permissions = set_permissions
+
+    r = tool(env, {"kit": "Ak Kit", "proof": "Tebex #9"})
+    assert env.posted[-1][0] == "<@&88>"                                       # approvers pinged, not support
+    assert perms and perms[0][0] is approver_role and perms[0][1]["view_channel"]
+    tool(env, {"kit": "Mega raid kit", "proof": "Tebex #10"})
+    assert len(perms) == 1                                                     # access only added once
+
+    approver = SimpleNamespace(id=3, roles=[approver_role], __str__=lambda: "Store")
+    assert not env.requests.can_decide(env.staff) and env.requests.can_decide(approver)
+    assert not env.requests.can_decide(env.buyer)
+    answers = []
+
+    async def send_message(text, **kw):
+        answers.append(text)
+    interaction = SimpleNamespace(user=env.staff, message=SimpleNamespace(id=env.db.kit_request(r["request_id"])[
+        "message_id"]), response=SimpleNamespace(send_message=send_message))
+    asyncio.run(KitRequestView(env.requests)._decide(interaction, True))
+    assert "Only <@&88>" in answers[0] and env.db.kit_request(r["request_id"])["status"] == "pending"
+    ok, _ = asyncio.run(env.requests.decide(r["request_id"], True, approver))
+    assert ok and env.existing in env.buyer.roles
