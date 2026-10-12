@@ -39,6 +39,7 @@ log = logging.getLogger("rce.tickets")
 
 AI_PREFIX = "🤖 "             # Marks AI replies (important for the conversation history)
 CLAIM_PREFIX = "✅ 🎁 "        # Kit claimed by the AI tool (also part of the history)
+PRIZE_PREFIX = "🎉 Giveaway won: "   # Prize notice in an already open ticket (also part of the history)
 DEBOUNCE_SECONDS = 3.0        # answer several quick messages in one go
 HISTORY_LIMIT = 40            # number of messages the AI gets as history
 STAFF_REPING_SECONDS = 600    # "Call staff" again only after 10 minutes
@@ -67,9 +68,9 @@ KIT_TOOLS = [
 GIVEAWAY_TOOLS = [
     {"type": "function", "function": {
         "name": "get_my_giveaway_wins",
-        "description": "Giveaways the ticket owner won (from the winner announcements channel): prize, date, whether "
-                       "it is a lifetime prize, the matching kit and its Discord role, and whether it was already "
-                       "redeemed.",
+        "description": "Giveaways the ticket owner won (this server's /giveaway and the winners channel): prize, "
+                       "date, whether it is a lifetime prize, the matching kit and its Discord role, and whether it "
+                       "was already redeemed.",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "redeem_giveaway_win",
@@ -79,6 +80,10 @@ GIVEAWAY_TOOLS = [
             "message_id": {"type": "string", "description": "message_id of the win from get_my_giveaway_wins"}},
             "required": ["message_id"]}}},
 ]
+
+
+class TicketError(Exception):
+    """Ticket could not be opened – message for the user."""
 
 
 class TicketModal(discord.ui.Modal, title="Open support ticket"):
@@ -234,17 +239,22 @@ class Tickets(commands.Cog):
         await interaction.response.send_modal(TicketModal(self))
 
     async def create_ticket(self, interaction: discord.Interaction, topic: str, ingame: str | None) -> None:
-        guild = interaction.guild
-        assert guild is not None
+        assert interaction.guild is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            channel = await self.open_ticket(interaction.guild, interaction.user, topic, ingame)
+        except TicketError as exc:
+            await interaction.followup.send(str(exc)[:2000], ephemeral=True)
+            return
+        await interaction.followup.send(f"✅ Your ticket has been created: {channel.mention}", ephemeral=True)
 
+    async def open_ticket(self, guild: discord.Guild, user: discord.abc.User, topic: str, ingame: str | None, *,
+                          title: str | None = None, opened_by: str | None = None) -> discord.TextChannel:
+        """Creates a ticket channel for this user and starts the AI (also used for giveaway prize tickets)."""
         category = guild.get_channel(self.bot.config.ticket_category_id)
         if not isinstance(category, discord.CategoryChannel):
-            await interaction.followup.send("⚠️ The ticket category was not found (TICKET_CATEGORY_ID).",
-                                            ephemeral=True)
-            return
+            raise TicketError("⚠️ The ticket category was not found (TICKET_CATEGORY_ID).")
 
-        user = interaction.user
         ticket_id = self.bot.db.create_ticket(user.id, topic, ingame)
         overwrites: dict = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -267,11 +277,11 @@ class Tickets(commands.Cog):
             text = "⚠️ Could not create the ticket."
             if isinstance(exc, discord.Forbidden):
                 text += "\n" + explain_forbidden(exc, self.bot)
-            await interaction.followup.send(text[:2000], ephemeral=True)
-            return
+            raise TicketError(text) from exc
         self.bot.db.update_ticket(ticket_id, channel_id=channel.id)
 
-        embed = discord.Embed(title=f"🎫 Ticket #{ticket_id}", description=topic[:4000], colour=discord.Colour.blurple())
+        embed = discord.Embed(title=title or f"🎫 Ticket #{ticket_id}", description=topic[:4000],
+                              colour=discord.Colour.blurple())
         embed.add_field(name="In-game name", value=safe_md(ingame) if ingame else "–")
         if self.ai.enabled:
             embed.add_field(name="What happens next?", inline=False, value=(
@@ -282,11 +292,10 @@ class Tickets(commands.Cog):
         embed.set_footer(text="Please do not post passwords or payment details.")
         await channel.send(content=user.mention, embed=embed, view=TicketControlView(self),
                            allowed_mentions=discord.AllowedMentions(users=[user]))
-        await interaction.followup.send(f"✅ Your ticket has been created: {channel.mention}", ephemeral=True)
 
         log_embed = discord.Embed(title=f"🎫 Ticket #{ticket_id} opened", description=topic[:1000],
                                   colour=discord.Colour.blurple())
-        log_embed.add_field(name="By", value=f"{user.mention} ({safe_md(str(user))})")
+        log_embed.add_field(name="By", value=opened_by or f"{user.mention} ({safe_md(str(user))})")
         log_embed.add_field(name="Channel", value=channel.mention)
         await self._log(guild, embed=log_embed)
 
@@ -295,6 +304,35 @@ class Tickets(commands.Cog):
             self._schedule_ai(channel, delay=0)
         else:
             await self._escalate(channel, ticket, "New ticket (no AI configured)", source="System")
+        return channel
+
+    async def open_prize_ticket(self, guild: discord.Guild, winner_id: int, prize: str, link: str) -> None:
+        """Giveaway won -> the winner gets a ticket in which the AI redeems the prize (or calls staff)."""
+        member = guild.get_member(winner_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(winner_id)
+            except discord.HTTPException:
+                return
+        topic = (f"🎉 I won the giveaway \"{prize}\" ({link}). Please redeem my prize.")
+        existing = self.bot.db.open_ticket_of_user(member.id)
+        channel = guild.get_channel(existing["channel_id"]) if existing else None
+        if channel is not None:
+            # Already has an open ticket: add the prize there instead of opening a second one
+            await channel.send(f"{PRIZE_PREFIX}{member.mention} won **{safe_md(prize)}** ({link}) – the prize is "
+                               "handled in this ticket.", allowed_mentions=discord.AllowedMentions(users=[member]))
+            ticket = self.bot.db.ticket_by_channel(channel.id)
+            if self.ai.enabled:
+                self._schedule_ai(channel, delay=1)
+            elif ticket is not None:
+                await self._escalate(channel, ticket, f"Giveaway prize to hand out: {prize}", source="Giveaway",
+                                     force=True)
+            return
+        try:
+            await self.open_ticket(guild, member, topic, self.bot.db.linked_player(member.id),
+                                   title="🎉 Giveaway prize", opened_by="Giveaway (automatic)")
+        except TicketError as exc:
+            log.warning("Prize ticket for %s failed: %s", member, exc)
 
     # ------------------------------------------------------------ Messages & AI
 
@@ -344,6 +382,9 @@ class Tickets(commands.Cog):
                     history.append(("assistant", m.content[len(AI_PREFIX):].strip()))
                 elif m.content.startswith(CLAIM_PREFIX):
                     history.append(("assistant", "[Kit claimed via claim_kit] " + m.content[len(CLAIM_PREFIX):]))
+                elif m.content.startswith(PRIZE_PREFIX):
+                    history.append(("user", "[System] I won the giveaway: " + m.content[len(PRIZE_PREFIX):]
+                                    + " Please redeem my prize."))
                 continue
             if m.author.bot:
                 continue
@@ -411,7 +452,8 @@ class Tickets(commands.Cog):
     def _ai_tools(self) -> list[dict]:
         if not self._kit_tools_enabled():
             return []
-        return KIT_TOOLS + (GIVEAWAY_TOOLS if self.bot.config.giveaway_win_channel_id else [])
+        # Giveaway tools always: wins of the bot's own /giveaway are in the database
+        return KIT_TOOLS + GIVEAWAY_TOOLS
 
     async def _ticket_member(self, channel: discord.TextChannel, ticket) -> discord.Member | None:
         member = channel.guild.get_member(ticket["user_id"])
@@ -477,13 +519,25 @@ class Tickets(commands.Cog):
             return await self._tool_redeem_win(channel, ticket, member, str(args.get("message_id") or ""))
         return {"error": f"Unknown tool {name}"}
 
-    # ------------------------------------------------------------ Giveaway wins (announced by e.g. Helios)
+    # ------------------------------------------------------------ Giveaway wins (own /giveaway + e.g. Helios)
 
-    async def _all_wins(self, guild: discord.Guild) -> list[GiveawayWin]:
+    def _own_wins(self, guild: discord.Guild) -> list[GiveawayWin]:
+        """Winners of this bot's own /giveaway (from the database – always up to date, no cache)."""
+        return [GiveawayWin(message_id=row["message_id"], created_at=int(row["ends_at"]),
+                            jump_url=f"https://discord.com/channels/{guild.id}/{row['channel_id']}/{row['message_id']}",
+                            winner_ids=[int(w) for w in row["winner_ids"].split(",") if w],
+                            winner_names=[], prize=row["prize"])
+                for row in self.bot.db.ended_giveaways(guild.id)]
+
+    async def _channel_wins(self, guild: discord.Guild) -> list[GiveawayWin]:
+        """Winners announced by another bot (e.g. Helios) in GIVEAWAY_WIN_CHANNEL_ID (cached briefly)."""
+        channel_id = self.bot.config.giveaway_win_channel_id
+        if not channel_id:
+            return []
         cached = getattr(self, "_win_cache", None)
         if cached and time.monotonic() - cached[0] < GIVEAWAY_CACHE_SECONDS:
             return cached[1]
-        channel = guild.get_channel(self.bot.config.giveaway_win_channel_id)
+        channel = guild.get_channel(channel_id)
         if channel is None:
             raise LookupError("The giveaway winner channel was not found (or the bot can't see it).")
         wins = []
@@ -493,6 +547,18 @@ class Tickets(commands.Cog):
                 wins.append(win)
         self._win_cache = (time.monotonic(), wins)
         return wins
+
+    async def _all_wins(self, guild: discord.Guild) -> list[GiveawayWin]:
+        own = self._own_wins(guild)
+        try:
+            other = await self._channel_wins(guild)
+        except (LookupError, discord.HTTPException) as exc:
+            if not own:
+                raise
+            log.warning("Giveaway winner channel unavailable: %s", exc)
+            other = []
+        known = {w.message_id for w in own}
+        return own + [w for w in other if w.message_id not in known]
 
     def _prize_kits(self) -> dict[str, int | None]:
         """Kit name -> Discord role that unlocks it (custom kit claim role or role-locked autokit)."""
@@ -510,10 +576,11 @@ class Tickets(commands.Cog):
                                      getattr(member, "display_name", None)) if n}
         return [w for w in await self._all_wins(guild) if w.won_by(member.id, names)]
 
-    def _describe_win(self, guild: discord.Guild, win: GiveawayWin, kits: dict[str, int | None]) -> dict:
+    def _describe_win(self, guild: discord.Guild, win: GiveawayWin, kits: dict[str, int | None],
+                      user_id: int) -> dict:
         kit = match_kit(win.prize, list(kits))
         role = guild.get_role(kits[kit]) if kit and kits[kit] else None
-        redeemed = self.bot.db.giveaway_redemption(win.message_id)
+        redeemed = self.bot.db.giveaway_redemption(win.message_id, user_id)
         return {"message_id": str(win.message_id), "prize": win.prize, "won_at_discord": f"<t:{win.created_at}:R>",
                 "lifetime": win.lifetime, "kit": kit, "kit_role": role.name if role else None,
                 "already_redeemed": bool(redeemed), "link": win.jump_url}
@@ -524,8 +591,8 @@ class Tickets(commands.Cog):
         except (LookupError, discord.HTTPException) as exc:
             return {"error": str(exc)}
         kits = self._prize_kits()
-        return {"wins": [self._describe_win(guild, w, kits) for w in wins],
-                "note": None if wins else "No win found for this user in the giveaway channel."}
+        return {"wins": [self._describe_win(guild, w, kits, member.id) for w in wins],
+                "note": None if wins else "No giveaway win found for this user."}
 
     async def _tool_redeem_win(self, channel: discord.TextChannel, ticket, member, message_id: str) -> dict:
         try:
@@ -535,7 +602,7 @@ class Tickets(commands.Cog):
         win = next((w for w in wins if str(w.message_id) == message_id.strip()), None)
         if win is None:
             return {"ok": False, "result": "not_your_win", "message": "This is not a win of the ticket owner."}
-        info = self._describe_win(channel.guild, win, self._prize_kits())
+        info = self._describe_win(channel.guild, win, self._prize_kits(), member.id)
         if info["already_redeemed"]:
             return {"ok": False, "result": "already_redeemed", **info}
         if not info["kit"] or not info["kit_role"]:

@@ -636,13 +636,23 @@ kits. Replies are sent without @mentions.
   can never claim for anyone else or give other kits – so nobody can talk it into more than they could
   claim themselves. Not linked yet? It explains `/customkit link`.
 
-**Giveaway prizes in tickets:** if another bot (e.g. Helios) posts "Giveaway Winner" messages in a
-channel (setting *Channel with giveaway winners*, preset to this server's channel), the AI can look up the
-ticket owner's wins there (matched by the @mention or the `Winner: name` line, only messages from bots):
+**Giveaway prizes in tickets:** the AI knows the ticket owner's giveaway wins from two sources:
+- the bot's own **`/giveaway`** (straight from the database), and
+- another bot (e.g. Helios) that posts "Giveaway Winner" messages in a channel (setting *Channel with
+  giveaway winners*, preset to this server's channel, `0` = off) – matched by the @mention or the
+  `Winner: name` line, only messages from bots.
+
+**Automatic prize tickets:** when a `/giveaway` ends (or is rerolled), every winner automatically gets a
+**🎉 Giveaway prize** ticket (setting *Prize ticket for /giveaway winners*, `GIVEAWAY_AUTO_TICKET`, on by
+default; needs tickets). The AI congratulates them and redeems the prize right away – or calls staff.
+If the winner already has an open ticket, the prize is posted there instead of opening a second one.
+Without a DeepSeek key the ticket simply pings staff.
+
+What the AI does with a win:
 - **Lifetime kit prize** (prize text names one of your kits and says *lifetime / permanent / perm /
   forever*): the AI gives the player that kit's **Discord role** – the custom kit's claim role or the
   required role of a role-locked autokit – so they can claim it from then on. Each win can be redeemed
-  **only once**; it's posted in the ticket and the admin log.
+  **only once per winner**; it's posted in the ticket and the admin log.
 - **Everything else** (store credit, a kit for a limited time, unknown prize): the AI tells the player and
   calls staff with the prize and a link to the winner message.
 - The bot needs *Read Message History* in that channel and *Manage Roles* with its role above the kit roles.

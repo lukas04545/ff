@@ -112,6 +112,9 @@ FIELDS: list[Field] = [
           pick="text_channel",
           help="The ticket AI looks up a player's wins here. Lifetime kit prizes: it gives the kit's role "
                "(once per win). Other prizes go to staff. 0 = off."),
+    Field("GIVEAWAY_AUTO_TICKET", "Prize ticket for /giveaway winners", "tickets", "bool",
+          help="On (default): when a /giveaway ends, every winner automatically gets a ticket in which the AI "
+               "redeems the prize (lifetime kit -> kit role) or calls staff. Needs tickets to be set up."),
     Field("RUST_SERVER_PLATFORM", "Platform (for /rust)", "community",
           placeholder="Rust Console Edition (Xbox & PlayStation)"),
     Field("RUST_SERVER_WIPE", "Wipe schedule (for /rust)", "community", placeholder="e.g. Thursdays 6 pm"),

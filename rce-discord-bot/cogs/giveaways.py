@@ -5,7 +5,8 @@
 /giveaway reroll  – draw new winners
 /giveaway list    – running and finished giveaways
 
-Optionally, winners receive the GIVEAWAY_WINNER_ROLE_ID role.
+Optionally, winners receive the GIVEAWAY_WINNER_ROLE_ID role. With tickets set up (GIVEAWAY_AUTO_TICKET),
+every winner also gets a prize ticket in which the ticket AI redeems the prize or calls staff.
 """
 from __future__ import annotations
 
@@ -155,6 +156,10 @@ class Giveaways(commands.Cog):
         await channel.send(text, reference=message, mention_author=False,
                            allowed_mentions=discord.AllowedMentions(users=[discord.Object(w) for w in winners]))
         await self._give_winner_role(channel, winners)
+        await self._open_prize_tickets(channel, row, winners,
+                                       message.jump_url if message else
+                                       f"https://discord.com/channels/{row['guild_id']}/{row['channel_id']}/"
+                                       f"{row['message_id']}")
 
         embed = discord.Embed(title="🎉 Giveaway " + ("rerolled" if reroll else "ended"), colour=COLOUR)
         embed.add_field(name="Prize", value=safe_md(row["prize"])[:1000])
@@ -162,6 +167,18 @@ class Giveaways(commands.Cog):
         embed.add_field(name="Winners", value=", ".join(f"<@{w}>" for w in winners) or "–", inline=False)
         self.bot.discord_log(embed)
         return winners
+
+    async def _open_prize_tickets(self, channel, row, winners: list[int], link: str) -> None:
+        """Hands every winner to the ticket AI: a prize ticket in which it redeems the prize (or calls staff)."""
+        tickets = self.bot.get_cog("Tickets")
+        guild = getattr(channel, "guild", None)
+        if not self.bot.config.giveaway_auto_ticket or tickets is None or not tickets.enabled or guild is None:
+            return
+        for winner_id in winners:
+            try:
+                await tickets.open_prize_ticket(guild, winner_id, row["prize"], link)
+            except Exception:  # one failed ticket must not stop the others
+                log.exception("Prize ticket for winner %s of giveaway #%s failed", winner_id, row["id"])
 
     async def _give_winner_role(self, channel, winners: list[int]) -> None:
         role_id = self.bot.config.giveaway_winner_role_id
