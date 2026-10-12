@@ -696,6 +696,10 @@ resolved?"* with **✅ Yes, close the ticket** / **✖️ No, I still need help*
 like "yes", "yep thanks", "ja", "resolved" – closes the ticket (transcript and DM as usual, reason "Resolved").
 Anything else keeps it open and the AI carries on. It asks once per answer and never while staff has taken over,
 staff was called, or a kit purchase in the ticket waits for approval.
+The player doesn't have to wait for the question: if they write on their own that it's solved ("all fixed,
+thanks", "it's resolved", "you can close it"), the AI says goodbye and closes the ticket right away. Questions
+like "is it resolved?" or "not resolved yet" don't count. A ticket with a kit purchase that still waits for
+approval stays open. `/ticket ai-test` shows "Would close the ticket" when the AI would close it.
 
 **Security:** The AI can only reply and call staff. It has **no access to RCON**, so it can't
 give kits, unban anyone or run commands, no matter what's written in the ticket. It only gets the
