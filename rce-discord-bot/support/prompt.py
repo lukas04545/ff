@@ -108,7 +108,10 @@ PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
     list (fix_items = correct/ask about the listed entries and call again with everything). Show them the final
     list. Staff checks the purchase and the list and approves it with a button – you can NEVER approve it yourself.
     After approval the bot creates the kit and its role and gives them the role; they claim it in-game with
-    /customkit claim (after /customkit link if their player isn't linked)."""
+    /customkit claim (after /customkit link if their player isn't linked).
+  * Bought kits are handled with these two tools, NOT by just calling staff: the request already pings staff,
+    so keep escalate false for it. Even if the knowledge base says only the team can give or create kits, file
+    the request – staff approving it IS the team doing it. Call staff only if they also need something else."""
 
 
 def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None,

@@ -225,3 +225,51 @@ def test_new_kit_retry_after_failed_role_step(env, monkeypatch):
     ok, text = asyncio.run(env.requests.decide(r["request_id"], True, env.staff))    # staff fixed it, approves again
     assert ok, text
     assert len(env.db.custom_kit_items("Bob kit")) == 2 and env.created[-1] in env.buyer.roles
+
+
+def test_ai_test_runs_like_a_ticket_without_doing_anything(env):
+    """/ticket ai-test uses the real prompt + tools, but actions are only simulated."""
+    seen = {}
+    replies = iter([
+        {"content": "", "tool_calls": [{"id": "1", "type": "function", "function": {
+            "name": "find_items", "arguments": '{"query": "garage"}'}}]},
+        {"content": "", "tool_calls": [{"id": "2", "type": "function", "function": {
+            "name": "request_new_custom_kit", "arguments": json.dumps({"items": ORDER, "proof": "Tebex #1"})}}]},
+        {"content": '{"reply": "Filed for staff approval!", "escalate": false, "reason": ""}', "tool_calls": []},
+    ])
+
+    async def chat(messages, tools=None, json_mode=True):
+        seen.setdefault("system", messages[0]["content"])
+        seen["tools"] = {t["function"]["name"] for t in tools or []}
+        return next(replies)
+    env.tickets.ai = SimpleNamespace(enabled=True, model="test-model", chat=chat)
+    sent = []
+
+    async def defer(**kw):
+        return None
+
+    async def followup_send(text, **kw):
+        sent.append(text)
+    interaction = SimpleNamespace(user=env.staff, guild=env.channel.guild,
+                                  response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=followup_send))
+    env.staff.display_name = "Mod"
+    asyncio.run(env.tickets.ai_test.callback(env.tickets, interaction, "I bought M249 x2 and 50 rockets"))
+    assert "request_new_custom_kit" in seen["tools"] and "request_new_custom_kit" in seen["system"]
+    assert "Filed for staff approval!" in sent[0] and "find_items `garage`" in sent[0]
+    assert "lmg.m249 ×2" in sent[0] and "nothing was executed" in sent[0]
+    assert env.posted == [] and env.db.kit_requests(status="pending") == []          # nothing filed for real
+
+
+def test_ai_error_is_never_silent(env, monkeypatch):
+    async def boom(channel):
+        raise RuntimeError("tool crashed")
+    monkeypatch.setattr(env.tickets, "_ai_reply", boom)
+    env.channel.mention = "#ticket"
+    env.tickets._staff_roles = lambda guild: []
+
+    async def no_log(guild, **kw):
+        return None
+    env.tickets._log = no_log
+    asyncio.run(env.tickets._debounced_reply(env.channel, env.tickets._generation[env.channel.id], 0))
+    assert any("ran into an error" in (c or "") for c, _, _ in env.posted)
+    assert env.db.ticket_by_channel(100)["escalated"]

@@ -38,6 +38,28 @@ class KitRequestError(Exception):
     """Request can't be filed / approved – message for the AI or staff."""
 
 
+def resolve_items(items: list) -> tuple[list[dict], list[dict]]:
+    """Buyer's item list [{item, amount}] -> (resolved [{short, label, amount}], problems for the AI)."""
+    resolved, unknown = [], []
+    for entry in items[:MAX_NEW_KIT_ITEMS]:
+        text = str((entry or {}).get("item") or "").strip() if isinstance(entry, dict) else str(entry)
+        try:
+            amount = int(entry.get("amount", 1)) if isinstance(entry, dict) else 1
+        except (TypeError, ValueError):
+            amount = 0
+        short, candidates = itemlist.resolve(text)
+        if short is None or not 1 <= amount <= MAX_AMOUNT:
+            unknown.append({"item": text, "amount": amount,
+                            "problem": "amount must be 1–1,000,000" if short else "unknown item",
+                            "candidates": [f"{s} ({label})" for s, label in candidates]})
+            continue
+        resolved.append({"short": short, "label": itemlist.COMMON_ITEMS[short], "amount": amount})
+    if len(items) > MAX_NEW_KIT_ITEMS:
+        unknown.append({"item": f"{len(items) - MAX_NEW_KIT_ITEMS} more entries",
+                        "problem": f"at most {MAX_NEW_KIT_ITEMS} items per kit"})
+    return resolved, unknown
+
+
 class KitRequestView(discord.ui.View):
     """Persistent Approve / Reject buttons – the request is found via the message."""
 
@@ -109,23 +131,7 @@ class KitRequests(commands.Cog):
                        items: list, proof: str, days: int = 0) -> dict:
         """Request for a NEW custom kit with the buyer's item list. Unknown items go back to the AI first."""
         db = self.bot.db
-        resolved, unknown = [], []
-        for entry in items[:MAX_NEW_KIT_ITEMS]:
-            text = str((entry or {}).get("item") or "").strip() if isinstance(entry, dict) else str(entry)
-            try:
-                amount = int(entry.get("amount", 1)) if isinstance(entry, dict) else 1
-            except (TypeError, ValueError):
-                amount = 0
-            short, candidates = itemlist.resolve(text)
-            if short is None or not 1 <= amount <= MAX_AMOUNT:
-                unknown.append({"item": text, "amount": amount,
-                                "problem": "amount must be 1–1,000,000" if short else "unknown item",
-                                "candidates": [f"{s} ({label})" for s, label in candidates]})
-                continue
-            resolved.append({"short": short, "label": itemlist.COMMON_ITEMS[short], "amount": amount})
-        if len(items) > MAX_NEW_KIT_ITEMS:
-            unknown.append({"item": f"{len(items) - MAX_NEW_KIT_ITEMS} more entries",
-                            "problem": f"at most {MAX_NEW_KIT_ITEMS} items per kit"})
+        resolved, unknown = resolve_items(items)
         if unknown or not resolved:
             return {"ok": False, "result": "fix_items", "resolved": resolved, "unknown": unknown,
                     "message": "Not filed yet: fix or ask about these entries (use find_items), then call again "

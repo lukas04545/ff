@@ -762,7 +762,9 @@ What the AI does with a win:
    apply without a restart. Don't put anything secret in it, because the AI may share all of it.
 6. Start the bot, then try `/ticket ai-status` (shows balance and model) and
    `/ticket ai-test question:"When is wipe?"`. Finally run `/ticket panel` in the channel of your
-   choice.
+   choice. `ai-test` answers like a real ticket (same prompt and tools, you as the player), but in test mode:
+   claims, purchase requests and redeems are only checked and listed under *Tools the AI used* – nothing is
+   executed. Try e.g. `question:"I bought M249 x2, 50 rockets and 50k hqm, Tebex order 123"`.
 
 **Privacy:** Ticket messages are sent to DeepSeek to generate replies. The panel points this
 out. Check whether that's OK for your community (GDPR, privacy notice in your Discord). Without
