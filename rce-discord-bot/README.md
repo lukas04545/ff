@@ -690,6 +690,13 @@ When a staff member writes in the ticket, **the AI pauses automatically**. Use
 `/ticket ai enabled:true` to turn it back on. On close, a **transcript** is posted as a text
 file to `TICKET_LOG_CHANNEL_ID`, the user gets a DM, and the channel is deleted.
 
+**Auto-close when resolved:** when the AI has answered and the player hasn't written for **5 minutes**
+(setting *Ask "Is it resolved?" after*, `TICKET_RESOLVE_MINUTES`, `0` = off), the AI asks *"❓ Is your issue
+resolved?"* with **✅ Yes, close the ticket** / **✖️ No, I still need help** buttons. Yes – or a short typed answer
+like "yes", "yep thanks", "ja", "resolved" – closes the ticket (transcript and DM as usual, reason "Resolved").
+Anything else keeps it open and the AI carries on. It asks once per answer and never while staff has taken over,
+staff was called, or a kit purchase in the ticket waits for approval.
+
 **Security:** The AI can only reply and call staff. It has **no access to RCON**, so it can't
 give kits, unban anyone or run commands, no matter what's written in the ticket. It only gets the
 knowledge base and the live status (online/offline, player count) – no player list and no custom

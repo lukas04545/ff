@@ -101,6 +101,10 @@ FIELDS: list[Field] = [
           help="platform.deepseek.com → API Keys. Empty = tickets without AI."),
     Field("DEEPSEEK_MODEL", "DeepSeek model", "tickets", placeholder="deepseek-flash"),
     Field("TICKET_AI_MAX_REPLIES", "Max. AI replies per ticket", "tickets", "int", placeholder="20"),
+    Field("TICKET_RESOLVE_MINUTES", "Ask \"Is it resolved?\" after (minutes)", "tickets", "int", placeholder="5",
+          help="After the AI answered and the player hasn't written for this long, the AI asks if the issue is "
+               "resolved (Yes/No buttons; typing \"yes\" works too). Yes = the ticket is closed. Not asked when "
+               "staff took over, staff was called or a kit purchase waits for approval. 0 = off."),
     Field("TICKET_AI_KIT_TOOLS", "AI may check and claim kits for the ticket owner", "tickets", "bool",
           help="On (default): the AI can look up which custom kits the ticket owner's Discord roles allow, "
                "when they last claimed them, and claim one for them – same rules as /customkit claim "

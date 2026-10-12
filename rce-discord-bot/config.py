@@ -116,6 +116,7 @@ class Config:
     deepseek_base_url: str
     support_knowledge_file: Path
     ticket_ai_max_replies: int
+    ticket_resolve_minutes: int  # AI asks "resolved?" this long after the player's last message (0 = off)
     ticket_ai_kit_tools: bool   # AI may check/claim the ticket owner's kits
     kit_approver_role_ids: frozenset[int]   # may approve bought kits (empty = support roles)
     link_verify_quickchat: bool  # /customkit link: also prove ownership with two quick chats in-game
@@ -265,6 +266,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         deepseek_base_url=_get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
         support_knowledge_file=Path(_get("SUPPORT_KNOWLEDGE_FILE", "support_knowledge.md")),
         ticket_ai_max_replies=max(1, _int("TICKET_AI_MAX_REPLIES", 20)),
+        ticket_resolve_minutes=max(0, min(_int("TICKET_RESOLVE_MINUTES", 5), 1440)),
         ticket_ai_kit_tools=_bool("TICKET_AI_KIT_TOOLS", True),
         kit_approver_role_ids=_id_set("KIT_APPROVER_ROLE_IDS"),
         link_verify_quickchat=_bool("LINK_VERIFY_QUICKCHAT", False),
