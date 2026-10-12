@@ -416,6 +416,16 @@ class Tickets(commands.Cog):
                 await self._ai_reply(channel)
             except discord.HTTPException as exc:
                 log.warning("AI reply in %s failed: %s", channel.id, exc)
+            except Exception as exc:  # never leave the player without an answer
+                log.exception("AI reply in %s crashed", channel.id)
+                ticket = self.bot.db.ticket_by_channel(channel.id)
+                if ticket is not None:
+                    try:
+                        await channel.send("⚠️ The AI assistant ran into an error – I have notified the team.")
+                        await self._escalate(channel, ticket, f"AI error: {type(exc).__name__}: {exc}"[:300],
+                                             source="System", force=True)
+                    except discord.HTTPException:
+                        pass
 
     async def _history(self, channel: discord.TextChannel, ticket) -> list[tuple[str, str]]:
         owner_name = "User"
@@ -452,6 +462,10 @@ class Tickets(commands.Cog):
         if ticket is None or not ticket["ai_enabled"] or ticket["staff_joined"]:
             return
         if ticket["ai_replies"] >= self.bot.config.ticket_ai_max_replies:
+            self.bot.db.update_ticket(ticket["id"], ai_enabled=0)      # say it once instead of going silent
+            await channel.send(f"🤖 The AI assistant has reached its limit of "
+                               f"{self.bot.config.ticket_ai_max_replies} replies in this ticket – the team will "
+                               "take over from here.")
             await self._escalate(channel, ticket, "AI reply limit reached in this ticket", source="System")
             return
 
@@ -513,9 +527,10 @@ class Tickets(commands.Cog):
                 return None
         return member
 
-    async def _chat_with_tools(self, messages: list[dict], ticket, channel: discord.TextChannel,
-                               tools: list[dict] | None = None) -> str:
-        """Lets the AI call the kit tools (several rounds), returns its final answer text."""
+    async def _chat_with_tools(self, messages: list[dict], ticket, channel: discord.TextChannel | None,
+                               tools: list[dict] | None = None, runner=None) -> str:
+        """Lets the AI call the kit tools (several rounds), returns its final answer text.
+        runner: replaces _run_tool (the /ticket ai-test dry run)."""
         tools = tools or self._ai_tools() or KIT_TOOLS
         for _ in range(MAX_TOOL_ROUNDS):
             msg = await self.ai.chat(messages, tools=tools)
@@ -524,7 +539,7 @@ class Tickets(commands.Cog):
                 return msg["content"]
             messages.append({"role": "assistant", "content": msg["content"], "tool_calls": calls})
             for call in calls:
-                result = await self._run_tool(call, ticket, channel)
+                result = await (runner(call) if runner else self._run_tool(call, ticket, channel))
                 messages.append({"role": "tool", "tool_call_id": call.get("id", ""),
                                  "content": json.dumps(result, ensure_ascii=False)})
         # Too many tool rounds – final answer without tools
@@ -930,27 +945,92 @@ class Tickets(commands.Cog):
         embed.add_field(name="Usage & top-up", value=PLATFORM_USAGE_URL, inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @ticket.command(name="ai-test", description="Tests the AI assistant with a question (admins).")
-    @app_commands.describe(question="Sample question, as a player would ask it")
+    @ticket.command(name="ai-test", description="Tests the AI assistant like a real ticket – nothing is executed (admins).")
+    @app_commands.describe(question="Sample ticket message, as a player would write it")
     @admin_only()
     async def ai_test(self, interaction: discord.Interaction, question: str) -> None:
         if not self.ai.enabled:
             await interaction.response.send_message("No DEEPSEEK_API_KEY configured.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
+        tools = self._ai_tools()
         system = build_system_prompt(server_name=self._server_name(), topic=question, ingame_name=None,
-                                     status=self._status_text(), knowledge=self._knowledge())
+                                     status=self._status_text(), knowledge=self._knowledge(), kit_tools=bool(tools),
+                                     giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools),
+                                     purchase_tools=any(t in PURCHASE_TOOLS for t in tools))
+        messages = build_messages(system, [("user", f"{interaction.user.display_name} (ticket description): "
+                                                    f"{question}")])
+        used: list[str] = []
         try:
-            raw = await self.ai.chat_json(build_messages(system, [("user", f"Test user: {question}")]))
+            raw = None
+            if tools:
+                try:
+                    raw = await self._chat_with_tools(list(messages), None, None, tools,
+                                                      runner=lambda call: self._dry_tool(call, interaction, used))
+                except DeepSeekError as exc:
+                    if "HTTP 400" not in str(exc) and "HTTP 422" not in str(exc):
+                        raise
+                    used.append(f"⚠️ The model rejected the tools ({exc}) – answered without them")
+            if raw is None:
+                raw = await self.ai.chat_json(messages)
         except DeepSeekError as exc:
             await interaction.followup.send(f"⚠️ DeepSeek error: {exc}", ephemeral=True)
             return
         answer = parse_answer(raw)
         knowledge = "loaded" if self._knowledge() else "⚠️ not found"
-        await interaction.followup.send(
-            f"**Answer:**\n{answer.reply or '–'}\n\n**Call staff:** {'yes – ' + answer.reason if answer.escalate else 'no'}"
-            f"\n-# Model: {self.ai.model} · Knowledge base {knowledge}",
-            ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        mode = (f"{len(tools)} tools, test mode – nothing was executed" if tools
+                else "no tools (enable *Ticket AI kit tools* in the settings)")
+        actions = "\n".join(f"• {u}" for u in used) or "none"
+        text = (f"**Answer:**\n{answer.reply or '–'}\n\n**Call staff:** "
+                f"{'yes – ' + answer.reason if answer.escalate else 'no'}\n**Tools the AI used:**\n{actions}")
+        footer = f"\n-# Model: {self.ai.model} · Knowledge base {knowledge} · {mode}"
+        await interaction.followup.send(text[:2000 - len(footer) - 1].rstrip() + footer,
+                                        ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    async def _dry_tool(self, call: dict, interaction: discord.Interaction, used: list[str]) -> dict:
+        """/ticket ai-test: read-only tools run for the tester, actions are only checked and simulated."""
+        fn = call.get("function") or {}
+        name = fn.get("name") or "?"
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        note = {"test_mode": "This is an admin test – nothing was executed. Answer as if it had worked."}
+        member, guild = interaction.user, interaction.guild
+        if name == "find_items":
+            query = str(args.get("query") or "").strip()[:60]
+            used.append(f"find_items `{safe_md(query)}`")
+            hits = itemlist.suggestions(query, limit=10) if query else []
+            return {"matches": [f"{short} ({label})" for short, label in hits] or "no match – try another word"}
+        if name == "request_new_custom_kit":
+            from cogs.kit_requests import resolve_items
+            items = args.get("items") if isinstance(args.get("items"), list) else []
+            resolved, unknown = resolve_items(items)
+            if unknown or not resolved:
+                used.append(f"request_new_custom_kit → fix_items ({len(unknown)} unclear: "
+                            + ", ".join(safe_md(u["item"]) for u in unknown)[:300] + ")")
+                return {"ok": False, "result": "fix_items", "resolved": resolved, "unknown": unknown,
+                        "message": "Not filed yet: fix or ask about these entries (use find_items), then call again "
+                                   "with the complete list."}
+            used.append(f"request_new_custom_kit **{safe_md(str(args.get('kit_name') or 'new kit'))}** – would post "
+                        "for staff approval: " + ", ".join(f"{i['short']} ×{i['amount']:,}" for i in resolved)[:900])
+            return {"ok": True, "result": "waiting_for_staff", "items": resolved, **note}
+        if name == "request_kit_access":
+            kit = self.bot.db.custom_kit(str(args.get("kit") or "").strip())
+            if kit is None:
+                used.append(f"request_kit_access `{safe_md(str(args.get('kit')))}` → unknown kit")
+                return {"ok": False, "result": "unknown_kit",
+                        "available_custom_kits": [r["name"] for r in self.bot.db.custom_kits()]}
+            used.append(f"request_kit_access **{safe_md(kit['name'])}** – would post for staff approval")
+            return {"ok": True, "result": "waiting_for_staff", "kit": kit["name"], **note}
+        if name == "get_my_kits" and (custom := self.bot.get_cog("CustomKits")) and isinstance(member, discord.Member):
+            used.append("get_my_kits (your own kits)")
+            return custom.kit_overview(member)
+        if name == "get_my_giveaway_wins" and guild is not None:
+            used.append("get_my_giveaway_wins (your own wins)")
+            return await self._tool_giveaway_wins(guild, member)
+        used.append(f"{name} {safe_md(json.dumps(args, ensure_ascii=False))[:200]} – would run")
+        return {"ok": True, "result": "done", **note}
 
 
 async def setup(bot: "RceBot") -> None:

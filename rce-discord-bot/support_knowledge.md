@@ -40,5 +40,12 @@ Only the team decides on refunds. Describe what happened (time, location, items)
 **The server is offline / I can't get on.**
 Check the status in the status channel. After wipes/updates the server may take a few minutes to restart.
 
+## Buying kits
+Players who bought a custom kit (an existing kit, or their own list of items) tell the assistant in a ticket
+together with their order details (store, order/transaction ID). The assistant files a request, staff checks the
+purchase and approves it, then the player gets the kit's role and claims the kit in-game with `/customkit claim`
+(link the in-game player first with `/customkit link`).
+[Where to buy: e.g. our Tebex store at ...]
+
 ## VIP / donations
 [E.g.: VIP is available at ... – only the team handles payment issues.]
