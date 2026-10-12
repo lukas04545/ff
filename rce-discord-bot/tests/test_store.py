@@ -478,3 +478,50 @@ def test_client_request_format_and_errors():
         raise AssertionError("JWT accepted")
     except Tip4ServError as exc:
         assert "store API key" in str(exc)
+
+
+# ------------------------------------------------------------------ webhook ("live payments")
+
+def test_parse_webhook_flexible():
+    from support.tip4serv import parse_webhook, strip_private
+    p = parse_webhook({"event": "payment.success", "data": {"id": 1110065, "total_paid": "25.00", "currency": "eur",
+                       "customer": {"discord_id": "1385231250033475675", "email": "a@b.c", "username": "Geek"}}})
+    assert p == {"kind": "payment", "payment_id": "1110065", "amount": 25.0, "currency": "EUR",
+                 "discord_id": 1385231250033475675, "player": "Geek"}
+    assert parse_webhook({"type": "payment_refunded", "payment_id": "#77"})["kind"] == "refund"
+    assert parse_webhook({"type": "subscription_renewal", "payment_id": "78"})["kind"] == "other"
+    assert parse_webhook({"hello": "world"}) is None and parse_webhook("x") is None
+    assert strip_private({"customer": {"email": "a@b.c", "ip": "1.2.3.4", "name": "x"}}) == {"customer": {"name": "x"}}
+
+
+def test_webhook_endpoint_stores_and_approves(shop):
+    from aiohttp.test_utils import TestClient, TestServer
+    env = shop
+    r = new_kit(env, {"kit_name": "Geek kit", "items": [{"item": "rifle.ak", "amount": 5}], "proof": "T4s #1110065"})
+    env.bot.config = replace(env.bot.config, tip4serv_key="")              # webhook only
+
+    async def scenario():
+        from web.server import WebInterface
+        tmp = env.bot.config.database_path.parent
+        web_ = WebInterface(env.bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        client = TestClient(TestServer(web_.app))
+        await client.start_server()
+        try:
+            payload = {"event": "Payment successful", "payment": {"id": "1110065", "amount": 25, "currency": "EUR",
+                                                                   "discord_id": "7"}, "player": "Geek"}
+            assert (await client.post("/hooks/tip4serv/wrongtoken", json=payload)).status == 404
+            res = await client.post(f"/hooks/tip4serv/{web_.webhook_token}", json=payload)
+            assert res.status == 200 and (await res.json())["stored"] is True
+            again = await client.post(f"/hooks/tip4serv/{web_.webhook_token}", json=payload)
+            assert (await again.json())["reason"] == "known"                   # sent twice -> counted once
+            refund = await client.post(f"/hooks/tip4serv/{web_.webhook_token}",
+                                       json={"event": "payment_refunded", "payment_id": "1110065"})
+            assert (await refund.json())["voided"] is True
+        finally:
+            await client.close()
+    asyncio.run(scenario())
+    # "discord_id": "7" isn't a snowflake -> matched by the order ID in the proof (name matching on)
+    assert env.db.kit_request(r["request_id"])["status"] == "approved"
+    assert env.store.problem() is None                                      # webhook counts as connected
+    row = env.db.find_store_payments("1110065")[0]
+    assert row["id"] == "1110065:webhook" and row["used_by"] == r["request_id"]
