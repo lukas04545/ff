@@ -3,8 +3,8 @@
 Only items spawned with the in-game admin panel count – the server logs them as
 "[ServerVar] giving <player> <amount> x <item>". Gives via RCON/console (the bot's shop and kits, /rcon) look
 different ("[ServerVar] SERVER giving …" or without "[ServerVar]") and are ignored. When the item matches
-ABUSE_ITEMS and the player is not allowed, the bot runs ABUSE_REMOVE_ADMIN_COMMANDS and ABUSE_KILL_COMMAND
-(global.killplayer "<player>") and pings staff.
+ABUSE_ITEMS and the player is not allowed, the bot runs ABUSE_REMOVE_ADMIN_COMMANDS, ABUSE_KILL_COMMAND
+(global.killplayer "<player>") and ABUSE_AFTER_KILL_COMMANDS (entity.deleteby "<player>") and pings staff.
 
 Allowed: players linked (/customkit link) to a Discord member with an ABUSE_EXEMPT_ROLE_IDS role (owner, co-owner)
 and the names in ABUSE_EXEMPT_PLAYERS. Items the bot gives itself (shop, custom kits, rewards) never count.
@@ -14,6 +14,7 @@ player – the alert says so, staff should check it.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import deque
@@ -137,22 +138,30 @@ class AbuseGuard(commands.Cog):
         log.warning(text.replace("**", ""))
         self.bot.audit(text)
 
+    async def _run(self, template: str, name: str) -> tuple[str, str]:
+        cmd = template.format(name=name)
+        try:
+            # Console Edition often doesn't answer these commands – don't wait long (and don't count it as a
+            # dead connection)
+            reply = (await self.bot.rcon.command(cmd, timeout=3, expect_response=False)).strip() or "sent (no reply)"
+        except RconError as exc:
+            reply = f"failed: {exc}"
+        return cmd, reply
+
     async def punish(self, player: str, item: str, amount: float | None) -> list[tuple[str, str]]:
-        """Removes admin and kills the player. Returns (command, server reply) for the alert."""
+        """Removes admin, kills the player, then runs the after-kill commands (entity.deleteby …).
+        Returns (command, server reply) for the alert."""
         cfg = self.bot.config
         name = sanitize_player_name(player)
-        results: list[tuple[str, str]] = []
-        for template in (*cfg.abuse_remove_admin_commands, cfg.abuse_kill_command):
-            cmd = template.format(name=name)
-            try:
-                reply = (await self.bot.rcon.command(cmd, timeout=8)).strip() or "ok (no reply)"
-            except RconError as exc:
-                reply = f"failed: {exc}"
-            results.append((cmd, reply))
+        results = [await self._run(t, name) for t in (*cfg.abuse_remove_admin_commands, cfg.abuse_kill_command)]
+        after = [t for t in cfg.abuse_after_kill_commands if t != "-"]
+        if after:
+            await asyncio.sleep(1)       # let the kill go through first
+            results += [await self._run(t, name) for t in after]
         what = f"{amount:g} × {item}" if amount else item
-        log.warning("Admin abuse: %s spawned %s – admin removed and killed.", player, what)
-        self.bot.audit(f"🚨 **{safe_md(player)}** spawned **{safe_md(what)}** without permission – admin removed, "
-                       "killed in-game")
+        done = "admin removed, killed in-game" + (", " + ", ".join(t.split(" ")[0] for t in after) if after else "")
+        log.warning("Admin abuse: %s spawned %s – %s.", player, what, done)
+        self.bot.audit(f"🚨 **{safe_md(player)}** spawned **{safe_md(what)}** without permission – {done}")
         await self._alert(player, what, results)
         return results
 

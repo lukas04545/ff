@@ -179,6 +179,10 @@ FIELDS: list[Field] = [
           help="Separated by ; – {name} = player. Test them first with /rcon on a test account; the server's reply is "
                "shown in the alert."),
     Field("ABUSE_KILL_COMMAND", "Kill command", "abuse", advanced=True, placeholder='global.killplayer "{name}"'),
+    Field("ABUSE_AFTER_KILL_COMMANDS", "Commands after the kill", "abuse", advanced=True,
+          placeholder='entity.deleteby "{name}"',
+          help="Run right after the kill, separated by ; – {name} = player. Default entity.deleteby deletes everything "
+               "the player owns (bases, deployables). Enter - to run nothing."),
     # Alerts & backups
     Field("SERVER_DOWN_ALERT_MINUTES", "Server-down alert after … minutes", "alerts", "int", placeholder="10",
           help="Pings staff once when there has been no RCON connection for this long, and again when the server is "
