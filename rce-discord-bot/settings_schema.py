@@ -115,6 +115,14 @@ FIELDS: list[Field] = [
           help="127.0.0.1 = this PC only, 0.0.0.0 = also phone/laptop on your home network. "
                "Never expose it to the internet!"),
     Field("WEB_PORT", "Port", "web", "int", placeholder="8080"),
+    Field("WEB_TUNNEL", "Reachable from the internet (Cloudflare tunnel)", "web", "bool",
+          help="On = free, encrypted https:// address that works from anywhere – no router settings needed. "
+               "The address is shown on the Overview and posted in the admin log channel. Needs WEB_PASSWORD."),
+    Field("WEB_TUNNEL_TOKEN", "Cloudflare tunnel token (fixed address)", "web", "secret", advanced=True,
+          help="Optional. Empty = random address (changes when the bot window is closed). For a fixed address "
+               "create a tunnel in the Cloudflare dashboard (needs your own domain) and paste its token."),
+    Field("WEB_PUBLIC_URL", "Fixed public address", "web", advanced=True, placeholder="https://panel.example.com",
+          help="Only with a tunnel token: the address you configured for it in Cloudflare."),
     Field("WEB_OPEN_BROWSER", "Open browser on start", "web", "bool"),
     Field("WEB_ENABLED", "Web interface enabled", "web", "bool",
           help="Careful: turning this off locks you out of the web interface (then only via .env)."),
@@ -157,6 +165,8 @@ def validate(key: str, value: str) -> str | None:
         return f'"{f.label}": allowed values are {", ".join(f.choices)}.'
     if key == "RCON_HOST" and (":" in value or "/" in value):
         return 'Enter the server IP without a port and without "/".'
+    if key == "WEB_PUBLIC_URL" and not value.startswith(("https://", "http://")):
+        return f'"{f.label}" must start with https://'
     if "\n" in value and f.kind != "textarea":
         return f'"{f.label}" must not contain line breaks.'
     return None
