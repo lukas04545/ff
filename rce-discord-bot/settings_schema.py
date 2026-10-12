@@ -35,6 +35,7 @@ GROUPS = [
     ("kits", "🎒 Kits"),
     ("tickets", "🎫 Tickets & AI"),
     ("community", "🎉 Community"),
+    ("alerts", "🚨 Alerts & backups"),
     ("web", "🌐 Web interface"),
     ("updates", "🔄 Updates"),
     ("templates", "🧩 Command templates (experts)"),
@@ -117,10 +118,26 @@ FIELDS: list[Field] = [
     Field("GIVEAWAY_AUTO_TICKET", "Prize ticket for /giveaway winners", "tickets", "bool",
           help="On (default): when a /giveaway ends, every winner automatically gets a ticket in which the AI "
                "redeems the prize (lifetime kit -> kit role) or calls staff. Needs tickets to be set up."),
+    Field("GIVEAWAY_PRIZE_DAYS", "Days for kit prizes without a duration", "tickets", "int", placeholder="0",
+          help="A kit prize that is neither lifetime nor names a duration (e.g. \"Vip Standard\"): the AI gives the "
+               "kit role for this many days. 0 = staff decides. Prizes like \"VIP 7 days\" always use their own "
+               "duration."),
     Field("RUST_SERVER_PLATFORM", "Platform (for /rust)", "community",
           placeholder="Rust Console Edition (Xbox & PlayStation)"),
     Field("RUST_SERVER_WIPE", "Wipe schedule (for /rust)", "community", placeholder="e.g. Thursdays 6 pm"),
     Field("RULES_FILE", "Rules file", "community", advanced=True, placeholder="rules.md"),
+    # Alerts & backups
+    Field("SERVER_DOWN_ALERT_MINUTES", "Server-down alert after … minutes", "alerts", "int", placeholder="10",
+          help="Pings staff once when there has been no RCON connection for this long, and again when the server is "
+               "back. 0 = off."),
+    Field("ALERT_CHANNEL_ID", "Alert channel", "alerts", "id", pick="text_channel",
+          help="Empty = admin log channel."),
+    Field("ALERT_ROLE_IDS", "Roles to ping on alerts", "alerts", "ids", pick="role",
+          help="Empty = admin roles."),
+    Field("BACKUP_ENABLED", "Daily backup", "alerts", "bool",
+          help="On (default): once a day and before every automatic update the bot saves the database, web "
+               "logins, rules and knowledge base to data/backups/ (your .env with the tokens is not included)."),
+    Field("BACKUP_KEEP_DAYS", "Keep backups for … days", "alerts", "int", placeholder="7"),
     # Web
     Field("WEB_PASSWORD", "Password for this web interface", "web", "secret",
           help="Empty = a login link in the bot window on every start."),

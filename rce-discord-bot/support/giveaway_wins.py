@@ -21,6 +21,11 @@ _PRIZE_LINE = re.compile(r"prize\s*[:\-]\s*(.+)", re.IGNORECASE)
 _CONGRATS = re.compile(r"congratulations?\b[\s,:]*(?P<names>[^!\n]*?)\s*!+\s*(?:you|they)\s+(?:have\s+)?won\s+"
                        r"(?:the\s+)?(?P<prize>[^\n]+)", re.IGNORECASE)
 _MENTION = re.compile(r"<@!?\d+>")
+# "VIP 7 days", "VIP (30d)", "2 weeks", "1 month", "24h"
+_PRIZE_DURATION = re.compile(r"(?<![\w.])(\d{1,4})\s*-?\s*(minutes?|mins?|hours?|hrs?|h|days?|d|weeks?|wks?|w|"
+                             r"months?|mo)\b", re.IGNORECASE)
+_DURATION_MINUTES = {"min": 1, "h": 60, "hr": 60, "hour": 60, "d": 1440, "day": 1440, "w": 10080, "wk": 10080,
+                     "week": 10080, "mo": 43200, "month": 43200}
 LIFETIME = re.compile(r"\b(life\s*-?\s*time|perm(?:anent)?|forever|unlimited)\b", re.IGNORECASE)
 
 
@@ -90,6 +95,19 @@ def parse_win(message) -> GiveawayWin | None:
         created_at=int(created.timestamp()) if created else 0,
         winner_ids=[u.id for u in getattr(message, "mentions", []) or []],
         winner_names=names, prize=prize.strip()[:200])
+
+
+def prize_duration_minutes(prize: str) -> int | None:
+    """Duration named in a prize ("VIP 7 days" -> 10080 minutes, "1 month" = 30 days), None if there is none."""
+    m = _PRIZE_DURATION.search(prize)
+    if not m:
+        return None
+    unit = m.group(2).lower()
+    for key in ("month", "minute", "min", "hour", "hr", "day", "week", "wk", "mo", "h", "d", "w"):
+        if unit.startswith(key):
+            factor = _DURATION_MINUTES["min" if key == "minute" else key]
+            return int(m.group(1)) * factor or None
+    return None
 
 
 def match_kit(prize: str, kit_names: list[str]) -> str | None:

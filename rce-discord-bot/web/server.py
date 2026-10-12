@@ -31,6 +31,7 @@ import aiohttp
 import discord
 from aiohttp import web
 
+import backups
 import settings_schema
 from config import ConfigError, load_config, required_intents
 from envfile import read_env, update_env
@@ -39,7 +40,7 @@ from rce.diagnostics import diagnose_rcon
 from logbuffer import memory_log
 from web import tunnel as tunnelmod
 from web.users import OWNER, UserError, UserStore
-from permcheck import check_permissions
+from permcheck import check_permissions, explain_forbidden
 from rce import items as itemlist
 from rce import kits as kitparse
 from rce import quickchat
@@ -60,7 +61,7 @@ SESSION_TTL = 12 * 3600
 LOGIN_ATTEMPTS_PER_MINUTE = 5
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
-OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update")
+OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -309,6 +310,11 @@ class WebInterface:
         r.add_put("/api/rules", self.put_rules)
         r.add_get("/api/community", self.community)
         r.add_post("/api/giveaways/{giveaway_id:\\d+}/{action:end|reroll}", self.giveaway_action)
+        r.add_get("/api/timed-roles", self.timed_roles)
+        r.add_delete("/api/timed-roles/{row_id:\\d+}", self.delete_timed_role)
+        r.add_get("/api/backups", self.list_backups)
+        r.add_post("/api/backups", self.create_backup)
+        r.add_get("/api/backups/{name}", self.download_backup)
         return app
 
     async def start(self, *, open_browser: bool | None = None) -> bool:
@@ -368,6 +374,8 @@ class WebInterface:
 
     def _tunnel_online(self, url: str | None, announce: bool = True) -> None:
         url = url or self.ws.public_url or "(your fixed tunnel address)"
+        if self.tunnel is not None and self.tunnel.adopted:
+            announce = False     # same link as before the update restart – no new announcement
         login = (f"owner / {self.generated_password}   (new password, saved in .env as WEB_PASSWORD)"
                  if self.generated_password else "owner / your WEB_PASSWORD   (other admins: their own account)")
         bar = "=" * 72
@@ -1254,6 +1262,49 @@ class WebInterface:
         winners = await cog.finish(row, reroll=action == "reroll")
         self._audit(f"Giveaway #{row['id']} {'ended' if action == 'end' else 'rerolled'}")
         return web.json_response({"ok": True, "winners": [str(w) for w in winners]})
+
+    async def timed_roles(self, request: web.Request) -> web.Response:
+        rows = []
+        for r in self.bot.db.timed_roles():
+            guild = self.bot.get_guild(r["guild_id"])
+            member = guild.get_member(r["user_id"]) if guild else None
+            role = guild.get_role(r["role_id"]) if guild else None
+            rows.append({"id": r["id"], "user_id": str(r["user_id"]),
+                         "user": (member.display_name if member else None) or str(r["user_id"]),
+                         "role": role.name if role else str(r["role_id"]), "expires_at": r["expires_at"],
+                         "reason": r["reason"], "granted_by": r["granted_by"]})
+        return web.json_response({"rows": rows})
+
+    async def delete_timed_role(self, request: web.Request) -> web.Response:
+        row = self.bot.db.timed_role_by_id(int(request.match_info["row_id"]))
+        if row is None:
+            raise ApiError("Not found (already ended?).", 404)
+        cog = self._cog("TimedRoles")
+        try:
+            text = await cog.revoke(row)
+        except discord.Forbidden as exc:
+            raise ApiError(explain_forbidden(exc, self.bot), 403) from exc
+        self._audit(f"Timed role removed: {text}")
+        return web.json_response({"ok": True})
+
+    async def list_backups(self, request: web.Request) -> web.Response:
+        return web.json_response({"enabled": self.bot.config.backup_enabled,
+                                  "keep_days": self.bot.config.backup_keep_days,
+                                  "backups": await asyncio.to_thread(backups.list_backups)})
+
+    async def create_backup(self, request: web.Request) -> web.Response:
+        name = await self._cog("Monitor").backup_now("manual")
+        if name is None:
+            raise ApiError("Backup failed – see the bot log.", 500)
+        self._audit(f"Backup created: {name}")
+        return web.json_response({"ok": True, "name": name})
+
+    async def download_backup(self, request: web.Request) -> web.StreamResponse:
+        path = backups.backup_path(request.match_info["name"])
+        if path is None:
+            raise ApiError("Backup not found.", 404)
+        self._audit(f"Backup downloaded: {path.name}")
+        return web.FileResponse(path, headers={"Content-Disposition": f'attachment; filename="{path.name}"'})
 
     async def botlog(self, request: web.Request) -> web.Response:
         return web.json_response({"lines": list(memory_log.records)})

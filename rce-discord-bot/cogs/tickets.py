@@ -28,7 +28,7 @@ from discord.ext import commands
 from cogs.kits import ConfirmView
 from permcheck import explain_forbidden
 from support.deepseek import PLATFORM_KEYS_URL, PLATFORM_USAGE_URL, DeepSeekClient, DeepSeekError
-from support.giveaway_wins import GiveawayWin, match_kit, parse_win
+from support.giveaway_wins import GiveawayWin, match_kit, parse_win, prize_duration_minutes
 from support.prompt import build_messages, build_system_prompt, parse_answer
 from utils import admin_only, format_duration, is_admin, safe_md, strip_rich_text
 
@@ -74,8 +74,9 @@ GIVEAWAY_TOOLS = [
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "redeem_giveaway_win",
-        "description": "Redeems one of the ticket owner's wins: for a LIFETIME kit prize it gives them the kit's "
-                       "Discord role (once per win). Other prizes return needs_staff.",
+        "description": "Redeems one of the ticket owner's wins: for a kit prize it gives them the kit's Discord "
+                       "role (once per win) – for good if lifetime, else for the prize's duration (e.g. 7 days). "
+                       "Other prizes return needs_staff.",
         "parameters": {"type": "object", "properties": {
             "message_id": {"type": "string", "description": "message_id of the win from get_my_giveaway_wins"}},
             "required": ["message_id"]}}},
@@ -581,9 +582,17 @@ class Tickets(commands.Cog):
         kit = match_kit(win.prize, list(kits))
         role = guild.get_role(kits[kit]) if kit and kits[kit] else None
         redeemed = self.bot.db.giveaway_redemption(win.message_id, user_id)
+        minutes = self._prize_minutes(win)
         return {"message_id": str(win.message_id), "prize": win.prize, "won_at_discord": f"<t:{win.created_at}:R>",
-                "lifetime": win.lifetime, "kit": kit, "kit_role": role.name if role else None,
-                "already_redeemed": bool(redeemed), "link": win.jump_url}
+                "lifetime": win.lifetime, "duration": "lifetime" if win.lifetime else
+                (format_duration(minutes * 60) if minutes else None), "kit": kit,
+                "kit_role": role.name if role else None, "already_redeemed": bool(redeemed), "link": win.jump_url}
+
+    def _prize_minutes(self, win: GiveawayWin) -> int | None:
+        """How long a non-lifetime prize lasts: from the prize text ("7 days"), else GIVEAWAY_PRIZE_DAYS."""
+        if win.lifetime:
+            return None
+        return prize_duration_minutes(win.prize) or (self.bot.config.giveaway_prize_days * 1440 or None)
 
     async def _tool_giveaway_wins(self, guild: discord.Guild, member) -> dict:
         try:
@@ -607,11 +616,28 @@ class Tickets(commands.Cog):
             return {"ok": False, "result": "already_redeemed", **info}
         if not info["kit"] or not info["kit_role"]:
             return {"ok": False, "result": "needs_staff", "reason": "Prize is not a kit with a Discord role", **info}
-        if not win.lifetime:
-            return {"ok": False, "result": "needs_staff", "reason": "Kit prize is not lifetime", **info}
+        minutes = self._prize_minutes(win)
+        if not win.lifetime and not minutes:
+            return {"ok": False, "result": "needs_staff",
+                    "reason": "Kit prize is neither lifetime nor has a duration (e.g. '7 days')", **info}
         role = channel.guild.get_role(self._prize_kits()[info["kit"]])
-        action = "role already owned"
-        if role not in getattr(member, "roles", []):
+        action, until = "role already owned", ""
+        if minutes:
+            timed = self.bot.get_cog("TimedRoles")
+            if timed is None:
+                return {"ok": False, "result": "needs_staff", "reason": "Timed roles are not available", **info}
+            if timed.permanent(member, role):
+                action = "role already owned permanently"
+            else:
+                from cogs.timed_roles import TimedRoleError
+                try:
+                    expires_at = await timed.grant(member, role, minutes, by=f"ticket #{ticket['id']} (AI)",
+                                                   reason=f"Giveaway prize {win.prize}")
+                except TimedRoleError as exc:
+                    return {"ok": False, "result": "needs_staff", "reason": str(exc), **info}
+                action = f"role {role.name} for {format_duration(minutes * 60)}"
+                until = f" until <t:{expires_at}:f> (<t:{expires_at}:R>)"
+        elif role not in getattr(member, "roles", []):
             try:
                 await member.add_roles(role, reason=f"Giveaway win {win.jump_url} (ticket #{ticket['id']})")
             except discord.Forbidden as exc:
@@ -622,13 +648,14 @@ class Tickets(commands.Cog):
         if not self.bot.db.record_giveaway_redemption(win.message_id, member.id, win.prize, action):
             return {"ok": False, "result": "already_redeemed", **info}
         await channel.send(f"{CLAIM_PREFIX}Giveaway prize **{safe_md(win.prize)}** redeemed: you now have the "
-                           f"**{safe_md(role.name)}** role (unlocks **{safe_md(info['kit'])}**).",
+                           f"**{safe_md(role.name)}** role{until} (unlocks **{safe_md(info['kit'])}**).",
                            allowed_mentions=discord.AllowedMentions.none())
         feed = self.bot.feed(self.bot.config.admin_log_channel_id)
         if feed:
             feed.add_line(f"🎉 {member.mention} redeemed giveaway win \"{safe_md(win.prize)}\" ({win.jump_url}) "
                           f"via ticket #{ticket['id']} (AI): {action}")
-        return {"ok": True, "result": "redeemed", "action": action, **info, "already_redeemed": True}
+        return {"ok": True, "result": "redeemed", "action": action, "until_discord": until.strip() or None,
+                **info, "already_redeemed": True}
 
     # ------------------------------------------------------------ Ping staff
 

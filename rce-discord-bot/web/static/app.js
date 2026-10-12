@@ -1126,8 +1126,14 @@ views.knowledge = async (main) => {
 views.community = async (main) => {
   const info = h("div", { class: "card" }, h("p", { class: "muted", text: "Loading …" }));
   const gBody = h("tbody");
+  const tBody = h("tbody");
   const rulesArea = h("textarea", { rows: 12 });
   main.append(h("h1", { text: "Community" }), info,
+    h("div", { class: "card" }, h("h2", { text: "⏳ Timed roles" }),
+      h("p", { class: "muted", text: "Roles that end by themselves – give one with /temprole give in Discord (e.g. VIP for 7d). Giveaway prizes like \"VIP 7 days\" land here too." }),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Member", "Role", "Ends", "Reason", ""].map((t) => h("th", { text: t })))),
+        tBody))),
     h("div", { class: "card" }, h("h2", { text: "🎉 Giveaways" }),
       h("p", { class: "muted", text: "Start one with /giveaway start in the desired Discord channel." }),
       h("div", { class: "table-wrap" }, h("table", {},
@@ -1156,7 +1162,19 @@ views.community = async (main) => {
         : h("button", { class: "small", text: "End now", onclick: async () => { if (!confirm("Draw the giveaway now?")) return; await act(() => api(`/api/giveaways/${g.id}/end`, { method: "POST" }), "Winners drawn"); load(); } }))))
       : [h("tr", {}, h("td", { colspan: 5, class: "muted", text: "No giveaways yet." }))]));
   };
-  every(15000, () => load().catch(() => {}));
+  const loadTimed = async () => {
+    const t = await api("/api/timed-roles");
+    tBody.replaceChildren(...(t.rows.length ? t.rows.map((r) => h("tr", {},
+      h("td", { text: r.user }), h("td", {}, h("span", { class: "pill", text: r.role })),
+      h("td", { text: `${new Date(r.expires_at * 1000).toLocaleString()} (in ${fmtDuration(r.expires_at - Date.now() / 1000)})` }),
+      h("td", { class: "muted", text: r.reason || "–" }),
+      h("td", {}, h("button", { class: "small danger", text: "Remove now", onclick: async () => {
+        if (!confirm(`Remove ${r.role} from ${r.user} now?`)) return;
+        await act(() => api(`/api/timed-roles/${r.id}`, { method: "DELETE" }), "Role removed"); loadTimed();
+      } }))))
+      : [h("tr", {}, h("td", { colspan: 5, class: "muted", text: "No timed roles running." }))]));
+  };
+  every(15000, () => { load().catch(() => {}); loadTimed().catch(() => {}); });
   const r = await api("/api/rules").catch(() => ({ text: "" }));
   rulesArea.value = r.text;
 };
@@ -1252,6 +1270,7 @@ views.settings = async (main) => {
     if (g.id === "discord") card.append(discordTester(inputs));
     if (g.id === "rcon") card.append(rconTester(inputs));
     if (g.id === "updates" && !data.setup_mode) card.firstChild.after(updateStatus());
+    if (g.id === "alerts" && !data.setup_mode) card.firstChild.after(backupBox());
     if (g.id === "templates") { card.classList.add("hidden"); advancedCards.push(card); }
     main.append(card);
   }
@@ -1319,6 +1338,29 @@ views.settings = async (main) => {
   }
   main.append(bar);
 };
+
+// Backups: list, download, "Backup now" (settings page, group "Alerts & backups")
+function backupBox() {
+  const box = h("div", { class: "update-box" }, h("span", { class: "muted", text: "Loading backups …" }));
+  const size = (b) => b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
+  const render = (r) => {
+    const btn = h("button", { class: "small", text: "💾 Backup now", onclick: async () => {
+      btn.disabled = true;
+      try { await act(() => api("/api/backups", { method: "POST" }), "Backup created"); render(await api("/api/backups")); }
+      catch { btn.disabled = false; }
+    } });
+    const list = r.backups.slice(0, 8).map((b) => h("div", { class: "row", style: "font-size:.85rem" },
+      h("a", { href: `/api/backups/${encodeURIComponent(b.name)}`, download: b.name, text: b.name }),
+      h("span", { class: "muted", text: `${size(b.size)} · ${new Date(b.created * 1000).toLocaleString()}` })));
+    box.replaceChildren(
+      h("div", { class: "row" }, h("strong", { text: "Backups " }),
+        h("span", { class: "muted", text: `${r.enabled ? `daily + before every update, kept ${r.keep_days} days` : "daily backup off"} · data/backups/ · without .env` })),
+      ...(list.length ? list : [h("span", { class: "muted", text: "No backup yet." })]),
+      h("div", { class: "row", style: "margin-top:.4rem" }, btn));
+  };
+  api("/api/backups").then(render).catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
+  return box;
+}
 
 // Installed version + "Check now" (settings page, group "Updates")
 function updateStatus() {

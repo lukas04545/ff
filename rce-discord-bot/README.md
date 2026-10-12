@@ -71,6 +71,9 @@ RCE tools use exactly this WebRCON interface. Also G-Portal's wiki article
 | **Discord moderation** | Discord | `/mod timeout/untimeout/kick/ban/unban/purge` with permission and role-hierarchy checks |
 | **Discord log** | Discord | Joins/leaves, deleted and edited messages, moderation, giveaways |
 | **Giveaways** | Discord + database | Enter via button, automatic draw, multiple winners, winner role, reroll; **survive restarts** |
+| **Timed roles** | Discord + database | `/temprole`: roles that end by themselves (e.g. VIP for 7 days) – also for giveaway prizes. See [Timed roles](#timed-roles-eg-vip-for-7-days). |
+| **Alerts & backups** | Bot | Staff ping when the server is offline, daily backups. See [Alerts & backups](#alerts--backups). |
+| **Automatic updates** | GitHub | Installs new versions by itself. See [Automatic updates](#automatic-updates). |
 | **Auto-reconnect** | exponential backoff 5 s → 120 s | A dead connection is detected after 3 unanswered commands. Pending commands get a clear error message. |
 
 ### 🔜 Technically possible, but not in this prototype
@@ -171,6 +174,8 @@ rce-discord-bot/
 │   ├── community.py       # /ping /rust /rules, welcome, auto role, Discord log
 │   ├── moderation.py      # /mod timeout/kick/ban/unban/purge (Discord members)
 │   ├── giveaways.py       # /giveaway … (persisted in the database)
+│   ├── timed_roles.py     # /temprole …: roles that end by themselves
+│   ├── monitor.py         # Server-down alerts, daily backups
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
@@ -184,6 +189,7 @@ rce-discord-bot/
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
 ├── envfile.py             # Read/write .env (comments are preserved)
 ├── updater.py             # Downloads + installs new versions from GitHub (ZIP install or git checkout)
+├── backups.py             # Backup ZIPs in data/backups/
 ├── start.bat              # Windows: double-click = set up + start + auto-restart (also after updates)
 ├── start.sh               # Linux/macOS: the same
 ├── rcon_test.bat          # Windows: test the RCON connection step by step (tools/rcon_test.py)
@@ -318,8 +324,9 @@ The bot runs fine on a normal Windows, Linux or Mac PC:
 - **Resources:** The bot only needs about 100–150 MB RAM and hardly any CPU – it runs fine in
   the background.
 - **Logs:** everything is also written to `logs/bot.log` (rotated automatically, max. ~8 MB).
-- **Backups:** only `.env`, `data/bot.db` (stats, kits, tickets) and `support_knowledge.md`
-  matter. Copy these three files = full backup; you can also use them to move to another PC.
+- **Backups:** the bot saves one by itself every day and before every automatic update (see
+  [Alerts & backups](#alerts--backups)). For a full copy (e.g. to move to another PC) you need
+  `.env`, `data/` (database, web logins, backups) and `support_knowledge.md`.
 
 ---
 
@@ -343,8 +350,8 @@ restarts – about 10 seconds offline. The admin log channel shows `🔄 Update 
 - **Settings** (⚙️ Settings → 🔄 Updates): turn it off (`AUTO_UPDATE=false`), change how often it checks
   (`AUTO_UPDATE_INTERVAL`, minutes) or the source (`AUTO_UPDATE_REPO`, `AUTO_UPDATE_BRANCH`, advanced).
   **Check now** shows the installed version and updates immediately.
-- The quick Cloudflare link (`….trycloudflare.com`) changes with every restart, so also after an update – the
-  new one is posted in the admin log channel and written to `PUBLIC_LINK.txt` as usual.
+- The public Cloudflare link **stays the same** across automatic updates: the bot leaves the tunnel running
+  and the new version takes it over. It only changes when you close the bot window (or the PC restarts).
 
 > **One-time step:** versions from before this feature can't update themselves. Update once by hand
 > (close the bot window, copy the new files over the old ones – including `start.bat` – and start it again).
@@ -484,6 +491,7 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/mod kick`, `/mod ban`, `/mod unban` | "Kick Members"/"Ban Members" | Kick/ban a Discord member (with a DM to the user), unban by user ID |
 | `/mod purge` | "Manage Messages" | Delete 1–100 messages, optionally only from one user |
 | `/giveaway start/end/reroll/list` | "Manage Server" | Start, end early, reroll and list giveaways |
+| `/temprole give/remove/list` | Admins | Give a Discord role for a limited time (`7d`, `12h`, `2w` …), take it away early, list running ones |
 
 Admin rights for **server commands** (RCON, kits, ticket management) are given only to the
 roles or users in `ADMIN_ROLE_IDS`/`ADMIN_USER_IDS`. Discord's own permissions such as
@@ -740,6 +748,33 @@ These features come from the KRYVON bot and have been rebuilt and extended here:
 - Let your community know what gets logged (e.g. in the rules) – privacy.
 - Giveaway prizes are **not** given out in-game automatically (Discord users and in-game names
   are not linked). Hand out prizes e.g. with `/customkit give` or `/kit give`.
+
+### Timed roles (e.g. VIP for 7 days)
+
+`/temprole give @member @VIP 7d` gives a role that the bot **removes by itself** when the time is up
+(checked every minute; also right after a restart if it ran out while the bot was offline). Giving it
+again extends the time. `/temprole list` and the web interface (🎉 Community → ⏳ Timed roles) show
+everything that's running, with a button to end it early. The member gets a DM when it ends.
+
+Giveaway prizes use this too: the ticket AI gives a kit prize like **"VIP 7 days"** (or "VIP 2 weeks",
+"VIP (30d)", "1 month") the kit's role for exactly that long. A kit prize without a duration and not
+lifetime (e.g. "Vip Standard") gets the role for *Days for kit prizes without a duration*
+(`GIVEAWAY_PRIZE_DAYS`) – or goes to staff if that is 0 (default). Someone who already has the role
+for good keeps it – no timer is added.
+
+### Alerts & backups
+
+- **Server-down alert:** if the bot has had no RCON connection for `SERVER_DOWN_ALERT_MINUTES`
+  (default 10), it pings `ALERT_ROLE_IDS` (default: admin roles) once in `ALERT_CHANNEL_ID` (default:
+  admin log channel) with the last error – and posts again when the server is back, with the
+  downtime. `0` = off.
+- **Backups:** once a day and right before every automatic update, the bot saves the database
+  (stats, kits, tickets, links, giveaways, timed roles), web logins, rules and knowledge base as a ZIP
+  in `data/backups/`. Backups older than `BACKUP_KEEP_DAYS` (default 7) are deleted, the newest 3
+  always stay. Your `.env` (tokens, passwords) is **not** included. In the web interface (⚙️ Settings →
+  🚨 Alerts & backups) you can create one right away and download them.
+  **Restore:** stop the bot, put `bot.db` from the ZIP into `data/` (and the other files into the bot
+  folder), start the bot.
 
 ---
 
