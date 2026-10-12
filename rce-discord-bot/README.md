@@ -845,10 +845,11 @@ for good keeps it – no timer is added.
 ### Admin abuse protection
 
 When someone spawns **rockets or C4** and isn't allowed to, the bot immediately runs
-`removeowner "<name>"`, `removemoderator "<name>"`, `global.killplayer "<name>"` and then
-`entity.deleteby "<name>"` (**deletes everything that player owns** – bases, deployables; change or remove it
-under *Commands after the kill*, `ABUSE_AFTER_KILL_COMMANDS`, `-` = nothing), writes it to the admin log and
-pings `ALERT_ROLE_IDS` in the alert channel – with the server's reply to each command.
+`removeowner "<name>"`, `removemoderator "<name>"`, `global.god 0 "<name>"` (god mode off), `global.killplayer
+"<name>"` and then `entity.deleteby "<name>"` (**deletes everything that player owns** – bases, deployables).
+When that player **respawns** (within an hour), it runs `global.sleep "<name>"`. It writes everything to the admin
+log and pings `ALERT_ROLE_IDS` in the alert channel – with the server's reply to each command. Every step can be
+changed in the advanced settings (*Commands before the kill / after the kill / when they respawn*, `-` = nothing).
 
 **Who is allowed** (⚙️ Settings → 🛡️ Admin abuse protection):
 - `ABUSE_EXEMPT_ROLE_IDS` – Discord roles such as *Owner* and *Co-Owner*. The bot recognises their in-game
