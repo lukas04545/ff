@@ -663,3 +663,21 @@ def suggestions(current: str, limit: int = 25) -> list[tuple[str, str]]:
     hits = [(short, label) for short, label in COMMON_ITEMS.items()
             if current_l in short or current_l in label.lower()]
     return hits[:limit]
+
+
+def resolve(text: str) -> tuple[str | None, list[tuple[str, str]]]:
+    """Item from a shortname or a name ("rifle.ak", "Assault Rifle", "m249") -> (shortname or None, candidates).
+    Exact shortname/name first, then a single partial match; otherwise None plus up to 5 candidates."""
+    query = " ".join(text.strip().lower().split())
+    if not query:
+        return None, []
+    short = normalize_shortname(query)
+    if short in COMMON_ITEMS:
+        return short, []
+    for s, label in COMMON_ITEMS.items():
+        if label.lower() == query:
+            return s, []
+    hits = suggestions(query, limit=6)
+    if len(hits) == 1:
+        return hits[0][0], []
+    return None, hits[:5]

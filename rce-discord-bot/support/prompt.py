@@ -94,7 +94,21 @@ PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
     order details if missing, then file the request. Staff checks the purchase and approves it with a button –
     you can NEVER approve or promise it yourself. Tell them staff will confirm; after approval they get the kit's
     role and claim it with /customkit claim. If the result is unknown_kit, ask which of the listed kits they mean.
-    already_has_access: tell them to use /customkit claim."""
+    already_has_access: tell them to use /customkit claim.
+  * request_new_custom_kit: when they bought a kit with their OWN list of items (not one of the existing custom
+    kits), you CAN set it up – never say you can't create kits. Turn every entry into a Rust shortname and an exact
+    amount (50k = 50000, 100k = 100000, "x2" = 2). Common slang: hqm = metal.refined, frags/metal frag =
+    metal.fragments, wood = wood, ak = rifle.ak, m249 = lmg.m249, l9/l96 = rifle.l96, eoka = pistol.eoka,
+    rockets = ammo.rocket.basic, hv's/hv rockets = ammo.rocket.hv, rocket launcher = rocket.launcher, supply drop =
+    supply.signal, c4 = explosive.timed, armoured door = door.hinged.toptier, double armoured door =
+    door.double.hinged.toptier, garage door = wall.frame.garagedoor, rug = rug. "Big and small" doors = both
+    the single and the double door with that amount each. A "metal kit" means armour: metal.facemask +
+    metal.plate.torso + roadsign.kilt (+ hoodie, pants) – that amount of each. Use find_items when unsure. Ask the
+    player about anything still unclear, plus the order details if missing, then call it ONCE with the complete
+    list (fix_items = correct/ask about the listed entries and call again with everything). Show them the final
+    list. Staff checks the purchase and the list and approves it with a button – you can NEVER approve it yourself.
+    After approval the bot creates the kit and its role and gives them the role; they claim it in-game with
+    /customkit claim (after /customkit link if their player isn't linked)."""
 
 
 def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None,

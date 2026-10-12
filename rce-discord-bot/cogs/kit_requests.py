@@ -11,6 +11,7 @@ Requests survive restarts (database); each can only be decided once.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,8 @@ import discord
 from discord.ext import commands
 
 from permcheck import explain_forbidden
+from rce import items as itemlist
+from rce import kits as kitparse
 from utils import is_admin, safe_md
 
 if TYPE_CHECKING:
@@ -26,6 +29,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("rce.kit_requests")
 
 COLOUR = discord.Colour(0xE0A23B)
+MAX_NEW_KIT_ITEMS = 40
+MAX_AMOUNT = 1_000_000
 STATUS_TEXT = {"pending": "⏳ Waiting for staff", "approved": "✅ Approved", "rejected": "✖️ Rejected"}
 
 
@@ -94,31 +99,98 @@ class KitRequests(commands.Cog):
             return {"ok": True, "result": "already_waiting_for_staff", "request_id": open_req[0]["id"], "kit": kit}
         request_id = db.add_kit_request(ticket["id"] if ticket else None, member.id, kit, max(0, int(days)),
                                         proof.strip()[:500])
-        req = db.kit_request(request_id)
-        guild = getattr(channel, "guild", None)
-        roles = [r for rid in self.bot.config.support_role_ids if guild and (r := guild.get_role(rid))]
-        msg = await channel.send(content=" ".join(r.mention for r in roles) or None, embed=self.embed(req),
-                                 view=KitRequestView(self), allowed_mentions=discord.AllowedMentions(roles=roles))
-        db.set_kit_request_message(request_id, msg.channel.id, msg.id)
+        await self._post(channel, request_id)
         self.bot.audit(f"🛒 Kit purchase request #{request_id}: <@{member.id}> → **{safe_md(kit)}** "
                        f"({safe_md(proof[:150])}) – waiting for staff")
         return {"ok": True, "result": "waiting_for_staff", "request_id": request_id, "kit": kit,
                 "message": "Posted for staff approval. Tell the player staff will check the purchase and confirm."}
 
+    async def file_new(self, channel: discord.abc.Messageable, ticket, member: discord.Member, kit_name: str,
+                       items: list, proof: str, days: int = 0) -> dict:
+        """Request for a NEW custom kit with the buyer's item list. Unknown items go back to the AI first."""
+        db = self.bot.db
+        resolved, unknown = [], []
+        for entry in items[:MAX_NEW_KIT_ITEMS]:
+            text = str((entry or {}).get("item") or "").strip() if isinstance(entry, dict) else str(entry)
+            try:
+                amount = int(entry.get("amount", 1)) if isinstance(entry, dict) else 1
+            except (TypeError, ValueError):
+                amount = 0
+            short, candidates = itemlist.resolve(text)
+            if short is None or not 1 <= amount <= MAX_AMOUNT:
+                unknown.append({"item": text, "amount": amount,
+                                "problem": "amount must be 1–1,000,000" if short else "unknown item",
+                                "candidates": [f"{s} ({label})" for s, label in candidates]})
+                continue
+            resolved.append({"short": short, "label": itemlist.COMMON_ITEMS[short], "amount": amount})
+        if len(items) > MAX_NEW_KIT_ITEMS:
+            unknown.append({"item": f"{len(items) - MAX_NEW_KIT_ITEMS} more entries",
+                            "problem": f"at most {MAX_NEW_KIT_ITEMS} items per kit"})
+        if unknown or not resolved:
+            return {"ok": False, "result": "fix_items", "resolved": resolved, "unknown": unknown,
+                    "message": "Not filed yet: fix or ask about these entries (use find_items), then call again "
+                               "with the complete list."}
+        name = kitparse.clean_arg(kit_name or "")[:40] or f"{member.display_name} kit"
+        base, n = name, 2
+        while db.custom_kit(name) is not None or any(r["kit"].lower() == name.lower()
+                                                     for r in db.kit_requests(status="pending")):
+            name, n = f"{base} {n}", n + 1
+        request_id = db.add_kit_request(ticket["id"] if ticket else None, member.id, name, max(0, int(days)),
+                                        proof.strip()[:500], json.dumps(resolved))
+        await self._post(channel, request_id)
+        self.bot.audit(f"🛒 New custom kit request #{request_id}: <@{member.id}> → **{safe_md(name)}** "
+                       f"({len(resolved)} items, {safe_md(proof[:150])}) – waiting for staff")
+        return {"ok": True, "result": "waiting_for_staff", "request_id": request_id, "kit": name, "items": resolved,
+                "message": "Posted for staff approval with the item list. Tell the player staff will check the "
+                           "purchase; after approval the kit is created and they get its role."}
+
+    async def _post(self, channel, request_id: int) -> None:
+        guild = getattr(channel, "guild", None)
+        roles = [r for rid in self.bot.config.support_role_ids if guild and (r := guild.get_role(rid))]
+        msg = await channel.send(content=" ".join(r.mention for r in roles) or None,
+                                 embed=self.embed(self.bot.db.kit_request(request_id)), view=KitRequestView(self),
+                                 allowed_mentions=discord.AllowedMentions(roles=roles))
+        self.bot.db.set_kit_request_message(request_id, msg.channel.id, msg.id)
+
+    @staticmethod
+    def new_items(req) -> list[dict] | None:
+        try:
+            return json.loads(req["items"]) if req["items"] else None
+        except (ValueError, TypeError):
+            return None
+
     def embed(self, req) -> discord.Embed:
         status = req["status"]
+        new = self.new_items(req)
+        what = (f"a **new custom kit** – it will be created as **{safe_md(req['kit'])}**" if new
+                else f"**{safe_md(req['kit'])}**")
         embed = discord.Embed(title=f"🛒 Kit purchase #{req['id']} – {STATUS_TEXT[status]}", colour=COLOUR
                               if status == "pending" else discord.Colour.dark_grey(),
-                              description=f"<@{req['user_id']}> says they bought **{safe_md(req['kit'])}**.")
+                              description=f"<@{req['user_id']}> says they bought {what}.")
         embed.add_field(name="Duration", value=f"{req['days']} days" if req["days"] else "permanent")
         if req["proof"]:
             embed.add_field(name="Their info (check it!)", value=safe_md(req["proof"])[:1024], inline=False)
-        items = self.bot.db.custom_kit_items(req["kit"])
-        if items:
-            embed.add_field(name="Kit contents", inline=False, value=", ".join(
-                f"{i['shortname']} ×{i['amount']}" for i in items[:15])[:1024])
+        if new:
+            chunks, chunk = [], ""       # every item must be visible to staff: split into fields of ≤1024 chars
+            for i in new:
+                line = f"• {safe_md(i['label'])} (`{i['short']}`) ×{i['amount']:,}"
+                if chunk and len(chunk) + len(line) + 1 > 1024:
+                    chunks.append(chunk)
+                    chunk = ""
+                chunk = f"{chunk}\n{line}" if chunk else line
+            chunks.append(chunk)
+            for n, value in enumerate(chunks):
+                embed.add_field(name=f"Items of the new kit ({len(new)}) – check them!" if n == 0 else "​",
+                                value=value, inline=False)
+        else:
+            items = self.bot.db.custom_kit_items(req["kit"])
+            if items:
+                embed.add_field(name="Kit contents", inline=False, value=", ".join(
+                    f"{i['shortname']} ×{i['amount']}" for i in items[:15])[:1024])
         if status == "pending":
-            embed.set_footer(text="Approve = the buyer gets the kit's role and can claim it with /customkit claim.")
+            embed.set_footer(text=("Approve = the kit is created with these items (edit it later in the web interface → "
+                                   "Kits), gets a role and the buyer gets it." if new else
+                                   "Approve = the buyer gets the kit's role and can claim it with /customkit claim."))
         else:
             role = f" · role <@&{req['role_id']}>" if req["role_id"] else ""
             embed.add_field(name=STATUS_TEXT[status], value=f"by {safe_md(req['decided_by'] or '?')}{role}",
@@ -171,8 +243,23 @@ class KitRequests(commands.Cog):
     async def _grant(self, req, by: str) -> str:
         channel = self.bot.get_channel(req["channel_id"]) if req["channel_id"] else None
         guild = getattr(channel, "guild", None) or (self.bot.guilds[0] if self.bot.guilds else None)
-        if guild is None or self.bot.db.custom_kit(req["kit"]) is None:
-            raise KitRequestError("The kit or the Discord server is no longer available.")
+        if guild is None:
+            raise KitRequestError("The Discord server is not available.")
+        new = self.new_items(req)
+        if new is not None:
+            marker = f"Bought by user {req['user_id']} (request #{req['id']})"
+            existing = self.bot.db.custom_kit(req["kit"])
+            if existing is None:
+                self.bot.db.create_custom_kit(req["kit"], marker, by)
+                for item in new:
+                    self.bot.db.add_custom_kit_item(req["kit"], item["short"], int(item["amount"]))
+                self.bot.audit(f"🛒 Custom kit **{safe_md(req['kit'])}** created ({len(new)} items, request "
+                               f"#{req['id']}, approved by {safe_md(by)})")
+            elif existing["description"] != marker:   # same marker = created by an earlier, failed approval: reuse
+                raise KitRequestError(f"A custom kit called {req['kit']} exists by now – reject this request and ask "
+                                      "the AI to file it again.")
+        elif self.bot.db.custom_kit(req["kit"]) is None:
+            raise KitRequestError("The kit no longer exists.")
         member = guild.get_member(req["user_id"])
         if member is None:
             try:
