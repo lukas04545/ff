@@ -163,7 +163,8 @@ class Config:
     abuse_remove_admin_commands: tuple[str, ...]   # templates with {name}
     abuse_before_kill_commands: tuple[str, ...]  # right before the kill, e.g. global.god 0 "{name}"
     abuse_kill_command: str                # template with {name}
-    abuse_after_kill_commands: tuple[str, ...]   # run after the kill, e.g. entity.deleteby "{name}"
+    abuse_after_kill_commands: tuple[str, ...]   # run right after the kill (default: none)
+    abuse_approval_commands: tuple[str, ...]     # only after staff approval, e.g. entity.deleteby "{name}"
     abuse_on_respawn_commands: tuple[str, ...]   # when the punished player respawns, e.g. global.sleep "{name}"
 
     # Staff alerts & backups
@@ -303,7 +304,8 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
                                           'removeowner "{name}";removemoderator "{name}"').split(";") if c.strip()),
         abuse_before_kill_commands=_commands("ABUSE_BEFORE_KILL_COMMANDS", 'global.god 0 "{name}"'),
         abuse_kill_command=_get("ABUSE_KILL_COMMAND", 'global.killplayer "{name}"'),
-        abuse_after_kill_commands=_commands("ABUSE_AFTER_KILL_COMMANDS", 'entity.deleteby "{name}"'),
+        abuse_after_kill_commands=_commands("ABUSE_AFTER_KILL_COMMANDS", "-"),
+        abuse_approval_commands=_commands("ABUSE_APPROVAL_COMMANDS", 'entity.deleteby "{name}"'),
         abuse_on_respawn_commands=_commands("ABUSE_ON_RESPAWN_COMMANDS", 'global.sleep "{name}"'),
         server_down_alert_minutes=max(0, _int("SERVER_DOWN_ALERT_MINUTES", 10)),
         alert_channel_id=_int("ALERT_CHANNEL_ID"),

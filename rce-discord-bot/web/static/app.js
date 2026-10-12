@@ -1428,6 +1428,7 @@ views.reports = async (main) => {
   const wPlayer = h("input", { placeholder: "In-game name (exact)", maxlength: 64 });
   const wReason = h("input", { placeholder: "Why (e.g. ban evader)", maxlength: 300 });
   main.append(h("h1", { text: "Reports" }),
+    h("div", { class: "card" }, h("h2", { text: "🚨 Admin abuse (rockets/C4)" }), abuseBox()),
     h("div", { class: "card" }, h("div", { class: "row", style: "margin-bottom:.5rem" }, h("h2", { text: "🚩 Player reports", style: "margin:0" }), filter),
       h("p", { class: "muted", style: "margin-top:0", text: "Members report players with /report in Discord. Staff closes them here or with the ✅ button in Discord." }),
       h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Player", "Reason", "By", "When (UTC)", ""].map((t) => h("th", { text: t })))), rBody))),
@@ -1692,13 +1693,28 @@ function abuseBox() {
     box.replaceChildren(
       h("div", { class: "row" }, h("strong", { text: "Status:" }), state),
       h("div", { class: "muted", style: "font-size:.85rem", text: "Allowed: " + (allowed.join(" · ") || "nobody yet") }),
+      ...(s.cases.length ? [h("div", { style: "font-size:.85rem;margin-top:.3rem" }, h("strong", { text: "Cases (deletion only after approval):" })),
+        ...s.cases.map((c) => h("div", { class: "row", style: "font-size:.82rem" },
+          h("span", {}, `#${c.id} · `, h("strong", { text: c.player }), ` ${c.what} · ${c.created_at} UTC · `),
+          c.status === "pending"
+            ? h("span", { class: "row tight" },
+                h("button", { class: "small danger", text: "🗑️ Approve deletion", onclick: () => decide(c, "approve") }),
+                h("button", { class: "small", text: "✖️ Reject", onclick: () => decide(c, "reject") }))
+            : h("span", { class: "muted", text: `${c.status} by ${c.decided_by}${c.result && c.status === "approved" ? ": " + c.result : ""}` })))] : []),
       h("div", { style: "font-size:.85rem;margin-top:.3rem" }, h("strong", { text: "Last rockets/C4 spawns the bot received:" })),
       ...(s.recent.length ? s.recent.slice(0, 8).map((e) => h("div", { class: "muted", style: "font-size:.82rem" },
         `${new Date(e.ts * 1000).toLocaleTimeString()} · `, h("strong", { text: e.player }), ` ${e.what} → ${e.result}`))
         : [h("div", { class: "muted", style: "font-size:.82rem", text: "None since the bot started. If you spawned some and nothing shows here, the server's \"[ServerVar] giving …\" lines don't reach the bot – check 🖥️ Console." })]),
       h("div", { class: "row", style: "margin-top:.4rem" }, h("button", { class: "small", text: "↻ Refresh", onclick: load })));
   };
-  const load = () => api("/api/abuse").then(render).catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
+  const decide = async (c, action) => {
+    if (action === "approve" && !confirm(`Run ${s_cmds} for ${c.player}? This deletes everything they own and can't be undone.`)) return;
+    await act(() => api(`/api/abuse/cases/${c.id}/${action}`, { method: "POST" }), action === "approve" ? "Approved – commands sent" : "Rejected");
+    load();
+  };
+  let s_cmds = "the approval commands";
+  const load = () => api("/api/abuse").then((s) => { s_cmds = (s.approval_commands || []).map((t) => t.replace("{name}", "…")).join(", ") || s_cmds; render(s); })
+    .catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
   load();
   return box;
 }

@@ -383,7 +383,7 @@ your browser opens automatically; otherwise go to **<http://localhost:8080>**.
 | 🎒 Kits | Give kits (player/everyone), view in-game kits, create/edit **custom kits**, create/pause/delete **autokits**, wipe reset, give history |
 | 🧰 Kit builder | **Visual kit builder** (like the Helios kit builder): all 566 RCE items by category with search, 7 wear / 24 inventory / 6 belt slots, click or drag items in, drag to move/swap, amount & condition per slot. Generates the `kit add` commands (copy), **creates the in-game kit on the server** or **saves it as a custom kit**. Load existing kits from the server, save kits in the browser, export/import share codes, import pasted `kit add` commands |
 | 🪙 Shop | Shop items (custom kit, in-game kit, item, role – optionally for N days), prices, on sale/hidden; all point balances with ± correction; how members earn points |
-| 🚩 Reports | Player reports (open/all, mark handled) and the watchlist (add/remove) |
+| 🚩 Reports | Admin abuse cases (approve/reject deletion), player reports (open/all, mark handled) and the watchlist (add/remove) |
 | 🎫 Tickets | All tickets with status, **transcripts of closed tickets**, DeepSeek balance |
 | 🏆 Stats | Leaderboard (kills, deaths, K/D, playtime), platform, last seen; **team leaderboard** |
 | 🎉 Community | **Wipe** (next date, repeat, wipe done), **scheduled messages**, timed roles, giveaways (end early, reroll), **edit rules**, overview of the community settings |
@@ -845,11 +845,16 @@ for good keeps it – no timer is added.
 ### Admin abuse protection
 
 When someone spawns **rockets or C4** and isn't allowed to, the bot immediately runs
-`removeowner "<name>"`, `removemoderator "<name>"`, `global.god 0 "<name>"` (god mode off), `global.killplayer
-"<name>"` and then `entity.deleteby "<name>"` (**deletes everything that player owns** – bases, deployables).
-When that player **respawns** (within an hour), it runs `global.sleep "<name>"`. It writes everything to the admin
-log and pings `ALERT_ROLE_IDS` in the alert channel – with the server's reply to each command. Every step can be
-changed in the advanced settings (*Commands before the kill / after the kill / when they respawn*, `-` = nothing).
+`removeowner "<name>"`, `removemoderator "<name>"`, `global.god 0 "<name>"` (god mode off) and
+`global.killplayer "<name>"`. When that player **respawns** (within an hour), it runs `global.sleep "<name>"`.
+
+Deleting their stuff is **never automatic**: the alert in the alert channel (with a ping for `ALERT_ROLE_IDS`) is a
+**case** with the buttons **🗑️ Approve deletion** and **✖️ Reject** (bot admins only). Only on approval does the
+bot run `entity.deleteby "<name>"` (**deletes everything that player owns** – bases, deployables). Staff can also
+decide in the web interface (🚩 Reports → 🚨 Admin abuse, or ⚙️ Settings → 🛡️ Admin abuse protection). Each case
+can only be decided once; it survives restarts. Every step and the server's replies are in the admin log.
+All commands can be changed in the advanced settings (*Commands before the kill / right after the kill / only
+after staff approval / when they respawn*, `-` = nothing).
 
 **Who is allowed** (⚙️ Settings → 🛡️ Admin abuse protection):
 - `ABUSE_EXEMPT_ROLE_IDS` – Discord roles such as *Owner* and *Co-Owner*. The bot recognises their in-game
