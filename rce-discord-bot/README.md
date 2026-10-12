@@ -708,6 +708,10 @@ switches back on if a staff message had paused it). For 30 minutes the AI may th
 one kit" checks would otherwise block (a second kit, an order ID used before); those requests are marked
 "allowed by staff via /aiconfirm". With `approve:True` the command also approves all open kit requests of the
 ticket (only for the approver roles). Staff-only command.
+You can also let the AI check a payment: `/aiconfirm message:"check the receipt ID and approve if you find it"` –
+the AI looks the order up among the Tip4Serv purchases the bot received (tool `verify_payment`). If it's there,
+unused and not paid by another Discord account, the AI approves the request (logged as "Name (via AI,
+/aiconfirm)"). If the bot never received that order, the AI says so and you approve with the button.
 
 When a staff member writes in the ticket, **the AI pauses automatically**. Use
 `/ticket ai enabled:true` to turn it back on. On close, a **transcript** is posted as a text

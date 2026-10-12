@@ -374,3 +374,51 @@ def test_tip4serv_find_and_assign(shop):
     asyncio.run(env.store.assign_cmd.callback(env.store, NS(user=stranger, response=NS(send_message=send_message)),
                                               "1110065", env.buyer))
     assert "Staff only" in out[-1]
+
+
+def verify(env, order):
+    call = {"id": "c", "type": "function", "function": {"name": "verify_payment",
+                                                        "arguments": json.dumps({"order_id": order})}}
+    return asyncio.run(env.tickets._run_tool(call, env.ticket, env.channel))
+
+
+def test_verify_payment_with_staff_authorisation(shop):
+    import time
+    env = shop
+    env.bot.config = replace(env.bot.config, tip4serv_name_match=False)   # order ID alone isn't enough …
+    r = new_kit(env, {"kit_name": "Geek kit", "items": [{"item": "rifle.ak", "amount": 5}],
+                      "proof": "T4s receipt"})
+    assert verify(env, "#424242")["result"] == "not_received"
+    env.db.add_store_payment("G:1", "1110065", amount=25, currency="EUR", discord_id=None, player="geek",
+                             username=None, customer=None, command="rcebot", raw=None)
+    res = verify(env, "#1110065")
+    assert res["result"] == "found_staff_decides" and env.db.kit_request(r["request_id"])["status"] == "pending"
+    assert "order 1110065" in env.db.kit_request(r["request_id"])["proof"]
+    # … until staff says "approve if you find it" with /aiconfirm
+    env.tickets._staff_ok[env.channel.id] = (time.monotonic() + 60, "Lukas")
+    res = verify(env, "1110065")
+    assert res["result"] == "approved"
+    req = env.db.kit_request(r["request_id"])
+    assert req["status"] == "approved" and req["decided_by"] in ("Lukas (via AI, /aiconfirm)", "Tip4Serv (automatic)")
+    assert env.db.find_store_payments("1110065")[0]["used_by"] == r["request_id"]
+    assert verify(env, "1110065")["result"] == "already_used"            # one payment, one kit
+
+
+def test_verify_payment_staff_approves_even_if_unpriced(shop):
+    import time
+    env = shop
+    r = new_kit(env, {"items": [{"item": "rug", "amount": 3}], "proof": "paid"})   # no price -> no auto-approve
+    env.db.add_store_payment("U:1", "777001", amount=5, currency="EUR", discord_id=None, player=None,
+                             username=None, customer=None, command="rcebot", raw=None)
+    env.tickets._staff_ok[env.channel.id] = (time.monotonic() + 60, "Lukas")
+    res = verify(env, "777001")
+    assert res["result"] == "approved"
+    assert env.db.kit_request(r["request_id"])["decided_by"] == "Lukas (via AI, /aiconfirm)"
+
+
+def test_verify_payment_other_buyer(shop):
+    env = shop
+    new_kit(env, {"items": PRICED, "proof": "paid"})
+    env.db.add_store_payment("O:1", "555111", amount=999, currency="EUR", discord_id=123456789012345678,
+                             player=None, username=None, customer=None, command="rcebot", raw=None)
+    assert verify(env, "555111")["result"] == "other_buyer"

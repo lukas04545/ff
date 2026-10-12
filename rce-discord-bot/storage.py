@@ -1043,6 +1043,11 @@ class Storage:
                              (kit, shortname, amount))
         self._db.commit()
 
+    def add_kit_request_proof(self, request_id: int, text: str) -> None:
+        self._db.execute("UPDATE kit_requests SET proof = substr(trim(coalesce(proof, '') || ' ' || ?), 1, 600) "
+                         "WHERE id = ?", (text, request_id))
+        self._db.commit()
+
     def set_kit_request_payment(self, request_id: int, payment_ids: list[str], note: str) -> None:
         self._db.execute("UPDATE kit_requests SET payment_ids = ?, pay_note = ? WHERE id = ?",
                          (",".join(payment_ids) or None, note, request_id))
