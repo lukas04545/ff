@@ -76,6 +76,8 @@ def _link(cog, interaction, player):
 
 
 def test_link_requires_ingame_verification(cog):
+    from dataclasses import replace
+    cog.bot.config = replace(cog.bot.config, link_verify_quickchat=True)    # optional emote wheel check
     db = cog.bot.db
     member = FakeInteraction(7, [55])
     edits = []
@@ -182,3 +184,43 @@ def test_spawn_kit_requires_discord_role(cog, monkeypatch):
     # Without a required role everyone gets it again
     assert bot.db.set_kit_rule_role(rule, None)
     assert respawn("Unlinked") == ['kit givetoplayer "starter" "Unlinked"']
+
+
+def test_link_with_dropdown_no_check(cog):
+    """Default: /customkit link without a name shows a dropdown of online players, picking links right away."""
+    db = cog.bot.db
+    cog.bot.online_players = {"GamerTag42": {}, "zed": {}, "Taken": {}}
+    db.link_player(99, "Taken")
+    member = FakeInteraction(7, [55])
+    views = []
+
+    async def send(content=None, view=None, **kw):
+        member.messages.append(content)
+        views.append(view)
+    member.response.send_message = send
+    asyncio.run(cog.link.callback(cog, member, None))
+    select = views[-1].children[0]
+    assert [o.value for o in select.options] == ["GamerTag42", "zed"]           # someone else's player not offered
+
+    edits = []
+
+    async def edit_message(content=None, view="same", **kw):
+        edits.append((content, view))
+    member.response.edit_message = edit_message
+    select._values = ["zed"]                                                     # what Discord sets on a pick
+    asyncio.run(select.callback(member))
+    assert db.linked_player(7) == "zed" and "now linked to **zed**" in edits[-1][0] and edits[-1][1] is None
+    assert cog._pending == {}                                                    # no emote wheel needed
+
+    # Changing the link needs an admin (the kit cooldown counts per player)
+    asyncio.run(cog.link.callback(cog, member, None))
+    assert "You are linked to **zed**" in member.messages[-1]
+    asyncio.run(cog.link.callback(cog, member, "GamerTag42"))
+    assert "already linked to **zed**" in member.messages[-1] and db.linked_player(7) == "zed"
+    asyncio.run(cog.link.callback(cog, FakeInteraction(8, []), "Taken"))       # typed name: same rules
+    assert db.player_owner("Taken") == 99
+
+    cog.bot.online_players = {}
+    nobody = FakeInteraction(8, [])
+    asyncio.run(cog.link.callback(cog, nobody, None))
+    assert "Join the game first" in nobody.messages[-1]

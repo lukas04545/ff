@@ -67,7 +67,8 @@ KIT_ACTIONS = """- You have tools for the player who opened this ticket – and 
   Use get_my_kits before answering questions about kits. Only call claim_kit when the player clearly asks
   for that kit to be claimed now. The tool enforces roles, cooldowns and the linked player – report its
   result honestly (cooldown time, not linked, not online) and never claim for anyone else.
-  If they are not linked: tell them to use /customkit link in Discord while they are online in-game.
+  If they are not linked: tell them to use /customkit link in Discord while they are online in-game and pick
+  their player from the list.
   get_my_kits also shows their points balance (if the shop is on): they earn points by playing, PvP kills and
   /daily and spend them themselves with /shop buy – you can't buy or give points for them.
   For "when can I claim again" copy the can_claim_again_discord value (e.g. <t:1791900000:R>) into your

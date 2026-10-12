@@ -87,6 +87,10 @@ FIELDS: list[Field] = [
     # Kits
     Field("AUTOKIT_DELAY", "Autokit delay after respawn (seconds)", "kits", "int", placeholder="3"),
     Field("KIT_CLAIM_ANNOUNCE", "Confirm quick chat kits in-game", "kits", "bool"),
+    Field("LINK_VERIFY_QUICKCHAT", "Linking: also verify with quick chat in-game", "kits", "bool",
+          help="Off (default): members pick their online player from a dropdown in Discord and are linked right "
+               "away – nothing proves the player is theirs. On: after picking, they must send two quick chat "
+               "phrases in-game (emote wheel) to prove it."),
     # Tickets
     Field("TICKET_CATEGORY_ID", "Ticket category", "tickets", "id", pick="category",
           help="Empty = tickets off."),
