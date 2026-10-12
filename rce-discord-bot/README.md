@@ -782,6 +782,14 @@ then update the URL on Tip4Serv, or set up a fixed address (`WEB_TUNNEL_TOKEN` +
 Connecting Tip4Serv's Discord bot (`/tiplink`) lets buyers log in with Discord, so payments carry their Discord ID –
 the safest match.
 
+*C) Tip4Serv's Discord bot:* if Tip4Serv's own bot posts purchases in a channel (e.g. *"Thank you
+<@{discord_id}> for your {total_paid} {currency} donation !"*), pick that channel in **Settings → 💳 Tip4Serv
+store → Channel with Tip4Serv purchase messages** (`TIP4SERV_CHANNEL_ID`). The bot reads the buyer's @mention, the
+amount and the currency from every **bot** message there (members can't fake it), also messages posted while it
+was offline (last 100). Matching is by Discord ID – the safest way. Needs the Message Content intent. If the
+message has no order number, the same purchase arriving by webhook/server key within 15 minutes (same buyer and
+amount) is counted once.
+
 *B) Server key:*
 1. On tip4serv.com add a **server for the bot** with the **plugin connection** (game Rust / Oxide – *not*
    "Connect with RCON", and *not* the store API key from Dashboard → API keys) and copy its **key** (three parts

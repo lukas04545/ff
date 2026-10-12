@@ -139,6 +139,7 @@ class Config:
     # Points & shop (economy)
     economy_enabled: bool
     tip4serv_key: str                    # Tip4Serv server key (empty = store connection off)
+    tip4serv_channel_id: int | None      # channel where Tip4Serv's Discord bot announces purchases
     tip4serv_auto_approve: bool          # paid + priced new custom kits are approved by the bot
     tip4serv_name_match: bool            # payments may be matched by in-game name (not only Discord ID)
     price_list_file: Path                # prices.txt
@@ -210,6 +211,8 @@ def required_intents(cfg: Config) -> dict[str, list[str]]:
         message_content.append("Support tickets")
         if getattr(cfg, "giveaway_win_channel_id", None):
             message_content.append("Giveaway wins (ticket AI)")
+    if getattr(cfg, "tip4serv_channel_id", None):
+        message_content.append("Tip4Serv purchase messages")
     if cfg.discord_log_channel_id:
         message_content.append("Discord log")
         members.append("Discord log (joins/leaves)")
@@ -292,6 +295,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         giveaway_prize_days=max(0, _int("GIVEAWAY_PRIZE_DAYS", 0)),
         economy_enabled=_bool("ECONOMY_ENABLED", True),
         tip4serv_key=_get("TIP4SERV_KEY").strip(),
+        tip4serv_channel_id=_int("TIP4SERV_CHANNEL_ID"),
         tip4serv_auto_approve=_bool("TIP4SERV_AUTO_APPROVE", True),
         tip4serv_name_match=_bool("TIP4SERV_NAME_MATCH", True),
         price_list_file=Path(_get("PRICE_LIST_FILE", "prices.txt") or "prices.txt"),
