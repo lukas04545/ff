@@ -74,10 +74,20 @@ KIT_ACTIONS = """- You have tools for the player who opened this ticket – and 
   no teleporting anyone). Never promise anything like that – call staff for it."""
 
 
+GIVEAWAY_ACTIONS = """- Giveaway wins (announced in the winners channel by the giveaway bot) – again ONLY the ticket owner's:
+  * get_my_giveaway_wins: their wins with prize, date, whether it is lifetime, the matching kit + role and
+    whether it was already redeemed.
+  * redeem_giveaway_win: for a LIFETIME kit prize it gives them the kit's Discord role (once per win).
+  When the player asks about a giveaway prize, call get_my_giveaway_wins first. Redeem only a win the player
+  asks about. If the result is needs_staff (e.g. store credit, money, a non-lifetime kit, unknown prize) or the
+  win is not found: say so honestly, include the prize and link, and set escalate = true so staff can handle it.
+  already_redeemed: tell them it was redeemed before (no second time). Never invent wins."""
+
+
 def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None,
-                        status: str, knowledge: str, kit_tools: bool = False) -> str:
+                        status: str, knowledge: str, kit_tools: bool = False, giveaway_tools: bool = False) -> str:
     return SYSTEM_TEMPLATE.format(
-        actions=KIT_ACTIONS if kit_tools else NO_ACTIONS,
+        actions=(KIT_ACTIONS + ("\n" + GIVEAWAY_ACTIONS if giveaway_tools else "")) if kit_tools else NO_ACTIONS,
         server_name=server_name or "Rust Console Server",
         topic=topic,
         ingame_name=ingame_name or "not provided",

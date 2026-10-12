@@ -28,6 +28,7 @@ from discord.ext import commands
 from cogs.kits import ConfirmView
 from permcheck import explain_forbidden
 from support.deepseek import PLATFORM_KEYS_URL, PLATFORM_USAGE_URL, DeepSeekClient, DeepSeekError
+from support.giveaway_wins import GiveawayWin, match_kit, parse_win
 from support.prompt import build_messages, build_system_prompt, parse_answer
 from utils import admin_only, format_duration, is_admin, safe_md, strip_rich_text
 
@@ -43,7 +44,9 @@ HISTORY_LIMIT = 40            # number of messages the AI gets as history
 STAFF_REPING_SECONDS = 600    # "Call staff" again only after 10 minutes
 KNOWLEDGE_MAX_CHARS = 12000
 DELETE_DELAY_SECONDS = 5
-MAX_TOOL_ROUNDS = 4           # AI tool calls per reply (look up kits, claim, …)
+MAX_TOOL_ROUNDS = 5           # AI tool calls per reply (look up kits, claim, …)
+GIVEAWAY_SCAN_LIMIT = 500     # winner messages read from the giveaway channel
+GIVEAWAY_CACHE_SECONDS = 60
 
 # Tools for the AI – they always act for the ticket owner (never a user chosen by the model)
 KIT_TOOLS = [
@@ -59,6 +62,22 @@ KIT_TOOLS = [
                        "Enforces role, cooldown, linked player and online status. Only when they asked for it.",
         "parameters": {"type": "object", "properties": {
             "kit": {"type": "string", "description": "Exact kit name from get_my_kits"}}, "required": ["kit"]}}},
+]
+
+GIVEAWAY_TOOLS = [
+    {"type": "function", "function": {
+        "name": "get_my_giveaway_wins",
+        "description": "Giveaways the ticket owner won (from the winner announcements channel): prize, date, whether "
+                       "it is a lifetime prize, the matching kit and its Discord role, and whether it was already "
+                       "redeemed.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "redeem_giveaway_win",
+        "description": "Redeems one of the ticket owner's wins: for a LIFETIME kit prize it gives them the kit's "
+                       "Discord role (once per win). Other prizes return needs_staff.",
+        "parameters": {"type": "object", "properties": {
+            "message_id": {"type": "string", "description": "message_id of the win from get_my_giveaway_wins"}},
+            "required": ["message_id"]}}},
 ]
 
 
@@ -348,17 +367,18 @@ class Tickets(commands.Cog):
             await self._escalate(channel, ticket, "AI reply limit reached in this ticket", source="System")
             return
 
-        tools = self._kit_tools_enabled()
+        tools = self._ai_tools()
         system = build_system_prompt(server_name=self._server_name(), topic=ticket["topic"],
                                      ingame_name=ticket["ingame_name"], status=self._status_text(),
-                                     knowledge=self._knowledge(), kit_tools=tools)
+                                     knowledge=self._knowledge(), kit_tools=bool(tools),
+                                     giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools))
         messages = build_messages(system, await self._history(channel, ticket))
         try:
             async with channel.typing():
                 raw = None
                 if tools:
                     try:
-                        raw = await self._chat_with_tools(list(messages), ticket, channel)
+                        raw = await self._chat_with_tools(list(messages), ticket, channel, tools)
                     except DeepSeekError as exc:
                         if "HTTP 400" not in str(exc) and "HTTP 422" not in str(exc):
                             raise
@@ -388,6 +408,11 @@ class Tickets(commands.Cog):
     def _kit_tools_enabled(self) -> bool:
         return self.bot.config.ticket_ai_kit_tools and self.bot.get_cog("CustomKits") is not None
 
+    def _ai_tools(self) -> list[dict]:
+        if not self._kit_tools_enabled():
+            return []
+        return KIT_TOOLS + (GIVEAWAY_TOOLS if self.bot.config.giveaway_win_channel_id else [])
+
     async def _ticket_member(self, channel: discord.TextChannel, ticket) -> discord.Member | None:
         member = channel.guild.get_member(ticket["user_id"])
         if member is None:
@@ -397,10 +422,12 @@ class Tickets(commands.Cog):
                 return None
         return member
 
-    async def _chat_with_tools(self, messages: list[dict], ticket, channel: discord.TextChannel) -> str:
+    async def _chat_with_tools(self, messages: list[dict], ticket, channel: discord.TextChannel,
+                               tools: list[dict] | None = None) -> str:
         """Lets the AI call the kit tools (several rounds), returns its final answer text."""
+        tools = tools or self._ai_tools() or KIT_TOOLS
         for _ in range(MAX_TOOL_ROUNDS):
-            msg = await self.ai.chat(messages, tools=KIT_TOOLS)
+            msg = await self.ai.chat(messages, tools=tools)
             calls = msg["tool_calls"]
             if not calls:
                 return msg["content"]
@@ -444,7 +471,97 @@ class Tickets(commands.Cog):
             return {"ok": outcome.ok, "result": outcome.code, "kit": outcome.kit, "player": outcome.player,
                     "can_claim_again_discord": f"<t:{outcome.ready_at}:R>" if outcome.ready_at else None,
                     "message": outcome.message.replace("**", "")}
+        if name == "get_my_giveaway_wins":
+            return await self._tool_giveaway_wins(channel.guild, member)
+        if name == "redeem_giveaway_win":
+            return await self._tool_redeem_win(channel, ticket, member, str(args.get("message_id") or ""))
         return {"error": f"Unknown tool {name}"}
+
+    # ------------------------------------------------------------ Giveaway wins (announced by e.g. Helios)
+
+    async def _all_wins(self, guild: discord.Guild) -> list[GiveawayWin]:
+        cached = getattr(self, "_win_cache", None)
+        if cached and time.monotonic() - cached[0] < GIVEAWAY_CACHE_SECONDS:
+            return cached[1]
+        channel = guild.get_channel(self.bot.config.giveaway_win_channel_id)
+        if channel is None:
+            raise LookupError("The giveaway winner channel was not found (or the bot can't see it).")
+        wins = []
+        async for message in channel.history(limit=GIVEAWAY_SCAN_LIMIT):
+            # Only announcements from bots (Helios etc.) – a player can't post a fake win there
+            if message.author.bot and (win := parse_win(message)):
+                wins.append(win)
+        self._win_cache = (time.monotonic(), wins)
+        return wins
+
+    def _prize_kits(self) -> dict[str, int | None]:
+        """Kit name -> Discord role that unlocks it (custom kit claim role or role-locked autokit)."""
+        kits: dict[str, int | None] = {}
+        for rule in self.bot.db.kit_rules(enabled_only=True):
+            if rule["required_role_id"]:
+                kits.setdefault(rule["kit"], rule["required_role_id"])
+        for row in self.bot.db.custom_kits():
+            roles = self.bot.db.claim_roles(row)
+            kits[row["name"]] = roles[0] if roles else kits.get(row["name"])
+        return kits
+
+    async def _owner_wins(self, guild: discord.Guild, member) -> list[GiveawayWin]:
+        names = {n.lower() for n in (member.name, getattr(member, "global_name", None),
+                                     getattr(member, "display_name", None)) if n}
+        return [w for w in await self._all_wins(guild) if w.won_by(member.id, names)]
+
+    def _describe_win(self, guild: discord.Guild, win: GiveawayWin, kits: dict[str, int | None]) -> dict:
+        kit = match_kit(win.prize, list(kits))
+        role = guild.get_role(kits[kit]) if kit and kits[kit] else None
+        redeemed = self.bot.db.giveaway_redemption(win.message_id)
+        return {"message_id": str(win.message_id), "prize": win.prize, "won_at_discord": f"<t:{win.created_at}:R>",
+                "lifetime": win.lifetime, "kit": kit, "kit_role": role.name if role else None,
+                "already_redeemed": bool(redeemed), "link": win.jump_url}
+
+    async def _tool_giveaway_wins(self, guild: discord.Guild, member) -> dict:
+        try:
+            wins = await self._owner_wins(guild, member)
+        except (LookupError, discord.HTTPException) as exc:
+            return {"error": str(exc)}
+        kits = self._prize_kits()
+        return {"wins": [self._describe_win(guild, w, kits) for w in wins],
+                "note": None if wins else "No win found for this user in the giveaway channel."}
+
+    async def _tool_redeem_win(self, channel: discord.TextChannel, ticket, member, message_id: str) -> dict:
+        try:
+            wins = await self._owner_wins(channel.guild, member)
+        except (LookupError, discord.HTTPException) as exc:
+            return {"ok": False, "result": "error", "message": str(exc)}
+        win = next((w for w in wins if str(w.message_id) == message_id.strip()), None)
+        if win is None:
+            return {"ok": False, "result": "not_your_win", "message": "This is not a win of the ticket owner."}
+        info = self._describe_win(channel.guild, win, self._prize_kits())
+        if info["already_redeemed"]:
+            return {"ok": False, "result": "already_redeemed", **info}
+        if not info["kit"] or not info["kit_role"]:
+            return {"ok": False, "result": "needs_staff", "reason": "Prize is not a kit with a Discord role", **info}
+        if not win.lifetime:
+            return {"ok": False, "result": "needs_staff", "reason": "Kit prize is not lifetime", **info}
+        role = channel.guild.get_role(self._prize_kits()[info["kit"]])
+        action = "role already owned"
+        if role not in getattr(member, "roles", []):
+            try:
+                await member.add_roles(role, reason=f"Giveaway win {win.jump_url} (ticket #{ticket['id']})")
+            except discord.Forbidden as exc:
+                return {"ok": False, "result": "needs_staff", "reason": explain_forbidden(exc, self.bot), **info}
+            except discord.HTTPException as exc:
+                return {"ok": False, "result": "needs_staff", "reason": f"Discord error: {exc}", **info}
+            action = f"role {role.name} given"
+        if not self.bot.db.record_giveaway_redemption(win.message_id, member.id, win.prize, action):
+            return {"ok": False, "result": "already_redeemed", **info}
+        await channel.send(f"{CLAIM_PREFIX}Giveaway prize **{safe_md(win.prize)}** redeemed: you now have the "
+                           f"**{safe_md(role.name)}** role (unlocks **{safe_md(info['kit'])}**).",
+                           allowed_mentions=discord.AllowedMentions.none())
+        feed = self.bot.feed(self.bot.config.admin_log_channel_id)
+        if feed:
+            feed.add_line(f"🎉 {member.mention} redeemed giveaway win \"{safe_md(win.prize)}\" ({win.jump_url}) "
+                          f"via ticket #{ticket['id']} (AI): {action}")
+        return {"ok": True, "result": "redeemed", "action": action, **info, "already_redeemed": True}
 
     # ------------------------------------------------------------ Ping staff
 

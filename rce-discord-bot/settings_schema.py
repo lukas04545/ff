@@ -108,6 +108,10 @@ FIELDS: list[Field] = [
           pick="text_channel"),
     Field("RULES_CHANNEL_ID", "Rules channel", "community", "id", pick="text_channel"),
     Field("GIVEAWAY_WINNER_ROLE_ID", "Role for giveaway winners", "community", "id", pick="role"),
+    Field("GIVEAWAY_WIN_CHANNEL_ID", "Channel with giveaway winners (e.g. Helios)", "tickets", "id",
+          pick="text_channel",
+          help="The ticket AI looks up a player's wins here. Lifetime kit prizes: it gives the kit's role "
+               "(once per win). Other prizes go to staff. 0 = off."),
     Field("RUST_SERVER_PLATFORM", "Platform (for /rust)", "community",
           placeholder="Rust Console Edition (Xbox & PlayStation)"),
     Field("RUST_SERVER_WIPE", "Wipe schedule (for /rust)", "community", placeholder="e.g. Thursdays 6 pm"),

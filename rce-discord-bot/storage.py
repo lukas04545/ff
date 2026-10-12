@@ -105,6 +105,14 @@ class Storage:
                 user_id INTEGER NOT NULL,
                 PRIMARY KEY (giveaway_id, user_id)
             );
+            -- Giveaway wins redeemed through a ticket (each winner message only once)
+            CREATE TABLE IF NOT EXISTS giveaway_redemptions (
+                message_id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                prize TEXT NOT NULL,
+                action TEXT NOT NULL,
+                redeemed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             -- Verified link Discord account <-> in-game player (one each, for self-service kit claims)
             CREATE TABLE IF NOT EXISTS linked_players (
                 user_id INTEGER PRIMARY KEY,
@@ -370,6 +378,17 @@ class Storage:
         cur = self._db.execute(sql, args)
         self._db.commit()
         return cur.rowcount
+
+    # ------------------------------------------------------------ Giveaway wins (other bots)
+
+    def giveaway_redemption(self, message_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM giveaway_redemptions WHERE message_id = ?", (message_id,)).fetchone()
+
+    def record_giveaway_redemption(self, message_id: int, user_id: int, prize: str, action: str) -> bool:
+        cur = self._db.execute("INSERT OR IGNORE INTO giveaway_redemptions (message_id, user_id, prize, action) "
+                               "VALUES (?, ?, ?, ?)", (message_id, user_id, prize, action))
+        self._db.commit()
+        return cur.rowcount > 0
 
     # ------------------------------------------------------------ Linked players
 
