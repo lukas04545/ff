@@ -258,6 +258,17 @@ FIELDS: list[Field] = [
           help="On (default): once a day and before every automatic update the bot saves the database, web "
                "logins, rules and knowledge base to data/backups/ (your .env with the tokens is not included)."),
     Field("BACKUP_KEEP_DAYS", "Keep backups for … days", "alerts", "int", placeholder="7"),
+    Field("BACKUP_COPY_DIR", "Also copy backups to folder (e.g. Google Drive)", "alerts",
+          placeholder=r"G:\My Drive\RCE bot backups",
+          help="Install Google Drive for desktop, then enter a folder inside it. Every backup ZIP is copied there "
+               "(old copies are removed after the days above) and a live-backup.zip is kept up to date – Google "
+               "uploads them by itself and keeps older versions. Empty = off."),
+    Field("BACKUP_LIVE_MINUTES", "Live backup every … minutes", "alerts", "int", placeholder="10",
+          help="Refreshes live-backup.zip in the copy folder when something changed. 0 = off."),
+    Field("BACKUP_INCLUDE_ENV", "Include the .env (tokens, passwords) in backups", "alerts", "bool",
+          help="Off (default): a backup doesn't contain your Discord token, RCON and API passwords – safer if the "
+               "file is shared or the Drive account is compromised, but on a new PC you enter them again. On: "
+               "a full copy – keep that Drive folder private."),
     # Web
     Field("WEB_PASSWORD", "Password for this web interface", "web", "secret",
           help="Empty = a login link in the bot window on every start."),

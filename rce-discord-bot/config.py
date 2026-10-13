@@ -186,6 +186,9 @@ class Config:
     alert_role_ids: frozenset[int]        # pinged on alerts (empty = admin roles)
     backup_enabled: bool
     backup_keep_days: int
+    backup_copy_dir: Path | None    # also copy backups here (e.g. Google Drive folder)
+    backup_live_minutes: int        # refresh live-backup.zip there every N minutes (0 = off)
+    backup_include_env: bool        # put the .env (tokens!) into backups
 
     # Web interface
     web_enabled: bool
@@ -342,6 +345,9 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         alert_role_ids=_id_set("ALERT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),
         backup_enabled=_bool("BACKUP_ENABLED", True),
         backup_keep_days=max(1, _int("BACKUP_KEEP_DAYS", 7)),
+        backup_copy_dir=Path(_get("BACKUP_COPY_DIR").strip().strip('"')) if _get("BACKUP_COPY_DIR").strip() else None,
+        backup_live_minutes=max(0, min(_int("BACKUP_LIVE_MINUTES", 10), 1440)),
+        backup_include_env=_bool("BACKUP_INCLUDE_ENV", False),
         web_enabled=_bool("WEB_ENABLED", True),
         web_host=_get("WEB_HOST", "127.0.0.1"),
         web_port=_int("WEB_PORT", 8080),
