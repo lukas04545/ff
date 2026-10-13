@@ -252,6 +252,19 @@ FIELDS: list[Field] = [
           placeholder='global.sleep "{name}"',
           help="Run once the punished player respawns (\"has entered the game\" in the log, within 1 hour). "
                "Separated by ; – {name} = player, - = nothing."),
+    Field("AI_ABUSE_WATCH", "AI watches the server log for admin abuse", "abuse", "bool",
+          help="On (default, needs the DeepSeek key): the AI checks admin actions in the server log (admin-panel "
+               "spawns, kit gives, bans, role changes, the kills of those admins) and flags suspicious patterns – "
+               "loot for themselves or friends, spawning before raids, banning someone they fought … Only an alert "
+               "with the evidence; nothing is done automatically. Trusted owners (allowed names/roles above) and "
+               "the bot's own gives are never flagged."),
+    Field("AI_ABUSE_WATCH_MINUTES", "AI abuse watch: check every … minutes", "abuse", "int", placeholder="5"),
+    Field("AI_ABUSE_CHANNEL_ID", "AI abuse watch: alert channel", "abuse", "id", pick="text_channel",
+          help="Empty = alert channel, else admin log. Severe suspicions ping the alert roles."),
+    Field("AI_ABUSE_INSTRUCTIONS", "AI abuse watch: your own rules", "abuse", "textarea",
+          placeholder="e.g. Admins may spawn building materials during build events.\nAnyone giving themselves "
+                      "AKs is suspicious.\nModerators must never ban without a ticket.",
+          help="Plain-language rules for the watcher, one per line – they take priority over its defaults."),
     # Alerts & backups
     Field("SERVER_DOWN_ALERT_MINUTES", "Server-down alert after … minutes", "alerts", "int", placeholder="10",
           help="Pings staff once when there has been no RCON connection for this long, and again when the server is "

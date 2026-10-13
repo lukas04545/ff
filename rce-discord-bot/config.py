@@ -171,6 +171,10 @@ class Config:
 
     # Admin abuse protection (raid items spawned by admins)
     abuse_protection: bool
+    ai_abuse_watch: bool                 # AI flags suspected admin abuse in the server log
+    ai_abuse_watch_minutes: int
+    ai_abuse_channel_id: int | None
+    ai_abuse_instructions: str
     abuse_exempt_role_ids: frozenset[int]  # Discord roles (owner, co-owner) – their linked players may spawn
     abuse_exempt_players: frozenset[str]   # in-game names that may spawn (lowercase)
     abuse_items: tuple[str, ...]           # keywords of forbidden items (lowercase)
@@ -331,6 +335,10 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         report_channel_id=_int("REPORT_CHANNEL_ID"),
         watchlist_channel_id=_int("WATCHLIST_CHANNEL_ID"),
         abuse_protection=_bool("ABUSE_PROTECTION", True),
+        ai_abuse_watch=_bool("AI_ABUSE_WATCH", True),
+        ai_abuse_watch_minutes=max(1, min(_int("AI_ABUSE_WATCH_MINUTES", 5), 120)),
+        ai_abuse_channel_id=_int("AI_ABUSE_CHANNEL_ID"),
+        ai_abuse_instructions=_get("AI_ABUSE_INSTRUCTIONS")[:3000],
         abuse_exempt_role_ids=_id_set("ABUSE_EXEMPT_ROLE_IDS"),
         abuse_exempt_players=frozenset(p.strip().lower() for p in _get("ABUSE_EXEMPT_PLAYERS").split(",") if p.strip()),
         abuse_items=tuple(k.strip().lower() for k in (_get("ABUSE_ITEMS") or
