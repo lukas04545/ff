@@ -2222,11 +2222,20 @@ views.webstore = async (main) => {
     h("p", { class: "muted", text: "Players buy kits on the player website (Store) with PayPal or gift cards. The kit is given to the Discord account their in-game name is linked to (/customkit link) – they claim it with /customkit claim." }));
   const holder = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
   main.append(holder);
-  let editId = null;
+  let editId = null, rechecked = false;
 
   const load = async () => {
     let d;
     try { d = await api("/api/webshop"); } catch (e) { holder.replaceChildren(h("div", { class: "banner bad", text: e.message })); return; }
+    try { render(d); } catch (e) {
+      console.error(e);
+      holder.replaceChildren(h("div", { class: "banner bad", text: "This page could not be shown: " + e.message }));
+    }
+    // New kits are looked for in the background – show them once that's done
+    if (d.syncing && !rechecked) { rechecked = true; setTimeout(() => { if (location.hash === "#webstore") load(); }, 8000); }
+  };
+
+  const render = (d) => {
     const st = d.status, cur = st.currency;
 
     // --- Status

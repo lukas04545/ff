@@ -613,17 +613,14 @@ class WebInterface:
     async def webshop(self, request: web.Request) -> web.Response:
         shop = self._cog("WebShop")
         db = self.bot.db
-        try:
-            await shop.sync_kits()            # new bot / in-game kits show up right away
-        except Exception:
-            log.exception("Store kit sync failed")
+        syncing = shop.start_sync()           # new bot / in-game kits – in the background, the page doesn't wait
         order_cols = ("id", "kind", "title", "player", "user_id", "total", "currency", "gift_code", "gift_amount",
                       "paypal_amount", "paypal_order", "capture_id", "payer_email", "admin_key", "status", "result", "request_id",
                       "created_at", "paid_at")
         orders = [{k: (str(o[k]) if k == "user_id" and o[k] else o[k]) for k in order_cols}
                   for o in db.store_orders(limit=150)]
         return web.json_response({
-            "status": shop.status(),
+            "status": shop.status(), "syncing": syncing,
             "kits": [{**dict(r), "items": len(shop.kit_items(r))} for r in db.store_kits()],
             "custom_kits": [k["name"] for k in db.custom_kits()],
             "gift_cards": [dict(g) for g in db.gift_cards()], "orders": orders,

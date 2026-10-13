@@ -413,7 +413,10 @@ def test_admin_sets_price_of_auto_kit(shop, monkeypatch):
         await c.start_server()
         try:
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
-            d = await (await c.get("/api/webshop")).json()                 # loading the page syncs the kits
+            d = await (await c.get("/api/webshop")).json()                 # opening the page starts a sync …
+            assert d["syncing"] is True
+            await asyncio.sleep(0.2)                                         # … in the background
+            d = await (await c.get("/api/webshop")).json()
             mega = next(k for k in d["kits"] if k["kit"] == "Mega raid kit")
             assert mega["auto"] and mega["price"] == 0 and not mega["enabled"] and mega["items"] == 1
             r = await c.put(f"/api/webshop/kits/{mega['id']}", json={"enabled": True}, headers=H)
@@ -468,3 +471,35 @@ def test_giftcard_discord_commands(shop):
     assert "disabled" in sent[-1].text
     run(s.gc_disable.callback(s, i, codes[0], True))
     assert "Only owners" in sent[-1].text and not db.gift_card(codes[0])["disabled"]
+
+
+def test_kit_sync_is_quick(shop, monkeypatch):
+    """Opening the Store page never waits for the game server; kit contents are read a few at a time."""
+    from cogs import webshop as ws
+    s, db, bot = shop.s, shop.db, shop.env.bot
+    for i in range(12):
+        db.add_store_kit(f"kit{i}", f"kit{i}", 0, 0, None, source="ingame", auto=True, enabled=False)
+    asked = []
+
+    async def command(cmd, **kw):
+        asked.append(cmd)
+        return ""
+    monkeypatch.setattr(bot.rcon, "command", command)
+    monkeypatch.setattr(type(bot.rcon), "connected", property(lambda self: True))
+    monkeypatch.setattr(ws.kitparse, "parse_kit_info", lambda raw: [NS(short_name="wood", amount=1)])
+    run(s._refresh_ingame_items())
+    assert len(asked) == ws.ITEMS_PER_SYNC
+    run(s._refresh_ingame_items())
+    run(s._refresh_ingame_items())
+    assert len(asked) == 12                                    # every kit read once …
+    run(s._refresh_ingame_items())
+    assert len(asked) == 12                                    # … and not again for hours
+
+    async def slow_sync():
+        await asyncio.sleep(10)
+
+    async def main():
+        monkeypatch.setattr(s, "sync_kits", slow_sync)
+        assert s.start_sync() is True and s.start_sync() is True     # one at a time, returns at once
+        s._sync_task.cancel()
+    run(main())

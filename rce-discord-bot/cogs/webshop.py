@@ -50,6 +50,8 @@ CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"      # no 0/O, 1/I – easy t
 BOUGHT_MARKER = "Bought by user "    # description of custom kits created for a buyer (not offered in the store)
 DISMISSED_KEY = "store_dismissed"     # kits an owner removed from the store – never added again automatically
 JOIN_DELAY = 20                       # seconds after joining before an in-game kit is given (still loading)
+ITEMS_REFRESH = 6 * 3600              # in-game kit contents are read again after this
+ITEMS_PER_SYNC = 5                    # at most this many "kit info" commands per sync (keeps it quick)
 PENDING_EXPIRE = 3 * 3600          # unpaid orders are cancelled after this (gift card amounts returned)
 CHECK_AFTER = 10 * 60              # approved on PayPal but the buyer never came back: capture after this
 MAX_AMOUNT = 100_000               # per item in a custom kit
@@ -80,6 +82,8 @@ class WebShop(commands.Cog):
         self._checkouts = RateLimiter(10, 600)          # started orders per visitor (each one is a PayPal order)
         self._key_failures = RateLimiter(5, 900)        # wrong admin keys per visitor
         self._locks: dict[int, asyncio.Lock] = {}
+        self._sync_task: asyncio.Task | None = None
+        self._items_read: dict[int, float] = {}       # store kit id -> when its in-game contents were read
 
     async def cog_load(self) -> None:
         self.check_loop.start()
@@ -246,6 +250,17 @@ class WebShop(commands.Cog):
             db.set_value(DISMISSED_KEY, json.dumps(sorted(self._dismissed() | {f"{row['source']}:{row['kit'].lower()}"})))
         return True
 
+    def start_sync(self) -> bool:
+        """Runs sync_kits in the background (the web interface doesn't wait). True while one is running."""
+        if self._sync_task is None or self._sync_task.done():
+            async def run() -> None:
+                try:
+                    await self.sync_kits()
+                except Exception:
+                    log.exception("Store kit sync failed")
+            self._sync_task = asyncio.create_task(run(), name="store-kit-sync")
+        return not self._sync_task.done()
+
     async def sync_kits(self) -> int:
         """Adds new staff-made bot kits and in-game kits to the store (hidden, no price). Returns how many."""
         db = self.bot.db
@@ -279,12 +294,16 @@ class WebShop(commands.Cog):
         return added
 
     async def _refresh_ingame_items(self) -> None:
-        """Keeps the contents of in-game kits for sale (shown with pictures on the website)."""
-        for row in self.bot.db.store_kits():
-            if row["source"] != "ingame":
-                continue
+        """Keeps the contents of in-game kits for sale (shown with pictures on the website). Kits without contents
+        first, then the oldest – a few per run, so a sync never takes long."""
+        now = time.monotonic()
+        rows = [r for r in self.bot.db.store_kits() if r["source"] == "ingame"
+                and now - self._items_read.get(r["id"], -1e9) >= ITEMS_REFRESH]
+        rows.sort(key=lambda r: (bool(r["items"]), self._items_read.get(r["id"], 0)))
+        for row in rows[:ITEMS_PER_SYNC]:
+            self._items_read[row["id"]] = now
             try:
-                raw = await self.bot.rcon.command(f'kit info "{kitparse.clean_arg(row["kit"])}"')
+                raw = await self.bot.rcon.command(f'kit info "{kitparse.clean_arg(row["kit"])}"', timeout=4)
             except RconError:
                 return
             items = [{"short": i.short_name, "amount": i.amount} for i in kitparse.parse_kit_info(raw)]
