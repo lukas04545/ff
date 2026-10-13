@@ -1844,9 +1844,14 @@ function backupBox() {
     const list = r.backups.slice(0, 8).map((b) => h("div", { class: "row", style: "font-size:.85rem" },
       h("a", { href: `/api/backups/${encodeURIComponent(b.name)}`, download: b.name, text: b.name }),
       h("span", { class: "muted", text: `${size(b.size)} · ${new Date(b.created * 1000).toLocaleString()}` })));
+    const copy = r.copy_dir ? h("div", { class: "muted", style: "font-size:.85rem" },
+      `☁️ Copied to ${r.copy_dir}` + (r.live_minutes ? ` · live backup every ${r.live_minutes} min` + (r.live_last ? ` (last ${new Date(r.live_last * 1000).toLocaleTimeString()})` : " (waiting for the first change)") : ""))
+      : h("div", { class: "muted", style: "font-size:.85rem", text: "☁️ Tip: set \"Also copy backups to folder\" to a Google Drive for desktop folder for an off-PC copy." });
+    const errs = [r.copy_error, r.live_error].filter(Boolean).map((e) => h("div", { class: "error", style: "font-size:.85rem", text: "⚠️ " + e }));
     box.replaceChildren(
       h("div", { class: "row" }, h("strong", { text: "Backups " }),
-        h("span", { class: "muted", text: `${r.enabled ? `daily + before every update, kept ${r.keep_days} days` : "daily backup off"} · data/backups/ · without .env` })),
+        h("span", { class: "muted", text: `${r.enabled ? `daily + before every update, kept ${r.keep_days} days` : "daily backup off"} · data/backups/ · ${r.include_env ? "with .env" : "without .env"}` })),
+      copy, ...errs,
       ...(list.length ? list : [h("span", { class: "muted", text: "No backup yet." })]),
       h("div", { class: "row", style: "margin-top:.4rem" }, btn));
   };

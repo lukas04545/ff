@@ -26,9 +26,15 @@ class Updates(commands.Cog):
 
     def _backup(self) -> None:
         """Runs in the update thread right before files are replaced."""
-        if self.bot.config.backup_enabled:
+        cfg = self.bot.config
+        if cfg.backup_enabled:
             import backups
-            backups.make_backup(self.bot.config.database_path, label="pre-update")
+            path = backups.make_backup(cfg.database_path, label="pre-update", include_env=cfg.backup_include_env)
+            if cfg.backup_copy_dir is not None:
+                try:
+                    backups.copy_to_folder(path, cfg.backup_copy_dir)
+                except OSError:
+                    pass       # the local backup exists; the copy is a bonus
 
     async def cog_load(self) -> None:
         if self.bot.config.auto_update:

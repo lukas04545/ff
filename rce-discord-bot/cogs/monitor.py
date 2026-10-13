@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -32,15 +33,21 @@ class Monitor(commands.Cog):
         self.down_since: float | None = time.time()   # until the first connection
         self.alerted = False
         self.last_error: str | None = None
+        self.live_last: float | None = None          # last live-backup.zip written
+        self.live_error: str | None = None
+        self.copy_error: str | None = None
+        self._live_marker: tuple | None = None
 
     async def cog_load(self) -> None:
         self.watch_loop.start()
+        self.live_loop.start()
         if self.bot.config.backup_enabled:
             self.backup_loop.start()
 
     async def cog_unload(self) -> None:
         self.watch_loop.cancel()
         self.backup_loop.cancel()
+        self.live_loop.cancel()
 
     async def on_config_changed(self, old, new) -> None:
         if new.backup_enabled and not self.backup_loop.is_running():
@@ -132,15 +139,74 @@ class Monitor(commands.Cog):
 
     async def backup_now(self, label: str = "manual") -> str | None:
         """Creates a backup (in a thread) and prunes old ones. Returns the file name or None on error."""
+        cfg = self.bot.config
         try:
-            path = await asyncio.to_thread(backups.make_backup, self.bot.config.database_path, label=label)
-            await asyncio.to_thread(backups.prune_backups, self.bot.config.backup_keep_days)
+            path = await asyncio.to_thread(backups.make_backup, cfg.database_path, label=label,
+                                           include_env=cfg.backup_include_env)
+            await asyncio.to_thread(backups.prune_backups, cfg.backup_keep_days)
         except Exception as exc:  # disk full, permissions …
             log.error("Backup failed: %s", exc)
             self.bot.audit(f"⚠️ Backup failed: {safe_md(str(exc))}")
             return None
         self.bot.db.set_value(BACKUP_KEY, str(time.time()))
+        await self.copy_out(path)
         return path.name
+
+    async def copy_out(self, path) -> None:
+        """Copies a backup ZIP into BACKUP_COPY_DIR (e.g. Google Drive) and removes old copies there."""
+        folder = self.bot.config.backup_copy_dir
+        if folder is None:
+            return
+        try:
+            await asyncio.to_thread(backups.copy_to_folder, path, folder)
+            await asyncio.to_thread(backups.prune_folder, folder, self.bot.config.backup_keep_days)
+            self.copy_error = None
+        except OSError as exc:
+            if self.copy_error != str(exc):
+                self.bot.audit(f"⚠️ Backup could not be copied to {safe_md(str(folder))}: {safe_md(str(exc))}")
+            self.copy_error = str(exc)
+            log.warning("Backup copy to %s failed: %s", folder, exc)
+
+    # ------------------------------------------------------------ Live backup (copy folder)
+
+    @tasks.loop(minutes=1)
+    async def live_loop(self) -> None:
+        cfg = self.bot.config
+        if cfg.backup_copy_dir is None or not cfg.backup_live_minutes:
+            return
+        if self.live_last and time.time() - self.live_last < cfg.backup_live_minutes * 60 - 5:
+            return
+        await self.live_backup()
+
+    @live_loop.before_loop
+    async def _before_live(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def live_backup(self, *, force: bool = False) -> bool:
+        """Refreshes live-backup.zip in the copy folder if anything changed since the last one."""
+        cfg = self.bot.config
+        if cfg.backup_copy_dir is None:
+            return False
+        marker = await asyncio.to_thread(backups.change_marker, cfg.database_path)
+        if not force and marker == self._live_marker:
+            return False
+        try:
+            await asyncio.to_thread(backups.write_live, cfg.database_path, cfg.backup_copy_dir,
+                                    include_env=cfg.backup_include_env)
+        except (OSError, sqlite3.Error) as exc:
+            if self.live_error != str(exc):
+                self.bot.audit(f"⚠️ Live backup to {safe_md(str(cfg.backup_copy_dir))} failed: {safe_md(str(exc))}")
+            self.live_error = str(exc)
+            log.warning("Live backup failed: %s", exc)
+            return False
+        self._live_marker, self.live_last, self.live_error = marker, time.time(), None
+        return True
+
+    def backup_status(self) -> dict:
+        cfg = self.bot.config
+        return {"copy_dir": str(cfg.backup_copy_dir) if cfg.backup_copy_dir else None,
+                "live_minutes": cfg.backup_live_minutes, "live_last": self.live_last,
+                "live_error": self.live_error, "copy_error": self.copy_error, "include_env": cfg.backup_include_env}
 
 
 async def setup(bot: "RceBot") -> None:

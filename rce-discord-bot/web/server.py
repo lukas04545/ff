@@ -1610,9 +1610,11 @@ class WebInterface:
         return web.json_response({"ok": True})
 
     async def list_backups(self, request: web.Request) -> web.Response:
+        monitor = self.bot.get_cog("Monitor")
         return web.json_response({"enabled": self.bot.config.backup_enabled,
                                   "keep_days": self.bot.config.backup_keep_days,
-                                  "backups": await asyncio.to_thread(backups.list_backups)})
+                                  "backups": await asyncio.to_thread(backups.list_backups),
+                                  **(monitor.backup_status() if monitor else {})})
 
     async def create_backup(self, request: web.Request) -> web.Response:
         name = await self._cog("Monitor").backup_now("manual")

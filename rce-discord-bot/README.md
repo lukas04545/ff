@@ -207,7 +207,7 @@ rce-discord-bot/
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
 ├── envfile.py             # Read/write .env (comments are preserved)
 ├── updater.py             # Downloads + installs new versions from GitHub (ZIP install or git checkout)
-├── backups.py             # Backup ZIPs in data/backups/
+├── backups.py             # Backup ZIPs in data/backups/ (+ copy / live backup to e.g. Google Drive)
 ├── start.bat              # Windows: double-click = set up + start + auto-restart (also after updates)
 ├── start.sh               # Linux/macOS: the same
 ├── rcon_test.bat          # Windows: test the RCON connection step by step (tools/rcon_test.py)
@@ -1046,10 +1046,19 @@ Good to know:
   admin log channel) with the last error – and posts again when the server is back, with the
   downtime. `0` = off.
 - **Backups:** once a day and right before every automatic update, the bot saves the database
-  (stats, kits, tickets, links, giveaways, timed roles), web logins, rules and knowledge base as a ZIP
-  in `data/backups/`. Backups older than `BACKUP_KEEP_DAYS` (default 7) are deleted, the newest 3
-  always stay. Your `.env` (tokens, passwords) is **not** included. In the web interface (⚙️ Settings →
-  🚨 Alerts & backups) you can create one right away and download them.
+  (stats, kits, tickets, links, giveaways, timed roles, purchases), web logins, rules, knowledge base and price
+  list as a ZIP in `data/backups/`. Backups older than `BACKUP_KEEP_DAYS` (default 7) are deleted, the newest 3
+  always stay. Your `.env` (tokens, passwords) is **not** included unless you turn on *Include the .env*
+  (`BACKUP_INCLUDE_ENV`). In the web interface (⚙️ Settings → 🚨 Alerts & backups) you can create one right
+  away and download them.
+- **Google Drive (or any cloud folder):** install [Google Drive for desktop](https://www.google.com/drive/download/)
+  on the bot PC and enter a folder inside it in *Also copy backups to folder* (`BACKUP_COPY_DIR`, e.g.
+  `G:\My Drive\RCE bot backups`). Every backup ZIP is copied there (old copies are removed after the same number of
+  days), and **`live-backup.zip`** there is refreshed every `BACKUP_LIVE_MINUTES` (default 10, `0` = off) whenever
+  something changed – Google uploads it by itself and keeps older versions (right-click → *Manage versions*).
+  Files are written under a temporary name first, so a half-written file is never uploaded. Don't put the live
+  `data/bot.db` itself into the Drive folder: a database that's synced while it's written can break. If copying
+  fails (e.g. Drive not running), the admin log and the backup box say so.
   **Restore:** stop the bot, put `bot.db` from the ZIP into `data/` (and the other files into the bot
   folder), start the bot.
 
