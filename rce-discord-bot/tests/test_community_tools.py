@@ -52,8 +52,9 @@ def bot(tmp_path):
     b = SimpleNamespace(config=cfg, db=Storage(tmp_path / "bot.db"), audit=audit.append, online_players={},
                         rcon=SimpleNamespace(command=command, connected=True),
                         get_channel=lambda cid: (b.channels_used.append(cid), Channel())[1],
-                        get_cog=lambda name: None, add_view=lambda v: None, get_user=lambda uid: None)
-    b.sent, b.said, b.audit_lines, b.channels_used = sent, said, audit, []
+                        get_cog=lambda name: None, add_view=lambda v: None, get_user=lambda uid: None,
+                        dispatch=lambda *a: b.events.append(a))
+    b.sent, b.said, b.audit_lines, b.channels_used, b.events = sent, said, audit, [], []
     old = discord.abc.Messageable
     discord.abc.Messageable = Channel
     yield b

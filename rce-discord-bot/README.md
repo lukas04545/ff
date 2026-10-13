@@ -80,6 +80,7 @@ RCE tools use exactly this WebRCON interface. Also G-Portal's wiki article
 | **Admin abuse protection** | Item spawn log line + RCON | Someone not allowed spawns rockets/C4 → admin removed, killed with `global.killplayer`, staff pinged. See [Admin abuse protection](#admin-abuse-protection). |
 | **Timed roles** | Discord + database | `/temprole`: roles that end by themselves (e.g. VIP for 7 days) – also for giveaway prizes. See [Timed roles](#timed-roles-eg-vip-for-7-days). |
 | **Alerts & backups** | Bot | Staff ping when the server is offline, daily backups. See [Alerts & backups](#alerts--backups). |
+| **Plugins** | `plugins/` + `data/plugins/` | Extra features as single files, switched on/off with their own settings in the web interface – live, no restart. 11 growth plugins built in, your own can be uploaded. See [Plugins](#plugins). |
 | **Automatic updates** | GitHub | Installs new versions by itself. See [Automatic updates](#automatic-updates). |
 | **Auto-reconnect** | exponential backoff 5 s → 120 s | A dead connection is detected after 3 unanswered commands. Pending commands get a clear error message. |
 
@@ -193,6 +194,21 @@ rce-discord-bot/
 │   ├── store.py           # Tip4Serv purchases (polled every minute) → automatic approval
 │   ├── automod.py         # AI chat moderation: warns offensive members in chosen channels
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
+├── plugins/               # Built-in plugins (one file each, on/off in the web interface → 🧩 Plugins)
+│   ├── invites.py         # Invite rewards
+│   ├── public_page.py     # Public stats page (/p/public_page)
+│   ├── starter_kit.py     # Starter kit for brand-new players
+│   ├── lowpop_bonus.py    # Extra points while the server is nearly empty
+│   ├── filling_ping.py    # "Server is filling up" ping (/pingme)
+│   ├── comeback.py        # Wipe comeback DM (/wipedm)
+│   ├── early_bird.py      # Early-bird wipe reward
+│   ├── bounties.py        # /bounty
+│   ├── weekly_recap.py    # Weekly recap post (/recap preview)
+│   ├── achievements.py    # Badges (/achievements show)
+│   └── wipe_poll.py       # Post-wipe feedback polls (/wipepoll)
+├── plugin_api.py          # Plugin base class + helpers (see PLUGINS.md)
+├── plugin_manager.py      # Finds, loads and switches plugins; settings in data/plugins.json
+├── PLUGINS.md             # How to write your own plugin
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
 │   ├── pricing.py         # Price list for custom kits (prices.txt)
@@ -949,6 +965,37 @@ out. Check whether that's OK for your community (GDPR, privacy notice in your Di
 an API key, the ticket system works entirely without AI.
 
 ---
+
+## Plugins
+
+Features that aren't part of the core come as **plugins**: one Python file each, switched on/off and configured in
+the web interface (**🧩 Plugins**, owner only). Switching, settings and reloading take effect immediately – no
+restart. A broken plugin never stops the bot: it shows the error on its card and stays off.
+
+- **Built-in plugins** are in `plugins/` and come with updates.
+- **Your own plugins** go to `data/plugins/` (upload a `.py` file on the Plugins page, or copy it there and click
+  ↻ Reload). Updates never touch them, and they are in every backup. How to write one: [PLUGINS.md](PLUGINS.md).
+  Only use plugins from people you trust – a plugin runs inside the bot with full access.
+- On/off state and settings are saved in `data/plugins.json`; the data plugins keep is in the database.
+
+### Growth plugins (built in)
+
+| Plugin | What it does | Default |
+|---|---|---|
+| 🤝 **Invite rewards** | `/invites stats`, `/invites top`. When someone a member invited links their player and plays *N* hours, both get points (optional recruiter role). Rejoins, self-invites and brand-new Discord accounts don't count. Needs the **Server Members Intent** and the bot permission **Manage Server**. | off |
+| 🌍 **Public stats page** | Read-only page at *your web link* + `/p/public_page`: online status, players, next wipe, top players, bounties, Discord button, how to join. No login, no secrets. | off |
+| 🎁 **Starter kit** | A name the bot has never seen gets a welcome message in-game and a one-time kit. | on (choose the kit) |
+| 🌱 **Low-pop bonus** | While fewer than *N* players are online, playtime points are multiplied – pays people to seed the server. | on |
+| 🔥 **Filling-up ping** | Members opt in with `/pingme on`; the role is pinged when the server reaches e.g. 10 or 20 players (cooldown per threshold). | off (choose a role) |
+| 📬 **Wipe comeback DM** | *N* hours before a wipe, linked players who haven't played for a few days get a DM. Max. one per wipe, sent slowly, opt-out with `/wipedm off`. | off |
+| 🐦 **Early-bird reward** | The first *N* linked players online after a wipe get points and/or a kit (each Discord account once). | on |
+| 🎯 **Bounties** | `/bounty place <player> <points>`, `/bounty list`. The killer collects via the killfeed; the placer, teammates and the target's own account can't. Unclaimed bounties are refunded. | on |
+| 📰 **Weekly recap** | Weekly post: top killers, playtime, K/D, most embarrassing killer, new players, peak population, biggest team. Optional points for the top players. `/recap` = preview. | on |
+| 🏅 **Achievements** | Badges for kills, hours, `/daily` streaks, wipes played, bounties and invites – points + announcement, shown in `/profile`. | on |
+| 🗳️ **Wipe feedback poll** | *N* hours after each wipe, Discord polls (your own questions) – `/wipepoll` posts them now. Needs the **Send Polls** permission. | on |
+
+All rewards go to **linked** accounts (`/customkit link`) – Console Edition only gives player names, so this stops
+alt accounts from collecting twice. Plugins that pay points need **Points & shop** to be on.
 
 ## Community & moderation
 

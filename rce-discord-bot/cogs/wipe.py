@@ -202,6 +202,7 @@ class Wipe(commands.Cog):
         if nxt:
             embed.add_field(name="Next wipe", value=f"<t:{nxt}:F> (<t:{nxt}:R>)")
         await self._post(embed, ping=True)
+        self.bot.dispatch("rce_wiped", nxt)      # plugins: early-bird rewards, feedback poll …
         self.bot.audit(f"🧹 Wipe ({safe_md(by)}): {', '.join(done) or 'nothing reset'}"
                        + (f" · next <t:{nxt}:F>" if nxt else ""))
         return done

@@ -234,6 +234,13 @@ def required_intents(cfg: Config) -> dict[str, list[str]]:
         members.append("Welcome message")
     if cfg.auto_role_id:
         members.append("Auto role")
+    try:   # plugins that are switched on (read from data/plugins.json)
+        from plugin_manager import enabled_plugin_intents
+        plugin_needs = enabled_plugin_intents(cfg.database_path)
+    except Exception:
+        plugin_needs = {}
+    message_content += plugin_needs.get("message_content", [])
+    members += plugin_needs.get("members", [])
     return {"message_content": message_content, "members": members}
 
 
