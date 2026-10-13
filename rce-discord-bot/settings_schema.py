@@ -124,6 +124,24 @@ FIELDS: list[Field] = [
     Field("SUPPORT_KNOWLEDGE_FILE", "Knowledge base file", "tickets", advanced=True,
           placeholder="support_knowledge.md"),
     # Community
+    Field("AI_CHAT_CHANNEL_IDS", "AI chat: channels", "community", "ids", pick="text_channel",
+          help="The AI (DeepSeek, needs the API key) chats with members in these channels – answers questions, "
+               "talks with the community. It only talks: it never gives anything or pings anyone. Messages there "
+               "are sent to DeepSeek. Empty = off."),
+    Field("AI_CHAT_MODE", "AI chat: when to answer", "community", choices=("mentions", "all"),
+          help="mentions (default) = when someone @mentions the bot or replies to it. all = every message in the "
+               "channel (use a cooldown below)."),
+    Field("AI_CHAT_COOLDOWN", "AI chat: seconds per member between answers", "community", "int", placeholder="10",
+          help="Stops one person from spamming the AI. 0 = no limit."),
+    Field("AI_CHAT_NAME", "AI chat: name", "community", placeholder="e.g. Kryvon AI",
+          help="How the AI calls itself. Empty = the bot's name."),
+    Field("AI_CHAT_INSTRUCTIONS", "AI chat: your own instructions", "community", "textarea",
+          placeholder="e.g. You are Rusty, a sarcastic but helpful survivor.\nAlways answer in English.\n"
+                      "Promote our Saturday events.\nDon't talk about other servers.",
+          help="Personality, tone, topics and rules for the chat AI – they take priority over its defaults."),
+    Field("AI_CHAT_KNOWLEDGE", "AI chat: use the knowledge base and server status", "community", "bool",
+          help="On (default): it answers server questions (rules, wipes, kits …) from the knowledge base and the "
+               "live status. Off: just chatting."),
     Field("AI_MOD_CHANNEL_IDS", "AI moderation: channels", "community", "ids", pick="text_channel",
           help="The AI (DeepSeek, needs the API key) reads these channels, e.g. #general, and warns members who are "
                "clearly offensive (insults at someone, slurs, hate, threats, harassment) – swearing, banter and "
