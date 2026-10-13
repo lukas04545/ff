@@ -188,6 +188,7 @@ rce-discord-bot/
 │   ├── schedule.py        # /schedule: messages every N minutes
 │   ├── reports.py         # /report and /watch
 │   ├── abuse.py           # Admin abuse protection (raid items spawned without permission)
+│   ├── abusewatch.py      # AI abuse watch: flags suspicious admin activity in the server log
 │   ├── kit_requests.py    # Bought custom kits: AI request → staff approve button → kit role
 │   ├── store.py           # Tip4Serv purchases (polled every minute) → automatic approval
 │   ├── automod.py         # AI chat moderation: warns offensive members in chosen channels
@@ -1077,6 +1078,17 @@ Good to know:
   on a test account and adjust `ABUSE_REMOVE_ADMIN_COMMANDS` (several separated by `;`) if needed; the
   alert always shows what the server answered.
 
+
+**AI abuse watch:** on top of the fixed rule above, the AI reads the admin-related server log lines – admin-panel
+spawns, kit gives by admins, bans, role changes and the kills of those admins – every `AI_ABUSE_WATCH_MINUTES`
+(default 5) and flags suspicious **patterns**: loot/raid items/weapons/resources for themselves or friends, spawning
+right before kills or raids, banning someone they just fought, handing out admin roles, many gives to the same
+players. A flag is only an **alert** (*🕵️ Suspected admin abuse – name*, with the reason and the evidence lines) in
+`AI_ABUSE_CHANNEL_ID` (default: alert channel / admin log); severe ones ping the alert roles. Nothing is done
+automatically, and the same suspicion isn't repeated within 30 minutes. Trusted owners (the allowed names/roles
+above) and the bot's own gives (shop, kits, rewards) are never flagged. Your own rules: *AI abuse watch: your own
+rules* (`AI_ABUSE_INSTRUCTIONS`, e.g. "Admins may spawn building materials during build events"). Switch:
+`AI_ABUSE_WATCH` (default on, needs the DeepSeek key). Only these admin lines are sent to DeepSeek, not the whole log.
 ### Alerts & backups
 
 - **Server-down alert:** if the bot has had no RCON connection for `SERVER_DOWN_ALERT_MINUTES`
