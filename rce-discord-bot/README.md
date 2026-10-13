@@ -411,6 +411,10 @@ restarts – about 10 seconds offline. The admin log channel shows `🔄 Update 
 
 ## Web interface
 
+Every section (card) can be **collapsed** by tapping its title – the page remembers it – and each page has
+**Collapse all / Expand all** at the top. The layout adapts to phones (navigation as a scrollable bar, one column,
+wide tables scroll sideways inside their card).
+
 The web interface runs **inside the bot** – no extra program, no extra packages. After startup
 your browser opens automatically; otherwise go to **<http://localhost:8080>**.
 
@@ -733,7 +737,9 @@ Calling other players worthless isn't okay here – please keep it respectful. `
 Optional: delete severe messages (`AI_MOD_DELETE`, needs *Manage Messages*) and a Discord timeout after
 `AI_MOD_TIMEOUT_AFTER` warnings in 24 h (default 3, 0 = never; needs *Timeout Members*) – the AI picks the length
 itself, 5 minutes to 2 hours, by how bad the message is and the member's warnings that day
-(`AI_MOD_TIMEOUT_MINUTES` is only the fallback). Staff and bots are never checked. `/automod warnings @member` and `/automod clear @member`
+(`AI_MOD_TIMEOUT_MINUTES` is only the fallback). **Your own rules:** *AI moderation: your own rules* (`AI_MOD_INSTRUCTIONS`) – plain-language instructions that
+take priority over the defaults, e.g. "Be strict: also warn for 'stfu'", "Swearing in German is fine", "Never warn
+for 'noob'", "Warnings should sound friendly and mention #rules". Staff and bots are never checked. `/automod warnings @member` and `/automod clear @member`
 (staff). Needs the DeepSeek API key and the Message Content intent; the watched messages are sent to DeepSeek.
 
 **The AI learns from staff answers:** when a ticket is closed, the bot sends the staff answers of that ticket

@@ -118,3 +118,20 @@ def test_staff_commands(mod):
     assert "insult" in answers[-1] and "“idiot”" in answers[-1]
     asyncio.run(mod.cog.clear_cmd.callback(mod.cog, inter, troll))
     assert "1 warning(s)" in answers[-1] and mod.env.db.count_ai_warnings(1, 10) == 0
+
+
+def test_owner_instructions_reach_the_ai(mod):
+    from cogs.automod import SYSTEM, system_prompt
+    assert system_prompt("") == SYSTEM
+    p = system_prompt("Be strict: warn for 'stfu'.\nNever warn for 'noob'.")
+    assert p.startswith(SYSTEM) and "RULES FROM THE SERVER OWNER" in p and "Never warn for 'noob'." in p
+    mod.env.bot.config = replace(mod.env.bot.config, ai_mod_instructions="Warn for 'stfu'.")
+    seen = []
+
+    async def chat_json(messages, **kw):
+        seen.append(messages[0]["content"])
+        return '{"flags": []}'
+    mod.env.tickets.ai = NS(enabled=True, chat_json=chat_json)
+    say(mod, 1, "stfu", mod.Member(10))
+    asyncio.run(mod.cog.flush())
+    assert "Warn for 'stfu'." in seen[0]

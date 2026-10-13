@@ -400,3 +400,28 @@ textarea.kb-output { font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, mon
 .ck-kit > summary .pill::before { display: none; }
 .ck-kit .ck-desc { font-weight: 400; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .ck-kit[hidden] { display: none; }
+
+/* ------------------------------------------------------------ Collapsible cards */
+.card > .card-head { cursor: pointer; user-select: none; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.card > .card-head .chev { margin-left: auto; width: .55rem; height: .55rem; flex: none; border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .15s; position: relative; top: -2px; }
+.card.collapsed > .card-head .chev { transform: rotate(-45deg); top: 0; }
+.card.collapsed > :not(.card-head) { display: none !important; }
+.card.collapsed > .card-head.row > :not(h2):not(.chev) { display: none; }
+.card.collapsed { padding-bottom: .9rem; }
+.card.collapsed > .card-head { margin-bottom: 0 !important; padding-bottom: 0; }
+.card > .card-head:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-ring); border-radius: 6px; }
+.page-tools { display: flex; gap: .4rem; flex-wrap: wrap; margin: -.4rem 0 1rem; }
+
+/* ------------------------------------------------------------ Phones: nothing wider than the screen */
+@media (max-width: 760px) {
+  main { min-width: 0; overflow-x: hidden; }
+  .card, .two-col > * { min-width: 0; }
+  .row { flex-wrap: wrap; }
+  .row > input, .row > select, .row > textarea { flex: 1 1 140px; min-width: 0; max-width: 100%; }
+  input, select, textarea, button { max-width: 100%; }
+  .table-wrap, .card > table, .card table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  pre, code, .transcript { white-space: pre-wrap; word-break: break-word; }
+  h2 { font-size: 1.05rem; }
+  .page-tools { margin-top: -.6rem; }
+}
