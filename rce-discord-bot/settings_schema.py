@@ -131,7 +131,10 @@ FIELDS: list[Field] = [
                "there are sent to DeepSeek. Empty = off."),
     Field("AI_MOD_TIMEOUT_AFTER", "AI moderation: timeout after … warnings (24 h)", "community", "int",
           placeholder="3", help="0 = only warn, never time out."),
-    Field("AI_MOD_TIMEOUT_MINUTES", "AI moderation: timeout length (minutes)", "community", "int", placeholder="10"),
+    Field("AI_MOD_TIMEOUT_MINUTES", "AI moderation: timeout length if the AI gives none (minutes)", "community",
+          "int", placeholder="10",
+          help="The AI picks the length itself (5 minutes – 2 hours, by how bad the message is and earlier "
+               "warnings today); this is only the fallback."),
     Field("AI_MOD_DELETE", "AI moderation: delete severe messages", "community", "bool",
           help="Off (default): only warn. On: slurs, threats etc. are also deleted (the bot needs Manage Messages)."),
     Field("WELCOME_CHANNEL_ID", "Welcome channel", "community", "id", pick="text_channel"),

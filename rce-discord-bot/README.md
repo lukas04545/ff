@@ -699,8 +699,9 @@ speech, threats, sexual harassment, private data. Swearing, banter and game tras
 fine; when unsure it does nothing. A flagged member gets a reply the AI writes for that message, in the language they wrote in (e.g. *"⚠️ @name
 Calling other players worthless isn't okay here – please keep it respectful. `1/3`"*; at most one per minute), and every case goes to the admin log with the message and a link.
 Optional: delete severe messages (`AI_MOD_DELETE`, needs *Manage Messages*) and a Discord timeout after
-`AI_MOD_TIMEOUT_AFTER` warnings in 24 h (default 3, 0 = never) for `AI_MOD_TIMEOUT_MINUTES` (default 10, needs
-*Timeout Members*). Staff and bots are never checked. `/automod warnings @member` and `/automod clear @member`
+`AI_MOD_TIMEOUT_AFTER` warnings in 24 h (default 3, 0 = never; needs *Timeout Members*) – the AI picks the length
+itself, 5 minutes to 2 hours, by how bad the message is and the member's warnings that day
+(`AI_MOD_TIMEOUT_MINUTES` is only the fallback). Staff and bots are never checked. `/automod warnings @member` and `/automod clear @member`
 (staff). Needs the DeepSeek API key and the Message Content intent; the watched messages are sent to DeepSeek.
 
 **The AI learns from staff answers:** when a ticket is closed, the bot sends the staff answers of that ticket
