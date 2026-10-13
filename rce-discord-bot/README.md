@@ -988,8 +988,12 @@ an API key, the ticket system works entirely without AI.
 Players buy kits for real money on the player website: **your web link + `/play/store`** (the 🌍 Player website
 plugin must be on). Three tabs:
 
-- **Kits** – kits you put up for sale: web interface → **💳 Store** → *Kits for sale*. Build the kit first (Kit
-  builder → save as custom kit), then pick it, set a price and optionally a duration (e.g. 30 days).
+- **Kits** – web interface → **💳 Store** → *Kits for sale*. Every kit staff make (Kit builder / Kits page – not
+  the kits players bought) and every **in-game kit** of the server is added there **automatically** (checked every
+  5 minutes and whenever you open the page) – **hidden until you set a price** (*Set price* → it's on sale). Bot
+  kits give the kit's claim role (optionally for N days, `/customkit claim`); in-game kits are given in-game once –
+  right away if the buyer is online, otherwise automatically the next time they join. Kits you *Remove* are never
+  added again. You can also add a bot kit by hand with its own name, price and duration.
 - **Build your own** – players pick items and amounts; the price comes from the price list (`prices.txt`, the same
   one the ticket AI and Tip4Serv use: bundles, free "with" items, caps and claim timers). `STORE_CUSTOM_KITS`.
 - **Gift cards** – players can buy gift cards (`STORE_GIFTCARD_VALUES`, e.g. `10,25,50`) and check a card's balance.

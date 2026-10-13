@@ -43,6 +43,7 @@ font-size:1.4rem;letter-spacing:.08em;color:var(--gold);user-select:all}
 STATUS_TEXT = {
     "pending": ("Waiting for payment", "If you already paid, this page updates within a few minutes – refresh it."),
     "paid": ("Paid – delivering …", "Refresh in a moment."),
+    "waiting": ("Paid – join the server", "You get the kit in-game automatically the next time you're online."),
     "delivered": ("Done!", ""),
     "failed": ("Paid – delivery needs staff", "Your payment arrived but the kit couldn't be given automatically. "
                                               "Staff got a message and will fix it – no need to pay again."),
@@ -115,10 +116,13 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
     db = shop.bot.db
     cards = []
     for row in db.store_kits(enabled_only=True):
-        if db.custom_kit(row["kit"]) is None:
+        if row["source"] == "custom" and db.custom_kit(row["kit"]) is None:
             continue
-        items = [(i["shortname"], i["amount"]) for i in db.custom_kit_items(row["kit"])]
-        days = f'<div class="days">{row["days"]} days</div>' if row["days"] else '<div class="days">Permanent</div>'
+        items = shop.kit_items(row)
+        if row["source"] == "ingame":
+            days = '<div class="days">One-time – given to you in-game</div>'
+        else:
+            days = f'<div class="days">{row["days"]} days</div>' if row["days"] else '<div class="days">Permanent</div>'
         desc = f'<div class="muted">{esc(row["description"])}</div>' if row["description"] else ""
         values = form if form and str(form.get("kit")) == str(row["id"]) else {}
         cards.append(f'<div class="card"><h2>{esc(row["name"])}</h2><div class="price">{esc(shop.fmt(row["price"]))}'
@@ -128,8 +132,9 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
                      f'{pay_button(admin)}</form></div>')
     intro = ('<div class="card"><h2>How it works</h2>Pick a kit, enter your in-game name and pay with PayPal (or a gift '
              'card). Your name has to be linked to your Discord account first – join our Discord and use '
-             '<b>/customkit link</b>. After the payment the kit is yours right away: claim it in-game with '
-             '<b>/customkit claim</b> on Discord while you\'re online.</div>')
+             '<b>/customkit link</b>. After the payment the kit is yours right away: one-time kits are given to you '
+             'in-game (when you\'re online), the others you claim with <b>/customkit claim</b> on Discord while '
+             'you\'re online.</div>')
     body = notice(error, "bad") + intro + (f'<div class="store-grid">{"".join(cards)}</div>' if cards else
                                            '<p class="muted">No kits for sale right now.</p>')
     return wrap(site, shop, base, "store", "Store", body, admin)
@@ -247,6 +252,8 @@ def order_page(site, shop, base: str, order) -> str:
             code = (order["result"] or "").removeprefix("Gift card ").strip()
             body += (f'<p>Your gift card code:</p><p class="code">{esc(code)}</p><p class="muted">Save it now – '
                      f'whoever has the code can use it. Check its balance any time under Gift cards.</p>')
+        elif not order["request_id"]:           # in-game kit (no kit role to claim)
+            body += f'<p>The kit <b>{esc(order["result"])}</b> was given to you in-game.</p>'
         else:
             body += (f'<p>Your kit <b>{esc(order["result"])}</b> is ready. Claim it in-game with '
                      f'<b>/customkit claim {esc(order["result"])}</b> on our Discord while you\'re online.</p>')

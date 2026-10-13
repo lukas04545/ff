@@ -2215,7 +2215,7 @@ views.plugins = async (main) => {
 // ------------------------------------------------------------------ Web store (owner): kits for sale, gift cards, orders
 
 const money = (v, cur) => `${Number(v).toFixed(2)} ${cur}`;
-const ORDER_PILL = { delivered: "ok", failed: "bad", review: "warn", pending: "warn", paid: "warn" };
+const ORDER_PILL = { delivered: "ok", failed: "bad", review: "warn", pending: "warn", paid: "warn", waiting: "warn" };
 
 views.webstore = async (main) => {
   main.append(h("h1", { text: "Store" }),
@@ -2256,20 +2256,28 @@ views.webstore = async (main) => {
       await act(() => editId ? api(`/api/webshop/kits/${editId}`, { method: "PUT", body }) : api("/api/webshop/kits", { method: "POST", body }), editId ? "Kit saved" : "Kit added");
       editId = null; load();
     });
+    const ingame = (k) => k.source === "ingame";
     const kitRows = d.kits.map((k) => h("tr", {},
       h("td", {}, h("strong", { text: k.name }), k.description ? h("div", { class: "muted", text: k.description }) : null),
-      h("td", { text: k.kit + (d.custom_kits.includes(k.kit) ? "" : " (missing!)") }),
-      h("td", { text: money(k.price, cur) }), h("td", { text: k.days ? `${k.days} days` : "permanent" }),
-      h("td", {}, h("span", { class: "pill " + (k.enabled ? "ok" : ""), text: k.enabled ? "for sale" : "hidden" })),
+      h("td", {}, k.kit, h("div", { class: "muted", text: (ingame(k) ? "in-game kit" : "bot kit") + (k.auto ? " · added automatically" : "")
+        + (!ingame(k) && !d.custom_kits.includes(k.kit) ? " · missing!" : "") + ` · ${k.items} item${k.items === 1 ? "" : "s"}` })),
+      h("td", {}, k.price > 0 ? money(k.price, cur) : h("span", { class: "pill warn", text: "needs a price" })),
+      h("td", { text: ingame(k) ? "one-time (in-game)" : k.days ? `${k.days} days` : "permanent" }),
+      h("td", {}, h("span", { class: "pill " + (k.enabled && k.price > 0 ? "ok" : ""), text: k.enabled && k.price > 0 ? "for sale" : "hidden" })),
       h("td", { class: "row tight" },
-        h("button", { class: "small", text: k.enabled ? "Hide" : "Show", onclick: async () => { await act(() => api(`/api/webshop/kits/${k.id}`, { method: "PUT", body: { enabled: !k.enabled } })); load(); } }),
+        k.price > 0 ? h("button", { class: "small", text: k.enabled ? "Hide" : "Show", onclick: async () => { await act(() => api(`/api/webshop/kits/${k.id}`, { method: "PUT", body: { enabled: !k.enabled } })); load(); } })
+          : h("button", { class: "small primary", text: "Set price", onclick: async () => {
+            const price = prompt(`Price for ${k.name} (${cur}) – it goes on sale right away:`);
+            if (!price) return;
+            await act(() => api(`/api/webshop/kits/${k.id}`, { method: "PUT", body: { price: price.replace(",", ".") } }), `${k.name} is on sale`); load();
+          } }),
         h("button", { class: "small", text: "Edit", onclick: () => {
           editId = k.id; kName.value = k.name; kKit.value = k.kit; kPrice.value = k.price; kDays.value = k.days; kDesc.value = k.description || "";
           kSave.textContent = "Save kit"; kCancel.classList.remove("hidden"); kName.focus();
         } }),
-        h("button", { class: "small danger", text: "Remove", onclick: async () => { if (!confirm(`Stop selling ${k.name}? (The custom kit itself stays.)`)) return; await act(() => api(`/api/webshop/kits/${k.id}`, { method: "DELETE" }), "Removed"); load(); } }))));
+        h("button", { class: "small danger", text: "Remove", onclick: async () => { if (!confirm(`Remove ${k.name} from the store?` + (k.auto ? " It won't be added again automatically." : "") + " (The kit itself stays.)")) return; await act(() => api(`/api/webshop/kits/${k.id}`, { method: "DELETE" }), "Removed"); load(); } }))));
     const kits = h("div", { class: "card" }, h("h2", { text: "🎒 Kits for sale" }),
-      h("p", { class: "muted", text: "Build the kit first (Kit builder → save as custom kit, or Kits → Custom kits), then put it up for sale here. Buyers get the kit's claim role – for N days or permanently." }),
+      h("p", { class: "muted", text: "New bot kits (Kit builder / Kits page) and the server's in-game kits are added here automatically – hidden until you set a price. Bot kits give the kit's claim role (for N days or permanently); in-game kits are given in-game once. You can also add a bot kit by hand below." }),
       d.kits.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Kit", "Custom kit", "Price", "Duration", "", ""].map((t) => h("th", { text: t })))), h("tbody", {}, kitRows))) : h("p", { class: "muted", text: "Nothing for sale yet." }),
       h("div", { class: "row", style: "margin-top:.75rem" }, kName, kKit, kPrice, kDays),
       h("div", { class: "row", style: "margin-top:.5rem" }, kDesc, kSave, kCancel));

@@ -310,7 +310,10 @@ class Storage:
             CREATE TABLE IF NOT EXISTS store_kits (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,                    -- shown on the website
-                kit TEXT NOT NULL COLLATE NOCASE,      -- custom kit that is given (its claim role)
+                kit TEXT NOT NULL COLLATE NOCASE,      -- custom kit (its claim role) or in-game kit name
+                source TEXT NOT NULL DEFAULT 'custom', -- custom (bot kit) / ingame (server kit, given in-game)
+                auto INTEGER NOT NULL DEFAULT 0,       -- added automatically (hidden until it has a price)
+                items TEXT,                            -- in-game kit contents (JSON, refreshed by the store)
                 price REAL NOT NULL,
                 days INTEGER NOT NULL DEFAULT 0,       -- 0 = permanent, else the kit role for N days
                 description TEXT,
@@ -417,6 +420,11 @@ class Storage:
                              ("pay_note", "TEXT")):                           # payment check result
             if column not in columns:
                 self._db.execute(f"ALTER TABLE kit_requests ADD COLUMN {column} {kind}")
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(store_kits)")}
+        for column, kind in (("source", "TEXT NOT NULL DEFAULT 'custom'"), ("auto", "INTEGER NOT NULL DEFAULT 0"),
+                             ("items", "TEXT")):
+            if column not in columns:
+                self._db.execute(f"ALTER TABLE store_kits ADD COLUMN {column} {kind}")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(store_orders)")}
         if "admin_key" not in columns:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN admin_key INTEGER NOT NULL DEFAULT 0")
@@ -1352,18 +1360,23 @@ class Storage:
 
     # ------------------------------------------------------------ Web store
 
-    _STORE_KIT_FIELDS = ("name", "kit", "price", "days", "description", "enabled")
+    _STORE_KIT_FIELDS = ("name", "kit", "price", "days", "description", "enabled", "items")
 
     def store_kits(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
-        sql = "SELECT * FROM store_kits" + (" WHERE enabled = 1" if enabled_only else "") + " ORDER BY price, id"
+        """enabled_only: what is on sale (switched on and has a price)."""
+        sql = "SELECT * FROM store_kits" + (" WHERE enabled = 1 AND price > 0" if enabled_only else "") + \
+            " ORDER BY price, id"
         return self._db.execute(sql).fetchall()
 
     def store_kit(self, kit_id: int) -> sqlite3.Row | None:
         return self._db.execute("SELECT * FROM store_kits WHERE id = ?", (kit_id,)).fetchone()
 
-    def add_store_kit(self, name: str, kit: str, price: float, days: int, description: str | None) -> int:
-        cur = self._db.execute("INSERT INTO store_kits (name, kit, price, days, description, created_at) "
-                               "VALUES (?, ?, ?, ?, ?, ?)", (name, kit, price, days, description, int(time.time())))
+    def add_store_kit(self, name: str, kit: str, price: float, days: int, description: str | None, *,
+                      source: str = "custom", auto: bool = False, enabled: bool = True) -> int:
+        cur = self._db.execute("INSERT INTO store_kits (name, kit, source, auto, price, days, description, enabled, "
+                               "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               (name, kit, source, int(auto), price, days, description, int(enabled),
+                                int(time.time())))
         self._db.commit()
         return int(cur.lastrowid)
 

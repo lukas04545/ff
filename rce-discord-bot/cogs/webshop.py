@@ -1,7 +1,10 @@
 """Web store: players buy kits on the player website (/play/store) with PayPal and/or gift cards.
 
 What can be bought
-  * Kits for sale – owners pick a custom kit (made with the kit builder) and set a price, optionally for N days.
+  * Kits for sale – staff-made bot kits (kit builder) and the server's in-game kits are added automatically (hidden
+    until an owner sets a price in the web interface → Store); owners can also add kits by hand. Bot kits give the
+    kit's claim role (optionally for N days), in-game kits are given in-game once (right away if the buyer is
+    online, otherwise when they next join).
   * Own custom kit – players pick items on the website, priced by the price list (prices.txt, STORE_CUSTOM_KITS).
   * Gift cards – values from STORE_GIFTCARD_VALUES; owners also create gift cards in the web interface.
 
@@ -27,6 +30,7 @@ import discord
 from discord.ext import commands, tasks
 
 from rce import kits as kitparse
+from rce.rcon_client import RconError
 from support import pricing
 from support.paypal import PayPalClient, PayPalError
 from utils import safe_md
@@ -39,6 +43,9 @@ log = logging.getLogger("rce.webshop")
 
 STORE_BY = "Web store (paid)"
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"      # no 0/O, 1/I – easy to type
+BOUGHT_MARKER = "Bought by user "    # description of custom kits created for a buyer (not offered in the store)
+DISMISSED_KEY = "store_dismissed"     # kits an owner removed from the store – never added again automatically
+JOIN_DELAY = 20                       # seconds after joining before an in-game kit is given (still loading)
 PENDING_EXPIRE = 3 * 3600          # unpaid orders are cancelled after this (gift card amounts returned)
 CHECK_AFTER = 10 * 60              # approved on PayPal but the buyer never came back: capture after this
 MAX_AMOUNT = 100_000               # per item in a custom kit
@@ -175,7 +182,8 @@ class WebShop(commands.Cog):
             row = self.bot.db.store_kit(int(kit_id))
         except (TypeError, ValueError):
             row = None
-        if row is None or not row["enabled"] or self.bot.db.custom_kit(row["kit"]) is None:
+        if row is None or not row["enabled"] or row["price"] <= 0 or \
+                (row["source"] == "custom" and self.bot.db.custom_kit(row["kit"]) is None):
             raise CheckoutError("This kit isn't for sale (any more).")
         return row
 
@@ -213,6 +221,78 @@ class WebShop(commands.Cog):
         if q.total <= 0:
             raise CheckoutError("This kit has no price – pick more items.")
         return q, items
+
+    # ------------------------------------------------------------ Automatic kit list
+
+    def _dismissed(self) -> set[str]:
+        try:
+            return set(json.loads(self.bot.db.get_value(DISMISSED_KEY) or "[]"))
+        except ValueError:
+            return set()
+
+    def remove_kit(self, kit_id: int) -> bool:
+        """Removes a kit from the store; automatically found kits are remembered so they don't come back."""
+        db = self.bot.db
+        row = db.store_kit(kit_id)
+        if row is None or not db.delete_store_kit(kit_id):
+            return False
+        if row["auto"]:
+            db.set_value(DISMISSED_KEY, json.dumps(sorted(self._dismissed() | {f"{row['source']}:{row['kit'].lower()}"})))
+        return True
+
+    async def sync_kits(self) -> int:
+        """Adds new staff-made bot kits and in-game kits to the store (hidden, no price). Returns how many."""
+        db = self.bot.db
+        have = {(r["source"], r["kit"].lower()) for r in db.store_kits()}
+        dismissed = self._dismissed()
+        added = 0
+
+        def add(source: str, name: str) -> None:
+            nonlocal added
+            if (source, name.lower()) in have or f"{source}:{name.lower()}" in dismissed:
+                return
+            db.add_store_kit(name[:60], name, 0, 0, None, source=source, auto=True, enabled=False)
+            have.add((source, name.lower()))
+            added += 1
+
+        for row in db.custom_kits():
+            if not (row["description"] or "").startswith(BOUGHT_MARKER):
+                add("custom", row["name"])
+        kits_cog = self.bot.get_cog("Kits")
+        if kits_cog is not None and self.bot.rcon.connected:
+            try:
+                names = await kits_cog.kit_names.get(max_wait=5)
+            except RconError:
+                names = []
+            for name in names:
+                add("ingame", name)
+            await self._refresh_ingame_items()
+        if added:
+            await self._log(f"🛒 {added} kit(s) added to the store – hidden until you set a price (web interface → "
+                            "Store → Kits for sale).")
+        return added
+
+    async def _refresh_ingame_items(self) -> None:
+        """Keeps the contents of in-game kits for sale (shown with pictures on the website)."""
+        for row in self.bot.db.store_kits():
+            if row["source"] != "ingame":
+                continue
+            try:
+                raw = await self.bot.rcon.command(f'kit info "{kitparse.clean_arg(row["kit"])}"')
+            except RconError:
+                return
+            items = [{"short": i.short_name, "amount": i.amount} for i in kitparse.parse_kit_info(raw)]
+            if items:
+                self.bot.db.update_store_kit(row["id"], items=json.dumps(items))
+
+    def kit_items(self, row) -> list[tuple[str, int]]:
+        """(shortname, amount) of a kit for sale."""
+        if row["source"] == "ingame":
+            try:
+                return [(i["short"], int(i["amount"])) for i in json.loads(row["items"] or "[]")]
+            except (ValueError, KeyError, TypeError):
+                return []
+        return [(i["shortname"], i["amount"]) for i in self.bot.db.custom_kit_items(row["kit"])]
 
     # ------------------------------------------------------------ Checkout
 
@@ -370,10 +450,15 @@ class WebShop(commands.Cog):
               (f" gift card {order['gift_code'][:4]}…" if order["gift_code"] else "") + \
               (" FREE with the admin key" if order["admin_key"] else "")
         try:
+            skit = db.store_kit(order["store_kit_id"]) if order["store_kit_id"] else None
             if order["kind"] == "giftcard":
                 code = self.create_gift_cards(float(order["total"]), 1, f"store order #{order_id}",
                                               order_id=order_id)[0]
                 result = f"Gift card {code}"
+            elif order["kind"] == "kit" and skit is not None and skit["source"] == "ingame":
+                result = await self._give_ingame(order, skit)
+                if result is None:            # buyer is offline: given when they join
+                    return True
             else:
                 kr = self.bot.get_cog("KitRequests")
                 if kr is None:
@@ -383,7 +468,6 @@ class WebShop(commands.Cog):
                 if earlier is not None and earlier["status"] == "pending":     # retry: use the same request
                     rid = earlier["id"]
                 elif order["kind"] == "kit":
-                    skit = db.store_kit(order["store_kit_id"])
                     if skit is None or db.custom_kit(skit["kit"]) is None:
                         raise CheckoutError("the kit for sale no longer exists")
                     rid = db.add_kit_request(None, order["user_id"], skit["kit"], int(skit["days"]), proof,
@@ -411,13 +495,52 @@ class WebShop(commands.Cog):
                         + (f" for <@{order['user_id']}> ({safe_md(order['player'] or '')})" if order["user_id"] else "")
                         + f" – {safe_md(pay.strip())} – delivered", alert=bool(order["admin_key"]))
         if order["user_id"] and order["kind"] != "giftcard":
-            await self._dm(order["user_id"], f"✅ Thanks for your purchase! **{safe_md(order['title'])}** is yours: "
-                                             f"claim it in-game with `/customkit claim {result}` on our Discord "
-                                             "while you're online.")
+            if skit is not None and skit["source"] == "ingame":
+                text = f"✅ Thanks for your purchase! **{safe_md(order['title'])}** was given to you in-game."
+            else:
+                text = (f"✅ Thanks for your purchase! **{safe_md(order['title'])}** is yours: claim it in-game with "
+                        f"`/customkit claim {result}` on our Discord while you're online.")
+            await self._dm(order["user_id"], text)
         return True
 
+    async def _give_ingame(self, order, skit) -> str | None:
+        """Gives an in-game kit to the buyer. None = they're offline (order waits until they join)."""
+        name = next((n for n in self.bot.online_players if n.lower() == (order["player"] or "").lower()), None)
+        if name is None or not self.bot.rcon.connected:
+            if self.bot.db.move_store_order(order["id"], "paid", "waiting",
+                                            result="paid – given when the player is online"):
+                await self._dm(order["user_id"], f"✅ Thanks for your purchase! **{safe_md(order['title'])}** is "
+                                                 "paid – you get it in-game the next time you're on the server.")
+            return None
+        template = self.bot.config.kit_give_template
+        try:
+            await self.bot.rcon.command(template.format(kit=kitparse.clean_arg(skit["kit"]), name=name),
+                                        expect_response=False)
+        except RconError:
+            self.bot.db.move_store_order(order["id"], "paid", "waiting", result="paid – server not reachable, retrying")
+            return None
+        return skit["kit"]
+
+    async def deliver_waiting(self, player: str | None = None) -> int:
+        """Gives in-game kits that wait for their buyer (only `player`, or everyone online). Returns how many."""
+        done = 0
+        online = {n.lower() for n in self.bot.online_players}
+        for order in self.bot.db.store_orders(status="waiting", limit=200):
+            buyer = (order["player"] or "").lower()
+            if buyer not in online or (player is not None and buyer != player.lower()):
+                continue
+            if self.bot.db.move_store_order(order["id"], "waiting", "paid") and await self.fulfil(order["id"]):
+                done += self.bot.db.store_order(order["id"])["status"] == "delivered"
+        return done
+
+    @commands.Cog.listener()
+    async def on_rce_player_join(self, player: str) -> None:
+        if any((o["player"] or "").lower() == player.lower() for o in self.bot.db.store_orders(status="waiting")):
+            await asyncio.sleep(JOIN_DELAY)
+            await self.deliver_waiting(player)
+
     async def retry(self, order_id: int) -> bool:
-        if not self.bot.db.move_store_order(order_id, ("failed", "review"), "paid"):
+        if not self.bot.db.move_store_order(order_id, ("failed", "review", "waiting"), "paid"):
             return False
         return await self.fulfil(order_id)
 
@@ -462,6 +585,8 @@ class WebShop(commands.Cog):
     @tasks.loop(minutes=5)
     async def check_loop(self) -> None:
         await self.check_pending()
+        await self.deliver_waiting()
+        await self.sync_kits()
 
     @check_loop.before_loop
     async def _before(self) -> None:
