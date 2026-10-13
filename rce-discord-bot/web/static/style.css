@@ -425,3 +425,9 @@ textarea.kb-output { font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, mon
   h2 { font-size: 1.05rem; }
   .page-tools { margin-top: -.6rem; }
 }
+
+/* Plugins: status and on/off stay visible when the card is collapsed */
+.card.collapsed > .card-head.row > .keep { display: inline-flex !important; }
+.switch { display: inline-flex; align-items: center; gap: .4rem; font-weight: 600; cursor: pointer; }
+.switch input { width: 1.1rem; height: 1.1rem; }
+.card.plugin > .card-head h2 { margin-right: auto; }

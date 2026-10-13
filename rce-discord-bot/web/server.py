@@ -63,7 +63,8 @@ SESSION_TTL = 12 * 3600
 LOGIN_ATTEMPTS_PER_MINUTE = 5
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
-OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups")
+OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
+                       "/api/plugins")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -88,6 +89,7 @@ INVITE_PERMISSIONS = discord.Permissions(
     view_channel=True, send_messages=True, embed_links=True, attach_files=True, read_message_history=True,
     add_reactions=True, manage_channels=True, manage_roles=True, moderate_members=True, kick_members=True,
     ban_members=True, manage_messages=True, mention_everyone=True,
+    manage_guild=True, send_polls=True,      # plugins: invite rewards (read invites), wipe feedback polls
 ).value
 
 
@@ -342,6 +344,14 @@ class WebInterface:
         r.add_get("/api/backups", self.list_backups)
         r.add_post("/api/backups", self.create_backup)
         r.add_get("/api/backups/{name}", self.download_backup)
+        r.add_get("/api/plugins", self.plugins_list)
+        r.add_post("/api/plugins/upload", self.plugin_upload)
+        r.add_post("/api/plugins/{pid}/toggle", self.plugin_toggle)
+        r.add_put("/api/plugins/{pid}/settings", self.plugin_settings)
+        r.add_post("/api/plugins/{pid}/reload", self.plugin_reload)
+        r.add_delete("/api/plugins/{pid}", self.plugin_delete)
+        r.add_get("/p/{pid}", self.plugin_public)                  # public plugin pages (no login)
+        r.add_get("/p/{pid}/{tail:.*}", self.plugin_public)
         return app
 
     async def start(self, *, open_browser: bool | None = None) -> bool:
@@ -552,6 +562,84 @@ class WebInterface:
         if cog is None:
             raise ApiError(f"Module {name} is not loaded.", 503)
         return cog
+
+    # ------------------------------------------------------------ Plugins
+
+    def _plugins(self):
+        manager = getattr(self.bot, "plugins", None) if self.bot is not None else None
+        if manager is None:
+            raise ApiError("Plugins are not loaded (is the bot running?).", 503)
+        return manager
+
+    async def _plugin_call(self, coro):
+        from plugin_manager import PluginError
+        try:
+            return await coro
+        except PluginError as exc:
+            raise ApiError(str(exc)) from None
+
+    async def plugins_list(self, request: web.Request) -> web.Response:
+        manager = self._plugins()
+        manager.discover()          # picks up files added by hand
+        return web.json_response({"plugins": manager.describe_all(),
+                                  "kits": [k["name"] for k in self.bot.db.custom_kits()],
+                                  "intents": {"members": self.bot.intents.members,
+                                              "message_content": self.bot.intents.message_content}})
+
+    async def plugin_toggle(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        pid = request.match_info["pid"]
+        info = await self._plugin_call(self._plugins().set_enabled(pid, bool(data.get("enabled"))))
+        self._audit(f"plugin {pid} switched {'on' if info['enabled'] else 'off'}")
+        return web.json_response({"plugin": info})
+
+    async def plugin_settings(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        pid = request.match_info["pid"]
+        values = data.get("values")
+        if not isinstance(values, dict):
+            raise ApiError("Invalid settings.")
+        errors = await self._plugin_call(self._plugins().save_settings(pid, values))
+        if errors:
+            return web.json_response({"error": "Please check the highlighted settings.", "errors": errors}, status=400)
+        self._audit(f"plugin {pid}: settings saved")
+        return web.json_response({"plugin": self._plugins().describe(pid)})
+
+    async def plugin_reload(self, request: web.Request) -> web.Response:
+        pid = request.match_info["pid"]
+        info = await self._plugin_call(self._plugins().reload(pid))
+        self._audit(f"plugin {pid} reloaded")
+        return web.json_response({"plugin": info})
+
+    async def plugin_upload(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        name = self._text(data, "filename", limit=60)
+        code = data.get("code")
+        if not isinstance(code, str):
+            raise ApiError("Choose a .py file.")
+        info = await self._plugin_call(self._plugins().install(name, code))
+        self._audit(f"plugin file {info['file']} uploaded")
+        return web.json_response({"plugin": info})
+
+    async def plugin_delete(self, request: web.Request) -> web.Response:
+        pid = request.match_info["pid"]
+        await self._plugin_call(self._plugins().uninstall(pid))
+        self._audit(f"plugin {pid} deleted")
+        return web.json_response({"ok": True})
+
+    async def plugin_public(self, request: web.Request) -> web.StreamResponse:
+        manager = getattr(self.bot, "plugins", None) if self.bot is not None else None
+        plugin = manager.running(request.match_info["pid"]) if manager is not None else None
+        handler = getattr(plugin, "web_public", None)
+        if handler is None:
+            raise web.HTTPNotFound(text="Not found.")
+        try:
+            return await handler(request, request.match_info.get("tail", "").strip("/"))
+        except web.HTTPException:
+            raise
+        except Exception:
+            log.exception("Public page of plugin %s failed", request.match_info["pid"])
+            raise web.HTTPInternalServerError(text="Error – see the bot log.") from None
 
     # ------------------------------------------------------------ Pages & login
 

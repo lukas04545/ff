@@ -83,6 +83,8 @@ class RceBot(commands.Bot):
         self.console_buffer: deque[dict] = deque(maxlen=1000)
         self._console_ids = itertools.count(1)
         self.web = None  # web.server.WebInterface, if enabled
+        self.plugins = None  # plugin_manager.PluginManager (set in setup_hook)
+        self._global_commands_cleared = False
         self.restart_requested = False
         self.update_restart = False   # new version installed -> restart the whole process
         self.launched_by_script = os.environ.get("RCE_LAUNCHER") == "1"   # start.bat/start.sh restart us
@@ -99,21 +101,16 @@ class RceBot(commands.Bot):
         for cog in COGS:
             await self.load_extension(cog)
 
+        # Plugins (plugins/ and data/plugins/) – a broken plugin never stops the bot
+        from plugin_manager import PluginManager
+        self.plugins = PluginManager(self)
+        try:
+            await self.plugins.load_all()
+        except Exception:
+            log.exception("Loading plugins failed")
+
         self.tree.on_error = self.on_app_command_error
-        if self.config.guild_id:
-            # Guild sync: commands show up immediately (global can take up to 1 h)
-            guild = discord.Object(id=self.config.guild_id)
-            self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
-            # Remove old global registrations (e.g. from a start without GUILD_ID or an older version with
-            # other command names) – otherwise Discord shows them next to the current commands.
-            self.tree.clear_commands(guild=None)
-            try:
-                await self.tree.sync()
-            except discord.HTTPException as exc:
-                log.warning("Could not remove old global slash commands: %s", exc)
-        else:
-            synced = await self.tree.sync()
+        synced = await self.sync_commands()
         log.info("Synced %d slash commands.", len(synced))
 
         await self.rcon.start()
@@ -124,6 +121,26 @@ class RceBot(commands.Bot):
             self.web = WebInterface(self)
             # Only open the browser on the very first start, not on every restart from the web interface
             await self.web.start(open_browser=None if self._first_start else False)
+
+    async def sync_commands(self) -> list:
+        """Registers the slash commands with Discord (at the start and when a plugin is switched on/off)."""
+        if self.config.guild_id:
+            # Guild sync: commands show up immediately (global can take up to 1 h)
+            guild = discord.Object(id=self.config.guild_id)
+            self.tree.clear_commands(guild=guild)
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            if not self._global_commands_cleared:
+                # Remove old global registrations (e.g. from a start without GUILD_ID or an older version with
+                # other command names) – otherwise Discord shows them next to the current commands. The local
+                # command tree stays complete, so later syncs (plugins) still have every command.
+                try:
+                    await self.http.bulk_upsert_global_commands(self.application_id, [])
+                    self._global_commands_cleared = True
+                except discord.HTTPException as exc:
+                    log.warning("Could not remove old global slash commands: %s", exc)
+            return synced
+        return await self.tree.sync()
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (ID %s).", self.user, self.user.id if self.user else "?")
@@ -201,6 +218,8 @@ class RceBot(commands.Bot):
     async def close(self) -> None:
         if self.web is not None:
             await self.web.stop()
+        if self.plugins is not None:
+            await self.plugins.unload_all()
         await self.rcon.close()
         for buffer in self._feeds.values():
             await buffer.flush()

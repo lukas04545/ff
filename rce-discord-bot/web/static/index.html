@@ -9,7 +9,7 @@
     // Apply the saved theme before the first paint (no flash)
     try { const t = localStorage.getItem("rce-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) { /* storage blocked */ }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=18">
+  <link rel="stylesheet" href="/static/style.css?v=19">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛢️</text></svg>">
 </head>
 <body>
@@ -68,6 +68,7 @@
         </div>
         <div class="nav-group">
           <div class="nav-label">Admin</div>
+          <a href="#plugins" data-view="plugins" data-owner><i>🧩</i><span>Plugins</span></a>
           <a href="#users" data-view="users" data-owner><i>👥</i><span>Users</span></a>
           <a href="#settings" data-view="settings" data-owner><i>⚙️</i><span>Settings</span></a>
         </div>
@@ -92,6 +93,6 @@
   </div>
 
   <div id="toasts" class="toasts"></div>
-  <script src="/static/app.js?v=18"></script>
+  <script src="/static/app.js?v=19"></script>
 </body>
 </html>

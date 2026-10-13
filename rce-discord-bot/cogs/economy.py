@@ -443,6 +443,10 @@ class Economy(commands.Cog):
         if timed:
             embed.add_field(name="Timed roles", inline=False, value="\n".join(
                 f"⏳ <@&{r['role_id']}> until <t:{r['expires_at']}:R>" for r in timed)[:1024])
+        plugins = getattr(self.bot, "plugins", None)
+        if plugins is not None:
+            for name, value in plugins.profile_fields(member)[:10]:
+                embed.add_field(name=str(name)[:256], value=str(value)[:1024] or "–")
         return embed
 
     @app_commands.command(name="profile", description="Your stats, points, kits and roles (or someone else's).")

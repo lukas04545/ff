@@ -1,4 +1,4 @@
-"""Backups of everything the bot can't get back by itself: database, web logins, rules and knowledge base.
+"""Backups of everything the bot can't get back by itself: database, web logins, rules, knowledge base and plugins.
 
 A backup is a ZIP in data/backups/ (daily and before every automatic update). The .env with the tokens is
 NOT included unless BACKUP_INCLUDE_ENV is on – backups can be downloaded in the web interface.
@@ -24,7 +24,8 @@ log = logging.getLogger("rce.backups")
 
 BASE_DIR = Path(__file__).resolve().parent
 NAME = re.compile(r"^backup-\d{4}-\d{2}-\d{2}_\d{6}-[a-z-]+\.zip$")
-EXTRA_FILES = ("data/web_users.json", "rules.md", "support_knowledge.md", "prices.txt")
+EXTRA_FILES = ("data/web_users.json", "data/plugins.json", "rules.md", "support_knowledge.md", "prices.txt")
+PLUGIN_GLOB = "data/plugins/*.py"      # your own plugins
 LIVE_NAME = "live-backup.zip"
 README = """RCE Discord bot – backup
 
@@ -70,6 +71,8 @@ def _write_zip(db_path: Path, target: Path, *, base: Path, include_env: bool) ->
             for rel in extra:
                 if (base / rel).is_file():
                     zf.write(base / rel, rel)
+            for path in sorted(base.glob(PLUGIN_GLOB)):
+                zf.write(path, path.relative_to(base).as_posix())
         partial.replace(target)
 
 
@@ -113,7 +116,8 @@ def change_marker(db_path: Path, base: Path | None = None) -> tuple:
     base = base or BASE_DIR
     db_path = db_path if db_path.is_absolute() else base / db_path
     marks = []
-    for p in (db_path, db_path.with_name(db_path.name + "-wal"), *(base / rel for rel in EXTRA_FILES)):
+    for p in (db_path, db_path.with_name(db_path.name + "-wal"), *(base / rel for rel in EXTRA_FILES),
+              *sorted(base.glob(PLUGIN_GLOB))):
         try:
             st = p.stat()
             marks.append((p.name, st.st_mtime_ns, st.st_size))

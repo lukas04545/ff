@@ -125,7 +125,7 @@ function route() {
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && ["settings", "users"].includes(view)) {
+  if (!isOwner() && ["settings", "users", "plugins"].includes(view)) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
@@ -2030,6 +2030,154 @@ views.botlog = (main) => {
     out.replaceChildren(...r.lines.map((l) => h("div", { text: l })));
     if (stick) out.scrollTop = out.scrollHeight;
   });
+};
+
+// ------------------------------------------------------------------ Plugins
+// Every plugin is one file (plugins/ or data/plugins/). Switch on/off and settings take effect right away.
+
+function pluginControl(f, opts, kits, inputs) {
+  const value = f.value === null || f.value === undefined ? "" : String(f.value);
+  const listFor = { channel: opts.text_channels, role: opts.roles }[f.kind] || [];
+  let el;
+  if (f.kind === "bool") {
+    el = h("select", {}, h("option", { value: "true", text: "On" }), h("option", { value: "false", text: "Off" }));
+    el.value = f.value ? "true" : "false";
+  } else if (f.kind === "choice") {
+    el = h("select", {}, f.choices.map((c) => h("option", { value: c, text: c })));
+    el.value = value;
+  } else if ((f.kind === "channel" || f.kind === "role") && opts.available) {
+    el = h("select", {}, h("option", { value: "", text: "– none –" }), listFor.map((o) => h("option", { value: o.id, text: o.name })));
+    if (value && !listFor.some((o) => o.id === value)) el.append(h("option", { value, text: `ID ${value} (not found)` }));
+    el.value = value;
+  } else if (f.kind === "textarea") {
+    el = h("textarea", { rows: 4 });
+    el.value = value;
+  } else if (f.kind === "kit") {
+    const id = `kits-${f.key}-${Math.random().toString(36).slice(2, 8)}`;
+    el = h("input", { value, list: id, placeholder: "Kit name (empty = none)" });
+    inputs[f.key] = () => el.value;
+    return h("div", {}, el, h("datalist", { id }, kits.map((k) => h("option", { value: k }))));
+  } else {
+    el = h("input", { value, inputmode: ["int", "channel", "role"].includes(f.kind) ? "numeric" : null,
+      placeholder: f.kind === "channel" || f.kind === "role" ? "Discord ID" : "" });
+  }
+  inputs[f.key] = () => el.value;
+  return el;
+}
+
+function pluginCard(p, opts, kits, reload) {
+  const inputs = {}, rows = {};
+  const pill = p.error ? h("span", { class: "pill bad keep", text: "error" })
+    : !p.enabled ? h("span", { class: "pill keep", text: "off" })
+    : !p.running ? h("span", { class: "pill bad keep", text: "not running" })
+    : (p.problems.length || p.missing_intents.length) ? h("span", { class: "pill warn keep", text: "needs setup" })
+    : h("span", { class: "pill ok keep", text: "on" });
+  const sw = h("input", { type: "checkbox" });
+  sw.checked = p.enabled;
+  sw.disabled = !!(p.error && !p.enabled);
+  sw.addEventListener("change", async () => {
+    sw.disabled = true;
+    try {
+      const r = await api(`/api/plugins/${p.id}/toggle`, { method: "POST", body: { enabled: sw.checked } });
+      toast(`${p.name} ${r.plugin.enabled ? "switched on" : "switched off"}`);
+      if (r.plugin.enabled && r.plugin.missing_intents.length) toast("This plugin needs a Discord intent – see the note on its card.", true);
+      reload();
+    } catch (e) { toast(e.message, true); sw.checked = !sw.checked; sw.disabled = false; }
+  });
+  const card = h("div", { class: "card plugin" },
+    h("div", { class: "row" }, h("h2", { text: `${p.icon} ${p.name}` }), pill,
+      h("label", { class: "switch keep", title: "On/off" }, sw, h("span", { text: "On" }))),
+    h("p", { class: "muted", text: p.description || "" }));
+  if (p.error) card.append(h("div", { class: "banner bad" }, h("strong", { text: "Error: " }), p.error));
+  if (p.enabled && p.missing_intents.length) {
+    const names = p.missing_intents.map((i) => ({ members: "Server Members Intent", message_content: "Message Content Intent" }[i] || i));
+    card.append(h("div", { class: "banner warn" }, h("strong", { text: "Needs a Discord setting: " }),
+      `turn on "${names.join('" and "')}" in the Discord Developer Portal (your app → Bot → Privileged Gateway Intents → Save), then restart the bot (Settings → Restart).`));
+  }
+  if (p.enabled && p.problems.length) card.append(h("div", { class: "banner warn" }, h("strong", { text: "To do: " }), p.problems.join(" ")));
+  const status = Object.entries(p.status || {});
+  if (p.running && status.length) {
+    card.append(h("div", { class: "grid", style: "margin:.25rem 0 .5rem" }, status.map(([k, v]) =>
+      h("div", { class: "stat" }, h("div", { class: "label", text: k }), h("div", { class: "value", style: "font-size:1.05rem", text: String(v) })))));
+  }
+  if (p.public) {
+    const url = `${location.origin}/p/${p.id}`;
+    card.append(h("p", {}, "Public address: ", h("a", { href: url, target: "_blank", rel: "noopener", text: url }),
+      h("span", { class: "muted", text: p.running ? " – share it anywhere (works with your public web link)." : " – switch the plugin on first." })));
+  }
+  if (p.settings.length) {
+    const form = h("div", {});
+    for (const f of p.settings) {
+      const err = h("div", { class: "field-error" });
+      const row = h("div", { class: "field" }, h("label", { text: f.label }),
+        h("div", { class: "control" }, pluginControl(f, opts, kits, inputs), f.help ? h("div", { class: "help", text: f.help }) : null, err));
+      rows[f.key] = { row, err };
+      form.append(row);
+    }
+    const save = h("button", { class: "primary", text: "Save settings" });
+    save.addEventListener("click", async () => {
+      Object.values(rows).forEach(({ row, err }) => { row.classList.remove("has-error"); err.textContent = ""; });
+      save.disabled = true;
+      try {
+        const values = Object.fromEntries(Object.entries(inputs).map(([k, get]) => [k, get()]));
+        await api(`/api/plugins/${p.id}/settings`, { method: "PUT", body: { values } });
+        toast("Saved – active right away");
+        reload();
+      } catch (e) {
+        for (const [key, msg] of Object.entries(e.data?.errors || {})) if (rows[key]) { rows[key].row.classList.add("has-error"); rows[key].err.textContent = msg; }
+        toast(e.message, true);
+      } finally { save.disabled = false; }
+    });
+    card.append(form, h("div", { class: "row", style: "margin-top:.6rem" }, save));
+  }
+  const foot = h("div", { class: "row muted", style: "margin-top:.6rem;font-size:.83rem" },
+    h("span", { text: `${p.builtin ? "Built-in" : "Your plugin"} · ${p.file}${p.version ? " · v" + p.version : ""}${p.author ? " · by " + p.author : ""}` }),
+    h("button", { class: "small ghost", text: "↻ Reload", title: "Read the file again (after editing it)", onclick: async () => {
+      await act(() => api(`/api/plugins/${p.id}/reload`, { method: "POST" }), "Reloaded"); reload();
+    } }),
+    p.builtin ? null : h("button", { class: "small danger", text: "Delete", onclick: async () => {
+      if (!confirm(`Delete the plugin file ${p.file}? Its settings are removed too.`)) return;
+      await act(() => api(`/api/plugins/${p.id}`, { method: "DELETE" }), "Plugin deleted"); reload();
+    } }));
+  card.append(foot);
+  return card;
+}
+
+function pluginUploadCard(reload) {
+  const file = h("input", { type: "file", accept: ".py" });
+  const btn = h("button", { class: "primary", text: "Upload plugin" });
+  btn.addEventListener("click", async () => {
+    const f = file.files[0];
+    if (!f) { toast("Choose a .py file first.", true); return; }
+    if (!confirm("Only upload plugins from people you trust – a plugin runs inside the bot and can do anything the bot can. Upload?")) return;
+    btn.disabled = true;
+    try {
+      const code = await f.text();
+      const r = await api("/api/plugins/upload", { method: "POST", body: { filename: f.name, code } });
+      toast(`${r.plugin.name} uploaded – switch it on below`);
+      file.value = "";
+      reload();
+    } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
+  });
+  return h("div", { class: "card" }, h("h2", { text: "⬆️ Add your own plugin" }),
+    h("p", { class: "muted", text: "A plugin is one .py file. It is saved in data/plugins/ (never touched by updates) and starts switched off. How to write one: PLUGINS.md in the bot folder." }),
+    h("div", { class: "banner warn" }, "Only upload plugins from people you trust – a plugin runs inside the bot with full access."),
+    h("div", { class: "row" }, file, btn));
+}
+
+views.plugins = async (main) => {
+  main.append(h("h1", { text: "Plugins" }),
+    h("p", { class: "muted", text: "Extra features as plugins – switch them on/off and change their settings here. Everything takes effect right away, no restart needed." }));
+  const list = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  main.append(list);
+  const opts = await api("/api/settings/discord-options").catch(() => ({ available: false }));
+  const reload = async () => {
+    try {
+      const r = await api("/api/plugins");
+      list.replaceChildren(...r.plugins.map((p) => pluginCard(p, opts, r.kits, reload)), pluginUploadCard(reload));
+    } catch (e) { list.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
+  };
+  reload();
 };
 
 start();

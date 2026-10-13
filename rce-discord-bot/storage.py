@@ -5,6 +5,7 @@ player list, stats are counted per name. Name change = new entry.
 """
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import time
@@ -304,6 +305,13 @@ class Storage:
                 kit TEXT NOT NULL COLLATE NOCASE REFERENCES custom_kits (name) ON DELETE CASCADE,
                 shortname TEXT NOT NULL,
                 amount INTEGER NOT NULL
+            );
+            -- Plugins keep their own data here (JSON values per plugin and key)
+            CREATE TABLE IF NOT EXISTS plugin_data (
+                plugin TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (plugin, key)
             );
             """
         )
@@ -1290,6 +1298,50 @@ class Storage:
         cur = self._db.execute("DELETE FROM timed_roles WHERE id = ?", (row_id,))
         self._db.commit()
         return cur.rowcount > 0
+
+    # ------------------------------------------------------------ Plugins
+
+    def plugin_get(self, plugin: str, key: str, default=None):
+        row = self._db.execute("SELECT value FROM plugin_data WHERE plugin = ? AND key = ?", (plugin, key)).fetchone()
+        if row is None:
+            return default
+        try:
+            return json.loads(row["value"])
+        except ValueError:
+            return default
+
+    def plugin_set(self, plugin: str, key: str, value) -> None:
+        self._db.execute("INSERT OR REPLACE INTO plugin_data (plugin, key, value) VALUES (?, ?, ?)",
+                         (plugin, key, json.dumps(value)))
+        self._db.commit()
+
+    def plugin_delete(self, plugin: str, key: str) -> bool:
+        cur = self._db.execute("DELETE FROM plugin_data WHERE plugin = ? AND key = ?", (plugin, key))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def plugin_items(self, plugin: str, prefix: str = "") -> dict:
+        """All keys of a plugin that start with `prefix` -> value."""
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        out = {}
+        for row in self._db.execute("SELECT key, value FROM plugin_data WHERE plugin = ? AND key LIKE ? ESCAPE '\\'",
+                                    (plugin, f"{escaped}%")):
+            try:
+                out[row["key"]] = json.loads(row["value"])
+            except ValueError:
+                pass
+        return out
+
+    def plugin_clear(self, plugin: str, prefix: str = "") -> int:
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        cur = self._db.execute("DELETE FROM plugin_data WHERE plugin = ? AND key LIKE ? ESCAPE '\\'",
+                               (plugin, f"{escaped}%"))
+        self._db.commit()
+        return cur.rowcount
+
+    def players_seen_since(self, since_utc: str) -> int:
+        """Players first seen at or after a UTC time ("YYYY-MM-DD HH:MM:SS")."""
+        return self._db.execute("SELECT COUNT(*) FROM players WHERE first_seen >= ?", (since_utc,)).fetchone()[0]
 
     def close(self) -> None:
         self._db.close()
