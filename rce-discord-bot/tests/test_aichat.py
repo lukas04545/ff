@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cogs.aichat import AIChat, clean_reply, system_prompt
+from cogs.aichat import AIChat, clean_reply, system_prompt, whole_sentences
 from tests.test_kit_requests import env  # noqa: F401
 
 
@@ -96,3 +96,17 @@ def test_mode_all_and_switched_off(chat, monkeypatch):
     assert len(chat.calls) == 2
     from config import required_intents
     assert "AI chat" in required_intents(chat.env.bot.config)["message_content"]
+
+
+def test_cut_off_reply_keeps_whole_sentences(chat, monkeypatch):
+    import cogs.aichat as ac
+    monkeypatch.setattr(ac, "CHANNEL_GAP", 0)
+    assert whole_sentences("Pings are off the table. 🙂 That") == "Pings are off the table."
+    assert whole_sentences("All good!") == "All good!" and whole_sentences("short") == "short"
+
+    async def cut(messages, **kw):
+        assert kw["max_tokens"] >= 1000
+        return {"content": "Sure, wipes are on Thursday. Kits reset then too. And the", "finish_reason": "length"}
+    chat.env.tickets.ai = NS(enabled=True, chat=cut)
+    send(chat, chat.message(1, "<@999> wipe?", mentions=[NS(id=999)]))
+    assert chat.replies[-1][1] == "Sure, wipes are on Thursday. Kits reset then too."
