@@ -208,6 +208,7 @@ rce-discord-bot/
 ├── envfile.py             # Read/write .env (comments are preserved)
 ├── updater.py             # Downloads + installs new versions from GitHub (ZIP install or git checkout)
 ├── backups.py             # Backup ZIPs in data/backups/ (+ copy / live backup to e.g. Google Drive)
+├── tools/install_linux.sh # Install on a Linux server as a service (optionally restoring a backup)
 ├── start.bat              # Windows: double-click = set up + start + auto-restart (also after updates)
 ├── start.sh               # Linux/macOS: the same
 ├── rcon_test.bat          # Windows: test the RCON connection step by step (tools/rcon_test.py)
@@ -347,6 +348,37 @@ The bot runs fine on a normal Windows, Linux or Mac PC:
   `.env`, `data/` (database, web logins, backups) and `support_knowledge.md`.
 
 ---
+
+## Hosting on a Linux server (VPS)
+
+Any small Linux server works (1 CPU, 1–2 GB RAM is plenty; e.g. InterServer, Hetzner, Oracle Free). With
+**Ubuntu** or Debian:
+
+1. **On the old PC – make a full backup:** web interface → ⚙️ Settings → 🚨 Alerts & backups → turn on
+   *Include the .env*, save, click **💾 Backup now**, download the ZIP. Then **stop the bot on the PC** (and keep it
+   off – two bots with the same token answer everything twice).
+2. **Upload the ZIP** to the server, e.g. in PowerShell on the PC:
+   `scp "$HOME\Downloads\backup-….zip" root@SERVER-IP:/root/`
+3. **Log in to the server** (PC: `ssh root@SERVER-IP`; phone: an SSH app like Termius) and run:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/lukas04545/ff/main/rce-discord-bot/tools/install_linux.sh -o install.sh
+   bash install.sh /root/backup-….zip
+   ```
+   Without a backup (fresh bot) just `bash install.sh` – the settings page link then appears in the log.
+
+The script installs Python and Git, creates a user `rcebot` (the bot doesn't run as root), downloads the bot to
+`/home/rcebot/ff/rce-discord-bot`, restores the backup (database, logins, rules, knowledge base, price list,
+.env) and sets up the service **`rcebot`**: it starts with the server, restarts after crashes and after automatic
+updates (git checkout → updates via fast-forward).
+
+| | |
+|---|---|
+| Live log | `journalctl -u rcebot -f` |
+| Web interface link | `cat /home/rcebot/ff/rce-discord-bot/PUBLIC_LINK.txt` (also posted in the admin log) |
+| Stop / start / restart | `systemctl stop rcebot` · `systemctl start rcebot` · `systemctl restart rcebot` |
+
+The web interface stays on 127.0.0.1 and is reached through the Cloudflare tunnel – no port has to be opened.
+Google Drive for desktop doesn't exist for Linux, so `BACKUP_COPY_DIR` is cleared when restoring.
 
 ## Automatic updates
 
