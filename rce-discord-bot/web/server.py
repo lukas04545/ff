@@ -93,6 +93,25 @@ INVITE_PERMISSIONS = discord.Permissions(
 ).value
 
 
+def placeholder_svg(shortname: str) -> str:
+    """Grey tile with the item's shortname (item without a picture)."""
+    import html
+    words = (shortname[:40] or "?").replace(".", ". ").split()
+    lines, line = [], ""
+    for w in words:
+        if line and len(line) + len(w) > 11:
+            lines.append(line)
+            line = w
+        else:
+            line = f"{line}{w}"
+    lines = (lines + [line])[:4]
+    text = "".join(f'<tspan x="50" dy="{0 if i == 0 else 13}">{html.escape(t)}</tspan>' for i, t in enumerate(lines))
+    top = 54 - 6.5 * (len(lines) - 1)
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="12" '
+            'fill="#8884"/><text x="50" y="' + f"{top:.1f}" + '" font-family="sans-serif" font-size="12" fill="#999" '
+            'text-anchor="middle">' + text + '</text></svg>')
+
+
 def invite_url(app_id) -> str | None:
     """Invite link with all required permissions. Using it again updates the bot role's permissions."""
     return (f"https://discord.com/oauth2/authorize?client_id={app_id}"
@@ -237,6 +256,8 @@ class WebInterface:
         self.generated_password: str | None = None  # shown once in the bot window
         self.restart_required = False
         self.restart_for: list[str] = []     # saved settings that only apply after a restart
+        from web.item_images import ItemImages
+        self.item_images = ItemImages((bot.config.database_path.parent if bot else Path("data")) / "item_images")
         self.app = self._build_app()
 
     @staticmethod
@@ -261,6 +282,7 @@ class WebInterface:
         r = app.router
         r.add_get("/", self._index)
         r.add_static("/static/", STATIC_DIR)
+        r.add_get("/img/items/{name}", self.item_image)            # public: item pictures (cached by the bot)
         r.add_get("/auth", self.auth_link)
         r.add_post("/api/login", self.login)
         r.add_post("/api/logout", self.logout)
@@ -350,6 +372,8 @@ class WebInterface:
         r.add_put("/api/plugins/{pid}/settings", self.plugin_settings)
         r.add_post("/api/plugins/{pid}/reload", self.plugin_reload)
         r.add_delete("/api/plugins/{pid}", self.plugin_delete)
+        r.add_get("/play", self.player_website)                     # public player website (plugin "website")
+        r.add_get("/play/{tail:.*}", self.player_website)
         r.add_get("/p/{pid}", self.plugin_public)                  # public plugin pages (no login)
         r.add_get("/p/{pid}/{tail:.*}", self.plugin_public)
         return app
@@ -436,6 +460,7 @@ class WebInterface:
         return None
 
     async def stop(self) -> None:
+        await self.item_images.close()
         if self.tunnel is not None:
             self.tunnel.on_online = None  # the tunnel itself keeps running for the restarted bot
         if self._runner is not None:
@@ -563,6 +588,27 @@ class WebInterface:
             raise ApiError(f"Module {name} is not loaded.", 503)
         return cog
 
+    # ------------------------------------------------------------ Item pictures
+
+    async def item_image(self, request: web.Request) -> web.Response:
+        template = self.bot.config.item_image_url if self.bot is not None else ""
+        if not template or template.lower() == "off":
+            raise web.HTTPNotFound()
+        self.item_images.url_template = template
+        name = request.match_info["name"]
+        for ext in (".png", ".jpg", ".webp"):
+            name = name.removesuffix(ext)
+        found = await self.item_images.get(name)
+        if found is None:
+            if request.query.get("ph"):        # player website: a neutral tile with the shortname instead of a 404
+                return web.Response(text=placeholder_svg(name), content_type="image/svg+xml",
+                                    headers={"Cache-Control": "public, max-age=3600",
+                                             "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"})
+            raise web.HTTPNotFound(headers={"Cache-Control": "public, max-age=3600"})
+        data, kind = found
+        return web.Response(body=data, content_type=kind,
+                            headers={"Cache-Control": "public, max-age=604800", "X-Content-Type-Options": "nosniff"})
+
     # ------------------------------------------------------------ Plugins
 
     def _plugins(self):
@@ -627,9 +673,13 @@ class WebInterface:
         self._audit(f"plugin {pid} deleted")
         return web.json_response({"ok": True})
 
-    async def plugin_public(self, request: web.Request) -> web.StreamResponse:
+    async def player_website(self, request: web.Request) -> web.StreamResponse:
+        return await self.plugin_public(request, pid="website")
+
+    async def plugin_public(self, request: web.Request, pid: str | None = None) -> web.StreamResponse:
+        pid = pid or request.match_info["pid"]
         manager = getattr(self.bot, "plugins", None) if self.bot is not None else None
-        plugin = manager.running(request.match_info["pid"]) if manager is not None else None
+        plugin = manager.running(pid) if manager is not None else None
         handler = getattr(plugin, "web_public", None)
         if handler is None:
             raise web.HTTPNotFound(text="Not found.")
@@ -638,7 +688,7 @@ class WebInterface:
         except web.HTTPException:
             raise
         except Exception:
-            log.exception("Public page of plugin %s failed", request.match_info["pid"])
+            log.exception("Public page of plugin %s failed", pid)
             raise web.HTTPInternalServerError(text="Error – see the bot log.") from None
 
     # ------------------------------------------------------------ Pages & login
@@ -1293,6 +1343,7 @@ class WebInterface:
                                      for s, label in entries.items()]}
                           for (cat, icon), entries in itemlist.CATALOGUE.items()],
             "kit_add_template": self.bot.config.kit_add_template,
+            "item_images": self.bot.config.item_image_url.lower() != "off",
         })
 
     # ------------------------------------------------------------ Tickets, stats, AI

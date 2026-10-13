@@ -196,7 +196,7 @@ rce-discord-bot/
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── plugins/               # Built-in plugins (one file each, on/off in the web interface → 🧩 Plugins)
 │   ├── invites.py         # Invite rewards
-│   ├── public_page.py     # Public stats page (/p/public_page)
+│   ├── website.py         # Player website (/play)
 │   ├── starter_kit.py     # Starter kit for brand-new players
 │   ├── lowpop_bonus.py    # Extra points while the server is nearly empty
 │   ├── filling_ping.py    # "Server is filling up" ping (/pingme)
@@ -219,6 +219,7 @@ rce-discord-bot/
 ├── prices.txt             # Custom kit price list (Tip4Serv auto-approve)  ← adjust
 ├── web/
 │   ├── server.py          # Web interface: login + JSON API (runs inside the bot process)
+│   ├── item_images.py     # Item pictures: downloaded once (ITEM_IMAGE_URL), cached in data/item_images/
 │   └── static/            # Frontend (HTML/CSS/JS, no external files)
 ├── logbuffer.py           # Recent log lines for the web interface
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
@@ -440,7 +441,7 @@ your browser opens automatically; otherwise go to **<http://localhost:8080>**.
 | 📊 Overview | Server status (players, map, uptime, FPS), **population graph** (24 h / 7 / 30 days, busiest hours), online players with **kick/ban**, unban, message to the game |
 | ⌨️ Console | **Live server console** and running any RCON command (if `ALLOW_RAW_RCON=true`) |
 | 🎒 Kits | Give kits (player/everyone), view in-game kits, create/edit **custom kits**, create/pause/delete **autokits**, wipe reset, give history |
-| 🧰 Kit builder | **Visual kit builder** (like the Helios kit builder): all 566 RCE items by category with search, 7 wear / 24 inventory / 6 belt slots, click or drag items in, drag to move/swap, amount & condition per slot. Generates the `kit add` commands (copy), **creates the in-game kit on the server** or **saves it as a custom kit**. Load existing kits from the server, save kits in the browser, export/import share codes, import pasted `kit add` commands |
+| 🧰 Kit builder | **Visual kit builder** (like the Helios kit builder): all 566 RCE items by category with search and **item pictures**, 7 wear / 24 inventory / 6 belt slots, click or drag items in, drag to move/swap, amount & condition per slot. Generates the `kit add` commands (copy), **creates the in-game kit on the server** or **saves it as a custom kit**. Load existing kits from the server, save kits in the browser, export/import share codes, import pasted `kit add` commands |
 | 🪙 Shop | Shop items (custom kit, in-game kit, item, role – optionally for N days), prices, on sale/hidden; all point balances with ± correction; how members earn points |
 | 🚩 Reports | Admin abuse cases (approve/reject deletion), player reports (open/all, mark handled) and the watchlist (add/remove) |
 | 🎫 Tickets | All tickets with status, **transcripts of closed tickets**, DeepSeek balance |
@@ -468,6 +469,11 @@ protection against other websites (CSRF), all player and console texts are displ
 text only. However, the web interface has **no HTTPS** – **never expose it to the internet via
 port forwarding on your router**. For access on the go, use a VPN such as Tailscale or WireGuard
 into your home network instead.
+
+**Item pictures:** the kit builder, the kit lists and the player website show pictures of the items. The bot
+downloads each picture once from `ITEM_IMAGE_URL` (default: RustLabs, `{shortname}` is replaced) and keeps it in
+`data/item_images/` – browsers only ever load them from the bot. Items without a picture show their category emoji.
+`ITEM_IMAGE_URL=off` switches pictures off.
 
 ### Accounts for other admins
 
@@ -983,7 +989,7 @@ restart. A broken plugin never stops the bot: it shows the error on its card and
 | Plugin | What it does | Default |
 |---|---|---|
 | 🤝 **Invite rewards** | `/invites stats`, `/invites top`. When someone a member invited links their player and plays *N* hours, both get points (optional recruiter role). Rejoins, self-invites and brand-new Discord accounts don't count. Needs the **Server Members Intent** and the bot permission **Manage Server**. | off |
-| 🌍 **Public stats page** | Read-only page at *your web link* + `/p/public_page`: online status, players, next wipe, top players, bounties, Discord button, how to join. No login, no secrets. | off |
+| 🌍 **Player website** | A public website at *your web link* + **`/play`**: live status, next wipe, leaderboards (kills, K/D, playtime, teams), player profiles with search (stats, team, badges, bounty), the points shop with item pictures, rules, about, how to join, Discord and store buttons. Read-only – no login, no secrets, no Discord IDs. | off |
 | 🎁 **Starter kit** | A name the bot has never seen gets a welcome message in-game and a one-time kit. | on (choose the kit) |
 | 🌱 **Low-pop bonus** | While fewer than *N* players are online, playtime points are multiplied – pays people to seed the server. | on |
 | 🔥 **Filling-up ping** | Members opt in with `/pingme on`; the role is pinged when the server reaches e.g. 10 or 20 players (cooldown per threshold). | off (choose a role) |
