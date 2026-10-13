@@ -1,7 +1,7 @@
 """AI chat moderation: the support AI (DeepSeek) watches chosen Discord channels and warns offensive members.
 
-Messages in AI_MOD_CHANNEL_IDS are collected and checked in batches (one AI call every ~15 seconds at most, not
-per message). Only clearly offensive messages are flagged – insults/harassment aimed at someone, slurs, hate speech,
+Messages in AI_MOD_CHANNEL_IDS are collected and checked in batches: one AI call every AI_MOD_INTERVAL seconds
+(default 15; 0 = every message right away), or at once when 30 messages are waiting. Only clearly offensive messages are flagged – insults/harassment aimed at someone, slurs, hate speech,
 threats, sexual harassment, doxxing; swearing, banter and game trash talk are fine. A flagged member gets a short
 warning reply, staff get the message in the admin log, and optionally:
   * AI_MOD_DELETE: severe messages are deleted,
@@ -32,8 +32,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("rce.automod")
 
-BATCH_SECONDS = 15        # wait this long after the first new message, then check all collected ones together
-MAX_BATCH = 30
+MAX_BATCH = 30            # check at once when this many messages are waiting (AI_MOD_INTERVAL = normal wait)
 CONTEXT_MESSAGES = 6      # earlier messages per channel sent along (already checked) so replies are understood
 WARN_COOLDOWN = 60        # at most one warning reply per member per minute
 WINDOW = 24 * 3600        # warnings counted for the timeout
@@ -157,9 +156,18 @@ class AutoMod(commands.Cog):
             self._remember(message, text)
             return
         self._pending.append(Pending(message, text))
-        if len(self._pending) >= MAX_BATCH:
+        if len(self._pending) >= MAX_BATCH or self.interval == 0:
             await self.flush()
-        elif self._flush_task is None or self._flush_task.done():
+        else:
+            self._schedule()
+
+    @property
+    def interval(self) -> int:
+        """Seconds between checks (AI_MOD_INTERVAL); 0 = every message right away."""
+        return max(0, int(getattr(self.bot.config, "ai_mod_interval", 15)))
+
+    def _schedule(self) -> None:
+        if self._pending and (self._flush_task is None or self._flush_task.done()):
             self._flush_task = asyncio.create_task(self._delayed_flush())
 
     def _remember(self, message: discord.Message, text: str) -> None:
@@ -167,8 +175,10 @@ class AutoMod(commands.Cog):
         ctx.append(f"{message.author.display_name}: {text[:300]}")
 
     async def _delayed_flush(self) -> None:
-        await asyncio.sleep(BATCH_SECONDS)
+        await asyncio.sleep(self.interval)
         await self.flush()
+        self._flush_task = None
+        self._schedule()          # more than one batch was waiting: check the rest after the next interval
 
     # ------------------------------------------------------------ Checking
 

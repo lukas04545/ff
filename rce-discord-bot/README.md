@@ -759,8 +759,9 @@ from your knowledge base. If it can't help, it **pings the support roles**.
 - Without a `DEEPSEEK_API_KEY`, every new ticket goes straight to staff.
 
 **AI chat moderation:** pick the channels to watch in **Settings → 🎉 Community → AI moderation: channels**
-(`AI_MOD_CHANNEL_IDS`, e.g. #general). The AI checks new messages there in batches (about every 15 s, one request
-for all of them) and only flags clearly offensive ones – insults or harassment aimed at someone, slurs, hate
+(`AI_MOD_CHANNEL_IDS`, e.g. #general). The AI checks new messages there in batches – every
+*AI moderation: check every … seconds* (`AI_MOD_INTERVAL`, default 15; 0 = every message right away, higher = fewer
+and cheaper DeepSeek calls but later warnings; one request for all waiting messages, at once when 30 are waiting) and only flags clearly offensive ones – insults or harassment aimed at someone, slurs, hate
 speech, threats, sexual harassment, private data. Swearing, banter and game trash talk ("ez", "get raided lol") are
 fine; when unsure it does nothing. A flagged member gets a reply the AI writes for that message, in the language they wrote in (e.g. *"⚠️ @name
 Calling other players worthless isn't okay here – please keep it respectful. `1/3`"*; at most one per minute), and every case goes to the admin log with the message and a link.
