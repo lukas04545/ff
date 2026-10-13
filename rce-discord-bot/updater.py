@@ -294,9 +294,21 @@ class Updater:
             return Result("up_to_date", "Already the newest version.", head, title)
         if not self._git_ok(root, "merge-base", "--is-ancestor", head, new):
             return Result("skipped", "Your checkout has its own commits – update it yourself with git pull.", new, title)
-        if self._git(root, "status", "--porcelain", "--untracked-files=no").strip():
-            return Result("skipped", "Local changes in the bot files – update it yourself with git pull.", new, title)
         prefix = "" if root == self.base else f"{SUBDIR}/"
+        # Locally changed tracked files. The web interface edits rules.md / support_knowledge.md / prices.txt
+        # (they live in the repo), which would otherwise block every future update. We keep those as the owner's
+        # and still update the code; only hand-edited *code* files stop the update.
+        dirty = {ln[3:].strip().strip('"') for ln in
+                 self._git(root, "status", "--porcelain", "--untracked-files=no").splitlines() if ln.strip()}
+        editable = {f"{prefix}{name}" for name in USER_EDITABLE}
+        code_dirty = sorted(dirty - editable)
+        if code_dirty:
+            names = ", ".join(f.split("/")[-1] for f in code_dirty[:4]) + (" …" if len(code_dirty) > 4 else "")
+            return Result("skipped", f"You changed bot code directly ({names}). Update with: cd {root} && git "
+                          "stash && git pull (then your changes are in 'git stash pop').", new, title)
+        preserved = {f: (root / f).read_bytes() for f in dirty & editable if (root / f).is_file()}
+        for f in preserved:                       # clean the tree so the fast-forward can run …
+            self._git_ok(root, "checkout", "--", f)
         changed = [line[len(prefix):] for line in self._git(root, "diff", "--name-only", head, new).splitlines()
                    if line.startswith(prefix)]
         req_changed = "requirements.txt" in changed
@@ -307,6 +319,11 @@ class Updater:
                 self.pip_install(req)
         self._before_apply()
         self._git(root, "merge", "--ff-only", "--quiet", new)
+        for f, data in preserved.items():          # … then put the owner's rules/knowledge/prices back
+            try:
+                (root / f).write_bytes(data)
+            except OSError as exc:
+                log.warning("Could not keep your %s after the update: %s", f, exc)
         return Result("updated", f"Updated to {new[:7]} ({len(changed)} changed file(s)).", new, title, changed,
                       requirements_changed=req_changed)
 
