@@ -125,7 +125,7 @@ function route() {
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && ["settings", "users", "plugins"].includes(view)) {
+  if (!isOwner() && ["settings", "users", "plugins", "webstore"].includes(view)) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
@@ -2210,6 +2210,123 @@ views.plugins = async (main) => {
     } catch (e) { list.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
   };
   reload();
+};
+
+// ------------------------------------------------------------------ Web store (owner): kits for sale, gift cards, orders
+
+const money = (v, cur) => `${Number(v).toFixed(2)} ${cur}`;
+const ORDER_PILL = { delivered: "ok", failed: "bad", review: "warn", pending: "warn", paid: "warn" };
+
+views.webstore = async (main) => {
+  main.append(h("h1", { text: "Store" }),
+    h("p", { class: "muted", text: "Players buy kits on the player website (Store) with PayPal or gift cards. The kit is given to the Discord account their in-game name is linked to (/customkit link) – they claim it with /customkit claim." }));
+  const holder = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  main.append(holder);
+  let editId = null;
+
+  const load = async () => {
+    let d;
+    try { d = await api("/api/webshop"); } catch (e) { holder.replaceChildren(h("div", { class: "banner bad", text: e.message })); return; }
+    const st = d.status, cur = st.currency;
+
+    // --- Status
+    const pill = (ok, yes, no) => h("span", { class: "pill " + (ok ? "ok" : "warn"), text: ok ? yes : no });
+    const status = h("div", { class: "card" }, h("h2", { text: "⚙️ Setup" }),
+      h("div", { class: "row" },
+        pill(st.paypal, `PayPal connected (${st.paypal_mode})`, "PayPal not set up"),
+        h("span", { class: "pill", text: `Currency ${cur}` }),
+        pill(st.builder, "Players can build their own kit", `Own kits: off (${st.builder_problem || "?"})`),
+        pill(st.giftcard_values.length, `Gift cards for sale: ${st.giftcard_values.map((v) => v + " " + cur).join(", ")}`, "Gift cards: owners only")),
+      h("p", { class: "muted", style: "margin:.6rem 0 0" },
+        "PayPal, currency and gift card values: Settings → 💳 Store. The store shows up on the player website (Plugins → Player website) at ",
+        h("a", { href: "/play/store", target: "_blank", rel: "noopener", text: "/play/store" }), "."),
+      st.paypal && st.paypal_mode === "sandbox" ? h("div", { class: "banner warn", style: "margin:.6rem 0 0", text: "PayPal is in sandbox (test) mode – no real money. Switch PAYPAL_MODE to live with your live Client ID/Secret when you're ready." }) : null);
+
+    // --- Kits for sale
+    const kName = h("input", { placeholder: "Name on the website, e.g. Raid kit" });
+    const kKit = h("select", {}, h("option", { value: "", text: "– custom kit –" }), d.custom_kits.map((k) => h("option", { value: k, text: k })));
+    const kPrice = h("input", { type: "number", min: "0.01", step: "0.01", placeholder: `Price (${cur})` });
+    const kDays = h("input", { type: "number", min: "0", step: "1", placeholder: "Days (0 = permanent)" });
+    const kDesc = h("input", { placeholder: "Description (optional)" });
+    const kSave = h("button", { class: "primary", text: "Add kit" });
+    const kCancel = h("button", { class: "ghost hidden", text: "Cancel", onclick: () => { editId = null; load(); } });
+    kSave.addEventListener("click", async () => {
+      const body = { name: kName.value, kit: kKit.value, price: kPrice.value, days: kDays.value || 0, description: kDesc.value };
+      await act(() => editId ? api(`/api/webshop/kits/${editId}`, { method: "PUT", body }) : api("/api/webshop/kits", { method: "POST", body }), editId ? "Kit saved" : "Kit added");
+      editId = null; load();
+    });
+    const kitRows = d.kits.map((k) => h("tr", {},
+      h("td", {}, h("strong", { text: k.name }), k.description ? h("div", { class: "muted", text: k.description }) : null),
+      h("td", { text: k.kit + (d.custom_kits.includes(k.kit) ? "" : " (missing!)") }),
+      h("td", { text: money(k.price, cur) }), h("td", { text: k.days ? `${k.days} days` : "permanent" }),
+      h("td", {}, h("span", { class: "pill " + (k.enabled ? "ok" : ""), text: k.enabled ? "for sale" : "hidden" })),
+      h("td", { class: "row tight" },
+        h("button", { class: "small", text: k.enabled ? "Hide" : "Show", onclick: async () => { await act(() => api(`/api/webshop/kits/${k.id}`, { method: "PUT", body: { enabled: !k.enabled } })); load(); } }),
+        h("button", { class: "small", text: "Edit", onclick: () => {
+          editId = k.id; kName.value = k.name; kKit.value = k.kit; kPrice.value = k.price; kDays.value = k.days; kDesc.value = k.description || "";
+          kSave.textContent = "Save kit"; kCancel.classList.remove("hidden"); kName.focus();
+        } }),
+        h("button", { class: "small danger", text: "Remove", onclick: async () => { if (!confirm(`Stop selling ${k.name}? (The custom kit itself stays.)`)) return; await act(() => api(`/api/webshop/kits/${k.id}`, { method: "DELETE" }), "Removed"); load(); } }))));
+    const kits = h("div", { class: "card" }, h("h2", { text: "🎒 Kits for sale" }),
+      h("p", { class: "muted", text: "Build the kit first (Kit builder → save as custom kit, or Kits → Custom kits), then put it up for sale here. Buyers get the kit's claim role – for N days or permanently." }),
+      d.kits.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Kit", "Custom kit", "Price", "Duration", "", ""].map((t) => h("th", { text: t })))), h("tbody", {}, kitRows))) : h("p", { class: "muted", text: "Nothing for sale yet." }),
+      h("div", { class: "row", style: "margin-top:.75rem" }, kName, kKit, kPrice, kDays),
+      h("div", { class: "row", style: "margin-top:.5rem" }, kDesc, kSave, kCancel));
+
+    // --- Gift cards
+    const gAmount = h("input", { type: "number", min: "0.01", step: "0.01", placeholder: `Value (${cur})` });
+    const gCount = h("input", { type: "number", min: "1", max: "100", value: "1", title: "How many" });
+    const gDays = h("input", { type: "number", min: "0", placeholder: "Valid for days (0 = no end)" });
+    const gNote = h("input", { placeholder: "Note, e.g. giveaway prize (optional)" });
+    const gOut = h("textarea", { rows: 3, readonly: true, class: "hidden", placeholder: "New codes" });
+    const gBtn = h("button", { class: "primary", text: "Create gift cards", onclick: async () => {
+      const r = await act(() => api("/api/webshop/giftcards", { method: "POST", body: { amount: gAmount.value, count: gCount.value, days: gDays.value || 0, note: gNote.value } }));
+      if (!r) return;
+      toast(`${r.codes.length} gift card(s) created`);
+      await load();
+      const out = $("#gift-codes");
+      if (out) { out.value = r.codes.join("\n"); out.classList.remove("hidden"); out.select(); }
+    } });
+    gOut.id = "gift-codes";
+    const now = Date.now() / 1000;
+    const giftRows = d.gift_cards.map((g) => {
+      const state = g.disabled ? ["disabled", "bad"] : (g.expires_at && g.expires_at < now) ? ["expired", ""] : g.balance <= 0 ? ["used up", ""] : ["active", "ok"];
+      return h("tr", {},
+        h("td", {}, h("code", { text: g.code })),
+        h("td", { text: `${money(g.balance, g.currency)} / ${money(g.initial, g.currency)}` }),
+        h("td", { class: "muted", text: (g.order_id ? `bought (order #${g.order_id})` : `by ${g.created_by}`) + (g.note ? ` · ${g.note}` : "") }),
+        h("td", { class: "muted", text: new Date(g.created_at * 1000).toLocaleDateString() + (g.expires_at ? ` → ${new Date(g.expires_at * 1000).toLocaleDateString()}` : "") }),
+        h("td", {}, h("span", { class: "pill " + state[1], text: state[0] })),
+        h("td", {}, h("button", { class: "small" + (g.disabled ? "" : " danger"), text: g.disabled ? "Enable" : "Disable", onclick: async () => {
+          await act(() => api(`/api/webshop/giftcards/${encodeURIComponent(g.code)}/toggle`, { method: "POST", body: { disabled: !g.disabled } })); load();
+        } })));
+    });
+    const gifts = h("div", { class: "card" }, h("h2", { text: "🎁 Gift cards" }),
+      h("p", { class: "muted", text: "Create codes to hand out (giveaways, apologies, prizes). Players enter the code at checkout; it pays all or part of an order, the rest stays on the card." }),
+      h("div", { class: "row" }, gAmount, gCount, gDays, gNote, gBtn), gOut,
+      d.gift_cards.length ? h("div", { class: "table-wrap", style: "margin-top:.75rem" }, h("table", {}, h("thead", {}, h("tr", {}, ["Code", "Balance", "From", "Created → ends", "", ""].map((t) => h("th", { text: t })))), h("tbody", {}, giftRows))) : null);
+
+    // --- Orders
+    const orderRows = d.orders.map((o) => h("tr", {},
+      h("td", { text: "#" + o.id }), h("td", { class: "muted", text: new Date(o.created_at * 1000).toLocaleString() }),
+      h("td", {}, o.title, o.result && o.status === "delivered" && o.kind !== "giftcard" ? h("div", { class: "muted", text: "→ " + o.result }) : null),
+      h("td", { text: o.player || "–" }),
+      h("td", {}, money(o.total, o.currency), h("div", { class: "muted", text: [o.gift_amount ? `gift ${money(o.gift_amount, o.currency)}` : "", o.paypal_amount ? `PayPal ${money(o.paypal_amount, o.currency)}` : ""].filter(Boolean).join(" + ") })),
+      h("td", {}, h("span", { class: "pill " + (ORDER_PILL[o.status] || ""), text: o.status }),
+        (o.status === "failed" || o.status === "review") && o.result ? h("div", { class: "muted", text: o.result }) : null),
+      h("td", { class: "muted", style: "font-size:.8rem" }, o.capture_id ? `capture ${o.capture_id}` : o.paypal_order ? `PayPal ${o.paypal_order}` : "", o.payer_email ? h("div", { text: o.payer_email }) : null),
+      h("td", {}, ["failed", "review"].includes(o.status) ? h("button", { class: "small", text: "Retry delivery", onclick: async () => {
+        const r = await act(() => api(`/api/webshop/orders/${o.id}/retry`, { method: "POST" }));
+        if (r) toast(r.ok ? "Delivered" : `Still failing: ${r.result || r.status}`, !r.ok);
+        load();
+      } }) : null)));
+    const orders = h("div", { class: "card" }, h("h2", { text: "🧾 Orders" }),
+      d.orders.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Date", "Product", "Player", "Paid", "Status", "PayPal", ""].map((t) => h("th", { text: t })))), h("tbody", {}, orderRows))) : h("p", { class: "muted", text: "No orders yet." }));
+
+    holder.replaceChildren(status, kits, gifts, orders);
+    if (editId) { kSave.textContent = "Save kit"; kCancel.classList.remove("hidden"); }
+  };
+  load();
 };
 
 start();

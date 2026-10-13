@@ -18,8 +18,8 @@ from plugin_api import Plugin, Setting
 from utils import format_duration, strip_rich_text
 
 INVITE = re.compile(r"^https://(discord\.gg|discord\.com/invite)/[\w-]{2,40}$")
-CSP = ("default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'self'; "
-       "frame-ancestors 'none'")
+CSP = ("default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; "
+       "form-action 'self' https://www.paypal.com https://www.sandbox.paypal.com; frame-ancestors 'none'")
 BOARDS = {"kills": "Kills", "kd": "K/D", "playtime": "Playtime", "teams": "Teams"}
 CACHE_SECONDS = 20
 
@@ -131,6 +131,8 @@ class PlayerWebsite(Plugin):
                 "Open Rust Console Edition → Play → Community servers → search for our server name.",
                 help="Shown on the home page."),
         Setting("leaderboards", "Leaderboards and player profiles", "bool", True),
+        Setting("show_store", "Show the web store (kits for real money, PayPal)", "bool", True,
+                help="Set it up in the web interface → Store and Settings → Store."),
         Setting("shop", "Show the points shop", "bool", True),
         Setting("rules", "Show the rules", "bool", True),
         Setting("accent", "Main colour", "text", "#e5341c", help="Hex colour, e.g. #e5341c (blends into orange)."),
@@ -169,6 +171,15 @@ class PlayerWebsite(Plugin):
             totals[b["target"]] = totals.get(b["target"], 0) + b["amount"]
         return sorted(totals.items(), key=lambda x: -x[1])
 
+    def store(self):
+        """The web store (cogs/webshop.py) if it has something to sell, else None."""
+        shop = self.bot.get_cog("WebShop")
+        if shop is None or not self.setting("show_store"):
+            return None
+        kits = bool(self.bot.db.store_kits(enabled_only=True))     # (can also be paid with gift cards alone)
+        paypal_only = shop.paypal is not None and (shop.builder_problem() is None or bool(shop.giftcard_values()))
+        return shop if kits or paypal_only else None
+
     def find_player(self, name: str):
         name = " ".join(str(name or "").split())[:64]
         return self.bot.db.player(name) if name else None
@@ -179,8 +190,10 @@ class PlayerWebsite(Plugin):
         links = [("", "Home")]
         if self.setting("leaderboards"):
             links += [("leaderboard", "Leaderboard"), ("player", "Players")]
+        if self.store() is not None:
+            links.append(("store", "Store"))
         if self.setting("shop") and self.points_enabled:
-            links.append(("shop", "Shop"))
+            links.append(("shop", "Points"))
         if self.setting("rules"):
             links.append(("rules", "Rules"))
         nav = "".join(f'<a href="{base}/{path}" class="{"active" if path == active else ""}">{esc(label)}</a>'
@@ -401,6 +414,8 @@ class PlayerWebsite(Plugin):
 
     def render(self, base: str, path: str, query) -> tuple[int, str]:
         path = path.strip("/")
+        if path == "store" or path.startswith("store/"):
+            return 404, self.not_found(base)          # handled in web_public (needs the request)
         if path in ("", "index.html"):
             return 200, self.home(base)
         if path == "leaderboard" and self.setting("leaderboards"):
@@ -438,5 +453,20 @@ class PlayerWebsite(Plugin):
             return web.Response(body=data, content_type=kind,
                                 headers={**headers, "Cache-Control": "public, max-age=86400"})
         base = "/play" if request.path.startswith("/play") else f"/p/{self.plugin_id}"
+        if path == "store" or path.startswith("store/"):
+            shop = self.store()
+            if shop is None:
+                status, text = 404, self.not_found(base)
+            else:
+                from web.server import WebInterface
+                from web.store_pages import handle
+                out = await handle(self, shop, request, base, path, WebInterface._client_ip(request))
+                if isinstance(out, web.StreamResponse):
+                    return out
+                status, text = out
+            headers = {**headers, "Cache-Control": "no-store"}
+            return web.Response(status=status, text=text, content_type="text/html", headers=headers)
+        if request.method != "GET":
+            raise web.HTTPMethodNotAllowed(request.method, ["GET"])
         status, text = self.render(base, path, request.query)
         return web.Response(status=status, text=text, content_type="text/html", headers=headers)

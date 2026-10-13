@@ -709,7 +709,10 @@ class KitRequests(commands.Cog):
 
     async def _grant(self, req, by: str) -> str:
         channel = self.bot.get_channel(req["channel_id"]) if req["channel_id"] else None
-        guild = getattr(channel, "guild", None) or (self.bot.guilds[0] if self.bot.guilds else None)
+        guild = getattr(channel, "guild", None)
+        if guild is None:          # no ticket (e.g. a web store order): the bot's Discord server
+            gid = self.bot.config.guild_id
+            guild = self.bot.get_guild(gid) if gid else (self.bot.guilds[0] if self.bot.guilds else None)
         if guild is None:
             raise KitRequestError("The Discord server is not available.")
         new = self.new_items(req)

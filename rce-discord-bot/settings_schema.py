@@ -36,7 +36,7 @@ GROUPS = [
     ("tickets", "🎫 Tickets & AI"),
     ("community", "🎉 Community"),
     ("economy", "🪙 Points & shop"),
-    ("store", "💳 Tip4Serv store"),
+    ("store", "💳 Store: PayPal, gift cards & Tip4Serv"),
     ("wipe", "🧹 Wipe"),
     ("alerts", "🚨 Alerts & backups"),
     ("abuse", "🛡️ Admin abuse protection"),
@@ -185,6 +185,24 @@ FIELDS: list[Field] = [
     Field("POINTS_PER_KILL", "Points per PvP kill", "economy", "int", placeholder="5",
           help="The same killer/victim pair counts at most once every 10 minutes (no farming)."),
     Field("DAILY_POINTS", "Points for /daily", "economy", "int", placeholder="50"),
+    # Web store (PayPal checkout on the player website) + gift cards
+    Field("PAYPAL_CLIENT_ID", "PayPal Client ID", "store",
+          help="Web store checkout. developer.paypal.com → Apps & Credentials → Create App → Client ID. Empty = "
+               "PayPal off (gift cards still work)."),
+    Field("PAYPAL_SECRET", "PayPal Secret", "store", "secret", help="The app's Secret (next to the Client ID)."),
+    Field("PAYPAL_MODE", "PayPal mode", "store", choices=("sandbox", "live"),
+          help="sandbox = test payments with PayPal test accounts (default), live = real money. Sandbox and live "
+               "have different Client IDs/Secrets."),
+    Field("STORE_CURRENCY", "Store currency", "store", placeholder="EUR",
+          help="3 letters, e.g. EUR, USD, GBP. Empty = the price list's currency (prices.txt). Kit prices and gift "
+               "cards use it."),
+    Field("STORE_CUSTOM_KITS", "Players can build and buy their own custom kit", "store", "bool",
+          help="On (default): the website store has a kit builder priced by the price list (prices.txt)."),
+    Field("STORE_GIFTCARD_VALUES", "Gift cards players can buy", "store", placeholder="10, 25, 50",
+          help="Values players can buy on the website (comma-separated). Empty = gift cards are only made by "
+               "owners (web interface → Store)."),
+    Field("STORE_CHANNEL_ID", "Store purchase log channel", "store", "id", pick="text_channel",
+          help="Every web store purchase and problem is posted here. Empty = admin log."),
     # Tip4Serv store (custom kit purchases)
     Field("TIP4SERV_KEY", "Tip4Serv server key", "store", "secret",
           help="tip4serv.com → Servers → add a server for the bot with the PLUGIN connection (game Rust/Oxide – "
@@ -368,6 +386,11 @@ def validate(key: str, value: str) -> str | None:
         return f'"{f.label}": allowed values are {", ".join(f.choices)}.'
     if key == "RCON_HOST" and (":" in value or "/" in value):
         return 'Enter the server IP without a port and without "/".'
+    if key == "STORE_CURRENCY" and not re.fullmatch(r"[A-Za-z]{3}", value):
+        return f'"{f.label}" must be a 3-letter currency code like EUR.'
+    if key == "STORE_GIFTCARD_VALUES" and not all(re.fullmatch(r"\d+(\.\d{1,2})?", v.strip())
+                                                  for v in value.split(",") if v.strip()):
+        return f'"{f.label}" must be numbers separated by commas, e.g. 10, 25, 50.'
     if key == "AUTO_UPDATE_REPO" and not re.fullmatch(r"[\w.-]+/[\w.-]+", value):
         return f'"{f.label}" must look like owner/repository.'
     if key == "AUTO_UPDATE_BRANCH" and not re.fullmatch(r"[\w./-]+", value):

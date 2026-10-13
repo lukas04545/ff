@@ -116,6 +116,8 @@ def test_own_plugin_upload_reload_and_delete(pb):
             await m.install("hello.py", "def broken(:\n")
         with pytest.raises(PluginError, match="exactly one class"):
             await m.install("hello.py", "x = 1\n")
+        with pytest.raises(PluginError, match="same key: text"):
+            await m.install("hello.py", HELLO.replace('Setting("times"', 'Setting("text"'))
         assert m.running("hello") is not None and "Hi" in (m.user_dir / "hello.py").read_text()
         with pytest.raises(PluginError, match="built-in"):
             await m.install("bounties.py", HELLO)

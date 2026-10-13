@@ -68,7 +68,7 @@ PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
-                       "/api/plugins")
+                       "/api/plugins", "/api/webshop")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -374,6 +374,13 @@ class WebInterface:
         r.add_get("/api/backups", self.list_backups)
         r.add_post("/api/backups", self.create_backup)
         r.add_get("/api/backups/{name}", self.download_backup)
+        r.add_get("/api/webshop", self.webshop)
+        r.add_post("/api/webshop/kits", self.webshop_kit_create)
+        r.add_put("/api/webshop/kits/{kit_id:\\d+}", self.webshop_kit_update)
+        r.add_delete("/api/webshop/kits/{kit_id:\\d+}", self.webshop_kit_delete)
+        r.add_post("/api/webshop/giftcards", self.webshop_giftcards_create)
+        r.add_post("/api/webshop/giftcards/{code}/toggle", self.webshop_giftcard_toggle)
+        r.add_post("/api/webshop/orders/{order_id:\\d+}/retry", self.webshop_retry)
         r.add_get("/api/plugins", self.plugins_list)
         r.add_post("/api/plugins/upload", self.plugin_upload)
         r.add_post("/api/plugins/{pid}/toggle", self.plugin_toggle)
@@ -385,8 +392,10 @@ class WebInterface:
         r.add_delete("/api/plugins/{pid}/file/{key}", self.plugin_file_delete)
         r.add_get("/play", self.player_website)                     # public player website (plugin "website")
         r.add_get("/play/{tail:.*}", self.player_website)
+        r.add_post("/play/{tail:.*}", self.player_website)          # store checkout forms
         r.add_get("/p/{pid}", self.plugin_public)                  # public plugin pages (no login)
         r.add_get("/p/{pid}/{tail:.*}", self.plugin_public)
+        r.add_post("/p/{pid}/{tail:.*}", self.plugin_public)
         return app
 
     async def start(self, *, open_browser: bool | None = None) -> bool:
@@ -598,6 +607,108 @@ class WebInterface:
         if cog is None:
             raise ApiError(f"Module {name} is not loaded.", 503)
         return cog
+
+    # ------------------------------------------------------------ Web store (owner)
+
+    async def webshop(self, request: web.Request) -> web.Response:
+        shop = self._cog("WebShop")
+        db = self.bot.db
+        order_cols = ("id", "kind", "title", "player", "user_id", "total", "currency", "gift_code", "gift_amount",
+                      "paypal_amount", "paypal_order", "capture_id", "payer_email", "status", "result", "request_id",
+                      "created_at", "paid_at")
+        orders = [{k: (str(o[k]) if k == "user_id" and o[k] else o[k]) for k in order_cols}
+                  for o in db.store_orders(limit=150)]
+        return web.json_response({
+            "status": shop.status(), "kits": [dict(r) for r in db.store_kits()],
+            "custom_kits": [k["name"] for k in db.custom_kits()],
+            "gift_cards": [dict(g) for g in db.gift_cards()], "orders": orders,
+            "price_list": bool(shop.price_list())})
+
+    def _store_kit_fields(self, data: dict, *, partial: bool = False) -> dict:
+        out = {}
+        if not partial or "kit" in data:
+            kit = self.bot.db.custom_kit(self._text(data, "kit", limit=60))
+            if kit is None:
+                raise ApiError("Choose an existing custom kit (create one in the kit builder first).")
+            out["kit"] = kit["name"]
+        if not partial or "name" in data:
+            out["name"] = self._text(data, "name", limit=60)
+        if not partial or "price" in data:
+            try:
+                price = round(float(data.get("price")), 2)
+            except (TypeError, ValueError):
+                raise ApiError("The price must be a number.") from None
+            if not 0.01 <= price <= 100_000:
+                raise ApiError("The price must be between 0.01 and 100 000.")
+            out["price"] = price
+        if not partial or "days" in data:
+            try:
+                days = int(data.get("days") or 0)
+            except (TypeError, ValueError):
+                raise ApiError("Days must be a whole number.") from None
+            if not 0 <= days <= 3650:
+                raise ApiError("Days: 0 (permanent) to 3650.")
+            out["days"] = days
+        if not partial or "description" in data:
+            out["description"] = str(data.get("description") or "").strip()[:500] or None
+        if "enabled" in data:
+            out["enabled"] = 1 if data.get("enabled") else 0
+        return out
+
+    async def webshop_kit_create(self, request: web.Request) -> web.Response:
+        f = self._store_kit_fields(await self._json(request))
+        kit_id = self.bot.db.add_store_kit(f["name"], f["kit"], f["price"], f["days"], f["description"])
+        self._audit(f"store: kit **{f['name']}** for sale ({f['kit']}, {f['price']})")
+        return web.json_response({"id": kit_id})
+
+    async def webshop_kit_update(self, request: web.Request) -> web.Response:
+        kit_id = int(request.match_info["kit_id"])
+        f = self._store_kit_fields(await self._json(request), partial=True)
+        if not self.bot.db.update_store_kit(kit_id, **f):
+            raise ApiError("Kit not found.", 404)
+        self._audit(f"store: kit #{kit_id} changed")
+        return web.json_response({"ok": True})
+
+    async def webshop_kit_delete(self, request: web.Request) -> web.Response:
+        if not self.bot.db.delete_store_kit(int(request.match_info["kit_id"])):
+            raise ApiError("Kit not found.", 404)
+        self._audit(f"store: kit #{request.match_info['kit_id']} removed")
+        return web.json_response({"ok": True})
+
+    async def webshop_giftcards_create(self, request: web.Request) -> web.Response:
+        from cogs.webshop import CheckoutError
+        data = await self._json(request)
+        try:
+            amount, count, days = float(data.get("amount")), int(data.get("count") or 1), int(data.get("days") or 0)
+        except (TypeError, ValueError):
+            raise ApiError("Value, number and days must be numbers.") from None
+        if not 0 <= days <= 3650:
+            raise ApiError("Valid for: 0 (no end) to 3650 days.")
+        try:
+            codes = self._cog("WebShop").create_gift_cards(amount, count, request["user"], days=days,
+                                                           note=str(data.get("note") or ""))
+        except CheckoutError as exc:
+            raise ApiError(str(exc)) from None
+        self._audit(f"store: {len(codes)} gift card(s) of {amount:.2f} created")
+        return web.json_response({"codes": codes})
+
+    async def webshop_giftcard_toggle(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        code = request.match_info["code"]
+        if not self.bot.db.set_gift_card_disabled(code, bool(data.get("disabled"))):
+            raise ApiError("Gift card not found.", 404)
+        self._audit(f"store: gift card {code[:4]}… {'disabled' if data.get('disabled') else 'enabled'}")
+        return web.json_response({"ok": True})
+
+    async def webshop_retry(self, request: web.Request) -> web.Response:
+        order_id = int(request.match_info["order_id"])
+        shop = self._cog("WebShop")
+        ok = await shop.retry(order_id)
+        order = self.bot.db.store_order(order_id)
+        if order is None:
+            raise ApiError("Order not found.", 404)
+        self._audit(f"store: order #{order_id} delivery retried ({order['status']})")
+        return web.json_response({"ok": ok, "status": order["status"], "result": order["result"]})
 
     # ------------------------------------------------------------ Item pictures
 
