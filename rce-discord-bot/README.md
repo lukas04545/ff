@@ -194,6 +194,8 @@ rce-discord-bot/
 │   ├── store.py           # Tip4Serv purchases (polled every minute) → automatic approval
 │   ├── automod.py         # AI chat moderation: warns offensive members in chosen channels
 │   ├── webshop.py         # Web store: PayPal checkout, gift cards, delivery of bought kits
+│   ├── aichat.py          # AI chats with members in chosen channels (own instructions)
+│   ├── countdown.py       # /countdown: one self-editing countdown message
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── plugins/               # Built-in plugins (one file each, on/off in the web interface → 🧩 Plugins)
 │   ├── invites.py         # Invite rewards
@@ -591,6 +593,7 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/wipe info` | everyone | Next wipe with countdown |
 | `/wipe set`, `/wipe clear`, `/wipe done` | Admins | Plan the next wipe (with repeat), clear it, or mark it as done now (runs the resets) |
 | `/schedule add/list/toggle/remove` | Admins | Messages posted automatically every N minutes in-game and/or in Discord |
+| `/countdown` | Admins | One message in the current channel that counts down in place (pings a chosen role once at the start) |
 | `/report <player> <reason>` | everyone | Report an in-game player to the staff |
 | `/watch add/remove/list` | Admins | Get pinged when a watched player joins |
 | `/teams top [category]`, `/teams of <player>` | everyone | Team leaderboard and a player's team |
