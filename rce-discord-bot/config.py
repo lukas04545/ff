@@ -156,6 +156,7 @@ class Config:
     store_custom_kits: bool              # players can build their own kit on the website
     store_giftcard_values: tuple[float, ...]   # gift cards players can buy (empty = owners only)
     store_channel_id: int | None         # purchase log (empty = admin log)
+    store_admin_key: str                 # checkout without payment with this key (empty = off)
     price_list_file: Path                # prices.txt
     points_name: str                      # e.g. "points", "coins", "scrap"
     points_per_hour: int                  # for linked players while online
@@ -344,6 +345,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         store_giftcard_values=tuple(sorted({round(float(v), 2) for v in _get("STORE_GIFTCARD_VALUES").split(",")
                                             if v.strip().replace(".", "", 1).isdigit() and float(v) > 0})),
         store_channel_id=_int("STORE_CHANNEL_ID"),
+        store_admin_key=_get("STORE_ADMIN_KEY") if len(_get("STORE_ADMIN_KEY")) >= 12 else "",
         price_list_file=Path(_get("PRICE_LIST_FILE", "prices.txt") or "prices.txt"),
         points_name=_get("POINTS_NAME", "points") or "points",
         points_per_hour=max(0, _int("POINTS_PER_HOUR", 10)),

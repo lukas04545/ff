@@ -65,6 +65,7 @@ class WebShop(commands.Cog):
         self._paypal: tuple[tuple, PayPalClient] | None = None
         self._gift_failures = RateLimiter(10, 900)      # wrong gift card codes per visitor
         self._checkouts = RateLimiter(10, 600)          # started orders per visitor (each one is a PayPal order)
+        self._key_failures = RateLimiter(5, 900)        # wrong admin keys per visitor
         self._locks: dict[int, asyncio.Lock] = {}
 
     async def cog_load(self) -> None:
@@ -114,6 +115,7 @@ class WebShop(commands.Cog):
     def status(self) -> dict:
         pp = self.paypal
         return {"paypal": bool(pp), "paypal_mode": self.bot.config.paypal_mode, "currency": self.currency,
+                "admin_key": bool(self.bot.config.store_admin_key),
                 "builder": self.builder_problem() is None, "builder_problem": self.builder_problem(),
                 "giftcard_values": list(self.giftcard_values())}
 
@@ -134,6 +136,19 @@ class WebShop(commands.Cog):
                                       expires_at=expires, order_id=order_id)
             codes.append(code)
         return codes
+
+    def check_admin_key(self, key: str, ip: str = "?") -> None:
+        """Admin key for a free checkout (STORE_ADMIN_KEY). Wrong keys: 5 tries per 15 minutes per visitor."""
+        from web.users import same_secret
+        expected = self.bot.config.store_admin_key
+        if not expected:
+            raise CheckoutError("The admin key isn't enabled.")
+        if self._key_failures.retry_after(ip) is not None:
+            raise CheckoutError("Too many wrong admin keys – please wait 15 minutes.")
+        if not same_secret(key.strip(), expected):
+            self._key_failures.hit(ip)
+            log.warning("Wrong store admin key from %s", ip)
+            raise CheckoutError("Wrong admin key.")
 
     def gift_card(self, code: str, ip: str = "?"):
         """A usable gift card or CheckoutError (wrong codes are limited per visitor)."""
@@ -213,8 +228,9 @@ class WebShop(commands.Cog):
 
     async def checkout(self, kind: str, *, base_url: str, kit_id=None, items: dict | None = None,
                        timer_hours: int | None = None, value=None, player: str = "", gift_code: str = "",
-                       ip: str = "?") -> dict:
-        """Starts an order. Returns {"token", "redirect"} (PayPal) or {"token"} (paid with a gift card)."""
+                       admin_key: str = "", ip: str = "?") -> dict:
+        """Starts an order. Returns {"token", "redirect"} (PayPal) or {"token"} (paid with a gift card or free with
+        the admin key)."""
         db = self.bot.db
         if self._checkouts.hit(ip) is not None:
             raise CheckoutError("Too many orders started – please wait a few minutes.")
@@ -240,6 +256,14 @@ class WebShop(commands.Cog):
             raise CheckoutError("Unknown product.")
         if kind in ("kit", "custom"):
             fields["player"], fields["user_id"] = self._buyer(player)
+        if admin_key.strip():
+            self.check_admin_key(admin_key, ip)
+            token = secrets.token_urlsafe(18)
+            order_id = db.add_store_order(token=token, admin_key=1, **fields)
+            db.move_store_order(order_id, "pending", "paid", paid_at=int(time.time()))
+            log.warning("Store order #%s taken for free with the admin key (from %s)", order_id, ip)
+            await self.fulfil(order_id)
+            return {"token": token}
         total = fields["total"]
         gift_row, gift_amount = None, 0.0
         if gift_code.strip():
@@ -343,7 +367,8 @@ class WebShop(commands.Cog):
         if order is None or order["status"] != "paid":
             return False
         pay = (f"PayPal {order['capture_id']}" if order["capture_id"] else "") + \
-              (f" gift card {order['gift_code'][:4]}…" if order["gift_code"] else "")
+              (f" gift card {order['gift_code'][:4]}…" if order["gift_code"] else "") + \
+              (" FREE with the admin key" if order["admin_key"] else "")
         try:
             if order["kind"] == "giftcard":
                 code = self.create_gift_cards(float(order["total"]), 1, f"store order #{order_id}",
@@ -381,10 +406,10 @@ class WebShop(commands.Cog):
                             "fix it and click Retry in the web interface (Store → Orders).", alert=True)
             return False
         db.move_store_order(order_id, "paid", "delivered", result=result[:300])
-        await self._log(f"💳 Store order #{order_id}: **{safe_md(order['title'])}** "
+        await self._log(("🔑 " if order["admin_key"] else "") + f"💳 Store order #{order_id}: **{safe_md(order['title'])}** "
                         f"{self.fmt(float(order['total']))}"
                         + (f" for <@{order['user_id']}> ({safe_md(order['player'] or '')})" if order["user_id"] else "")
-                        + f" – {safe_md(pay.strip())} – delivered")
+                        + f" – {safe_md(pay.strip())} – delivered", alert=bool(order["admin_key"]))
         if order["user_id"] and order["kind"] != "giftcard":
             await self._dm(order["user_id"], f"✅ Thanks for your purchase! **{safe_md(order['title'])}** is yours: "
                                              f"claim it in-game with `/customkit claim {result}` on our Discord "
