@@ -763,6 +763,18 @@ from your knowledge base. If it can't help, it **pings the support roles**.
 - The AI is unreachable (e.g. no balance left) or the reply limit per ticket has been reached.
 - Without a `DEEPSEEK_API_KEY`, every new ticket goes straight to staff.
 
+**AI chat (talks with members):** pick channels in **Settings → 🎉 Community → AI chat: channels**
+(`AI_CHAT_CHANNEL_IDS`). There the AI chats with the community – answers questions, small talk, helps new players.
+*When to answer* (`AI_CHAT_MODE`): `mentions` (default – when someone @mentions the bot or replies to its message)
+or `all` (every message; use *AI chat: seconds per member between answers*, `AI_CHAT_COOLDOWN`, default 10).
+**Your own instructions** (`AI_CHAT_INSTRUCTIONS`): personality, tone, topics and rules – e.g. "You are Rusty, a
+sarcastic but helpful survivor", "Always answer in English", "Promote our Saturday events" – they take priority
+over its defaults. `AI_CHAT_NAME` sets the name it uses. With `AI_CHAT_KNOWLEDGE` (on) it answers server questions
+from the knowledge base and the live status; it never invents rules or prices and points to a ticket when it
+doesn't know. It only talks: it can't give anything, never pings anyone (@everyone, roles, users) and keeps
+answers short, in the member's language. It sees the last messages of the channel as context. Needs the DeepSeek
+API key and the Message Content intent; messages in those channels are sent to DeepSeek.
+
 **AI chat moderation:** pick the channels to watch in **Settings → 🎉 Community → AI moderation: channels**
 (`AI_MOD_CHANNEL_IDS`, e.g. #general). The AI checks new messages there in batches – every
 *AI moderation: check every … seconds* (`AI_MOD_INTERVAL`, default 15; 0 = every new message is read right away, higher = fewer
