@@ -13,7 +13,10 @@ from tests.test_kit_requests import env  # noqa: F401  (fixture: bot + Tickets c
 def test_parse_flags():
     raw = json.dumps({"flags": [{"id": "1", "severity": "HIGH", "reason": "racist slur"},
                                 {"id": "99", "severity": "low", "reason": "x"}, "junk"]})
-    assert parse_flags(raw, {"1", "2"}) == [{"id": "1", "severity": "high", "reason": "racist slur", "warning": None}]
+    assert parse_flags(raw, {"1", "2"}) == [{"id": "1", "severity": "high", "reason": "racist slur", "warning": None,
+                                             "mute_minutes": None}]
+    clamp = lambda m: parse_flags(json.dumps({"flags": [{"id": "1", "mute_minutes": m}]}), {"1"})[0]["mute_minutes"]  # noqa
+    assert (clamp(1), clamp(45), clamp("90"), clamp(500), clamp("x")) == (5, 45, 90, 120, None)
     w = parse_flags(json.dumps({"flags": [{"id": "1", "warning": "Hey, das war beleidigend @everyone <@123> – "
                                                                 "bitte bleib respektvoll. https://x.y"}]}), {"1"})
     assert w[0]["warning"] == "Hey, das war beleidigend – bitte bleib respektvoll."
@@ -64,12 +67,12 @@ def test_flags_warn_delete_and_timeout(mod):
     troll, friendly = mod.Member(10), mod.Member(11)
     mod.verdicts.update({"1": {"severity": "low", "reason": "insulting another player",
                                "warning": "Calling other players worthless isn't okay here – please keep it respectful."},
-                         "3": {"severity": "high", "reason": "hate speech"}})
+                         "3": {"severity": "high", "reason": "hate speech", "mute_minutes": 90}})
     say(mod, 1, "you are a worthless idiot", troll)
     say(mod, 2, "lol get raided ez", friendly)
     flags = asyncio.run(mod.cog.flush())
     assert [f["id"] for f in flags] == ["1"] and len(mod.calls) == 1        # one AI call for the whole batch
-    assert "[id 1] user10: you are a worthless idiot" in mod.calls[0] and "[id 2]" in mod.calls[0]
+    assert "[id 1] user10 (warnings today: 0): you are a worthless idiot" in mod.calls[0] and "[id 2]" in mod.calls[0]
     assert mod.out.replies == ["⚠️ <@10> Calling other players worthless isn't okay here – please keep it "
                                "respectful. `1/2`"]
     assert mod.out.deleted == [] and mod.out.timeouts == []                 # low severity: warn only
@@ -78,8 +81,9 @@ def test_flags_warn_delete_and_timeout(mod):
     say(mod, 3, "[slur]", troll)
     asyncio.run(mod.cog.flush())
     assert mod.out.deleted == [3]                                           # severe + AI_MOD_DELETE
-    assert mod.out.timeouts == [(10, 600.0)]                                # 2nd warning in 24 h -> 10 min timeout
-    assert "Timed out for 10 minutes" in mod.out.sent[-1]
+    assert mod.out.timeouts == [(10, 5400.0)]                               # 2nd warning: the AI chose 90 minutes
+    assert "Timed out for 1 hour 30 minutes" in mod.out.sent[-1]
+    assert "(warnings today: 1)" in mod.calls[1]                            # the AI sees earlier warnings
     assert mod.out.sent[-1].startswith("⚠️ <@10> please keep it respectful – hate speech. `2/2`")  # no AI text
     assert "CONTEXT (already checked)" in mod.calls[1] and "user11: lol get raided ez" in mod.calls[1]
     assert mod.env.db.count_ai_warnings(1, 10) == 2 and mod.env.db.count_ai_warnings(1, 11) == 0
