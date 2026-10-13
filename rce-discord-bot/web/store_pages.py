@@ -192,10 +192,12 @@ def build_page(site, shop, base: str, query, error: str = "", admin: bool = Fals
             hidden = "".join(f'<input type="hidden" name="q.{esc(i["short"])}" value="{i["amount"]}">' for i in picked)
             if q.timer_hours:
                 hidden += f'<input type="hidden" name="timer" value="{q.timer_hours}">'
+            name_field = ('<label class="field"><span>Kit name (optional)</span><input name="name" maxlength="40" '
+                          f'placeholder="e.g. My Raid Kit" value="{esc(query.get("name", ""))}"></label>')
             summary = (f'<div class="card"><h2>Your kit – <span class="price">{esc(shop.fmt(q.total))}</span></h2>'
                        f'{site.item_tiles([(i["short"], i["amount"]) for i in picked])}<table>{rows}</table>'
                        f'<form method="post" action="{base}/store/checkout"><input type="hidden" name="kind" '
-                       f'value="custom">{hidden}{buyer_fields(values=query, admin=admin)}'
+                       f'value="custom">{hidden}{name_field}{buyer_fields(values=query, admin=admin)}'
                        f'{pay_button(admin, f"Buy for {shop.fmt(q.total)} with PayPal")}</form></div>')
     return wrap(site, shop, base, "store/build", "Build your own kit", notice(error, "bad") + summary + form, admin)
 
@@ -291,7 +293,7 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
                 kind, base_url=_base_url(request, base), kit_id=form.get("kit"), items=amounts,
                 timer_hours=int(timer) if timer.isdigit() else None, value=form.get("value"),
                 player=str(form.get("player", "")), gift_code=str(form.get("gift", "")),
-                admin_key=str(form.get("admin_key", "")) if admin else "", ip=ip)
+                name=str(form.get("name", "")), admin_key=str(form.get("admin_key", "")) if admin else "", ip=ip)
         except CheckoutError as exc:
             values = {k: str(v) for k, v in form.items() if k != "admin_key"}
             if kind == "custom":

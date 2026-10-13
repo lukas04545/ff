@@ -159,13 +159,20 @@ def test_custom_kit_and_gift_card_purchase(shop):
     with pytest.raises(CheckoutError, match="at least one"):
         s.price_custom({"rifle.ak": 0})
     r = run(s.checkout("custom", base_url="https://x/play", items={"rifle.ak": 1, "ammo.rifle": 300},
-                       timer_hours=12, player="Gamer7"))
+                       timer_hours=12, player="Gamer7", name=' My "Raid" Kit '))
     assert shop.pp.orders["PP1"]["amount"] == 10.0
+    order = db.store_order_by("token", r["token"])
+    assert order["kit_name"] == "My Raid Kit" and order["title"] == "Custom kit: My Raid Kit"   # buyer's name, cleaned
     order = run(s.complete(r["token"]))
-    assert order["status"] == "delivered" and order["result"] == "Gamer7 kit"
-    kit = db.custom_kit("Gamer7 kit")
+    assert order["status"] == "delivered" and order["result"] == "My Raid Kit"
+    kit = db.custom_kit("My Raid Kit")
     assert kit["cooldown_minutes"] == 720
-    assert {i["shortname"]: i["amount"] for i in db.custom_kit_items("Gamer7 kit")} == {"rifle.ak": 1, "ammo.rifle": 300}
+    assert {i["shortname"]: i["amount"] for i in db.custom_kit_items("My Raid Kit")} == {"rifle.ak": 1, "ammo.rifle": 300}
+    # No name given -> falls back to the player's name; a clash gets a number
+    db.create_custom_kit("Gamer7 kit", None, "x")
+    r2 = run(s.checkout("custom", base_url="https://x/play", items={"rifle.ak": 1}, player="Gamer7"))
+    assert db.store_order_by("token", r2["token"])["kit_name"] is None
+    assert run(s.complete(r2["token"]))["result"] == "Gamer7 kit 2"
     # Gift cards for sale
     with pytest.raises(CheckoutError, match="isn't available"):
         run(s.checkout("giftcard", base_url="https://x/play", value="11"))
@@ -240,7 +247,7 @@ def test_website_store_and_admin_api(shop, monkeypatch):
             page = await (await c.get(f"/play/store/order/{token}")).text()
             assert "Done!" in page and "/customkit claim Ak Kit" in page
             page = await (await c.get("/play/store/build?q.rifle.ak=1&q.ammo.rifle=250")).text()
-            assert "6.00" in page and 'name="q.rifle.ak" value="1"' in page
+            assert "6.00" in page and 'name="q.rifle.ak" value="1"' in page and 'name="name"' in page
             page = await (await c.get("/play/store/giftcards")).text()
             assert "25.00" in page
             assert (await c.get("/play/store/order/nope")).status == 404
