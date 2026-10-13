@@ -137,6 +137,12 @@ FIELDS: list[Field] = [
                "warnings today); this is only the fallback."),
     Field("AI_MOD_DELETE", "AI moderation: delete severe messages", "community", "bool",
           help="Off (default): only warn. On: slurs, threats etc. are also deleted (the bot needs Manage Messages)."),
+    Field("AI_MOD_INSTRUCTIONS", "AI moderation: your own rules", "community", "textarea",
+          placeholder="e.g. Be strict: also warn for 'stfu' and 'kys'.\nSwearing in German is fine.\n"
+                      "Never warn for the word 'noob'.\nWarnings should sound friendly and mention #rules.",
+          help="Extra instructions for the moderation AI – they take priority over its defaults: make it stricter "
+               "or more relaxed, add or allow words/topics, change how the warnings sound, how long mutes should "
+               "be. Plain language, one rule per line. Applies right away."),
     Field("WELCOME_CHANNEL_ID", "Welcome channel", "community", "id", pick="text_channel"),
     Field("WELCOME_MESSAGE", "Welcome message", "community", "textarea",
           help="Placeholders: {member} {server} {count} {rules}"),

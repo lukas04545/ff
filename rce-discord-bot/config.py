@@ -143,6 +143,7 @@ class Config:
     ai_mod_timeout_after: int            # warnings in 24 h -> timeout (0 = never)
     ai_mod_timeout_minutes: int
     ai_mod_delete: bool                  # delete severe messages
+    ai_mod_instructions: str             # owner's own rules for the moderation AI
     tip4serv_channel_id: int | None      # channel where Tip4Serv's Discord bot announces purchases
     tip4serv_auto_approve: bool          # paid + priced new custom kits are approved by the bot
     tip4serv_name_match: bool            # payments may be matched by in-game name (not only Discord ID)
@@ -308,6 +309,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         ai_mod_timeout_after=max(0, _int("AI_MOD_TIMEOUT_AFTER", 3)),
         ai_mod_timeout_minutes=max(1, min(_int("AI_MOD_TIMEOUT_MINUTES", 10), 40320)),
         ai_mod_delete=_bool("AI_MOD_DELETE", False),
+        ai_mod_instructions=_get("AI_MOD_INSTRUCTIONS")[:3000],
         tip4serv_channel_id=_int("TIP4SERV_CHANNEL_ID"),
         tip4serv_auto_approve=_bool("TIP4SERV_AUTO_APPROVE", True),
         tip4serv_name_match=_bool("TIP4SERV_NAME_MATCH", True),

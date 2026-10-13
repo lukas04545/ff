@@ -133,6 +133,63 @@ function route() {
 }
 window.addEventListener("hashchange", route);
 
+// ------------------------------------------------------------------ Collapsible cards (every page)
+// Every card whose first element is an <h2> gets a toggle; the state is remembered per page and title.
+// Works for cards that are built later or re-rendered (MutationObserver), and adds "Collapse all / Expand all".
+const COLLAPSE_KEY = "rce-collapsed";
+let collapsedState = {};
+try { collapsedState = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "{}") || {}; } catch { /* storage blocked */ }
+const saveCollapsed = () => { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedState)); } catch { /* ignore */ } };
+const cardKey = (h2) => `${(location.hash || "#overview").slice(1)}|${h2.textContent.replace(/[\d.,]+/g, "#").replace(/\s+/g, " ").trim().slice(0, 60)}`;
+
+// The card's header: its first element if that's an <h2>, or a row whose first element is the <h2>
+function cardHeader(card) {
+  const first = card.firstElementChild;
+  if (!first) return null;
+  if (first.tagName === "H2") return first;
+  if (first.tagName === "DIV" && first.classList.contains("row") && first.firstElementChild?.tagName === "H2") return first;
+  return null;
+}
+const headerTitle = (head) => (head.tagName === "H2" ? head : head.firstElementChild);
+
+function setCollapsed(card, collapsed, remember = true) {
+  card.classList.toggle("collapsed", collapsed);
+  const head = card.querySelector(":scope > .card-head");
+  if (head) {
+    head.setAttribute("aria-expanded", String(!collapsed));
+    const key = cardKey(headerTitle(head));
+    if (remember) { if (collapsed) collapsedState[key] = 1; else delete collapsedState[key]; saveCollapsed(); }
+  }
+}
+
+function decorateCards(root) {
+  root.querySelectorAll(".card").forEach((card) => {
+    const head = cardHeader(card);
+    if (!head || head.dataset.toggle) return;
+    head.dataset.toggle = "1";
+    head.classList.add("card-head");
+    head.tabIndex = 0;
+    head.setAttribute("role", "button");
+    head.append(h("span", { class: "chev", "aria-hidden": "true" }));
+    const toggle = (e) => {
+      if (e.target.closest("a, button, input, select, textarea")) return;
+      setCollapsed(card, !card.classList.contains("collapsed"));
+    };
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", (e) => { if (e.target === head && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggle(e); } });
+    if (collapsedState[cardKey(headerTitle(head))]) setCollapsed(card, true, false);
+    else head.setAttribute("aria-expanded", "true");
+  });
+  const h1 = root.querySelector(":scope > h1");
+  if (h1 && !root.querySelector(":scope > .page-tools") && root.querySelectorAll(".card > .card-head").length > 1) {
+    const all = (collapsed) => root.querySelectorAll(".card > .card-head").forEach((t) => setCollapsed(t.parentElement, collapsed));
+    h1.after(h("div", { class: "page-tools" },
+      h("button", { class: "small ghost", type: "button", text: "▸ Collapse all", onclick: () => all(true) }),
+      h("button", { class: "small ghost", type: "button", text: "▾ Expand all", onclick: () => all(false) })));
+  }
+}
+new MutationObserver(() => decorateCards($("#main"))).observe($("#main"), { childList: true, subtree: true });
+
 async function refreshConnection() {
   try {
     status = await api("/api/status");
@@ -393,9 +450,9 @@ function populationCard() {
       h("span", {}, "Now ", h("strong", { text: String(r.online_now) })),
       h("span", {}, "Peak ", h("strong", { text: String(Math.round(vals[peakIdx])) }), ` (${new Date(r.points[peakIdx][0] * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })})`),
       h("span", {}, "Average ", h("strong", { text: (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) }))) : null;
-    body.replaceChildren(summary || "", lineChart(r.points, days),
+    body.replaceChildren(...[summary, lineChart(r.points, days),
       days > 1 ? h("h3", { style: "margin:1rem 0 .3rem", text: "Busiest hours (your local time)" }) : null,
-      days > 1 ? hoursChart(r.points) : null);
+      days > 1 ? hoursChart(r.points) : null].filter(Boolean));
   };
   load();
   return card;
