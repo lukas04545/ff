@@ -11,6 +11,9 @@ What can be bought
 Buyers enter their in-game name; it has to be linked to their Discord account (/customkit link) – that's who gets
 the kit (its claim role, like an approved kit purchase: /customkit claim). Gift cards pay all or part of an order.
 
+Discord: /giftcard create | list | disable (owners: server owner, Administrator permission or ADMIN_USER_IDS – the
+codes are only shown to them) and /giftcard check (everyone).
+
 Payment safety: the price is always calculated by the bot. PayPal orders are created for the exact amount and only
 delivered after the bot captured the payment and PayPal reports COMPLETED for exactly that amount and currency.
 Each order is paid and delivered once (database status change). Gift card amounts are held while an order waits
@@ -27,6 +30,7 @@ import time
 from typing import TYPE_CHECKING
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from rce import kits as kitparse
@@ -67,6 +71,8 @@ def new_code() -> str:
 
 
 class WebShop(commands.Cog):
+    giftcard = app_commands.Group(name="giftcard", description="Store gift cards", guild_only=True)
+
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
         self._paypal: tuple[tuple, PayPalClient] | None = None
@@ -563,6 +569,90 @@ class WebShop(commands.Cog):
                                allowed_mentions=discord.AllowedMentions(roles=roles, users=False))
         except discord.HTTPException as exc:
             log.warning("Store log message failed: %s", exc)
+
+    # ------------------------------------------------------------ Discord: gift cards
+
+    def is_owner(self, user) -> bool:
+        """Owners may create and manage gift cards: the Discord server owner, Administrator permission or
+        ADMIN_USER_IDS."""
+        if user.id in self.bot.config.admin_user_ids:
+            return True
+        guild = getattr(user, "guild", None)
+        if guild is not None and getattr(guild, "owner_id", None) == user.id:
+            return True
+        perms = getattr(user, "guild_permissions", None)
+        return bool(perms is not None and perms.administrator)
+
+    async def _owners_only(self, interaction: discord.Interaction) -> bool:
+        if self.is_owner(interaction.user):
+            return True
+        await interaction.response.send_message("⛔ Only owners can do this (server owner or Administrator).",
+                                                ephemeral=True)
+        return False
+
+    @staticmethod
+    def _card_line(row) -> str:
+        state = ("disabled" if row["disabled"] else "expired" if row["expires_at"] and row["expires_at"] <= time.time()
+                 else "used up" if row["balance"] <= 0 else "active")
+        until = f" · until <t:{row['expires_at']}:d>" if row["expires_at"] else ""
+        return (f"`{row['code']}` – {pricing.format_money(row['balance'], row['currency'])} of "
+                f"{pricing.format_money(row['initial'], row['currency'])} · {state}{until}"
+                + (f" · {safe_md(row['note'])}" if row["note"] else ""))
+
+    @giftcard.command(name="create", description="Create gift cards for the web store (owners).")
+    @app_commands.describe(value="Value of each card (store currency)", count="How many (1-25)",
+                           days="Valid for N days (0 = no end)", note="Note, e.g. giveaway prize")
+    async def gc_create(self, interaction: discord.Interaction, value: app_commands.Range[float, 0.01, 10000.0],
+                        count: app_commands.Range[int, 1, 25] = 1, days: app_commands.Range[int, 0, 3650] = 0,
+                        note: str | None = None) -> None:
+        if not await self._owners_only(interaction):
+            return
+        try:
+            codes = self.create_gift_cards(value, count, str(interaction.user), days=days, note=note or "")
+        except CheckoutError as exc:
+            await interaction.response.send_message(f"⚠️ {exc}", ephemeral=True)
+            return
+        self.bot.audit(f"🎁 {safe_md(str(interaction.user))} created {len(codes)} gift card(s) of {self.fmt(value)} "
+                       "in Discord")
+        embed = discord.Embed(title=f"🎁 {len(codes)} gift card(s) – {self.fmt(value)} each", colour=COLOUR,
+                              description="```\n" + "\n".join(codes) + "\n```")
+        embed.set_footer(text=("Valid for " + f"{days} days" if days else "No end date") +
+                         " · only you can see this · players use the code at checkout on the website")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @giftcard.command(name="list", description="The newest gift cards and their balance (owners).")
+    async def gc_list(self, interaction: discord.Interaction) -> None:
+        if not await self._owners_only(interaction):
+            return
+        rows = self.bot.db.gift_cards(limit=15)
+        embed = discord.Embed(title="🎁 Gift cards", colour=COLOUR,
+                              description="\n".join(self._card_line(r) for r in rows)[:4000] or "None yet.")
+        embed.set_footer(text="All of them: web interface → Store → Gift cards")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @giftcard.command(name="disable", description="Disable (or enable again) a gift card (owners).")
+    @app_commands.describe(code="The gift card code", disabled="True = can't be used any more")
+    async def gc_disable(self, interaction: discord.Interaction, code: str, disabled: bool = True) -> None:
+        if not await self._owners_only(interaction):
+            return
+        code = normalize_code(code)
+        if not self.bot.db.set_gift_card_disabled(code, disabled):
+            await interaction.response.send_message("⚠️ No gift card with that code.", ephemeral=True)
+            return
+        self.bot.audit(f"🎁 {safe_md(str(interaction.user))} {'disabled' if disabled else 'enabled'} gift card "
+                       f"{code[:4]}…")
+        await interaction.response.send_message(f"✅ `{code}` is {'disabled' if disabled else 'usable again'}.",
+                                                ephemeral=True)
+
+    @giftcard.command(name="check", description="How much is left on a gift card?")
+    @app_commands.describe(code="The gift card code")
+    async def gc_check(self, interaction: discord.Interaction, code: str) -> None:
+        try:
+            row = self.gift_card(code, f"discord:{interaction.user.id}")
+        except CheckoutError as exc:
+            await interaction.response.send_message(f"⚠️ {exc}", ephemeral=True)
+            return
+        await interaction.response.send_message(f"🎁 {self._card_line(row)}", ephemeral=True)
 
     # ------------------------------------------------------------ Background check
 
