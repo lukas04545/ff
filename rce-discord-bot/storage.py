@@ -306,6 +306,53 @@ class Storage:
                 shortname TEXT NOT NULL,
                 amount INTEGER NOT NULL
             );
+            -- Web store: kits for sale (custom kits), orders (PayPal / gift cards) and gift cards
+            CREATE TABLE IF NOT EXISTS store_kits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,                    -- shown on the website
+                kit TEXT NOT NULL COLLATE NOCASE,      -- custom kit that is given (its claim role)
+                price REAL NOT NULL,
+                days INTEGER NOT NULL DEFAULT 0,       -- 0 = permanent, else the kit role for N days
+                description TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS store_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token TEXT NOT NULL UNIQUE,            -- secret part of the order page address
+                kind TEXT NOT NULL,                    -- kit / custom / giftcard
+                title TEXT NOT NULL,
+                store_kit_id INTEGER,
+                items TEXT,                            -- custom kit: JSON [{"short", "amount"}]
+                timer_hours INTEGER,
+                player TEXT,
+                user_id INTEGER,
+                total REAL NOT NULL,                   -- full price
+                currency TEXT NOT NULL,
+                gift_code TEXT,
+                gift_amount REAL NOT NULL DEFAULT 0,   -- paid with the gift card (held while pending)
+                paypal_amount REAL NOT NULL DEFAULT 0, -- paid with PayPal
+                paypal_order TEXT UNIQUE,
+                capture_id TEXT,
+                payer_email TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',   -- pending / paid / delivered / failed / cancelled / expired
+                result TEXT,
+                request_id INTEGER,                    -- kit request that delivered it
+                created_at INTEGER NOT NULL,
+                paid_at INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS gift_cards (
+                code TEXT PRIMARY KEY,
+                initial REAL NOT NULL,
+                balance REAL NOT NULL,
+                currency TEXT NOT NULL,
+                note TEXT,
+                created_by TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER,
+                disabled INTEGER NOT NULL DEFAULT 0,
+                order_id INTEGER                       -- bought in the store (else created by an owner)
+            );
             -- Plugins keep their own data here (JSON values per plugin and key)
             CREATE TABLE IF NOT EXISTS plugin_data (
                 plugin TEXT NOT NULL,
@@ -1296,6 +1343,104 @@ class Storage:
 
     def delete_timed_role(self, row_id: int) -> bool:
         cur = self._db.execute("DELETE FROM timed_roles WHERE id = ?", (row_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    # ------------------------------------------------------------ Web store
+
+    _STORE_KIT_FIELDS = ("name", "kit", "price", "days", "description", "enabled")
+
+    def store_kits(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM store_kits" + (" WHERE enabled = 1" if enabled_only else "") + " ORDER BY price, id"
+        return self._db.execute(sql).fetchall()
+
+    def store_kit(self, kit_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM store_kits WHERE id = ?", (kit_id,)).fetchone()
+
+    def add_store_kit(self, name: str, kit: str, price: float, days: int, description: str | None) -> int:
+        cur = self._db.execute("INSERT INTO store_kits (name, kit, price, days, description, created_at) "
+                               "VALUES (?, ?, ?, ?, ?, ?)", (name, kit, price, days, description, int(time.time())))
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def update_store_kit(self, kit_id: int, **fields) -> bool:
+        fields = {k: v for k, v in fields.items() if k in self._STORE_KIT_FIELDS}
+        if not fields:
+            return False
+        cur = self._db.execute(f"UPDATE store_kits SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
+                               (*fields.values(), kit_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def delete_store_kit(self, kit_id: int) -> bool:
+        cur = self._db.execute("DELETE FROM store_kits WHERE id = ?", (kit_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def add_store_order(self, **fields) -> int:
+        fields.setdefault("created_at", int(time.time()))
+        cur = self._db.execute(f"INSERT INTO store_orders ({', '.join(fields)}) VALUES "
+                               f"({', '.join('?' for _ in fields)})", tuple(fields.values()))
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def store_order(self, order_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM store_orders WHERE id = ?", (order_id,)).fetchone()
+
+    def store_order_by(self, column: str, value) -> sqlite3.Row | None:
+        if column not in ("token", "paypal_order"):
+            raise ValueError(column)
+        return self._db.execute(f"SELECT * FROM store_orders WHERE {column} = ?", (value,)).fetchone()
+
+    def store_orders(self, *, status: str | None = None, limit: int = 100) -> list[sqlite3.Row]:
+        if status:
+            return self._db.execute("SELECT * FROM store_orders WHERE status = ? ORDER BY id DESC LIMIT ?",
+                                    (status, limit)).fetchall()
+        return self._db.execute("SELECT * FROM store_orders ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+    def update_store_order(self, order_id: int, **fields) -> None:
+        self._db.execute(f"UPDATE store_orders SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
+                         (*fields.values(), order_id))
+        self._db.commit()
+
+    def move_store_order(self, order_id: int, old: str | tuple, new: str, **fields) -> bool:
+        """Changes the status only if it still is `old` (one of `old`) – so an order is paid/delivered only once."""
+        olds = (old,) if isinstance(old, str) else tuple(old)
+        sets = {"status": new, **fields}
+        cur = self._db.execute(
+            f"UPDATE store_orders SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ? AND status IN "
+            f"({', '.join('?' for _ in olds)})", (*sets.values(), order_id, *olds))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def add_gift_card(self, code: str, amount: float, currency: str, created_by: str, *, note: str | None = None,
+                      expires_at: int | None = None, order_id: int | None = None) -> None:
+        self._db.execute("INSERT INTO gift_cards (code, initial, balance, currency, note, created_by, created_at, "
+                         "expires_at, order_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (code, amount, amount, currency, note, created_by, int(time.time()), expires_at, order_id))
+        self._db.commit()
+
+    def gift_card(self, code: str) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM gift_cards WHERE code = ?", (code,)).fetchone()
+
+    def gift_cards(self, limit: int = 300) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM gift_cards ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+
+    def take_gift_balance(self, code: str, amount: float, now: int) -> bool:
+        """Takes `amount` from a usable gift card (atomic). False if the balance is too low, disabled or expired."""
+        cur = self._db.execute(
+            "UPDATE gift_cards SET balance = ROUND(balance - ?, 2) WHERE code = ? AND disabled = 0 AND "
+            "balance >= ? - 0.0001 AND (expires_at IS NULL OR expires_at > ?)", (amount, code, amount, now))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def return_gift_balance(self, code: str, amount: float) -> None:
+        self._db.execute("UPDATE gift_cards SET balance = ROUND(MIN(balance + ?, initial), 2) WHERE code = ?",
+                         (amount, code))
+        self._db.commit()
+
+    def set_gift_card_disabled(self, code: str, disabled: bool) -> bool:
+        cur = self._db.execute("UPDATE gift_cards SET disabled = ? WHERE code = ?", (int(disabled), code))
         self._db.commit()
         return cur.rowcount > 0
 

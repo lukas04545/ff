@@ -109,6 +109,9 @@ def _plugin_class(module) -> type[Plugin]:
     if len(found) != 1:
         raise PluginError("The file must contain exactly one class derived from Plugin "
                           f"(found {len(found)}).")
+    keys = [s.key for s in found[0].SETTINGS]
+    if dupes := sorted({k for k in keys if keys.count(k) > 1}):
+        raise PluginError(f"Two settings use the same key: {', '.join(dupes)}.")
     return found[0]
 
 

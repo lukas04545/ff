@@ -193,6 +193,7 @@ rce-discord-bot/
 │   ├── kit_requests.py    # Bought custom kits: AI request → staff approve button → kit role
 │   ├── store.py           # Tip4Serv purchases (polled every minute) → automatic approval
 │   ├── automod.py         # AI chat moderation: warns offensive members in chosen channels
+│   ├── webshop.py         # Web store: PayPal checkout, gift cards, delivery of bought kits
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── plugins/               # Built-in plugins (one file each, on/off in the web interface → 🧩 Plugins)
 │   ├── invites.py         # Invite rewards
@@ -211,6 +212,7 @@ rce-discord-bot/
 ├── PLUGINS.md             # How to write your own plugin
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
+│   ├── paypal.py          # PayPal checkout (Orders v2: create, capture, verify)
 │   ├── pricing.py         # Price list for custom kits (prices.txt)
 │   ├── prompt.py          # System prompt, history, parsing the AI reply
 │   └── tip4serv.py        # Tip4Serv store connection (signed requests, rcebot commands)
@@ -220,6 +222,7 @@ rce-discord-bot/
 ├── web/
 │   ├── server.py          # Web interface: login + JSON API (runs inside the bot process)
 │   ├── item_images.py     # Item pictures: downloaded once (ITEM_IMAGE_URL), cached in data/item_images/
+│   ├── store_pages.py     # Web store pages of the player website (/play/store)
 │   └── static/            # Frontend (HTML/CSS/JS, no external files)
 ├── logbuffer.py           # Recent log lines for the web interface
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
@@ -979,6 +982,41 @@ out. Check whether that's OK for your community (GDPR, privacy notice in your Di
 an API key, the ticket system works entirely without AI.
 
 ---
+
+## Web store (PayPal & gift cards)
+
+Players buy kits for real money on the player website: **your web link + `/play/store`** (the 🌍 Player website
+plugin must be on). Three tabs:
+
+- **Kits** – kits you put up for sale: web interface → **💳 Store** → *Kits for sale*. Build the kit first (Kit
+  builder → save as custom kit), then pick it, set a price and optionally a duration (e.g. 30 days).
+- **Build your own** – players pick items and amounts; the price comes from the price list (`prices.txt`, the same
+  one the ticket AI and Tip4Serv use: bundles, free "with" items, caps and claim timers). `STORE_CUSTOM_KITS`.
+- **Gift cards** – players can buy gift cards (`STORE_GIFTCARD_VALUES`, e.g. `10,25,50`) and check a card's balance.
+
+**Checkout:** the buyer enters their in-game name – it must be linked to their Discord account (`/customkit link`),
+that's who gets the kit – and optionally a gift card code, then pays with **PayPal**. Right after the payment the
+kit is delivered like an approved kit purchase: the buyer gets the kit's role (for N days if it's time-limited, or a
+new custom kit with their items) and claims it with `/customkit claim` in Discord. They also get a DM, and every
+purchase is posted in `STORE_CHANNEL_ID` (default: admin log).
+
+**Gift cards:** owners create them in **💳 Store → Gift cards** (value, how many, optional validity and note) –
+codes like `NUSF-UHNP-CXSX-EXJ3`. A card pays all or part of an order (the rest goes to PayPal) and keeps any
+remaining balance. Cards can be disabled any time. Wrong codes are rate-limited (10 per 15 minutes per visitor).
+
+**Setup:**
+1. [developer.paypal.com](https://developer.paypal.com) → *Apps & Credentials* → *Create App* → copy the
+   **Client ID** and **Secret** into Settings → 💳 Store (`PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`).
+2. Test with `PAYPAL_MODE=sandbox` (default, PayPal's test system with test accounts – no real money; the store
+   shows a "Test mode" note). For real payments switch to `live` with your **live** Client ID/Secret.
+3. Optional: `STORE_CURRENCY` (default: the price list's currency), `STORE_GIFTCARD_VALUES`, `STORE_CHANNEL_ID`.
+
+**Safety:** prices are always calculated by the bot – the browser only sends what was picked. The bot creates the
+PayPal order for the exact amount and delivers only after it captured the payment and PayPal reports COMPLETED for
+exactly that amount and currency; each order is delivered once. Buyers who pay but close the page still get their
+order (checked every 5 minutes); orders not paid within 3 hours expire and a held gift card amount goes back to
+the card. If a paid order can't be delivered (e.g. the buyer left the Discord), staff gets an alert and can click
+**Retry delivery** under 💳 Store → Orders. Refunds are done in your PayPal account.
 
 ## Plugins
 

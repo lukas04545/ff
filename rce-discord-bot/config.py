@@ -149,6 +149,13 @@ class Config:
     tip4serv_channel_id: int | None      # channel where Tip4Serv's Discord bot announces purchases
     tip4serv_auto_approve: bool          # paid + priced new custom kits are approved by the bot
     tip4serv_name_match: bool            # payments may be matched by in-game name (not only Discord ID)
+    paypal_client_id: str                # web store checkout (empty = PayPal off)
+    paypal_secret: str
+    paypal_mode: str                     # sandbox / live
+    store_currency: str                  # empty = price list currency
+    store_custom_kits: bool              # players can build their own kit on the website
+    store_giftcard_values: tuple[float, ...]   # gift cards players can buy (empty = owners only)
+    store_channel_id: int | None         # purchase log (empty = admin log)
     price_list_file: Path                # prices.txt
     points_name: str                      # e.g. "points", "coins", "scrap"
     points_per_hour: int                  # for linked players while online
@@ -329,6 +336,14 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         tip4serv_channel_id=_int("TIP4SERV_CHANNEL_ID"),
         tip4serv_auto_approve=_bool("TIP4SERV_AUTO_APPROVE", True),
         tip4serv_name_match=_bool("TIP4SERV_NAME_MATCH", True),
+        paypal_client_id=_get("PAYPAL_CLIENT_ID"),
+        paypal_secret=_get("PAYPAL_SECRET"),
+        paypal_mode="live" if _get("PAYPAL_MODE").lower() == "live" else "sandbox",
+        store_currency=_get("STORE_CURRENCY").upper()[:3],
+        store_custom_kits=_bool("STORE_CUSTOM_KITS", True),
+        store_giftcard_values=tuple(sorted({round(float(v), 2) for v in _get("STORE_GIFTCARD_VALUES").split(",")
+                                            if v.strip().replace(".", "", 1).isdigit() and float(v) > 0})),
+        store_channel_id=_int("STORE_CHANNEL_ID"),
         price_list_file=Path(_get("PRICE_LIST_FILE", "prices.txt") or "prices.txt"),
         points_name=_get("POINTS_NAME", "points") or "points",
         points_per_hour=max(0, _int("POINTS_PER_HOUR", 10)),
