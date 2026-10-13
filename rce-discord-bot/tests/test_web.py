@@ -189,7 +189,7 @@ def test_admin_accounts(bot):
         users = (await (await c.get("/api/users")).json())["users"]
         assert [(u["username"], u["role"], u["created_by"]) for u in users] == [("Mod_Anna", "admin", "owner")]
         stored = (bot.config.database_path.parent / "web_users.json").read_text()
-        assert "anna-pass-1" not in stored and "scrypt$" in stored  # only hashes on disk
+        assert "anna-pass-1" not in stored and "pbkdf2_sha256$600000$" in stored  # only hashes on disk
 
         # Admin: everything except settings / users / restart
         await c.post("/api/logout", headers=H)

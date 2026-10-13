@@ -1,7 +1,8 @@
 """Web interface accounts (other admins log in with username + password).
 
 * The built-in account "owner" uses WEB_PASSWORD from the .env (and the one-time login link).
-* Further accounts live in data/web_users.json – passwords only as scrypt hashes.
+* Further accounts live in data/web_users.json – passwords only as salted PBKDF2-HMAC-SHA256 hashes
+  (600 000 rounds, like OWASP recommends). Older scrypt hashes still work and are upgraded at the next login.
 * Roles: "owner" = everything, "admin" = everything except settings, bot restart and user management.
 """
 from __future__ import annotations
@@ -22,24 +23,45 @@ OWNER = "owner"                       # built-in account (WEB_PASSWORD)
 ROLES = ("admin", "owner")
 USERNAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{3,32}")
 MIN_PASSWORD_LENGTH = 8
-_SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
+_SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}      # older hashes (before PBKDF2-SHA256)
+PBKDF2_ROUNDS = 600_000
+SCHEME = "pbkdf2_sha256"
 
 
-def hash_password(password: str) -> str:
+def hash_password(password: str, *, rounds: int = PBKDF2_ROUNDS) -> str:
+    """Salted PBKDF2-HMAC-SHA256 – SHA-256 run many times, so stolen hashes can't be brute-forced quickly."""
     salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(password.encode(), salt=salt, dklen=32, **_SCRYPT)
-    return f"scrypt${salt.hex()}${digest.hex()}"
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, rounds)
+    return f"{SCHEME}${rounds}${salt.hex()}${digest.hex()}"
 
 
 def verify_password(password: str, stored: str) -> bool:
     try:
-        scheme, salt_hex, digest_hex = stored.split("$")
-        if scheme != "scrypt":
+        parts = stored.split("$")
+        if parts[0] == SCHEME and len(parts) == 4:
+            rounds = int(parts[1])
+            if not 1000 <= rounds <= 10_000_000:
+                return False
+            digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(parts[2]), rounds)
+            expected = parts[3]
+        elif parts[0] == "scrypt" and len(parts) == 3:
+            digest = hashlib.scrypt(password.encode(), salt=bytes.fromhex(parts[1]), dklen=32, **_SCRYPT)
+            expected = parts[2]
+        else:
             return False
-        digest = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex), dklen=32, **_SCRYPT)
     except (ValueError, TypeError):
         return False
-    return hmac.compare_digest(digest.hex(), digest_hex)
+    return hmac.compare_digest(digest.hex(), expected)
+
+
+def needs_rehash(stored: str) -> bool:
+    parts = stored.split("$")
+    return parts[0] != SCHEME or len(parts) != 4 or parts[1] != str(PBKDF2_ROUNDS)
+
+
+def same_secret(given: str, expected: str) -> bool:
+    """Constant-time comparison of two secrets via their SHA-256 (also hides the length)."""
+    return hmac.compare_digest(hashlib.sha256(given.encode()).digest(), hashlib.sha256(expected.encode()).digest())
 
 
 _DUMMY_HASH = hash_password(secrets.token_hex(8))  # same work for unknown users (no timing leak)
@@ -99,6 +121,8 @@ class UserStore:
             return None
         if not verify_password(password, user["hash"]) or user.get("disabled"):
             return None
+        if needs_rehash(user["hash"]):         # older scrypt hash -> PBKDF2-SHA256
+            user["hash"] = hash_password(password)
         user["last_login"] = int(time.time())
         self._save()
         return user
