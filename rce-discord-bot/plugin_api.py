@@ -24,6 +24,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import discord
@@ -36,8 +37,9 @@ if TYPE_CHECKING:
     from bot import RceBot
     from plugin_manager import PluginManager
 
-# Setting kinds: text, textarea, int, bool, choice, channel (text channel), role, kit (custom or in-game kit name)
-SETTING_KINDS = ("text", "textarea", "int", "bool", "choice", "channel", "role", "kit")
+# Setting kinds: text, textarea, int, bool, choice, channel (text channel), role, kit (custom or in-game kit name),
+# image (uploaded on the Plugins page, read with self.file(key))
+SETTING_KINDS = ("text", "textarea", "int", "bool", "choice", "channel", "role", "kit", "image")
 
 
 @dataclass(frozen=True)
@@ -181,6 +183,10 @@ class Plugin(commands.Cog):
         await self.on_unload()
 
     # ------------------------------------------------------------ Settings
+
+    def file(self, key: str) -> Path | None:
+        """The uploaded file of an "image" setting (None = nothing uploaded)."""
+        return self.manager.file_path(self.plugin_id, key) if self.manager is not None else None
 
     def setting(self, key: str) -> Any:
         spec = next((s for s in self.SETTINGS if s.key == key), None)

@@ -26,6 +26,7 @@ BASE_DIR = Path(__file__).resolve().parent
 NAME = re.compile(r"^backup-\d{4}-\d{2}-\d{2}_\d{6}-[a-z-]+\.zip$")
 EXTRA_FILES = ("data/web_users.json", "data/plugins.json", "rules.md", "support_knowledge.md", "prices.txt")
 PLUGIN_GLOB = "data/plugins/*.py"      # your own plugins
+PLUGIN_FILES_GLOB = "data/plugin_files/*/*"   # pictures uploaded for plugins (e.g. the website logo)
 LIVE_NAME = "live-backup.zip"
 README = """RCE Discord bot – backup
 
@@ -71,8 +72,9 @@ def _write_zip(db_path: Path, target: Path, *, base: Path, include_env: bool) ->
             for rel in extra:
                 if (base / rel).is_file():
                     zf.write(base / rel, rel)
-            for path in sorted(base.glob(PLUGIN_GLOB)):
-                zf.write(path, path.relative_to(base).as_posix())
+            for path in sorted([*base.glob(PLUGIN_GLOB), *base.glob(PLUGIN_FILES_GLOB)]):
+                if path.is_file():
+                    zf.write(path, path.relative_to(base).as_posix())
         partial.replace(target)
 
 
@@ -117,7 +119,7 @@ def change_marker(db_path: Path, base: Path | None = None) -> tuple:
     db_path = db_path if db_path.is_absolute() else base / db_path
     marks = []
     for p in (db_path, db_path.with_name(db_path.name + "-wal"), *(base / rel for rel in EXTRA_FILES),
-              *sorted(base.glob(PLUGIN_GLOB))):
+              *sorted(base.glob(PLUGIN_GLOB)), *sorted(base.glob(PLUGIN_FILES_GLOB))):
         try:
             st = p.stat()
             marks.append((p.name, st.st_mtime_ns, st.st_size))

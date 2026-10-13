@@ -11,6 +11,7 @@ import json
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from plugin_api import Plugin, Setting
@@ -22,46 +23,87 @@ CSP = ("default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; bas
 BOARDS = {"kills": "Kills", "kd": "K/D", "playtime": "Playtime", "teams": "Teams"}
 CACHE_SECONDS = 20
 
+ASSETS = Path(__file__).resolve().parent / "website_assets"     # default logo (replace it on the Plugins page)
+NOISE = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E"
+         "%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E"
+         "%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.09'/%3E%3C/svg%3E")
+
+# Dark, burnt "Rust" look: black background with a sunset glow, rusty red/orange accents, rugged cut corners
 STYLE = """
-:root{--bg:#0d0f13;--card:#161a21;--card2:#1d222b;--text:#eceef1;--muted:#9aa3ae;--line:#262c36;--accent:ACCENT;
---ok:#2ecc71;--bad:#e5533d;--gold:#f1c40f}
-@media (prefers-color-scheme:light){:root{--bg:#f3f4f6;--card:#fff;--card2:#f6f7f9;--text:#1b1e23;--muted:#5c6470;--line:#e3e6ea}}
-*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
-a{color:inherit}header{background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
-.bar{max-width:1040px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.brand{font-weight:800;font-size:1.1rem;text-decoration:none;display:flex;align-items:center;gap:8px}
-.dot{width:10px;height:10px;border-radius:50%;background:var(--bad);display:inline-block}.dot.on{background:var(--ok)}
-nav{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}nav a{text-decoration:none;padding:6px 11px;border-radius:8px;
-color:var(--muted);font-weight:600;font-size:.93rem}nav a:hover{color:var(--text);background:var(--card2)}
-nav a.active{color:#fff;background:var(--accent)}main{max-width:1040px;margin:0 auto;padding:22px 16px 40px}
-.hero{background:linear-gradient(135deg,var(--accent),#1d222b);color:#fff;border-radius:16px;padding:28px 24px;margin-bottom:18px}
-.hero h1{margin:0 0 4px;font-size:2rem;line-height:1.15}.hero p{margin:0;opacity:.9}
-.btn{display:inline-block;margin:14px 8px 0 0;background:#fff;color:#111;padding:10px 18px;border-radius:10px;
-text-decoration:none;font-weight:700}.btn.alt{background:rgba(255,255,255,.15);color:#fff}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:14px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px}
-.grid .card{margin-bottom:0}.card h2{margin:0 0 10px;font-size:1.05rem}.muted{color:var(--muted)}
-.big{font-size:2rem;font-weight:800;line-height:1.2}.pill{display:inline-block;padding:2px 10px;border-radius:99px;
-font-size:.8rem;font-weight:700;color:#fff;background:var(--bad)}.pill.on{background:var(--ok)}
-table{width:100%;border-collapse:collapse}td,th{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left}
-th{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}td.n{width:2.5rem;color:var(--muted)}
-td.r,th.r{text-align:right}tr:last-child td{border-bottom:0}.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
-.tabs a{text-decoration:none;padding:6px 12px;border-radius:99px;border:1px solid var(--line);font-weight:600;font-size:.9rem}
-.tabs a.active{background:var(--accent);border-color:var(--accent);color:#fff}
-form.search{display:flex;gap:8px}form.search input{flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--line);
-background:var(--card2);color:var(--text);font:inherit}form.search button{padding:10px 16px;border-radius:10px;border:0;
-background:var(--accent);color:#fff;font-weight:700;font:inherit;cursor:pointer}
-.items{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.it{position:relative;width:58px;height:58px;border-radius:10px;
-background:var(--card2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center}
-.it img{width:44px;height:44px;object-fit:contain}.it .q{position:absolute;right:4px;bottom:1px;font-size:.72rem;font-weight:800}
-.it .t{font-size:.6rem;text-align:center;padding:2px;word-break:break-all;color:var(--muted)}
-.price{font-weight:800;color:var(--gold)}.badges{display:flex;flex-wrap:wrap;gap:6px}.badge{background:var(--card2);
-border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-size:.88rem}ol.rules{padding-left:1.3rem}
-ol.rules li{margin:6px 0}.pre{white-space:pre-wrap}footer{max-width:1040px;margin:0 auto;padding:0 16px 30px;
-font-size:.8rem;color:var(--muted)}@media (max-width:600px){.hero h1{font-size:1.5rem}.big{font-size:1.6rem}
-nav{margin-left:0;width:100%}nav a{padding:6px 9px}}
-"""
+:root{--bg:#060606;--card:rgba(18,13,11,.88);--card2:rgba(34,22,17,.9);--text:#f1ebe6;--muted:#a8998f;
+--line:rgba(229,84,40,.22);--red:ACCENT;--orange:#f7931e;--ok:#3ddc6a;--bad:#e5341c;--gold:#ffb627;
+--grad:linear-gradient(90deg,var(--red),var(--orange));--cut:14px;
+--head:Impact,"Haettenschweiler","Arial Narrow Bold","Franklin Gothic Heavy","Oswald",sans-serif}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%;background:var(--bg)}
+body{margin:0;color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;
+background:url("NOISE"),radial-gradient(ellipse 90% 55% at 50% -8%,rgba(247,110,30,.32),transparent 70%),
+radial-gradient(ellipse 60% 40% at 85% 10%,rgba(229,52,28,.18),transparent 70%),
+linear-gradient(180deg,#120a07 0%,var(--bg) 55%);background-attachment:fixed}
+a{color:inherit}a:hover{color:var(--orange)}td a,.card p a{text-decoration:none;border-bottom:1px solid rgba(247,147,30,.4)}
+h1,h2,h3,.brand,nav a,.tabs a,.btn,th,.big,.kicker{font-family:var(--head);text-transform:uppercase;letter-spacing:.06em;
+font-weight:400}
+header{background:rgba(6,6,6,.82);backdrop-filter:blur(8px);position:sticky;top:0;z-index:5}
+header::after{content:"";display:block;height:2px;background:var(--grad);opacity:.85}
+.bar{max-width:1080px;margin:0 auto;padding:8px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-size:1.3rem;text-decoration:none;display:flex;align-items:center;gap:10px;color:#fff}
+.brand img{width:42px;height:42px;border-radius:50%;box-shadow:0 0 14px rgba(247,110,30,.45)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--bad);display:inline-block;box-shadow:0 0 8px currentColor;
+color:var(--bad)}.dot.on{background:var(--ok);color:var(--ok)}
+nav{display:flex;gap:2px;flex-wrap:wrap;margin-left:auto}nav a{text-decoration:none;padding:7px 12px;color:var(--muted);
+font-size:1.02rem;position:relative}nav a:hover{color:#fff}
+nav a.active{color:#fff}nav a.active::after{content:"";position:absolute;left:10px;right:10px;bottom:2px;height:3px;
+background:var(--grad);clip-path:polygon(0 0,100% 0,96% 100%,4% 100%)}
+main{max-width:1080px;margin:0 auto;padding:26px 16px 40px}
+h1{font-size:2.3rem;margin:.2rem 0 1rem;color:#fff;text-shadow:0 2px 0 #000,0 0 22px rgba(229,52,28,.35)}
+h1::after{content:"";display:block;width:90px;height:4px;margin-top:6px;background:var(--grad);
+clip-path:polygon(0 0,100% 0,94% 100%,0 100%)}
+.hero{text-align:center;padding:10px 0 26px}
+.hero .logo{width:min(360px,74vw);aspect-ratio:1;filter:drop-shadow(0 0 28px rgba(247,90,30,.45)) drop-shadow(0 6px 18px #000)}
+.hero h1{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.kicker{display:flex;align-items:center;justify-content:center;gap:14px;color:#e9dfd8;font-size:1.15rem;
+letter-spacing:.32em;margin:10px 0 2px}.kicker::before,.kicker::after{content:"";height:3px;width:min(70px,12vw);
+background:var(--grad)}.motto{color:var(--red);font-family:var(--head);letter-spacing:.25em;text-transform:uppercase;
+font-size:.95rem;margin:6px 0 0;text-shadow:0 0 12px rgba(229,52,28,.5)}
+.btn{display:inline-block;margin:18px 6px 0;background:var(--grad);color:#fff;padding:11px 26px;text-decoration:none;
+font-size:1.15rem;clip-path:polygon(10px 0,100% 0,calc(100% - 10px) 100%,0 100%);box-shadow:0 0 20px rgba(229,52,28,.35)}
+.btn:hover{color:#fff;filter:brightness(1.12)}.btn.alt{background:rgba(255,255,255,.08);outline:1px solid var(--line)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);padding:18px 20px;margin-bottom:14px;position:relative;
+clip-path:polygon(0 0,calc(100% - var(--cut)) 0,100% var(--cut),100% 100%,var(--cut) 100%,0 calc(100% - var(--cut)));
+box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.card::before{content:"";position:absolute;left:0;top:0;width:60px;height:3px;background:var(--grad)}
+.grid .card{margin-bottom:0}.card h2{margin:0 0 10px;font-size:1.25rem;color:#fff}.muted{color:var(--muted)}
+.big{font-size:2.4rem;line-height:1.1;background:var(--grad);-webkit-background-clip:text;background-clip:text;
+color:transparent}.pill{display:inline-block;padding:1px 10px;font-size:.78rem;font-weight:800;color:#fff;
+background:var(--bad);letter-spacing:.08em;text-transform:uppercase;clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%)}
+.pill.on{background:#1f9d4a}
+table{width:100%;border-collapse:collapse}td,th{padding:9px 6px;border-bottom:1px solid rgba(255,255,255,.06);text-align:left}
+th{font-size:.9rem;color:var(--muted)}td.n{width:2.6rem;font-family:var(--head);color:var(--orange);font-size:1.1rem}
+tr:nth-child(1) td.n{color:var(--gold)}td.r,th.r{text-align:right}tr:last-child td{border-bottom:0}
+tbody tr:hover,table tr:hover td{background:rgba(229,84,40,.06)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}.tabs a{text-decoration:none;padding:6px 16px;
+background:var(--card2);border:1px solid var(--line);font-size:1rem;clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)}
+.tabs a.active{background:var(--grad);color:#fff;border-color:transparent}
+form.search{display:flex;gap:8px}form.search input{flex:1;padding:11px 13px;border:1px solid var(--line);
+background:rgba(0,0,0,.45);color:var(--text);font:inherit;outline:none}form.search input:focus{border-color:var(--orange)}
+form.search button{padding:10px 20px;border:0;background:var(--grad);color:#fff;font-family:var(--head);font-size:1.05rem;
+letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+.items{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.it{position:relative;width:60px;height:60px;
+background:radial-gradient(circle at 50% 40%,rgba(255,255,255,.07),rgba(0,0,0,.35));border:1px solid rgba(255,255,255,.08);
+display:flex;align-items:center;justify-content:center}.it img{width:46px;height:46px;object-fit:contain}
+.it .q{position:absolute;right:4px;bottom:0;font-size:.74rem;font-weight:800;text-shadow:0 1px 2px #000}
+.price{font-family:var(--head);font-size:1.3rem;letter-spacing:.04em;color:var(--gold)}
+.badges{display:flex;flex-wrap:wrap;gap:6px}.badge{background:var(--card2);border:1px solid var(--line);padding:3px 12px;
+font-size:.9rem}ol.rules{padding-left:1.5rem;margin:0}ol.rules li{margin:8px 0;padding-left:4px}
+ol.rules li::marker{color:var(--orange);font-family:var(--head)}.pre{white-space:pre-wrap}
+footer{max-width:1080px;margin:0 auto;padding:18px 16px 34px;font-size:.82rem;color:var(--muted);text-align:center;
+border-top:1px solid rgba(255,255,255,.06)}footer .motto{font-size:.85rem;margin-bottom:4px}
+@media (max-width:640px){h1{font-size:1.8rem}.big{font-size:1.9rem}.bar{gap:6px 10px}
+nav{margin:0 -16px;padding:0 10px;width:calc(100% + 32px);flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+nav a{padding:6px 9px;font-size:.95rem;white-space:nowrap}.kicker{font-size:.9rem;letter-spacing:.16em;gap:10px;
+white-space:nowrap}.kicker::before,.kicker::after{width:22px}.motto{font-size:.8rem;letter-spacing:.15em}
+.btn{padding:10px 20px;font-size:1.05rem}}
+""".replace("NOISE", NOISE)
 
 
 def esc(text) -> str:
@@ -76,8 +118,11 @@ class PlayerWebsite(Plugin):
                    "points shop with item pictures, rules and how to join. Share the link everywhere.")
     SETTINGS = (
         Setting("title", "Website title", "text", "", help="Empty = the server name."),
-        Setting("tagline", "Tagline", "text", "Rust Console Edition community server",
-                help="Shown under the title on the home page."),
+        Setting("logo", "Logo", "image", help="Square picture (PNG/WebP with a transparent background looks best). "
+                                              "Empty = the bundled Kryvon logo."),
+        Setting("tagline", "Tagline", "text", "Rust Console Server",
+                help="Shown under the logo on the home page."),
+        Setting("motto", "Motto", "text", "Build · Survive · Dominate", help="Shown in red under the tagline."),
         Setting("invite", "Discord invite link", "text", "", help="e.g. https://discord.gg/abc123 – shown as a button."),
         Setting("store", "Store link", "text", "", help="Optional, e.g. your Tip4Serv store (https://…)."),
         Setting("about", "About the server", "textarea", "",
@@ -88,7 +133,7 @@ class PlayerWebsite(Plugin):
         Setting("leaderboards", "Leaderboards and player profiles", "bool", True),
         Setting("shop", "Show the points shop", "bool", True),
         Setting("rules", "Show the rules", "bool", True),
-        Setting("accent", "Colour", "text", "#ce422b", help="Hex colour, e.g. #ce422b."),
+        Setting("accent", "Main colour", "text", "#e5341c", help="Hex colour, e.g. #e5341c (blends into orange)."),
     )
 
     def __init__(self, *args, **kwargs) -> None:
@@ -141,18 +186,22 @@ class PlayerWebsite(Plugin):
         nav = "".join(f'<a href="{base}/{path}" class="{"active" if path == active else ""}">{esc(label)}</a>'
                       for path, label in links)
         accent = self.setting("accent").strip()
-        accent = accent if re.fullmatch(r"#[0-9a-fA-F]{6}", accent) else "#ce422b"
+        accent = accent if re.fullmatch(r"#[0-9a-fA-F]{6}", accent) else "#e5341c"
         live = self.live()
         site = self.site_title()
+        motto = f'<div class="motto">{esc(self.setting("motto"))}</div>' if self.setting("motto").strip() else ""
         updated = datetime.fromtimestamp(self.now(), self.tz).strftime("%H:%M")
         return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
                 f'<meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<title>{esc(title + " – " if title else "")}{esc(site)}</title>'
                 f'<meta name="description" content="{esc(self.setting("tagline"))}">'
+                f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon">'
                 f'<style>{STYLE.replace("ACCENT", accent)}</style></head><body>'
-                f'<header><div class="bar"><a class="brand" href="{base}/"><span class="dot{" on" if live["online"] else ""}">'
-                f'</span>{esc(site)}</a><nav>{nav}</nav></div></header><main>{body}</main>'
-                f'<footer>Updated {esc(updated)} · {esc(self.bot.config.rust_server_platform)}</footer></body></html>')
+                f'<header><div class="bar"><a class="brand" href="{base}/"><img src="{base}/logo" alt="">'
+                f'<span class="name">{esc(site)}</span><span class="dot{" on" if live["online"] else ""}" '
+                f'title="{"Online" if live["online"] else "Offline"}"></span></a><nav>{nav}</nav></div></header>'
+                f'<main>{body}</main><footer>{motto}Updated {esc(updated)} · '
+                f'{esc(self.bot.config.rust_server_platform)}</footer></body></html>')
 
     def item_tiles(self, items) -> str:
         tiles = []
@@ -180,8 +229,12 @@ class PlayerWebsite(Plugin):
             wipe_sub = f'in {format_duration(max(live["next_wipe"] - self.now(), 0))} ({getattr(tz, "key", "UTC")})'
         else:
             wipe, wipe_sub = self.bot.config.rust_server_wipe or "Announced on Discord", ""
-        body = (f'<section class="hero"><h1>{esc(self.site_title())}</h1><p>{esc(self.setting("tagline"))}</p>'
-                f'{buttons}</section><div class="grid">'
+        tagline, motto = self.setting("tagline").strip(), self.setting("motto").strip()
+        body = (f'<section class="hero"><img class="logo" src="{base}/logo" alt="{esc(self.site_title())}">'
+                f'<h1>{esc(self.site_title())}</h1>'
+                + (f'<div class="kicker">{esc(tagline)}</div>' if tagline else "")
+                + (f'<div class="motto">{esc(motto)}</div>' if motto else "")
+                + f'{buttons}</section><div class="grid">'
                 f'<div class="card"><h2>Server</h2><span class="pill{" on" if live["online"] else ""}">'
                 f'{"Online" if live["online"] else "Offline"}</span><div class="big">{esc(players)}</div>'
                 f'<div class="muted">{str(live["queued"]) + " in queue" if live["queued"] else "players online"}</div></div>'
@@ -360,6 +413,18 @@ class PlayerWebsite(Plugin):
             return 200, self.rules(base)
         return 404, self.not_found(base)
 
+    def picture(self, which: str) -> tuple[bytes, str]:
+        """The logo (uploaded on the Plugins page, else the bundled one) or the small icon for the browser tab."""
+        from web.item_images import image_type
+        custom = self.file("logo")
+        if custom is not None:
+            data = custom.read_bytes()
+            kind = image_type(data)
+            if kind:
+                return data, kind
+        data = (ASSETS / ("icon.png" if which == "icon" else "logo.webp")).read_bytes()
+        return data, image_type(data) or "image/png"
+
     async def web_public(self, request, path: str):
         """Public (no login): /play/… (and /p/website/…); /play/status.json for other tools."""
         from aiohttp import web
@@ -368,6 +433,10 @@ class PlayerWebsite(Plugin):
         if path == "status.json":
             data = {"name": self.site_title(), **self.live()}
             return web.Response(text=json.dumps(data), content_type="application/json", headers=headers)
+        if path in ("logo", "icon"):
+            data, kind = self.picture(path)
+            return web.Response(body=data, content_type=kind,
+                                headers={**headers, "Cache-Control": "public, max-age=86400"})
         base = "/play" if request.path.startswith("/play") else f"/p/{self.plugin_id}"
         status, text = self.render(base, path, request.query)
         return web.Response(status=status, text=text, content_type="text/html", headers=headers)

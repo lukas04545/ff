@@ -440,3 +440,4 @@ img.kb-item-icon { width: 34px; height: 34px; object-fit: contain; flex: none; }
 img.kb-editor-pic, .kb-editor-pic.emoji { width: 40px; height: 40px; object-fit: contain; font-size: 1.6rem; }
 .item-cell { display: inline-flex; align-items: center; gap: .45rem; }
 img.item-pic, .item-pic.emoji { width: 26px; height: 26px; object-fit: contain; flex: none; text-align: center; }
+img.plugin-img { width: 72px; height: 72px; object-fit: contain; border-radius: var(--radius-sm); background: var(--panel-2); }
