@@ -248,7 +248,8 @@ def test_website_store_and_admin_api(shop, monkeypatch):
             assert (await c.get("/api/webshop")).status == 401
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
             d = await (await c.get("/api/webshop")).json()
-            assert d["status"]["paypal"] and d["kits"][0]["name"] == "AK kit" and d["orders"][0]["status"] == "delivered"
+            assert d["status"]["paypal"] and d["orders"][0]["status"] == "delivered"
+            assert any(k["name"] == "AK kit" and k["price"] == 9.99 for k in d["kits"])
             r = await c.post("/api/webshop/kits", json={"name": "Raid", "kit": "nope", "price": 5}, headers=H)
             assert r.status == 400
             r = await c.post("/api/webshop/kits", json={"name": "Raid", "kit": "mega raid kit", "price": "12.5",
@@ -316,7 +317,7 @@ def test_admin_key_bypasses_payment(shop, monkeypatch):
 def test_admin_key_on_the_website(shop, monkeypatch):
     from plugin_api import Plugin
     from plugin_manager import PluginManager
-    bot, db = shop.env.bot, shop.db
+    bot = shop.env.bot
     monkeypatch.setattr(Plugin, "_loops", lambda self: [])
     bot.config = replace(bot.config, store_admin_key="staff-only-key-123")
 
@@ -346,6 +347,82 @@ def test_admin_key_on_the_website(shop, monkeypatch):
             assert r.status == 303 and r.headers["Location"].startswith("/play/store/order/")
             page = await (await c.get(r.headers["Location"])).text()
             assert "Done!" in page and "free – admin key" in page
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    asyncio.run(main())
+
+
+def test_kits_added_automatically_hidden_until_priced(shop, monkeypatch):
+    from cogs import webshop as ws
+    s, db, bot = shop.s, shop.db, shop.env.bot
+    db.create_custom_kit("Gamer7 kit", "Bought by user 7 (request #3)", "store")     # a player's bought kit
+    said = []
+
+    async def command(cmd, **kw):
+        said.append(cmd)
+        return "kit info"
+    monkeypatch.setattr(bot.rcon, "command", command)
+    monkeypatch.setattr(type(bot.rcon), "connected", property(lambda self: True))
+
+    async def names(**kw):
+        return ["vip", "Starter"]
+    monkeypatch.setattr(bot, "get_cog", lambda name, _orig=bot.get_cog: NS(kit_names=NS(get=names))
+                        if name == "Kits" else _orig(name))
+    monkeypatch.setattr(ws.kitparse, "parse_kit_info", lambda raw: [NS(short_name="rifle.ak", amount=1),
+                                                                    NS(short_name="ammo.rifle", amount=128)])
+    assert run(s.sync_kits()) == 3                       # Mega raid kit + 2 in-game kits (Ak Kit is already sold)
+    rows = {(r["source"], r["kit"]): r for r in db.store_kits()}
+    assert ("custom", "Gamer7 kit") not in rows and ("custom", "Mega raid kit") in rows
+    vip = rows[("ingame", "vip")]
+    assert vip["auto"] and not vip["enabled"] and vip["price"] == 0
+    assert s.kit_items(vip) == [("rifle.ak", 1), ("ammo.rifle", 128)]
+    assert [r["kit"] for r in db.store_kits(enabled_only=True)] == ["Ak Kit"]           # hidden until priced
+    assert run(s.sync_kits()) == 0                                                      # nothing twice
+    from cogs.webshop import CheckoutError
+    with pytest.raises(CheckoutError, match="isn't for sale"):
+        s.store_kit(vip["id"])
+    # Removed by the owner: never added again
+    assert s.remove_kit(rows[("ingame", "Starter")]["id"])
+    assert run(s.sync_kits()) == 0 and ("ingame", "Starter") not in {(r["source"], r["kit"]) for r in db.store_kits()}
+
+    # Buying an in-game kit: offline -> waits, given in-game when the buyer is online
+    db.update_store_kit(vip["id"], price=4.5, enabled=1)
+    bot.online_players = {}
+    r = run(s.checkout("kit", base_url="https://x/play", kit_id=vip["id"], player="Gamer7"))
+    order = run(s.complete(r["token"]))
+    assert order["status"] == "waiting" and "next time you're on the server" in shop.dms[-1]
+    assert not any(c.startswith("kit givetoplayer") for c in said)
+    bot.online_players = {"Gamer7": {}}
+    assert run(s.deliver_waiting()) == 1
+    order = db.store_order(order["id"])
+    assert order["status"] == "delivered" and order["result"] == "vip" and order["request_id"] is None
+    assert 'kit givetoplayer "vip" "Gamer7"' in said and "given to you in-game" in shop.dms[-1]
+    assert run(s.deliver_waiting()) == 0                                                # given once
+
+
+def test_admin_sets_price_of_auto_kit(shop, monkeypatch):
+    bot, db = shop.env.bot, shop.db
+    bot.config = replace(bot.config, web_password="secret123")
+
+    async def main():
+        from web.server import WebInterface
+        tmp = bot.config.database_path.parent
+        web = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            d = await (await c.get("/api/webshop")).json()                 # loading the page syncs the kits
+            mega = next(k for k in d["kits"] if k["kit"] == "Mega raid kit")
+            assert mega["auto"] and mega["price"] == 0 and not mega["enabled"] and mega["items"] == 1
+            r = await c.put(f"/api/webshop/kits/{mega['id']}", json={"enabled": True}, headers=H)
+            assert r.status == 400 and "price first" in (await r.json())["error"]
+            r = await c.put(f"/api/webshop/kits/{mega['id']}", json={"price": "19.99"}, headers=H)
+            assert r.status == 200 and db.store_kit(mega["id"])["enabled"] == 1      # first price: on sale
+            assert (await c.delete(f"/api/webshop/kits/{mega['id']}", headers=H)).status == 200
+            d = await (await c.get("/api/webshop")).json()
+            assert not any(k["kit"] == "Mega raid kit" for k in d["kits"])          # removed stays removed
         finally:
             await c.close()
             await bot.rcon.close()

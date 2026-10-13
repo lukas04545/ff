@@ -613,20 +613,25 @@ class WebInterface:
     async def webshop(self, request: web.Request) -> web.Response:
         shop = self._cog("WebShop")
         db = self.bot.db
+        try:
+            await shop.sync_kits()            # new bot / in-game kits show up right away
+        except Exception:
+            log.exception("Store kit sync failed")
         order_cols = ("id", "kind", "title", "player", "user_id", "total", "currency", "gift_code", "gift_amount",
                       "paypal_amount", "paypal_order", "capture_id", "payer_email", "admin_key", "status", "result", "request_id",
                       "created_at", "paid_at")
         orders = [{k: (str(o[k]) if k == "user_id" and o[k] else o[k]) for k in order_cols}
                   for o in db.store_orders(limit=150)]
         return web.json_response({
-            "status": shop.status(), "kits": [dict(r) for r in db.store_kits()],
+            "status": shop.status(),
+            "kits": [{**dict(r), "items": len(shop.kit_items(r))} for r in db.store_kits()],
             "custom_kits": [k["name"] for k in db.custom_kits()],
             "gift_cards": [dict(g) for g in db.gift_cards()], "orders": orders,
             "price_list": bool(shop.price_list())})
 
-    def _store_kit_fields(self, data: dict, *, partial: bool = False) -> dict:
+    def _store_kit_fields(self, data: dict, *, partial: bool = False, source: str = "custom") -> dict:
         out = {}
-        if not partial or "kit" in data:
+        if (not partial or "kit" in data) and source == "custom":
             kit = self.bot.db.custom_kit(self._text(data, "kit", limit=60))
             if kit is None:
                 raise ApiError("Choose an existing custom kit (create one in the kit builder first).")
@@ -663,14 +668,20 @@ class WebInterface:
 
     async def webshop_kit_update(self, request: web.Request) -> web.Response:
         kit_id = int(request.match_info["kit_id"])
-        f = self._store_kit_fields(await self._json(request), partial=True)
-        if not self.bot.db.update_store_kit(kit_id, **f):
+        row = self.bot.db.store_kit(kit_id)
+        if row is None:
             raise ApiError("Kit not found.", 404)
+        f = self._store_kit_fields(await self._json(request), partial=True, source=row["source"])
+        if f.get("price", 0) > 0 and row["price"] <= 0 and "enabled" not in f:
+            f["enabled"] = 1                  # automatically added kit got its first price: on sale now
+        if f.get("enabled") and (f.get("price") or row["price"]) <= 0:
+            raise ApiError("Set a price first.")
+        self.bot.db.update_store_kit(kit_id, **f)
         self._audit(f"store: kit #{kit_id} changed")
         return web.json_response({"ok": True})
 
     async def webshop_kit_delete(self, request: web.Request) -> web.Response:
-        if not self.bot.db.delete_store_kit(int(request.match_info["kit_id"])):
+        if not self._cog("WebShop").remove_kit(int(request.match_info["kit_id"])):
             raise ApiError("Kit not found.", 404)
         self._audit(f"store: kit #{request.match_info['kit_id']} removed")
         return web.json_response({"ok": True})
