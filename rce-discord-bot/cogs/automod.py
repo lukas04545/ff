@@ -34,7 +34,7 @@ log = logging.getLogger("rce.automod")
 
 MAX_BATCH = 30            # check at once when this many messages are waiting (AI_MOD_INTERVAL = normal wait)
 CONTEXT_MESSAGES = 6      # earlier messages per channel sent along (already checked) so replies are understood
-WARN_COOLDOWN = 60        # at most one warning reply per member per minute
+DEFAULT_WARN_COOLDOWN = 60   # seconds between warning replies to the same member (AI_MOD_WARN_COOLDOWN, 0 = always)
 WINDOW = 24 * 3600        # warnings counted for the timeout
 MUTE_MIN, MUTE_MAX = 5, 120   # the AI picks the timeout length in this range (minutes)
 
@@ -241,7 +241,8 @@ class AutoMod(commands.Cog):
             except discord.HTTPException as exc:
                 log.warning("AI moderation timeout for %s failed: %s", member, exc)
         now = time.monotonic()
-        if timed_out or now - self._last_warn.get(member.id, -1e9) >= WARN_COOLDOWN:
+        cooldown = max(0, int(getattr(cfg, "ai_mod_warn_cooldown", DEFAULT_WARN_COOLDOWN)))
+        if timed_out or cooldown == 0 or now - self._last_warn.get(member.id, -1e9) >= cooldown:
             self._last_warn[member.id] = now
             counter = f" `{count}/{limit}`" if limit else ""
             body = (safe_md(flag["warning"]) if flag.get("warning")

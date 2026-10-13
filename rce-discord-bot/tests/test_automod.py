@@ -166,3 +166,17 @@ def test_check_interval(mod):
     asyncio.run(scenario())
     from settings_schema import validate
     assert validate("AI_MOD_INTERVAL", "60") is None and validate("AI_MOD_INTERVAL", "fast")
+
+
+def test_warn_cooldown_setting(mod):
+    troll = mod.Member(30)
+    mod.verdicts.update({str(i): {"severity": "low", "reason": "insult", "warning": "Keep it respectful."}
+                         for i in (1, 2, 3)})
+    mod.env.bot.config = replace(mod.env.bot.config, ai_mod_interval=0, ai_mod_timeout_after=0)
+    say(mod, 1, "idiot", troll)
+    say(mod, 2, "idiot again", troll)
+    assert len(mod.out.replies) == 1                                       # default: one warning per minute
+    mod.env.bot.config = replace(mod.env.bot.config, ai_mod_warn_cooldown=0)
+    say(mod, 3, "still an idiot", troll)
+    assert len(mod.out.replies) == 2                                       # 0: warned again right away
+    assert mod.env.bot.db.count_ai_warnings(1, 30) == 3                    # every message counted
