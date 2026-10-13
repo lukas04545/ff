@@ -996,7 +996,7 @@ restart. A broken plugin never stops the bot: it shows the error on its card and
 | Plugin | What it does | Default |
 |---|---|---|
 | 🤝 **Invite rewards** | `/invites stats`, `/invites top`. When someone a member invited links their player and plays *N* hours, both get points (optional recruiter role). Rejoins, self-invites and brand-new Discord accounts don't count. Needs the **Server Members Intent** and the bot permission **Manage Server**. | off |
-| 🌍 **Player website** | A public website at *your web link* + **`/play`**: live status, next wipe, leaderboards (kills, K/D, playtime, teams), player profiles with search (stats, team, badges, bounty), the points shop with item pictures, rules, about, how to join, Discord and store buttons. Read-only – no login, no secrets, no Discord IDs. | off |
+| 🌍 **Player website** | A public website at *your web link* + **`/play`** in the Kryvon look (dark, rusty red/orange, your logo – upload another one on the plugin card): live status, next wipe, leaderboards (kills, K/D, playtime, teams), player profiles with search (stats, team, badges, bounty), the points shop with item pictures, rules, about, how to join, Discord and store buttons. Read-only – no login, no secrets, no Discord IDs. | off |
 | 🎁 **Starter kit** | A name the bot has never seen gets a welcome message in-game and a one-time kit. | on (choose the kit) |
 | 🌱 **Low-pop bonus** | While fewer than *N* players are online, playtime points are multiplied – pays people to seed the server. | on |
 | 🔥 **Filling-up ping** | Members opt in with `/pingme on`; the role is pinged when the server reaches e.g. 10 or 20 players (cooldown per threshold). | off (choose a role) |

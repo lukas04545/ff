@@ -275,3 +275,46 @@ def test_backup_contains_plugins(tmp_path):
     path = backups.make_backup(tmp_path / "data" / "bot.db", base=tmp_path)
     names = zipfile.ZipFile(path).namelist()
     assert "data/plugins/mine.py" in names and "data/plugins.json" in names
+
+
+def test_website_logo_upload_and_default(pb):
+    import base64
+    png = b"\x89PNG\r\n\x1a\n" + b"y" * 40
+
+    async def main():
+        from web.server import WebInterface
+        m = pb.m
+        await m.load_all()
+        await m.set_enabled("website", True)
+        web = WebInterface(pb.bot, env_path=pb.tmp / ".env", secret_path=pb.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            r = await c.get("/play/logo")                                         # bundled default logo
+            assert r.status == 200 and r.content_type == "image/webp"
+            assert (await c.get("/play/icon")).content_type == "image/png"
+            page = await (await c.get("/play")).text()
+            assert 'src="/play/logo"' in page and "Build · Survive · Dominate" in page
+            url = "/api/plugins/website/file/logo"
+            assert (await c.post(url, json={"data": base64.b64encode(png).decode()}, headers=H)).status == 401
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            r = await c.post(url, json={"data": "data:text/html;base64," + base64.b64encode(b"<script>").decode()},
+                             headers=H)
+            assert r.status == 400                                                 # only real pictures
+            r = await c.post(url, json={"data": "data:image/png;base64," + base64.b64encode(png).decode()}, headers=H)
+            settings = {f["key"]: f for f in (await r.json())["plugin"]["settings"]}
+            assert r.status == 200 and settings["logo"]["value"] == "logo.png" and settings["logo"]["kind"] == "image"
+            assert (m.files_dir / "website" / "logo.png").read_bytes() == png
+            assert await (await c.get(url)).read() == png
+            r = await c.put("/api/plugins/website/settings", json={"values": {"logo": "../../.env"}}, headers=H)
+            assert r.status == 200 and m.settings_of("website")["logo"] == "logo.png"     # can't be set by hand
+            c.session.cookie_jar.clear()
+            assert await (await c.get("/play/logo")).read() == png                 # the uploaded logo is used
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            assert (await c.delete(url, headers=H)).status == 200
+            assert (await c.get("/play/logo")).content_type == "image/webp"        # back to the default
+            assert (await c.post("/api/plugins/bounties/file/min_amount", json={"data": ""}, headers=H)).status == 400
+        finally:
+            await c.close()
+            await pb.bot.rcon.close()
+    asyncio.run(main())

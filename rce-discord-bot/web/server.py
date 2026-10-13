@@ -380,6 +380,9 @@ class WebInterface:
         r.add_put("/api/plugins/{pid}/settings", self.plugin_settings)
         r.add_post("/api/plugins/{pid}/reload", self.plugin_reload)
         r.add_delete("/api/plugins/{pid}", self.plugin_delete)
+        r.add_get("/api/plugins/{pid}/file/{key}", self.plugin_file_get)
+        r.add_post("/api/plugins/{pid}/file/{key}", self.plugin_file_upload)
+        r.add_delete("/api/plugins/{pid}/file/{key}", self.plugin_file_delete)
         r.add_get("/play", self.player_website)                     # public player website (plugin "website")
         r.add_get("/play/{tail:.*}", self.player_website)
         r.add_get("/p/{pid}", self.plugin_public)                  # public plugin pages (no login)
@@ -674,6 +677,34 @@ class WebInterface:
             raise ApiError("Choose a .py file.")
         info = await self._plugin_call(self._plugins().install(name, code))
         self._audit(f"plugin file {info['file']} uploaded")
+        return web.json_response({"plugin": info})
+
+    async def plugin_file_get(self, request: web.Request) -> web.Response:
+        path = self._plugins().file_path(request.match_info["pid"], request.match_info["key"])
+        if path is None:
+            raise web.HTTPNotFound()
+        from web.item_images import image_type
+        data = path.read_bytes()
+        return web.Response(body=data, content_type=image_type(data) or "application/octet-stream",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+    async def plugin_file_upload(self, request: web.Request) -> web.Response:
+        import base64
+        import binascii
+        data = await self._json(request)
+        pid, key = request.match_info["pid"], request.match_info["key"]
+        try:
+            raw = base64.b64decode(str(data.get("data") or "").split(",")[-1], validate=True)
+        except (binascii.Error, ValueError):
+            raise ApiError("Invalid file.") from None
+        info = await self._plugin_call(self._plugins().save_file(pid, key, raw))
+        self._audit(f"plugin {pid}: picture {key} uploaded")
+        return web.json_response({"plugin": info})
+
+    async def plugin_file_delete(self, request: web.Request) -> web.Response:
+        pid, key = request.match_info["pid"], request.match_info["key"]
+        info = await self._plugin_call(self._plugins().delete_file(pid, key))
+        self._audit(f"plugin {pid}: picture {key} removed")
         return web.json_response({"plugin": info})
 
     async def plugin_delete(self, request: web.Request) -> web.Response:

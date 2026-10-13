@@ -59,7 +59,7 @@ Slash commands are registered with Discord automatically when the plugin is swit
 | Attribute | Meaning |
 |---|---|
 | `NAME`, `ICON`, `DESCRIPTION`, `VERSION`, `AUTHOR` | Shown on the Plugins page |
-| `SETTINGS` | Tuple of `Setting(key, label, kind, default, help=…, min=…, max=…, choices=…)`. Kinds: `text`, `textarea`, `int`, `bool`, `choice`, `channel`, `role`, `kit` |
+| `SETTINGS` | Tuple of `Setting(key, label, kind, default, help=…, min=…, max=…, choices=…)`. Kinds: `text`, `textarea`, `int`, `bool`, `choice`, `channel`, `role`, `kit`, `image` (uploaded on the Plugins page) |
 | `INTENTS` | Privileged intents it needs: `("members",)` and/or `("message_content",)` – the page tells the owner what to switch on |
 
 ### Events
@@ -85,6 +85,7 @@ Game events from the server log (`ev` objects from `rce/log_parser.py`):
 | Helper | |
 |---|---|
 | `setting(key)` | Current value of a setting (or its default) |
+| `file(key)` | Path of the picture uploaded for an `image` setting (or `None`) |
 | `data.get(key, default)`, `data.set(key, value)`, `data.delete(key)`, `data.items(prefix)` | The plugin's own storage (any JSON value, survives restarts and updates) |
 | `await say(text)` | In-game chat message |
 | `await give_kit(player, kit)` | Custom kit (bot kit) or in-game kit |

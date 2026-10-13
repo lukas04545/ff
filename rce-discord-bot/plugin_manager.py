@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import traceback
 from dataclasses import dataclass
@@ -37,6 +38,8 @@ BUILTIN_PACKAGE = "plugins"
 USER_PACKAGE = "rce_user_plugins"
 PLUGIN_ID = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 MAX_UPLOAD = 300_000          # bytes of source code
+MAX_IMAGE = 700_000           # bytes of an uploaded picture ("image" settings)
+IMAGE_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 KNOWN_INTENTS = ("members", "message_content")
 
 
@@ -50,6 +53,10 @@ def state_path_for(database_path: Path) -> Path:
 
 def user_dir_for(database_path: Path) -> Path:
     return Path(database_path).parent / "plugins"
+
+
+def files_dir_for(database_path: Path) -> Path:
+    return Path(database_path).parent / "plugin_files"
 
 
 def read_state(path: Path) -> dict:
@@ -112,6 +119,7 @@ class PluginManager:
         self.builtin_dir = Path(builtin_dir)
         self.user_dir = Path(user_dir) if user_dir else user_dir_for(bot.config.database_path)
         self.state_path = Path(state_path) if state_path else state_path_for(bot.config.database_path)
+        self.files_dir = files_dir_for(bot.config.database_path)
         self.state = read_state(self.state_path)
         for key in ("enabled", "settings", "known"):
             if not isinstance(self.state.get(key), dict):
@@ -321,7 +329,7 @@ class PluginManager:
         errors: dict[str, str] = {}
         for key, raw in (values or {}).items():
             spec = specs.get(key)
-            if spec is None:
+            if spec is None or spec.kind == "image":       # pictures are uploaded with save_file()
                 continue
             try:
                 value = spec.clean(raw)
@@ -343,6 +351,63 @@ class PluginManager:
             except Exception:
                 log.exception("Plugin %s: applying settings failed", pid)
         return {}
+
+    # ------------------------------------------------------------ Uploaded pictures ("image" settings)
+
+    def _image_spec(self, pid: str, key: str):
+        info = self.infos.get(pid)
+        spec = next((s for s in info.cls.SETTINGS if s.key == key), None) if info and info.cls else None
+        if spec is None or spec.kind != "image":
+            raise PluginError("Unknown picture setting.")
+        return spec
+
+    def file_path(self, pid: str, key: str) -> Path | None:
+        name = self.settings_of(pid).get(key)
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9_]+\.(png|jpg|webp|gif)", name):
+            return None
+        path = self.files_dir / pid / name
+        return path if path.is_file() else None
+
+    async def save_file(self, pid: str, key: str, data: bytes) -> dict:
+        from web.item_images import image_type
+        self._image_spec(pid, key)
+        kind = image_type(data or b"")
+        if kind not in IMAGE_EXT:
+            raise PluginError("Please choose a PNG, JPG, WebP or GIF picture.")
+        if len(data) > MAX_IMAGE:
+            raise PluginError("The picture is too big (max. 700 KB).")
+        folder = self.files_dir / pid
+        folder.mkdir(parents=True, exist_ok=True)
+        for old in folder.glob(f"{key}.*"):
+            old.unlink(missing_ok=True)
+        name = f"{key}{IMAGE_EXT[kind]}"
+        tmp = folder / (name + ".part")
+        tmp.write_bytes(data)
+        os.replace(tmp, folder / name)
+        await self._set_value(pid, key, name)
+        return self.describe(pid)
+
+    async def delete_file(self, pid: str, key: str) -> dict:
+        self._image_spec(pid, key)
+        for old in (self.files_dir / pid).glob(f"{key}.*"):
+            old.unlink(missing_ok=True)
+        await self._set_value(pid, key, None)
+        return self.describe(pid)
+
+    async def _set_value(self, pid: str, key: str, value) -> None:
+        current = self.settings_of(pid)
+        if value is None:
+            current.pop(key, None)
+        else:
+            current[key] = value
+        self.state["settings"][pid] = current
+        self._save()
+        plugin = self.instances.get(pid)
+        if plugin is not None:
+            try:
+                await plugin.on_settings_changed()
+            except Exception:
+                log.exception("Plugin %s: applying settings failed", pid)
 
     # ------------------------------------------------------------ Your own plugins
 
@@ -399,6 +464,7 @@ class PluginManager:
         was_running = pid in self.instances
         await self._stop(pid)
         info.path.unlink(missing_ok=True)
+        shutil.rmtree(self.files_dir / pid, ignore_errors=True)
         self.infos.pop(pid, None)
         self.state["enabled"].pop(pid, None)
         self.state["settings"].pop(pid, None)

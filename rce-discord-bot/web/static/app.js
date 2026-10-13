@@ -2044,7 +2044,30 @@ views.botlog = (main) => {
 // ------------------------------------------------------------------ Plugins
 // Every plugin is one file (plugins/ or data/plugins/). Switch on/off and settings take effect right away.
 
-function pluginControl(f, opts, kits, inputs) {
+function pluginImageControl(f, p, reload) {
+  const url = `/api/plugins/${p.id}/file/${f.key}`;
+  const preview = f.value ? h("img", { class: "plugin-img", src: `${url}?t=${Date.now()}`, alt: "" })
+    : h("span", { class: "muted", text: "Default picture" + (p.public_path ? " (see the website)" : "") });
+  const file = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif" });
+  file.addEventListener("change", () => {
+    const f0 = file.files[0];
+    if (!f0) return;
+    if (f0.size > 700000) { toast("The picture is too big (max. 700 KB).", true); file.value = ""; return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try { await api(url, { method: "POST", body: { data: reader.result } }); toast("Picture saved"); reload(); }
+      catch (e) { toast(e.message, true); }
+    };
+    reader.readAsDataURL(f0);
+  });
+  return h("div", { class: "row" }, preview, file,
+    f.value ? h("button", { class: "small ghost", text: "Use default", onclick: async () => {
+      await act(() => api(url, { method: "DELETE" }), "Default picture restored"); reload();
+    } }) : null);
+}
+
+function pluginControl(f, opts, kits, inputs, p, reload) {
+  if (f.kind === "image") return pluginImageControl(f, p, reload);
   const value = f.value === null || f.value === undefined ? "" : String(f.value);
   const listFor = { channel: opts.text_channels, role: opts.roles }[f.kind] || [];
   let el;
@@ -2119,7 +2142,7 @@ function pluginCard(p, opts, kits, reload) {
     for (const f of p.settings) {
       const err = h("div", { class: "field-error" });
       const row = h("div", { class: "field" }, h("label", { text: f.label }),
-        h("div", { class: "control" }, pluginControl(f, opts, kits, inputs), f.help ? h("div", { class: "help", text: f.help }) : null, err));
+        h("div", { class: "control" }, pluginControl(f, opts, kits, inputs, p, reload), f.help ? h("div", { class: "help", text: f.help }) : null, err));
       rows[f.key] = { row, err };
       form.append(row);
     }
