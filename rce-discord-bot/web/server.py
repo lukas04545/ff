@@ -614,7 +614,7 @@ class WebInterface:
         shop = self._cog("WebShop")
         db = self.bot.db
         order_cols = ("id", "kind", "title", "player", "user_id", "total", "currency", "gift_code", "gift_amount",
-                      "paypal_amount", "paypal_order", "capture_id", "payer_email", "status", "result", "request_id",
+                      "paypal_amount", "paypal_order", "capture_id", "payer_email", "admin_key", "status", "result", "request_id",
                       "created_at", "paid_at")
         orders = [{k: (str(o[k]) if k == "user_id" and o[k] else o[k]) for k in order_cols}
                   for o in db.store_orders(limit=150)]

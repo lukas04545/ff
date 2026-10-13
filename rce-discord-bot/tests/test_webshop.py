@@ -283,3 +283,70 @@ def test_checkout_rate_limit_and_masked_codes(shop):
     with pytest.raises(CheckoutError, match="Too many orders"):
         run(s.checkout("giftcard", base_url="https://x/play", value="10", ip="9.9.9.9"))
     run(s.checkout("giftcard", base_url="https://x/play", value="10", ip="8.8.8.8"))   # other visitors are fine
+
+
+def test_admin_key_bypasses_payment(shop, monkeypatch):
+    from cogs.webshop import CheckoutError
+    from settings_schema import validate
+    s, db, bot = shop.s, shop.db, shop.env.bot
+    with pytest.raises(CheckoutError, match="isn't enabled"):                # off by default
+        run(s.checkout("kit", base_url="https://x/play", kit_id=shop.kit_id, player="Gamer7", admin_key="anything"))
+    bot.config = replace(bot.config, store_admin_key="staff-only-key-123", paypal_client_id="")
+    s._paypal = None                                                       # works without PayPal too
+    alerts = []
+    monkeypatch.setattr(bot, "audit", alerts.append)
+    r = run(s.checkout("kit", base_url="https://x/play", kit_id=shop.kit_id, player="Gamer7",
+                       admin_key=" staff-only-key-123 ", ip="5.5.5.5"))
+    order = db.store_order_by("token", r["token"])
+    assert "redirect" not in r and order["status"] == "delivered" and order["admin_key"] == 1
+    assert order["paypal_amount"] == 0 and order["gift_amount"] == 0 and shop.env.existing in shop.env.buyer.roles
+    assert any("🔑" in a and "FREE with the admin key" in a for a in alerts)
+    r = run(s.checkout("giftcard", base_url="https://x/play", value="25", admin_key="staff-only-key-123"))
+    assert db.store_order_by("token", r["token"])["status"] == "delivered"
+    for _ in range(5):
+        with pytest.raises(CheckoutError, match="Wrong admin key"):
+            run(s.checkout("kit", base_url="https://x/play", kit_id=shop.kit_id, player="Gamer7",
+                           admin_key="guess", ip="6.6.6.6"))
+    with pytest.raises(CheckoutError, match="Too many wrong admin keys"):
+        run(s.checkout("kit", base_url="https://x/play", kit_id=shop.kit_id, player="Gamer7",
+                       admin_key="staff-only-key-123", ip="6.6.6.6"))
+    assert validate("STORE_ADMIN_KEY", "short") and validate("STORE_ADMIN_KEY", "long-enough-key") is None
+
+
+def test_admin_key_on_the_website(shop, monkeypatch):
+    from plugin_api import Plugin
+    from plugin_manager import PluginManager
+    bot, db = shop.env.bot, shop.db
+    monkeypatch.setattr(Plugin, "_loops", lambda self: [])
+    bot.config = replace(bot.config, store_admin_key="staff-only-key-123")
+
+    async def main():
+        from web.server import WebInterface
+        bot.plugins = PluginManager(bot)
+        await bot.plugins.load_all()
+        await bot.plugins.set_enabled("website", True)
+        tmp = bot.config.database_path.parent
+        web = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            assert 'name="admin_key"' not in await (await c.get("/play/store")).text()   # hidden normally
+            page = await (await c.get("/play/store?admin=1")).text()
+            assert 'name="admin_key"' in page and "Admin mode" in page and "store/build?admin=1" in page
+            r = await c.post("/play/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
+                                                          "admin": "1", "admin_key": "wrong"})
+            text = await r.text()
+            assert r.status == 400 and "Wrong admin key" in text and "wrong" not in text.split("Wrong admin key")[1][:300]
+            r = await c.post("/play/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
+                                                          "admin_key": "staff-only-key-123"}, allow_redirects=False)
+            assert r.status == 303 and r.headers["Location"].startswith("https://www.sandbox.paypal.com/")  # no ?admin=1
+            r = await c.post("/play/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
+                                                          "admin": "1", "admin_key": "staff-only-key-123"},
+                             allow_redirects=False)
+            assert r.status == 303 and r.headers["Location"].startswith("/play/store/order/")
+            page = await (await c.get(r.headers["Location"])).text()
+            assert "Done!" in page and "free – admin key" in page
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    asyncio.run(main())

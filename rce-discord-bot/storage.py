@@ -335,6 +335,7 @@ class Storage:
                 paypal_order TEXT UNIQUE,
                 capture_id TEXT,
                 payer_email TEXT,
+                admin_key INTEGER NOT NULL DEFAULT 0,  -- 1 = free with the admin key (no payment)
                 status TEXT NOT NULL DEFAULT 'pending',   -- pending / paid / delivered / failed / cancelled / expired
                 result TEXT,
                 request_id INTEGER,                    -- kit request that delivered it
@@ -416,6 +417,9 @@ class Storage:
                              ("pay_note", "TEXT")):                           # payment check result
             if column not in columns:
                 self._db.execute(f"ALTER TABLE kit_requests ADD COLUMN {column} {kind}")
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(store_orders)")}
+        if "admin_key" not in columns:
+            self._db.execute("ALTER TABLE store_orders ADD COLUMN admin_key INTEGER NOT NULL DEFAULT 0")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 

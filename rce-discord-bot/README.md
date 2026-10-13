@@ -1004,6 +1004,12 @@ purchase is posted in `STORE_CHANNEL_ID` (default: admin log).
 codes like `NUSF-UHNP-CXSX-EXJ3`. A card pays all or part of an order (the rest goes to PayPal) and keeps any
 remaining balance. Cards can be disabled any time. Wrong codes are rate-limited (10 per 15 minutes per visitor).
 
+**Admin key (free checkout for staff):** set *Admin key* (`STORE_ADMIN_KEY`, at least 12 characters) in Settings →
+💳 Store. Staff open the store with `?admin=1` at the end of the address (e.g. `…/play/store?admin=1`); the checkout
+then has an *Admin key* field – with the right key the item is delivered right away without any payment (works
+without PayPal too). Every use is posted in the purchase log with a ping and marked "🔑 free (admin key)" under
+Orders. Wrong keys: 5 tries per 15 minutes per visitor. Empty = off (default).
+
 **Setup:**
 1. [developer.paypal.com](https://developer.paypal.com) → *Apps & Credentials* → *Create App* → copy the
    **Client ID** and **Secret** into Settings → 💳 Store (`PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`).

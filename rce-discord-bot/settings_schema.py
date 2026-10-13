@@ -201,6 +201,10 @@ FIELDS: list[Field] = [
     Field("STORE_GIFTCARD_VALUES", "Gift cards players can buy", "store", placeholder="10, 25, 50",
           help="Values players can buy on the website (comma-separated). Empty = gift cards are only made by "
                "owners (web interface → Store)."),
+    Field("STORE_ADMIN_KEY", "Admin key (free checkout)", "store", "secret",
+          help="Lets staff take any store item without paying: open the store with ?admin=1 at the end of the address "
+               "(e.g. …/play/store?admin=1) and enter this key at checkout. At least 12 characters – share it only "
+               "with staff. Every use is posted in the purchase log with a ping. Empty = off."),
     Field("STORE_CHANNEL_ID", "Store purchase log channel", "store", "id", pick="text_channel",
           help="Every web store purchase and problem is posted here. Empty = admin log."),
     # Tip4Serv store (custom kit purchases)
@@ -386,6 +390,8 @@ def validate(key: str, value: str) -> str | None:
         return f'"{f.label}": allowed values are {", ".join(f.choices)}.'
     if key == "RCON_HOST" and (":" in value or "/" in value):
         return 'Enter the server IP without a port and without "/".'
+    if key == "STORE_ADMIN_KEY" and len(value) < 12:
+        return f'"{f.label}" needs at least 12 characters (so nobody can guess it).'
     if key == "STORE_CURRENCY" and not re.fullmatch(r"[A-Za-z]{3}", value):
         return f'"{f.label}" must be a 3-letter currency code like EUR.'
     if key == "STORE_GIFTCARD_VALUES" and not all(re.fullmatch(r"\d+(\.\d{1,2})?", v.strip())
