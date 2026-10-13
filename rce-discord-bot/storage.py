@@ -327,6 +327,7 @@ class Storage:
                 title TEXT NOT NULL,
                 store_kit_id INTEGER,
                 items TEXT,                            -- custom kit: JSON [{"short", "amount"}]
+                kit_name TEXT,                         -- custom kit: the name the buyer chose
                 timer_hours INTEGER,
                 player TEXT,
                 user_id INTEGER,
@@ -428,6 +429,8 @@ class Storage:
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(store_orders)")}
         if "admin_key" not in columns:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN admin_key INTEGER NOT NULL DEFAULT 0")
+        if "kit_name" not in columns:
+            self._db.execute("ALTER TABLE store_orders ADD COLUMN kit_name TEXT")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 

@@ -333,7 +333,7 @@ class WebShop(commands.Cog):
 
     async def checkout(self, kind: str, *, base_url: str, kit_id=None, items: dict | None = None,
                        timer_hours: int | None = None, value=None, player: str = "", gift_code: str = "",
-                       admin_key: str = "", ip: str = "?") -> dict:
+                       name: str = "", admin_key: str = "", ip: str = "?") -> dict:
         """Starts an order. Returns {"token", "redirect"} (PayPal) or {"token"} (paid with a gift card or free with
         the admin key)."""
         db = self.bot.db
@@ -345,8 +345,11 @@ class WebShop(commands.Cog):
             fields.update(title=row["name"], store_kit_id=row["id"], total=round(float(row["price"]), 2))
         elif kind == "custom":
             q, picked = self.price_custom(items or {}, timer_hours)
-            fields.update(title=f"Own custom kit ({len(picked)} item{'s' if len(picked) != 1 else ''})", total=q.total,
-                          timer_hours=q.timer_hours, items=json.dumps(picked))
+            kit_name = kitparse.clean_arg(name or "")[:40].strip()
+            count = f"{len(picked)} item{'s' if len(picked) != 1 else ''}"
+            fields.update(title=f"Custom kit: {kit_name}" if kit_name else f"Own custom kit ({count})",
+                          total=q.total, timer_hours=q.timer_hours, items=json.dumps(picked),
+                          kit_name=kit_name or None)
         elif kind == "giftcard":
             try:
                 value = round(float(value), 2)
@@ -499,7 +502,7 @@ class WebShop(commands.Cog):
                                              source="store", price=order["total"], currency=order["currency"],
                                              checkout_name=order["player"])
                 else:
-                    name = self._unique_kit_name(f"{order['player']} kit")
+                    name = self._unique_kit_name(order["kit_name"] or f"{order['player']} kit")
                     rid = db.add_kit_request(None, order["user_id"], name, 0, proof, order["items"], source="store",
                                              price=order["total"], currency=order["currency"],
                                              cooldown_minutes=order["timer_hours"] * 60 if order["timer_hours"] else None,

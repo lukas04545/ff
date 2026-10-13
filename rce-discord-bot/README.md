@@ -1012,7 +1012,8 @@ plugin must be on). Three tabs:
   right away if the buyer is online, otherwise automatically the next time they join. Kits you *Remove* are never
   added again. You can also add a bot kit by hand with its own name, price and duration.
 - **Build your own** – players pick items and amounts; the price comes from the price list (`prices.txt`, the same
-  one the ticket AI and Tip4Serv use: bundles, free "with" items, caps and claim timers). `STORE_CUSTOM_KITS`.
+  one the ticket AI and Tip4Serv use: bundles, free "with" items, caps and claim timers). Buyers can also give their kit a
+  name (optional; otherwise it's named after their player). `STORE_CUSTOM_KITS`.
 - **Gift cards** – players can buy gift cards (`STORE_GIFTCARD_VALUES`, e.g. `10,25,50`) and check a card's balance.
 
 **Checkout:** the buyer enters their in-game name – it must be linked to their Discord account (`/customkit link`),
