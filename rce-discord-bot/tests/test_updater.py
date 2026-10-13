@@ -134,10 +134,34 @@ def test_git_checkout_fast_forward(tmp_path):
 
     _write(origin, {"rce-discord-bot/bot.py": "v = 3\n"})
     _git(origin, "commit", "-qam", "third")
-    (bot_dir / "bot.py").write_text("v = 'my local edit'\n")    # local changes -> never overwritten
+    (bot_dir / "bot.py").write_text("v = 'my local edit'\n")    # hand-edited code -> blocks, never overwritten
     r = up.check()
-    assert r.status == "skipped" and "Local changes" in r.message
+    assert r.status == "skipped" and "changed bot code" in r.message and "bot.py" in r.message
     assert (bot_dir / "bot.py").read_text() == "v = 'my local edit'\n"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_git_update_keeps_web_edited_files(tmp_path):
+    """Editing rules/knowledge/prices in the web interface must not block updates – the owner's version stays."""
+    origin = tmp_path / "origin"
+    _write(origin, {"rce-discord-bot/bot.py": "v = 1\n", "rce-discord-bot/rules.md": "upstream rules\n",
+                    "rce-discord-bot/prices.txt": "upstream prices\n"})
+    _git(origin, "init", "-q"); _git(origin, "add", "."); _git(origin, "commit", "-qm", "first")
+    _git(tmp_path, "clone", "-q", str(origin), "clone")
+    bot_dir = tmp_path / "clone" / "rce-discord-bot"
+    up = Updater("lukas04545/ff", base_dir=bot_dir, pip_install=lambda req: None)
+
+    # The owner edited their knowledge base/prices in the panel; upstream changes code and also the rules file.
+    (bot_dir / "prices.txt").write_text("MY custom prices\n")
+    (bot_dir / "rules.md").write_text("MY rules\n")
+    _write(origin, {"rce-discord-bot/bot.py": "v = 2\n", "rce-discord-bot/rules.md": "new upstream rules\n"})
+    _git(origin, "commit", "-qam", "second")
+    r = up.check()
+    assert r.status == "updated"                                    # not blocked any more
+    assert (bot_dir / "bot.py").read_text() == "v = 2\n"            # code updated
+    assert (bot_dir / "prices.txt").read_text() == "MY custom prices\n"   # owner's edits kept
+    assert (bot_dir / "rules.md").read_text() == "MY rules\n"             # kept even though upstream changed it
+    assert up.check().status == "up_to_date"
 
 
 def test_cog_restarts_after_update(monkeypatch):

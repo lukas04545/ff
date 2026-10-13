@@ -1944,7 +1944,7 @@ function updateStatus() {
         else toast(r.status === "up_to_date" ? "Already the newest version" : r.message, r.status === "error");
       } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "🔄 Check now"; }
     } });
-    box.replaceChildren(
+    box.replaceChildren(...[
       h("div", { class: "row" },
         h("strong", { text: "Installed version: " }),
         cur.sha ? h("code", { text: cur.sha.slice(0, 7) }) : h("span", { class: "muted", text: "unknown (first check pending)" }),
@@ -1953,7 +1953,8 @@ function updateStatus() {
         `${u.enabled ? `Auto-update on – every ${u.interval} min` : "Auto-update off"} · from ${u.repo} (${u.branch}) · ` +
         `${u.mode === "git" ? "git checkout" : "ZIP install"} · last check: ${ago(u.last_check)}`, state),
       u.launcher ? null : h("p", { class: "muted", style: "font-size:.85rem;margin:.2rem 0 0", text: "Tip: start the bot with start.bat / start.sh – then it restarts by itself after an update." }),
-      h("div", { class: "row", style: "margin-top:.4rem" }, btn));
+      h("div", { class: "row", style: "margin-top:.4rem" }, btn),
+    ].filter(Boolean));
   };
   api("/api/update").then(render).catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
   return box;
