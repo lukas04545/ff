@@ -135,3 +135,34 @@ def test_owner_instructions_reach_the_ai(mod):
     say(mod, 1, "stfu", mod.Member(10))
     asyncio.run(mod.cog.flush())
     assert "Warn for 'stfu'." in seen[0]
+
+
+def test_check_interval(mod):
+    from cogs.automod import MAX_BATCH
+    user = mod.Member(20)
+    # 0 = every message is checked right away
+    mod.env.bot.config = replace(mod.env.bot.config, ai_mod_interval=0)
+    say(mod, 1, "hello", user)
+    assert len(mod.calls) == 1 and "[id 1]" in mod.calls[0]
+
+    # 1 second: messages are collected and checked together after the interval
+    mod.env.bot.config = replace(mod.env.bot.config, ai_mod_interval=1)
+    mod.calls.clear()
+
+    async def scenario():
+        await mod.cog.on_message(mod.message(2, "one", user))
+        await mod.cog.on_message(mod.message(3, "two", user))
+        assert mod.calls == []                                            # still waiting for the interval
+        await asyncio.sleep(1.3)
+        assert len(mod.calls) == 1 and "[id 2]" in mod.calls[0] and "[id 3]" in mod.calls[0]
+        # More than a full batch: checked at once, the rest after the next interval
+        for i in range(MAX_BATCH + 2):
+            await mod.cog.on_message(mod.message(100 + i, f"msg {i}", user))
+        assert len(mod.calls) == 2 and "[id 129]" in mod.calls[1] and "[id 130]" not in mod.calls[1]
+        await asyncio.sleep(1.3)
+        await asyncio.sleep(1.3)
+        assert len(mod.calls) == 3 and "[id 130]" in mod.calls[2] and "[id 131]" in mod.calls[2]
+        assert not mod.cog._pending
+    asyncio.run(scenario())
+    from settings_schema import validate
+    assert validate("AI_MOD_INTERVAL", "60") is None and validate("AI_MOD_INTERVAL", "fast")

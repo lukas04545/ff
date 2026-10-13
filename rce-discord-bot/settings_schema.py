@@ -129,6 +129,10 @@ FIELDS: list[Field] = [
                "clearly offensive (insults at someone, slurs, hate, threats, harassment) – swearing, banter and "
                "game trash talk are fine. Staff is never checked. Every warning goes to the admin log. Messages "
                "there are sent to DeepSeek. Empty = off."),
+    Field("AI_MOD_INTERVAL", "AI moderation: check every … seconds", "community", "int", placeholder="15",
+          help="How often the AI checks new messages (0–3600). 0 = every message right away (fastest reaction, "
+               "most AI calls). Higher = new messages are collected and checked together (fewer DeepSeek calls, "
+               "cheaper, but warnings come later). After 30 waiting messages it checks at once anyway."),
     Field("AI_MOD_TIMEOUT_AFTER", "AI moderation: timeout after … warnings (24 h)", "community", "int",
           placeholder="3", help="0 = only warn, never time out."),
     Field("AI_MOD_TIMEOUT_MINUTES", "AI moderation: timeout length if the AI gives none (minutes)", "community",
