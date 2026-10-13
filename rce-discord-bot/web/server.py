@@ -21,7 +21,6 @@ import os
 import secrets
 import time
 import webbrowser
-from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -39,7 +38,8 @@ from rce.diagnostics import diagnose_rcon
 
 from logbuffer import memory_log
 from web import tunnel as tunnelmod
-from web.users import OWNER, UserError, UserStore
+from web.ratelimit import RateLimiter
+from web.users import OWNER, UserError, UserStore, same_secret
 from cogs.economy import SHOP_KINDS
 from permcheck import check_permissions, explain_forbidden
 from rce import items as itemlist
@@ -60,7 +60,11 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 SESSION_COOKIE = "rce_session"
 PUBLIC_LINK_FILE = "PUBLIC_LINK.txt"  # current public address (Cloudflare tunnel), next to start.bat
 SESSION_TTL = 12 * 3600
-LOGIN_ATTEMPTS_PER_MINUTE = 5
+LOGIN_ATTEMPTS_PER_MINUTE = 5          # per IP and per username (every attempt counts)
+LOGIN_FAILURES_PER_15_MIN = 15         # failed attempts -> locked for up to 15 minutes
+PUBLIC_PAGES_PER_MINUTE = 60           # player website per visitor
+PUBLIC_IMAGES_PER_MINUTE = 300         # item pictures per visitor (a shop page shows many)
+PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
@@ -249,7 +253,11 @@ class WebInterface:
         self._secret = self._load_secret(secret_path)
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
         self._revoked: set[str] = set()
-        self._login_attempts: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
+        self._login_minute = RateLimiter(LOGIN_ATTEMPTS_PER_MINUTE, 60)
+        self._login_failures = RateLimiter(LOGIN_FAILURES_PER_15_MIN, 900)
+        self._public_pages = RateLimiter(PUBLIC_PAGES_PER_MINUTE, 60)
+        self._public_images = RateLimiter(PUBLIC_IMAGES_PER_MINUTE, 60)
+        self._public_total = RateLimiter(PUBLIC_PAGES_TOTAL_PER_MINUTE, 60)
         self._runner: web.AppRunner | None = None
         self.tunnel: tunnelmod.Tunnel | None = None
         self.tunnel_problem: str | None = None
@@ -591,6 +599,7 @@ class WebInterface:
     # ------------------------------------------------------------ Item pictures
 
     async def item_image(self, request: web.Request) -> web.Response:
+        self._public_limit(request, images=True)
         template = self.bot.config.item_image_url if self.bot is not None else ""
         if not template or template.lower() == "off":
             raise web.HTTPNotFound()
@@ -677,6 +686,7 @@ class WebInterface:
         return await self.plugin_public(request, pid="website")
 
     async def plugin_public(self, request: web.Request, pid: str | None = None) -> web.StreamResponse:
+        self._public_limit(request)
         pid = pid or request.match_info["pid"]
         manager = getattr(self.bot, "plugins", None) if self.bot is not None else None
         plugin = manager.running(pid) if manager is not None else None
@@ -696,14 +706,44 @@ class WebInterface:
     async def _index(self, request: web.Request) -> web.FileResponse:
         return web.FileResponse(STATIC_DIR / "index.html")
 
-    def _rate_limit(self, key: str) -> None:
-        attempts = self._login_attempts[key]
-        now = time.time()
-        while attempts and now - attempts[0] > 60:
-            attempts.popleft()
-        if len(attempts) >= LOGIN_ATTEMPTS_PER_MINUTE:
-            raise ApiError("Too many attempts – please wait a minute.", 429)
-        attempts.append(now)
+    def _login_blocked(self, *keys: str, count: bool = True) -> float | None:
+        """Seconds to wait if one of the keys (IP, username …) is locked. count=True counts this attempt."""
+        for key in keys:
+            wait = self._login_failures.retry_after(key)
+            if wait is None and count:
+                wait = self._login_minute.hit(key)
+            elif wait is None:
+                wait = self._login_minute.retry_after(key)
+            if wait is not None:
+                return wait
+        return None
+
+    def _rate_limit(self, *keys: str) -> None:
+        wait = self._login_blocked(*keys)
+        if wait is not None:
+            minutes = max(1, round(wait / 60))
+            raise ApiError(f"Too many attempts – please wait {minutes} minute{'s' if minutes != 1 else ''}.", 429)
+
+    def _login_failed(self, *keys: str) -> None:
+        for key in keys:
+            self._login_failures.hit(key)
+
+    def _login_ok(self, *keys: str) -> None:
+        for key in keys:
+            self._login_minute.clear(key)
+            self._login_failures.clear(key)
+
+    def _public_limit(self, request: web.Request, *, images: bool = False) -> None:
+        """Player website and item pictures: limits per visitor (logged-in admins aren't limited)."""
+        if self._session_user(request) is not None:
+            return
+        ip = self._client_ip(request)
+        wait = (self._public_images if images else self._public_pages).hit(ip)
+        if wait is None and not images:
+            wait = self._public_total.hit("all")
+        if wait is not None:
+            raise web.HTTPTooManyRequests(text="Too many requests – please wait a moment and reload.",
+                                          headers={"Retry-After": str(int(wait) + 1)})
 
     @staticmethod
     def _client_ip(request: web.Request) -> str:
@@ -719,21 +759,21 @@ class WebInterface:
         data = await self._json(request)
         username = str(data.get("username") or OWNER).strip()[:32] or OWNER
         password = str(data.get("password", ""))[:256]
-        self._rate_limit(ip)
-        self._rate_limit("user:" + username.lower())  # also limits guessing one account from many IPs
+        keys = (ip, "user:" + username.lower())     # per IP, and per account (guessing one account from many IPs)
+        self._rate_limit(*keys)
 
         if username.lower() == OWNER:
             username = OWNER
-            ok = hmac.compare_digest(password.encode(), self.password.encode())
+            ok = same_secret(password, self.password)
         else:
             user = await asyncio.to_thread(self.users.authenticate, username, password)
             ok = user is not None
             username = user["username"] if user else username
         if not ok:
+            self._login_failed(*keys)
             log.warning("Failed web login for '%s' from %s", username, ip)
             raise ApiError("Wrong username or password.", 401)
-        self._login_attempts[ip].clear()
-        self._login_attempts["user:" + username.lower()].clear()
+        self._login_ok(*keys)
         resp = web.json_response({"ok": True})
         self._set_session_cookie(resp, username)
         log.info("Web login: %s from %s", username, ip)
@@ -743,8 +783,11 @@ class WebInterface:
 
     async def auth_link(self, request: web.Request) -> web.Response:
         """One-time link from the bot window: logs in and opens the matching page."""
-        if not hmac.compare_digest(request.query.get("token", ""), self.login_token):
+        key = "link:" + self._client_ip(request)
+        if self._login_blocked(key) is not None or not same_secret(request.query.get("token", ""), self.login_token):
+            self._login_failed(key)
             raise web.HTTPFound("/")
+        self._login_ok(key)
         resp = web.HTTPFound("/#settings" if self.setup_mode else "/#overview")
         self._set_session_cookie(resp)
         raise resp
@@ -808,9 +851,13 @@ class WebInterface:
         if request["user"] == OWNER:
             raise ApiError("The owner password is WEB_PASSWORD – change it under Settings → Web interface.")
         data = await self._json(request)
+        key = "pw:" + request["user"].lower()
+        self._rate_limit(key)
         if await asyncio.to_thread(self.users.authenticate, request["user"],
                                    str(data.get("current") or "")) is None:
+            self._login_failed(key)
             raise ApiError("The current password is wrong.", 403)
+        self._login_ok(key)
         try:
             await asyncio.to_thread(self.users.update, request["user"], password=str(data.get("new") or ""))
         except UserError as exc:
@@ -1412,7 +1459,11 @@ class WebInterface:
         return hmac.new(self._secret, b"tip4serv-webhook", hashlib.sha256).hexdigest()[:32]
 
     async def tip4serv_webhook(self, request: web.Request) -> web.Response:
-        if not hmac.compare_digest(request.match_info["token"], self.webhook_token):
+        key = "hook:" + self._client_ip(request)
+        if self._login_failures.retry_after(key) is not None:
+            raise web.HTTPTooManyRequests()
+        if not same_secret(request.match_info["token"], self.webhook_token):
+            self._login_failed(key)
             raise web.HTTPNotFound()
         try:
             data = await request.json()

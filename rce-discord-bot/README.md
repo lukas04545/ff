@@ -464,7 +464,8 @@ Everything you do in the web interface is posted to the admin log channel in Dis
 | `WEB_OPEN_BROWSER` | `true` | Open the browser automatically on startup |
 | `WEB_ENABLED` | `true` | Turn the web interface off completely |
 
-**Security:** Password login (max. 5 attempts per minute), sessions expire after 12 hours,
+**Security:** Password login (max. 5 attempts per minute, locked for 15 minutes after 15 wrong passwords),
+sessions expire after 12 hours,
 protection against other websites (CSRF), all player and console texts are displayed as plain
 text only. However, the web interface has **no HTTPS** – **never expose it to the internet via
 port forwarding on your router**. For access on the go, use a VPN such as Tailscale or WireGuard
@@ -486,12 +487,18 @@ role:
 | **Admin** | Everything (overview, console, kits, kit builder, tickets, stats, community, …) **except** Settings, bot restart and user management |
 | **Owner** | Everything, including settings and managing accounts |
 
-- Passwords are stored only as scrypt hashes in `data/web_users.json` (never in plain text).
+- Passwords are stored only as salted **PBKDF2-HMAC-SHA256** hashes (600 000 rounds) in `data/web_users.json`
+  (never in plain text). Accounts from older versions (scrypt) are upgraded automatically at their next login.
+  Plain single SHA-256 is deliberately not used: it can be brute-forced billions of times per second.
 - Admins change their own password via **🔑 My password** in the sidebar. The owner can reset
   passwords, change roles, disable or delete accounts – disabling/deleting/resetting logs that person
   out immediately.
 - Every action in the web interface is written to the admin log channel **with the username**.
-- Login protection: max. 5 attempts per minute per IP and per account.
+- Login protection, per IP **and** per account: max. 5 attempts per minute, and after 15 wrong passwords
+  within 15 minutes that IP/account is locked for 15 minutes (even with the right password). The same applies
+  to *My password*, the one-time login link and the Tip4Serv webhook address.
+- Player website and item pictures (public): max. 60 pages and 300 pictures per minute per visitor, 1200 pages
+  per minute in total; new picture downloads are capped at 60 per minute. Logged-in admins aren't limited.
 
 **How other admins reach the web interface** (it runs on your PC):
 

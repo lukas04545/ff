@@ -16,12 +16,15 @@ from urllib.parse import quote
 
 import aiohttp
 
+from web.ratelimit import RateLimiter
+
 log = logging.getLogger("rce.items.images")
 
 DEFAULT_URL = "https://rustlabs.com/img/items180/{shortname}.png"
 SHORTNAME = re.compile(r"^[a-z0-9][a-z0-9._ -]{0,63}$")
 MAX_BYTES = 512 * 1024
 MISSING_RETRY = 86400           # seconds before an item without a picture is tried again
+DOWNLOADS_PER_MINUTE = 60       # new downloads from the source, all visitors together
 MAGIC = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"RIFF", "image/webp"),
          (b"GIF8", "image/gif"))
 
@@ -41,6 +44,7 @@ class ItemImages:
         self._locks: dict[str, asyncio.Lock] = {}
         self._parallel = asyncio.Semaphore(4)
         self._session: aiohttp.ClientSession | None = None
+        self._downloads = RateLimiter(DOWNLOADS_PER_MINUTE, 60)   # random names can't make the bot spam the source
 
     def _path(self, shortname: str) -> Path:
         return self.folder / (shortname.replace(" ", "_") + ".img")
@@ -70,6 +74,8 @@ class ItemImages:
         return (data, kind) if kind else None
 
     async def _download(self, shortname: str) -> bytes | None:
+        if self._downloads.hit("all") is not None:
+            return None                     # too many new pictures right now – the next request tries again
         url = self.url_template.replace("{shortname}", quote(shortname))
         try:
             async with self._parallel:
