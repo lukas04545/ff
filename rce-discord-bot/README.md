@@ -585,6 +585,8 @@ Run the automated tests with `pip install pytest && pytest`.
 | `/shop list`, `/shop buy <item>` | everyone | See the shop and buy with your points – delivered in-game to your linked player |
 | `/points balance`, `/points top`, `/points history` | everyone | Your balance, the top 10, your last point changes |
 | `/points give`, `/points take` | Admins | Give or take points |
+| `/giftcard create`, `/giftcard list`, `/giftcard disable` | Owners (server owner, Administrator, `ADMIN_USER_IDS`) | Create web store gift cards (codes are only shown to you), see their balances, disable one |
+| `/giftcard check` | everyone | How much is left on a gift card |
 | `/profile [member]` | everyone | Linked player, PvP stats, playtime, points, /daily, custom kits with cooldowns, timed roles |
 | `/wipe info` | everyone | Next wipe with countdown |
 | `/wipe set`, `/wipe clear`, `/wipe done` | Admins | Plan the next wipe (with repeat), clear it, or mark it as done now (runs the resets) |
@@ -1004,7 +1006,8 @@ kit is delivered like an approved kit purchase: the buyer gets the kit's role (f
 new custom kit with their items) and claims it with `/customkit claim` in Discord. They also get a DM, and every
 purchase is posted in `STORE_CHANNEL_ID` (default: admin log).
 
-**Gift cards:** owners create them in **💳 Store → Gift cards** (value, how many, optional validity and note) –
+**Gift cards:** owners create them in **💳 Store → Gift cards** in the web interface or with **`/giftcard create`** in
+Discord (server owner / Administrator; the codes are only shown to them) – value, how many, optional validity and note –
 codes like `NUSF-UHNP-CXSX-EXJ3`. A card pays all or part of an order (the rest goes to PayPal) and keeps any
 remaining balance. Cards can be disabled any time. Wrong codes are rate-limited (10 per 15 minutes per visitor).
 

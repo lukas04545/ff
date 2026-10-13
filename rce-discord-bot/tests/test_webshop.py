@@ -427,3 +427,44 @@ def test_admin_sets_price_of_auto_kit(shop, monkeypatch):
             await c.close()
             await bot.rcon.close()
     asyncio.run(main())
+
+
+def test_giftcard_discord_commands(shop):
+    s, db = shop.s, shop.db
+
+    def interaction(uid, admin=False, owner_id=999):
+        sent = []
+
+        async def send_message(text=None, embed=None, ephemeral=False):
+            sent.append(NS(text=text, embed=embed, ephemeral=ephemeral))
+        class User:
+            id, guild, guild_permissions = uid, NS(owner_id=owner_id), NS(administrator=admin)
+
+            def __str__(self):
+                return f"user{uid}"
+        user = User()
+        return NS(user=user, response=NS(send_message=send_message)), sent
+
+    # Not an owner: refused, nothing created
+    i, sent = interaction(50)
+    run(s.gc_create.callback(s, i, 10.0, 2, 0, None))
+    assert "Only owners" in sent[-1].text and sent[-1].ephemeral and not db.gift_cards()
+    # Server owner / Administrator: codes only shown to them
+    i, sent = interaction(999)
+    run(s.gc_create.callback(s, i, 15.0, 3, 30, "prize"))
+    codes = sent[-1].embed.description.strip("`\n").split("\n")
+    assert sent[-1].ephemeral and len(codes) == 3 and db.gift_card(codes[0])["note"] == "prize"
+    assert db.gift_card(codes[0])["created_by"] == "user999" and db.gift_card(codes[0])["expires_at"]
+    i, sent = interaction(51, admin=True)
+    run(s.gc_list.callback(s, i))
+    assert codes[0] in sent[-1].embed.description and "15.00" in sent[-1].embed.description
+    run(s.gc_disable.callback(s, i, codes[1].lower().replace("-", ""), True))
+    assert db.gift_card(codes[1])["disabled"] and "disabled" in sent[-1].text
+    # Anyone can check a balance
+    i, sent = interaction(52)
+    run(s.gc_check.callback(s, i, codes[0]))
+    assert "€15.00 of €15.00" in sent[-1].text and "active" in sent[-1].text
+    run(s.gc_check.callback(s, i, codes[1]))
+    assert "disabled" in sent[-1].text
+    run(s.gc_disable.callback(s, i, codes[0], True))
+    assert "Only owners" in sent[-1].text and not db.gift_card(codes[0])["disabled"]
