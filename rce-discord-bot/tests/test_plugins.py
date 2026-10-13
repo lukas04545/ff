@@ -1,4 +1,5 @@
-"""Plugin system: discovery, on/off, settings, own plugin files, broken plugins, web API and public pages."""
+"""Plugin system: discovery, on/off, settings, own plugin files, broken plugins, web API, player website and
+item pictures."""
 import asyncio
 import json
 from types import SimpleNamespace as NS
@@ -8,7 +9,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 H = {"X-Requested-With": "rce-web"}
 DEFAULT_ON = {"starter_kit", "lowpop_bonus", "early_bird", "bounties", "weekly_recap", "achievements", "wipe_poll"}
-ALL = DEFAULT_ON | {"invites", "public_page", "filling_ping", "comeback"}
+ALL = DEFAULT_ON | {"invites", "website", "filling_ping", "comeback"}
 
 HELLO = '''
 from plugin_api import Plugin, Setting
@@ -158,8 +159,15 @@ def test_broken_plugin_never_stops_the_bot(pb):
     asyncio.run(main())
 
 
-def test_web_api_and_public_page(pb):
-    pb.db.record_kill("<script>alert(1)</script>", "Victim")
+def test_web_api_and_player_website(pb):
+    db = pb.db
+    db.record_kill("<script>alert(1)</script>", "Victim")
+    db.record_kill("Ace", "Victim")
+    db.record_kill("Ace", "Bob")
+    db.add_playtime(["Ace"], 7200)
+    db.create_custom_kit("Raid", None, "admin")
+    db.add_custom_kit_item("Raid", "ammo.rocket.basic", 3)
+    db.add_shop_item("Raid kit", "custom_kit", "Raid", 1, 500, "Boom")
 
     async def main():
         from web.server import WebInterface
@@ -170,15 +178,15 @@ def test_web_api_and_public_page(pb):
         await c.start_server()
         try:
             assert (await c.get("/api/plugins")).status == 401
-            assert (await c.get("/p/public_page")).status == 404                 # off -> no page
+            assert (await c.get("/play")).status == 404                          # off -> no website
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
             r = await (await c.get("/api/plugins")).json()
             assert {p["id"] for p in r["plugins"]} == ALL
-            r = await c.post("/api/plugins/public_page/toggle", json={"enabled": True}, headers=H)
+            r = await c.post("/api/plugins/website/toggle", json={"enabled": True}, headers=H)
             assert (await r.json())["plugin"]["running"] is True
-            r = await c.put("/api/plugins/public_page/settings", json={"values": {"accent": "#123456",
-                                                                              "invite": "https://discord.gg/abc"}},
-                            headers=H)
+            r = await c.put("/api/plugins/website/settings", json={"values": {
+                "accent": "#123456", "invite": "https://discord.gg/abc", "store": "javascript:alert(1)",
+                "about": "5x gather\n<b>solo/duo</b>"}}, headers=H)
             assert r.status == 200
             r = await c.put("/api/plugins/weekly_recap/settings", json={"values": {"hour": "99"}}, headers=H)
             assert r.status == 400 and "hour" in (await r.json())["errors"]
@@ -187,19 +195,74 @@ def test_web_api_and_public_page(pb):
             assert (await c.delete("/api/plugins/hello", headers=H)).status == 200
             r = await c.post("/api/plugins/upload", json={"filename": "x.py", "code": "nope("}, headers=H)
             assert r.status == 400
-            c.session.cookie_jar.clear()                                          # the public page needs no login
-            r = await c.get("/p/public_page")
+            c.session.cookie_jar.clear()                                          # the website needs no login
+            r = await c.get("/play")
             page = await r.text()
-            assert r.status == 200 and "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "<script>" not in page
-            assert "https://discord.gg/abc" in page and "#123456" in page
+            assert r.status == 200 and "<script>" not in page and "javascript:" not in page
+            assert "https://discord.gg/abc" in page and "#123456" in page and "&lt;b&gt;solo/duo&lt;/b&gt;" in page
             assert "default-src 'none'" in r.headers["Content-Security-Policy"]
-            data = await (await c.get("/p/public_page/data.json")).json()
-            assert data["top_kills"][0]["kills"] == 1 and "password" not in json.dumps(data).lower()
-            assert (await c.get("/p/public_page/../../.env")).status == 404
+            page = await (await c.get("/play/leaderboard?by=kills")).text()
+            assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "player?name=Ace" in page
+            page = await (await c.get("/play/player?name=ace")).text()
+            assert ">Ace <span" in page and "2h" in page
+            page = await (await c.get("/play/player?name=A")).text()
+            assert "Did you mean" in page and "player?name=Ace" in page
+            page = await (await c.get("/play/shop")).text()
+            assert "Raid kit" in page and "/img/items/ammo.rocket.basic.png?ph=1" in page and "500" in page
+            assert (await c.get("/play/rules")).status == 200
+            assert (await c.get("/play/nope")).status == 404
+            assert (await c.get("/p/website/leaderboard")).status == 200
+            data = await (await c.get("/play/status.json")).json()
+            assert data["online"] is False and "password" not in json.dumps(data).lower()
+            await m.save_settings("website", {"leaderboards": False})
+            assert (await c.get("/play/leaderboard")).status == 404
         finally:
             await c.close()
             await pb.bot.rcon.close()
     asyncio.run(main())
+
+
+def test_item_pictures_are_cached(pb, monkeypatch):
+    from web import item_images
+    png = b"\x89PNG\r\n\x1a\n" + b"x" * 50
+    calls = []
+
+    async def fake_download(self, shortname):
+        calls.append(shortname)
+        if shortname == "rifle.ak":
+            self.folder.mkdir(parents=True, exist_ok=True)
+            self._path(shortname).write_bytes(png)
+            return png
+        self._missing[shortname] = item_images.time.time()
+        return None
+    monkeypatch.setattr(item_images.ItemImages, "_download", fake_download)
+    assert item_images.image_type(png) == "image/png" and item_images.image_type(b"<html>") is None
+
+    async def main():
+        from web.server import WebInterface
+        web = WebInterface(pb.bot, env_path=pb.tmp / ".env", secret_path=pb.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            r = await c.get("/img/items/rifle.ak.png")                             # public, no login needed
+            assert r.status == 200 and r.content_type == "image/png" and await r.read() == png
+            assert "max-age" in r.headers["Cache-Control"]
+            await c.get("/img/items/rifle.ak.png")
+            assert calls == ["rifle.ak"]                                         # downloaded once, then cached
+            assert (await c.get("/img/items/nothing.png")).status == 404
+            assert (await c.get("/img/items/nothing.png")).status == 404
+            assert calls == ["rifle.ak", "nothing"]                              # missing ones aren't retried
+            r = await c.get("/img/items/nothing.png?ph=1")                        # website: placeholder tile
+            assert r.content_type == "image/svg+xml" and "nothing" in await r.text()
+            assert (await c.get("/img/items/..%2F..%2Fsecret.png")).status == 404
+            assert (await c.get("/img/items/UPPER$.png")).status == 404
+        finally:
+            await c.close()
+            await pb.bot.rcon.close()
+    asyncio.run(main())
+    from settings_schema import validate
+    assert validate("ITEM_IMAGE_URL", "https://x.example/{shortname}.png") is None
+    assert validate("ITEM_IMAGE_URL", "off") is None and validate("ITEM_IMAGE_URL", "http://x/{shortname}")
 
 
 def test_backup_contains_plugins(tmp_path):

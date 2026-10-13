@@ -649,6 +649,15 @@ views.console = (main) => {
 let meta = null;
 async function loadMeta() { if (!meta) meta = await api("/api/meta"); return meta; }
 
+// Item picture (downloaded and cached by the bot); shows the emoji if there is none
+function itemPic(short, emoji, cls = "pic") {
+  const fallback = h("span", { class: cls + " emoji", text: emoji || "📦" });
+  if (!short || meta?.item_images === false) return fallback;
+  const img = h("img", { class: cls, src: `/img/items/${encodeURIComponent(short)}.png`, alt: "", loading: "lazy", draggable: "false" });
+  img.addEventListener("error", () => img.replaceWith(fallback), { once: true });
+  return img;
+}
+
 // ------------------------------------------------------------------ Kit builder
 
 const KB_SIZES = { Wear: 7, Main: 24, Belt: 6 };
@@ -747,7 +756,7 @@ views.kitbuilder = async (main) => {
       const group = `${i.category} – ${i.group}`;
       if (group !== lastGroup) { children.push(h("div", { class: "kb-group", text: group })); lastGroup = group; }
       const btn = h("button", { class: "kb-item", title: `${i.label} (${i.short}) – click or drag into a slot`, draggable: "true", onclick: () => place(i.short) },
-        h("span", { class: "kb-item-icon", text: i.icon }), h("span", {}, i.label, h("small", { text: i.short })));
+        itemPic(i.short, i.icon, "kb-item-icon"), h("span", {}, i.label, h("small", { text: i.short })));
       btn.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", JSON.stringify({ add: i.short })); e.dataTransfer.effectAllowed = "copy"; });
       children.push(btn);
     }
@@ -770,7 +779,7 @@ views.kitbuilder = async (main) => {
     const el = h("div", { class: "kb-slot" + (s ? " filled" : "") + (isSel ? " selected" : ""), draggable: s ? "true" : null,
       title: s ? `${label(s.item)} (${s.item})` : `Empty ${container.toLowerCase()} slot – click it, then pick an item (or drag one here)`,
       onclick: () => { selected = { container, index }; render(); } },
-      s ? [h("span", { class: "icon", text: icon(s.item) }), h("span", { class: "name", text: label(s.item) }),
+      s ? [itemPic(s.item, icon(s.item), "icon"), h("span", { class: "name", text: label(s.item) }),
         s.amount > 1 ? h("span", { class: "amt", text: "×" + s.amount }) : null,
         s.condition < 100 ? h("span", { class: "cond", text: s.condition + "%" }) : null]
         : h("span", { class: "num", text: String(index + 1).padStart(2, "0") }));
@@ -802,7 +811,7 @@ views.kitbuilder = async (main) => {
     condition.addEventListener("change", () => { s.condition = Math.max(1, Math.min(100, parseInt(condition.value) || 100)); render(); });
     const quick = [1, 10, 64, 128, 256, 1000].map((n) => h("button", { class: "small", text: "×" + n, onclick: () => { s.amount = n; render(); } }));
     editor.replaceChildren(
-      h("strong", { text: `${icon(s.item)} ${label(s.item)}` }), h("code", { text: s.item }),
+      itemPic(s.item, icon(s.item), "kb-editor-pic"), h("strong", { text: label(s.item) }), h("code", { text: s.item }),
       h("label", { class: "row", style: "gap:.3rem" }, "Amount", amount), ...quick,
       h("label", { class: "row", style: "gap:.3rem" }, "Condition %", condition),
       h("button", { class: "small danger", text: "Remove", onclick: () => { slots[selected.container][selected.index] = null; render(); } }));
@@ -1018,7 +1027,7 @@ views.kits = async (main) => {
         const info = await act(() => api(`/api/kits/ingame/${encodeURIComponent(k)}`));
         ingameInfo.replaceChildren(h("h2", { text: k }),
           info.items.length ? h("table", {}, h("tbody", {}, info.items.map((i) => h("tr", {},
-            h("td", { text: i.short_name }), h("td", { text: "× " + i.amount }), h("td", { class: "muted", text: i.container }),
+            h("td", {}, h("span", { class: "item-cell" }, itemPic(i.short_name, "📦", "item-pic"), i.short_name)), h("td", { text: "× " + i.amount }), h("td", { class: "muted", text: i.container }),
             h("td", { class: "muted", text: i.item_id !== null ? "ID " + i.item_id : "" }))))) : h("pre", { class: "transcript", text: info.raw || "No items." }));
       } }))) : h("p", { class: "muted", text: "No kits found (or no RCON connection)." }),
       ingameInfo),
@@ -1162,7 +1171,7 @@ function customKitsCard(data, reload, opts) {
         roles ? h("span", { class: "pill ok", text: `🙋 ${roles} role${roles === 1 ? "" : "s"} · ${minutesToDuration(kit.cooldown_minutes) || "no cooldown"}` }) : null,
         kit.description ? h("span", { class: "muted ck-desc", text: kit.description }) : null),
       h("table", {}, h("tbody", {}, kit.items.map((i) => h("tr", {},
-        h("td", { text: i.shortname }), h("td", { text: "× " + i.amount }),
+        h("td", {}, h("span", { class: "item-cell" }, itemPic(i.shortname, "📦", "item-pic"), i.shortname)), h("td", { text: "× " + i.amount }),
         h("td", {}, h("button", { class: "small", text: "✕", title: "Remove", onclick: async () => {
           await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}/items/${i.id}`, { method: "DELETE" }));
           reload();
@@ -2101,7 +2110,7 @@ function pluginCard(p, opts, kits, reload) {
       h("div", { class: "stat" }, h("div", { class: "label", text: k }), h("div", { class: "value", style: "font-size:1.05rem", text: String(v) })))));
   }
   if (p.public) {
-    const url = `${location.origin}/p/${p.id}`;
+    const url = location.origin + (p.public_path || `/p/${p.id}`);
     card.append(h("p", {}, "Public address: ", h("a", { href: url, target: "_blank", rel: "noopener", text: url }),
       h("span", { class: "muted", text: p.running ? " – share it anywhere (works with your public web link)." : " – switch the plugin on first." })));
   }

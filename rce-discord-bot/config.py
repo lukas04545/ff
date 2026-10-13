@@ -204,6 +204,7 @@ class Config:
     web_tunnel: bool          # reachable from the internet via Cloudflare tunnel
     web_tunnel_token: str     # optional: named tunnel (fixed address)
     web_public_url: str       # optional: fixed address of the named tunnel
+    item_image_url: str       # item pictures for the kit builder/website ({shortname}); "off" = none
 
     # Automatic updates from GitHub (updater.py)
     auto_update: bool
@@ -373,6 +374,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         web_tunnel=_bool("WEB_TUNNEL", True),
         web_tunnel_token=_get("WEB_TUNNEL_TOKEN"),
         web_public_url=_get("WEB_PUBLIC_URL"),
+        item_image_url=_get("ITEM_IMAGE_URL") or "https://rustlabs.com/img/items180/{shortname}.png",
         auto_update=_bool("AUTO_UPDATE", True),
         auto_update_interval=max(1, _int("AUTO_UPDATE_INTERVAL", 5)),
         auto_update_repo=_get("AUTO_UPDATE_REPO", "lukas04545/ff"),

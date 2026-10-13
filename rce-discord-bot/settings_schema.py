@@ -305,6 +305,10 @@ FIELDS: list[Field] = [
     Field("WEB_PUBLIC_URL", "Fixed public address", "web", advanced=True, placeholder="https://panel.example.com",
           help="Only with a tunnel token: the address you configured for it in Cloudflare."),
     Field("WEB_OPEN_BROWSER", "Open browser on start", "web", "bool"),
+    Field("ITEM_IMAGE_URL", "Item pictures from", "web", advanced=True,
+          placeholder="https://rustlabs.com/img/items180/{shortname}.png",
+          help="Where the kit builder and the player website get item pictures ({shortname} is replaced). The bot "
+               "downloads each picture once and keeps it in data/item_images/. off = no pictures."),
     Field("WEB_ENABLED", "Web interface enabled", "web", "bool",
           help="Careful: turning this off locks you out of the web interface (then only via .env)."),
     # Updates
@@ -359,6 +363,9 @@ def validate(key: str, value: str) -> str | None:
         return f'"{f.label}" must look like owner/repository.'
     if key == "AUTO_UPDATE_BRANCH" and not re.fullmatch(r"[\w./-]+", value):
         return f'"{f.label}" is not a valid branch name.'
+    if key == "ITEM_IMAGE_URL" and value.lower() != "off" and (
+            not value.startswith("https://") or "{shortname}" not in value):
+        return f'"{f.label}" must start with https:// and contain {{shortname}} (or be "off").'
     if key == "WEB_PUBLIC_URL" and not value.startswith(("https://", "http://")):
         return f'"{f.label}" must start with https://'
     if "\n" in value and f.kind != "textarea":

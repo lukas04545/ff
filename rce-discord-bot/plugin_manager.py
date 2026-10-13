@@ -427,6 +427,7 @@ class PluginManager:
                "version": cls.VERSION if cls else "", "icon": cls.ICON if cls else "🧩",
                "author": cls.AUTHOR if cls else "", "intents": list(cls.INTENTS) if cls else [],
                "missing_intents": self.missing_intents(pid), "public": bool(cls and hasattr(cls, "web_public")),
+               "public_path": (cls.PUBLIC_PATH or f"/p/{pid}") if cls and hasattr(cls, "web_public") else None,
                "settings": [{**s.describe(), "value": values.get(s.key, s.default)} for s in (cls.SETTINGS if cls else ())],
                "problems": [], "status": {}}
         if plugin is not None:

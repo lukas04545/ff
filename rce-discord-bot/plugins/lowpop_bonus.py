@@ -30,7 +30,7 @@ class LowPopBonus(Plugin):
         self.active = False
         self._remainder: defaultdict[int, float] = defaultdict(float)
         self._last_tick: float | None = None
-        self._last_announce = 0.0
+        self._last_announce: float | None = None
 
     def bonus_active(self, count: int) -> bool:
         return 1 <= count < self.setting("below")
@@ -61,7 +61,8 @@ class LowPopBonus(Plugin):
         return paid
 
     async def _announce(self, active: bool) -> None:
-        if not self.setting("announce") or time.monotonic() - self._last_announce < 600:
+        if not self.setting("announce") or (self._last_announce is not None
+                                            and time.monotonic() - self._last_announce < 600):
             return
         self._last_announce = time.monotonic()
         x = self.setting("multiplier")
