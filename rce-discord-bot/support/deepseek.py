@@ -106,7 +106,7 @@ class DeepSeekClient:
         calls = message.get("tool_calls") or []
         if not content.strip() and not calls:
             raise DeepSeekError(f"Empty response (finish_reason={finish}).")
-        return {"content": content, "tool_calls": calls}
+        return {"content": content, "tool_calls": calls, "finish_reason": finish}
 
     async def chat_json(self, messages: list[dict], *, max_tokens: int = 1200, temperature: float = 0.4) -> str:
         """Sends the chat and returns the reply text (a JSON string)."""

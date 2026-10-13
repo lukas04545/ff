@@ -60,6 +60,15 @@ def system_prompt(name: str, server: str, instructions: str = "", knowledge: str
     return text
 
 
+def whole_sentences(text: str) -> str:
+    """A reply that was cut off (token limit): keep it up to the last complete sentence."""
+    text = text.rstrip()
+    cut = max(text.rfind(m) for m in (". ", "! ", "? ", ".\n", "!\n", "?\n"))
+    if text.endswith((".", "!", "?", ")", "*")) or cut < len(text) * 0.3:
+        return text
+    return text[:cut + 1].rstrip()
+
+
 def clean_reply(text: str, bot_name: str = "") -> str | None:
     """The AI's reply ready for Discord: no pings, no name prefix, not too long."""
     text = str(text or "").strip().strip('"').strip()
@@ -159,11 +168,14 @@ class AIChat(commands.Cog):
                 return None
             try:
                 async with message.channel.typing():
-                    reply = await ai.chat(messages, json_mode=False, max_tokens=400, temperature=0.7)
+                    reply = await ai.chat(messages, json_mode=False, max_tokens=1200, temperature=0.7)
             except DeepSeekError as exc:
                 log.warning("AI chat reply failed: %s", exc)
                 return None
-            out = clean_reply(reply.get("content"), name)
+            content = reply.get("content") or ""
+            if reply.get("finish_reason") == "length":       # hit the token limit mid-sentence
+                content = whole_sentences(content)
+            out = clean_reply(content, name)
             if not out:
                 return None
             try:
