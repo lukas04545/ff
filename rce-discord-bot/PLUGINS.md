@@ -7,7 +7,7 @@ done. Updates never overwrite your plugins, and they are included in backups.
 > A plugin runs inside the bot with full access (Discord, RCON, database). Only install plugins you wrote yourself
 > or got from someone you trust.
 
-**Don't want to write Python?** On the Plugins page use **✨ Create a plugin with AI**: describe the feature in
+**Don't want to write Python?** Open the **✨ Create plugin** page in the web interface: describe the feature in
 plain words and the integrated AI writes the plugin from the API below. You review (and can edit) the code in the
 window before it is created, and it is saved switched off like any plugin. Because the generated code runs inside
 the bot, read it before you create it.
