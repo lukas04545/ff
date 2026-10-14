@@ -150,7 +150,9 @@ class Config:
     ai_mod_instructions: str             # owner's own rules for the moderation AI
     ai_mod_jail: bool                    # AI may send repeat/severe offenders to prison for a while
     ai_mod_jail_minutes: int             # default/max jail length the AI picks (needs the prison role + channel)
+    ai_mod_jail_permanent: bool          # AI may jail the worst cases permanently (no timer, until staff free them)
     ai_mod_guard: bool                   # the AI acts as a prison guard: it replies to members in the prison channel
+    ai_mod_guard_instructions: str       # owner's own rules for the prison guard persona
     ai_chat_channel_ids: frozenset[int]  # channels where the AI chats with members (empty = off)
     ai_chat_mode: str                    # mentions / all
     ai_chat_cooldown: int                # seconds per member between AI answers
@@ -355,7 +357,9 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         ai_mod_instructions=_get("AI_MOD_INSTRUCTIONS")[:3000],
         ai_mod_jail=_bool("AI_MOD_JAIL", False),
         ai_mod_jail_minutes=max(5, min(_int("AI_MOD_JAIL_MINUTES", 60), 40320)),
+        ai_mod_jail_permanent=_bool("AI_MOD_JAIL_PERMANENT", False),
         ai_mod_guard=_bool("AI_MOD_GUARD", False),
+        ai_mod_guard_instructions=_get("AI_MOD_GUARD_INSTRUCTIONS")[:3000],
         ai_chat_channel_ids=_id_set("AI_CHAT_CHANNEL_IDS"),
         ai_chat_mode="all" if _get("AI_CHAT_MODE").lower() == "all" else "mentions",
         ai_chat_cooldown=max(0, min(_int("AI_CHAT_COOLDOWN", 10), 3600)),

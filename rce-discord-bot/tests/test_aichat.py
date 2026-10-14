@@ -121,8 +121,13 @@ def test_prison_guard_answers_in_prison_channel(chat, monkeypatch):
     assert len(chat.calls) == 1
     system = chat.calls[0][0]["content"]
     assert "prison guard" in system and "Reason for jail: griefing other bases." in system
-    assert "Keep order firmly." in system and "KNOWLEDGE BASE" not in system   # guard persona, not the chat persona
+    assert "Keep order firmly." in system and "KNOWLEDGE BASE" not in system   # falls back to AI mod rules
     assert chat.replies[-1][0] == 1
+    # The guard's own instructions take priority over the moderation rules when set
+    chat.env.bot.config = replace(chat.env.bot.config, ai_mod_guard_instructions="You may joke a little.")
+    send(chat, chat.message(2, "hello guard", ch=prison))
+    system = chat.calls[-1][0]["content"]
+    assert "You may joke a little." in system and "Keep order firmly." not in system
     # The prison channel is watched only while guard mode is on
     assert chat.cog.watching(700) and chat.cog.is_prison(700)
     chat.env.bot.config = replace(chat.env.bot.config, ai_mod_guard=False)

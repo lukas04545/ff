@@ -149,7 +149,8 @@ class Prison(commands.Cog):
                 title="🔒 You've been put in prison", colour=discord.Colour.red(),
                 description=(f"On **{safe_md(guild.name)}** you can now only see {channel.mention} and your own "
                             "ticket." + (f"\nYou'll be let out automatically in **{human_duration(minutes)}**."
-                                         if minutes else "") + (f"\n**Reason:** {safe_md(reason)}" if reason else ""))))
+                                         if minutes else "\nA staff member will decide when you're let out.")
+                            + (f"\n**Reason:** {safe_md(reason)}" if reason else ""))))
         except discord.HTTPException:
             pass
         if announce and hasattr(channel, "send"):

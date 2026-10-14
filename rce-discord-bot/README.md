@@ -802,17 +802,20 @@ them the prison role, takes away their other roles (saved and restored when free
 Channel* everywhere except the prison channel (new channels are locked too), and DMs them why. Their own ticket
 stays visible because a ticket grants its owner a per-member overwrite, which beats the role deny. With `minutes`
 it's a **timed jail** – the bot releases them automatically when the time is up (checked once a minute) and gives
-their roles back. `/prison free @member` lets them out by hand; `/prison list` shows who's in. Staff only
-(*Moderate Members*).
+their roles back. Leave `minutes` empty to jail **permanently** – they stay in prison until a staff member runs
+`/prison free @member`. `/prison list` shows who's in (with the release time, or that it's until freed by hand).
+Staff only (*Moderate Members*).
 
 **AI moderation can jail, too:** turn on *AI moderation: send serious offenders to prison* (`AI_MOD_JAIL`, needs
 the prison role + channel). For serious or repeated offences the AI then puts the member in the prison channel for
 a while instead of only warning/timing out – it picks the length itself up to *AI moderation: longest jail*
-(`AI_MOD_JAIL_MINUTES`, default 60, max 28 days), then they're auto-released. **AI prison guard:** turn on *AI prison
-guard* (`AI_MOD_GUARD`, needs the DeepSeek key + prison channel) and the AI replies to jailed members in the prison
-channel as a calm, firm guard – it explains why they're there and how long is left, stays respectful even if they
-aren't, and points appeals to staff (it can't actually free anyone). Your *AI moderation: your own rules* also
-shape how strict the guard is.
+(`AI_MOD_JAIL_MINUTES`, default 60, max 28 days), then they're auto-released. Turn on *AI moderation: allow
+permanent jail* (`AI_MOD_JAIL_PERMANENT`) and the AI may, for the very worst cases, jail with **no timer** until
+staff free them by hand. **AI prison guard:** turn on *AI prison guard* (`AI_MOD_GUARD`, needs the DeepSeek key +
+prison channel) and the AI replies to jailed members in the prison channel as a calm, firm guard – it explains why
+they're there and how long is left (or that staff decide), stays respectful even if they aren't, and points appeals
+to staff (it can't actually free anyone). Give the guard its own personality with *AI prison guard: your own rules*
+(`AI_MOD_GUARD_INSTRUCTIONS`); left empty it uses your *AI moderation: your own rules*.
 
 **The AI learns from staff answers:** when a ticket is closed, the bot sends the staff answers of that ticket
 (including `/aiconfirm` messages; the player's messages only as context) to the AI and asks for **general, new**
