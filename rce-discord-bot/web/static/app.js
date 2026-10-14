@@ -2198,6 +2198,59 @@ function pluginUploadCard(reload) {
     h("div", { class: "row" }, file, btn));
 }
 
+function pluginAiCard(reload) {
+  const desc = h("textarea", { rows: 4, placeholder: "Describe the plugin in plain words, e.g. \"Every time a player joins the game, greet them in the game chat and give them 5 points. Owner can set the welcome text.\"" });
+  const draftBtn = h("button", { class: "primary", text: "✨ Draft with AI" });
+  const result = h("div", {});                         // filled after the AI answers
+
+  draftBtn.addEventListener("click", async () => {
+    const text = desc.value.trim();
+    if (text.length < 5) { toast("Describe the plugin in a bit more detail.", true); return; }
+    draftBtn.disabled = true;
+    draftBtn.textContent = "Writing …";
+    result.replaceChildren(h("p", { class: "muted", text: "The AI is writing your plugin – this can take a few seconds …" }));
+    try {
+      const r = await api("/api/plugins/generate", { method: "POST", body: { description: text } });
+      result.replaceChildren(aiDraftReview(r.draft, reload));
+    } catch (e) {
+      result.replaceChildren(h("div", { class: "banner bad", text: e.message }));
+    } finally { draftBtn.disabled = false; draftBtn.textContent = "✨ Draft with AI"; }
+  });
+
+  return h("div", { class: "card" }, h("h2", { text: "✨ Create a plugin with AI" }),
+    h("p", { class: "muted", text: "Describe what you want and the integrated AI writes the plugin for you. You can read and edit the code before it is created – it is saved switched off, like any plugin." }),
+    h("div", { class: "banner warn" }, "AI-written code runs inside the bot with full access. Read it before you create the plugin, and only create what you understand."),
+    desc, h("div", { class: "row" }, draftBtn), result);
+}
+
+function aiDraftReview(draft, reload) {
+  const filename = h("input", { type: "text", value: draft.filename || "ai_plugin.py", style: "max-width:14rem" });
+  const code = h("textarea", { rows: 20, spellcheck: "false", value: draft.code || "",
+    style: "width:100%;font-family:var(--mono, monospace);font-size:.85rem" });
+  const createBtn = h("button", { class: "primary", text: "Create plugin" });
+
+  createBtn.addEventListener("click", async () => {
+    const body = { filename: filename.value.trim(), code: code.value };
+    if (!body.code.trim()) { toast("There is no code to create.", true); return; }
+    if (!confirm("Create this plugin? AI-written code runs inside the bot with full access – only create it if you have read and trust it. It will be saved switched off.")) return;
+    createBtn.disabled = true;
+    try {
+      const r = await api("/api/plugins/upload", { method: "POST", body });
+      toast(`${r.plugin.name} created – switch it on below`);
+      reload();
+    } catch (e) { toast(e.message, true); } finally { createBtn.disabled = false; }
+  });
+
+  return h("div", { class: "ai-draft" },
+    draft.summary ? h("p", {}, h("strong", { text: "What it does: " }), draft.summary) : null,
+    (draft.warnings && draft.warnings.length)
+      ? h("div", { class: "banner warn" }, "Check before creating: " + draft.warnings.join(" "))
+      : h("div", { class: "banner ok", text: "No obvious problems found – still read the code below." }),
+    h("label", { class: "muted", text: "File name" }), h("div", { class: "row" }, filename),
+    h("label", { class: "muted", text: "Plugin code (you can edit it)" }), code,
+    h("div", { class: "row" }, createBtn));
+}
+
 views.plugins = async (main) => {
   main.append(h("h1", { text: "Plugins" }),
     h("p", { class: "muted", text: "Extra features as plugins – switch them on/off and change their settings here. Everything takes effect right away, no restart needed." }));
@@ -2207,7 +2260,8 @@ views.plugins = async (main) => {
   const reload = async () => {
     try {
       const r = await api("/api/plugins");
-      list.replaceChildren(...r.plugins.map((p) => pluginCard(p, opts, r.kits, reload)), pluginUploadCard(reload));
+      list.replaceChildren(...r.plugins.map((p) => pluginCard(p, opts, r.kits, reload)),
+        pluginAiCard(reload), pluginUploadCard(reload));
     } catch (e) { list.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
   };
   reload();
