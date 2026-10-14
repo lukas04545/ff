@@ -210,7 +210,8 @@ class AIChat(commands.Cog):
             server = cfg.server_display_name or getattr(message.guild, "name", "")
             name = self._name()
             if self.is_prison(channel_id):
-                prompt = guard_prompt(name, server, cfg.ai_mod_instructions, self._prisoner_note(message))
+                guard_rules = getattr(cfg, "ai_mod_guard_instructions", "") or cfg.ai_mod_instructions
+                prompt = guard_prompt(name, server, guard_rules, self._prisoner_note(message))
             else:
                 knowledge, status = self._context()
                 prompt = system_prompt(name, server, cfg.ai_chat_instructions, knowledge, status)

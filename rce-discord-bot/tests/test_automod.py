@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cogs.automod import parse_flags
+from cogs.automod import parse_flags, system_prompt
 from tests.test_kit_requests import env  # noqa: F401  (fixture: bot + Tickets cog with staff role 42)
 
 
@@ -14,12 +14,15 @@ def test_parse_flags():
     raw = json.dumps({"flags": [{"id": "1", "severity": "HIGH", "reason": "racist slur"},
                                 {"id": "99", "severity": "low", "reason": "x"}, "junk"]})
     assert parse_flags(raw, {"1", "2"}) == [{"id": "1", "severity": "high", "reason": "racist slur", "warning": None,
-                                             "mute_minutes": None, "jail_minutes": None}]
+                                             "mute_minutes": None, "jail_minutes": None, "jail_permanent": False}]
     clamp = lambda m: parse_flags(json.dumps({"flags": [{"id": "1", "mute_minutes": m}]}), {"1"})[0]["mute_minutes"]  # noqa
     assert (clamp(1), clamp(45), clamp("90"), clamp(500), clamp("x")) == (5, 45, 90, 120, None)
     # jail_minutes only when jailing is on (jail_max > 0), clamped to 1..jail_max; 0/blank/invalid -> None
     jail = lambda m, mx=60: parse_flags(json.dumps({"flags": [{"id": "1", "jail_minutes": m}]}), {"1"}, mx)[0]["jail_minutes"]  # noqa
     assert (jail(30), jail(500), jail(0), jail("x"), jail(30, 0)) == (30, 60, None, None, None)
+    # jail_permanent is only honoured while jailing is on (jail_max > 0)
+    perm = lambda v, mx=60: parse_flags(json.dumps({"flags": [{"id": "1", "jail_permanent": v}]}), {"1"}, mx)[0]["jail_permanent"]  # noqa
+    assert (perm(True), perm("true"), perm(False), perm(True, 0)) == (True, True, False, False)
     w = parse_flags(json.dumps({"flags": [{"id": "1", "warning": "Hey, das war beleidigend @everyone <@123> – "
                                                                 "bitte bleib respektvoll. https://x.y"}]}), {"1"})
     assert w[0]["warning"] == "Hey, das war beleidigend – bitte bleib respektvoll."
@@ -142,6 +145,34 @@ def test_ai_jails_serious_offender(mod):
     # The AI asked for 120 but the cap is 60; parse clamps it, and the member is jailed, not timed out
     assert jailed == [(10, "AI moderation: racist slur", "AI moderation", 60, False)]
     assert mod.out.timeouts == [] and "🔒 Sent to prison for 1 hour" in mod.out.sent[-1]
+
+
+def test_ai_permanent_jail(mod):
+    """AI_MOD_JAIL_PERMANENT lets a jail_permanent verdict jail with no timer (minutes=None)."""
+    jailed = []
+
+    async def jail_member(guild, member, reason, by, *, minutes="unset", announce=True):
+        jailed.append(minutes)
+        return None
+    real_get_cog = mod.env.bot.__class__.get_cog.__get__(mod.env.bot)
+    mod.env.bot.get_cog = lambda name: NS(jail_member=jail_member) if name == "Prison" else real_get_cog(name)
+
+    # Permanent allowed: jail_permanent wins over jail_minutes and jails with no timer
+    mod.env.bot.config = replace(mod.env.bot.config, ai_mod_jail=True, ai_mod_jail_minutes=60,
+                                 ai_mod_jail_permanent=True, prison_role_id=50, prison_channel_id=900)
+    assert "PERMANENT PRISON is allowed" in system_prompt("", jail_max=60, allow_permanent=True)
+    mod.verdicts["1"] = {"severity": "high", "reason": "threats", "jail_minutes": 30, "jail_permanent": True}
+    say(mod, 1, "[threat]", mod.Member(10))
+    asyncio.run(mod.cog.flush())
+    assert jailed == [None] and "🔒 Sent to prison until staff free you." in mod.out.sent[-1]
+
+    # Permanent NOT allowed: the same verdict falls back to a timed jail
+    jailed.clear(); mod.cog._last_warn.clear(); mod.cog._context.clear()
+    mod.env.bot.config = replace(mod.env.bot.config, ai_mod_jail_permanent=False)
+    mod.verdicts["2"] = {"severity": "high", "reason": "threats", "jail_minutes": 30, "jail_permanent": True}
+    say(mod, 2, "[threat again]", mod.Member(11))
+    asyncio.run(mod.cog.flush())
+    assert jailed == [30] and "🔒 Sent to prison for 30 minutes" in mod.out.sent[-1]
 
 
 def test_ai_jail_off_without_setup(mod):

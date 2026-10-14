@@ -175,10 +175,19 @@ FIELDS: list[Field] = [
     Field("AI_MOD_JAIL_MINUTES", "AI moderation: longest jail (minutes)", "community", "int", placeholder="60",
           help="The AI picks the jail length itself for each case; this is the most it may give (up to 40320 = "
                "28 days). The member is released automatically when the time is up."),
+    Field("AI_MOD_JAIL_PERMANENT", "AI moderation: allow permanent jail", "community", "bool",
+          help="Off (default): every AI jail has a timer and auto-releases. On: for the very worst cases the AI may "
+               "jail with no timer, until a staff member frees the member by hand with /prison free."),
     Field("AI_MOD_GUARD", "AI prison guard: chat with jailed members", "community", "bool",
           help="On: the AI acts as a prison guard and replies to messages in the prison channel – it explains why "
                "they're jailed and how long is left, stays calm, and points appeals to staff. Needs the DeepSeek "
                "API key and the Prison channel set above."),
+    Field("AI_MOD_GUARD_INSTRUCTIONS", "AI prison guard: your own rules", "community", "textarea",
+          placeholder="e.g. Stay strict and short.\nNever promise an early release.\nYou may joke a little.\n"
+                      "Tell them the rules are in #rules.",
+          help="Extra instructions just for the prison guard – personality, how strict or chatty it is, what to say "
+               "or avoid. They take priority over its defaults. Empty = use your AI moderation rules. Plain "
+               "language, one rule per line."),
     Field("AI_MOD_INSTRUCTIONS", "AI moderation: your own rules", "community", "textarea",
           placeholder="e.g. Be strict: also warn for 'stfu' and 'kys'.\nSwearing in German is fine.\n"
                       "Never warn for the word 'noob'.\nWarnings should sound friendly and mention #rules.",
