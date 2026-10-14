@@ -1081,11 +1081,12 @@ restart. A broken plugin never stops the bot: it shows the error on its card and
 - **Your own plugins** go to `data/plugins/` (upload a `.py` file on the Plugins page, or copy it there and click
   ↻ Reload). Updates never touch them, and they are in every backup. How to write one: [PLUGINS.md](PLUGINS.md).
   Only use plugins from people you trust – a plugin runs inside the bot with full access.
-- **Create a plugin with AI:** on the Plugins page, *✨ Create a plugin with AI*: describe what you want in plain
+- **Create a plugin with AI:** its own **✨ Create plugin** page in the sidebar: describe what you want in plain
   words and the integrated AI (DeepSeek, the same key as the support AI) writes the plugin for you. You see the
   code, a short summary and any safety warnings in the window, can edit it, and only when you click *Create* is it
-  saved (switched off, like any plugin). AI-written code runs inside the bot with full access, so read it before
-  you create it – you stay in control.
+  saved (switched off, like any plugin) – then it shows up on the Plugins page to switch on. The same page also has
+  the manual *upload your own .py file* option. AI-written code runs inside the bot with full access, so read it
+  before you create it – you stay in control.
 - On/off state and settings are saved in `data/plugins.json`; the data plugins keep is in the database.
 
 ### Growth plugins (built in)

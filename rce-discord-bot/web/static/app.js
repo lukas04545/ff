@@ -125,7 +125,7 @@ function route() {
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && ["settings", "users", "plugins", "webstore"].includes(view)) {
+  if (!isOwner() && ["settings", "users", "plugins", "makeplugin", "webstore"].includes(view)) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
@@ -2251,6 +2251,14 @@ function aiDraftReview(draft, reload) {
     h("div", { class: "row" }, createBtn));
 }
 
+const goTo = (hash) => () => { location.hash = hash; };
+
+function pluginCreateLink() {
+  return h("div", { class: "card" }, h("h2", { text: "➕ Add a plugin" }),
+    h("p", { class: "muted", text: "Build a new plugin with AI from a plain-language description, or upload your own .py file – on the Create plugin page. New plugins start switched off and then show up here." }),
+    h("div", { class: "row" }, h("button", { class: "primary", text: "✨ Create a plugin", onclick: goTo("#makeplugin") })));
+}
+
 views.plugins = async (main) => {
   main.append(h("h1", { text: "Plugins" }),
     h("p", { class: "muted", text: "Extra features as plugins – switch them on/off and change their settings here. Everything takes effect right away, no restart needed." }));
@@ -2260,11 +2268,20 @@ views.plugins = async (main) => {
   const reload = async () => {
     try {
       const r = await api("/api/plugins");
-      list.replaceChildren(...r.plugins.map((p) => pluginCard(p, opts, r.kits, reload)),
-        pluginAiCard(reload), pluginUploadCard(reload));
+      list.replaceChildren(...r.plugins.map((p) => pluginCard(p, opts, r.kits, reload)), pluginCreateLink());
     } catch (e) { list.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
   };
   reload();
+};
+
+views.makeplugin = async (main) => {
+  main.append(h("h1", { text: "Create a plugin" }),
+    h("p", { class: "muted", text: "Make a new plugin without touching the bot's code: describe it and let the AI write it, or upload your own .py file. New plugins are saved switched off – turn them on under Plugins." }));
+  const toPlugins = goTo("#plugins");   // after creating, jump to the list to switch it on
+  main.append(pluginAiCard(toPlugins), pluginUploadCard(toPlugins),
+    h("div", { class: "card" }, h("h2", { text: "🧩 Your plugins" }),
+      h("p", { class: "muted", text: "Switch plugins on or off and change their settings on the Plugins page." }),
+      h("div", { class: "row" }, h("button", { text: "Go to Plugins", onclick: toPlugins }))));
 };
 
 // ------------------------------------------------------------------ Web store (owner): kits for sale, gift cards, orders
