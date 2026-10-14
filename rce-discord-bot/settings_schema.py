@@ -124,6 +124,11 @@ FIELDS: list[Field] = [
     Field("SUPPORT_KNOWLEDGE_FILE", "Knowledge base file", "tickets", advanced=True,
           placeholder="support_knowledge.md"),
     # Community
+    Field("PRISON_ROLE_ID", "Prison role (jail)", "community", "id", pick="role",
+          help="Staff can jail a member with /prison jail. A jailed member keeps only this role and can see just the "
+               "prison channel and their own ticket. /prison free lets them out and restores their roles. Empty = off."),
+    Field("PRISON_CHANNEL_ID", "Prison channel", "community", "id", pick="text_channel",
+          help="The one channel jailed members can see and write in."),
     Field("AI_CHAT_CHANNEL_IDS", "AI chat: channels", "community", "ids", pick="text_channel",
           help="The AI (DeepSeek, needs the API key) chats with members in these channels – answers questions, "
                "talks with the community. It only talks: it never gives anything or pings anyone. Messages there "
@@ -164,6 +169,16 @@ FIELDS: list[Field] = [
                "warnings today); this is only the fallback."),
     Field("AI_MOD_DELETE", "AI moderation: delete severe messages", "community", "bool",
           help="Off (default): only warn. On: slurs, threats etc. are also deleted (the bot needs Manage Messages)."),
+    Field("AI_MOD_JAIL", "AI moderation: send serious offenders to prison", "community", "bool",
+          help="Off (default): the AI only warns/times out. On: for serious or repeated offences the AI can put the "
+               "member in the prison channel for a while (needs the Prison role and Prison channel set above)."),
+    Field("AI_MOD_JAIL_MINUTES", "AI moderation: longest jail (minutes)", "community", "int", placeholder="60",
+          help="The AI picks the jail length itself for each case; this is the most it may give (up to 40320 = "
+               "28 days). The member is released automatically when the time is up."),
+    Field("AI_MOD_GUARD", "AI prison guard: chat with jailed members", "community", "bool",
+          help="On: the AI acts as a prison guard and replies to messages in the prison channel – it explains why "
+               "they're jailed and how long is left, stays calm, and points appeals to staff. Needs the DeepSeek "
+               "API key and the Prison channel set above."),
     Field("AI_MOD_INSTRUCTIONS", "AI moderation: your own rules", "community", "textarea",
           placeholder="e.g. Be strict: also warn for 'stfu' and 'kys'.\nSwearing in German is fine.\n"
                       "Never warn for the word 'noob'.\nWarnings should sound friendly and mention #rules.",

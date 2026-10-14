@@ -111,6 +111,8 @@ class Config:
     ticket_category_id: int | None
     ticket_log_channel_id: int | None
     support_role_ids: frozenset[int]
+    prison_role_id: int | None           # jailed members keep this role only (see only the prison channel + own ticket)
+    prison_channel_id: int | None        # the channel jailed members can use
     deepseek_api_key: str
     deepseek_model: str
     deepseek_base_url: str
@@ -146,6 +148,9 @@ class Config:
     ai_mod_interval: int                 # seconds between checks (0 = every message right away)
     ai_mod_warn_cooldown: int            # seconds before the same member gets another warning reply (0 = always)
     ai_mod_instructions: str             # owner's own rules for the moderation AI
+    ai_mod_jail: bool                    # AI may send repeat/severe offenders to prison for a while
+    ai_mod_jail_minutes: int             # default/max jail length the AI picks (needs the prison role + channel)
+    ai_mod_guard: bool                   # the AI acts as a prison guard: it replies to members in the prison channel
     ai_chat_channel_ids: frozenset[int]  # channels where the AI chats with members (empty = off)
     ai_chat_mode: str                    # mentions / all
     ai_chat_cooldown: int                # seconds per member between AI answers
@@ -244,6 +249,8 @@ def required_intents(cfg: Config) -> dict[str, list[str]]:
         message_content.append("AI chat moderation")
     if getattr(cfg, "ai_chat_channel_ids", None):
         message_content.append("AI chat")
+    if getattr(cfg, "ai_mod_guard", False) and getattr(cfg, "prison_channel_id", None):
+        message_content.append("AI prison guard")
     if getattr(cfg, "tip4serv_channel_id", None):
         message_content.append("Tip4Serv purchase messages")
     if cfg.discord_log_channel_id:
@@ -253,6 +260,8 @@ def required_intents(cfg: Config) -> dict[str, list[str]]:
         members.append("Welcome message")
     if cfg.auto_role_id:
         members.append("Auto role")
+    if cfg.prison_role_id:
+        members.append("Prison (jail role)")
     try:   # plugins that are switched on (read from data/plugins.json)
         from plugin_manager import enabled_plugin_intents
         plugin_needs = enabled_plugin_intents(cfg.database_path)
@@ -309,6 +318,8 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         ticket_log_channel_id=_int("TICKET_LOG_CHANNEL_ID"),
         # Without dedicated support roles, the admin roles handle support
         support_role_ids=_id_set("SUPPORT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),
+        prison_role_id=_int("PRISON_ROLE_ID"),
+        prison_channel_id=_int("PRISON_CHANNEL_ID"),
         deepseek_api_key=_get("DEEPSEEK_API_KEY"),
         deepseek_model=_get("DEEPSEEK_MODEL", "deepseek-flash"),
         deepseek_base_url=_get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
@@ -342,6 +353,9 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         ai_mod_interval=max(0, min(_int("AI_MOD_INTERVAL", 15), 3600)),
         ai_mod_warn_cooldown=max(0, min(_int("AI_MOD_WARN_COOLDOWN", 60), 3600)),
         ai_mod_instructions=_get("AI_MOD_INSTRUCTIONS")[:3000],
+        ai_mod_jail=_bool("AI_MOD_JAIL", False),
+        ai_mod_jail_minutes=max(5, min(_int("AI_MOD_JAIL_MINUTES", 60), 40320)),
+        ai_mod_guard=_bool("AI_MOD_GUARD", False),
         ai_chat_channel_ids=_id_set("AI_CHAT_CHANNEL_IDS"),
         ai_chat_mode="all" if _get("AI_CHAT_MODE").lower() == "all" else "mentions",
         ai_chat_cooldown=max(0, min(_int("AI_CHAT_COOLDOWN", 10), 3600)),

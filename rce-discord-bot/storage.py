@@ -359,6 +359,16 @@ class Storage:
                 order_id INTEGER                       -- bought in the store (else created by an owner)
             );
             -- Plugins keep their own data here (JSON values per plugin and key)
+            CREATE TABLE IF NOT EXISTS prison (
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                roles TEXT NOT NULL DEFAULT '',        -- removed role IDs (restored on release), comma-separated
+                reason TEXT,
+                jailed_by TEXT,
+                jailed_at INTEGER NOT NULL,
+                expires_at INTEGER,                   -- auto-release time (epoch seconds); NULL = until freed by hand
+                PRIMARY KEY (guild_id, user_id)
+            );
             CREATE TABLE IF NOT EXISTS plugin_data (
                 plugin TEXT NOT NULL,
                 key TEXT NOT NULL,
@@ -426,6 +436,10 @@ class Storage:
                              ("items", "TEXT")):
             if column not in columns:
                 self._db.execute(f"ALTER TABLE store_kits ADD COLUMN {column} {kind}")
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(prison)")}
+        if "expires_at" not in columns:
+            # When a timed jail should auto-release (epoch seconds); NULL = until freed by hand
+            self._db.execute("ALTER TABLE prison ADD COLUMN expires_at INTEGER")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(store_orders)")}
         if "admin_key" not in columns:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN admin_key INTEGER NOT NULL DEFAULT 0")
@@ -1507,6 +1521,37 @@ class Storage:
     def players_seen_since(self, since_utc: str) -> int:
         """Players first seen at or after a UTC time ("YYYY-MM-DD HH:MM:SS")."""
         return self._db.execute("SELECT COUNT(*) FROM players WHERE first_seen >= ?", (since_utc,)).fetchone()[0]
+
+    # ------------------------------------------------------------ Prison (jail)
+
+    def jail(self, guild_id: int, user_id: int, role_ids: list[int], reason: str | None, by: str,
+             expires_at: int | None = None) -> None:
+        self._db.execute("INSERT OR REPLACE INTO prison (guild_id, user_id, roles, reason, jailed_by, jailed_at, "
+                         "expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (guild_id, user_id, ",".join(str(r) for r in role_ids), reason, by, int(time.time()),
+                          expires_at))
+        self._db.commit()
+
+    def prisoner(self, guild_id: int, user_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM prison WHERE guild_id = ? AND user_id = ?",
+                                (guild_id, user_id)).fetchone()
+
+    def prisoners(self, guild_id: int) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM prison WHERE guild_id = ? ORDER BY jailed_at", (guild_id,)).fetchall()
+
+    def expired_prisoners(self, now: int | None = None) -> list[sqlite3.Row]:
+        """Timed jails whose release time has passed (across all guilds)."""
+        return self._db.execute("SELECT * FROM prison WHERE expires_at IS NOT NULL AND expires_at <= ? "
+                                "ORDER BY expires_at", (now if now is not None else int(time.time()),)).fetchall()
+
+    def free(self, guild_id: int, user_id: int) -> list[int]:
+        """Removes the prison record and returns the stored role IDs to restore."""
+        row = self.prisoner(guild_id, user_id)
+        if row is None:
+            return []
+        self._db.execute("DELETE FROM prison WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+        self._db.commit()
+        return [int(r) for r in (row["roles"] or "").split(",") if r.strip().isdigit()]
 
     def close(self) -> None:
         self._db.close()
