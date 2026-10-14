@@ -313,6 +313,12 @@ FIELDS: list[Field] = [
           placeholder='global.god 0 "{name}"',
           help="Run right before the kill (default: switch god mode off so the kill works). Separated by ; – "
                "{name} = player, - = nothing."),
+    Field("ABUSE_TELEPORT_COMMAND", "Teleport the abuser away before the kill", "abuse", advanced=True,
+          placeholder='global.teleportpos (999,999,999) "{name}"',
+          help="Run before the kill to teleport the abuser far away (default: to (999,999,999)). {name} = player, "
+               "empty = don't teleport."),
+    Field("ABUSE_KILL_DELAY", "Wait before the kill (seconds)", "abuse", "int", advanced=True, placeholder="10",
+          help="Seconds to wait after the teleport before the kill command runs (0 = kill right away). Max 300."),
     Field("ABUSE_KILL_COMMAND", "Kill command", "abuse", advanced=True, placeholder='global.killplayer "{name}"'),
     Field("ABUSE_AFTER_KILL_COMMANDS", "Commands right after the kill", "abuse", advanced=True, placeholder="-",
           help="Run automatically right after the kill, separated by ; – {name} = player. Default: nothing."),
