@@ -77,7 +77,7 @@ RCE tools use exactly this WebRCON interface. Also G-Portal's wiki article
 | **Reports & watchlist** | Discord + player list | `/report` for members, staff pinged with a ✅ Handled button; watchlist pings staff when a watched player joins |
 | **Team leaderboard** | Team log lines | `/teams top`, `/teams of` – teams named after their leader, current members' stats summed up |
 | **Population graph** | `serverinfo` every 5 min | Players online over 24 h / 7 / 30 days and the busiest hours (web interface → Overview) |
-| **Admin abuse protection** | Item spawn log line + RCON | Someone not allowed spawns rockets/C4 → admin removed, killed with `global.killplayer`, staff pinged. See [Admin abuse protection](#admin-abuse-protection). |
+| **Admin abuse protection** | Live log stream + RCON | Someone not allowed spawns rockets/C4 → admin removed, teleported away, then killed with `global.killplayer`, staff pinged. See [Admin abuse protection](#admin-abuse-protection). |
 | **Timed roles** | Discord + database | `/temprole`: roles that end by themselves (e.g. VIP for 7 days) – also for giveaway prizes. See [Timed roles](#timed-roles-eg-vip-for-7-days). |
 | **Alerts & backups** | Bot | Staff ping when the server is offline, daily backups. See [Alerts & backups](#alerts--backups). |
 | **Plugins** | `plugins/` + `data/plugins/` | Extra features as single files, switched on/off with their own settings in the web interface – live, no restart. 11 growth plugins built in, your own can be uploaded. See [Plugins](#plugins). |
@@ -1202,17 +1202,21 @@ for good keeps it – no timer is added.
 
 ### Admin abuse protection
 
-When someone spawns **rockets or C4** and isn't allowed to, the bot immediately runs
-`removeowner "<name>"`, `removemoderator "<name>"`, `global.god 0 "<name>"` (god mode off) and
-`global.killplayer "<name>"`. When that player **respawns** (within an hour), it runs `global.sleep "<name>"`.
+The bot watches the server log **constantly** (the live RCON console stream, which reconnects on its own), so a
+raid-item spawn is caught the moment it's logged. When someone spawns **rockets or C4** and isn't allowed to, the
+bot immediately runs `removeowner "<name>"`, `removemoderator "<name>"`, `global.god 0 "<name>"` (god mode off)
+and `global.teleportpos (999,999,999) "<name>"` (teleports the abuser far away), then – after a short wait
+(*Wait before the kill*, `ABUSE_KILL_DELAY`, default **10 seconds**) – `global.killplayer "<name>"`. When that
+player **respawns** (within an hour), it runs `global.sleep "<name>"`.
 
 Deleting their stuff is **never automatic**: the alert in the alert channel (with a ping for `ALERT_ROLE_IDS`) is a
 **case** with the buttons **🗑️ Approve deletion** and **✖️ Reject** (bot admins only). Only on approval does the
 bot run `entity.deleteby "<name>"` (**deletes everything that player owns** – bases, deployables). Staff can also
 decide in the web interface (🚩 Reports → 🚨 Admin abuse, or ⚙️ Settings → 🛡️ Admin abuse protection). Each case
 can only be decided once; it survives restarts. Every step and the server's replies are in the admin log.
-All commands can be changed in the advanced settings (*Commands before the kill / right after the kill / only
-after staff approval / when they respawn*, `-` = nothing).
+All commands can be changed in the advanced settings (*Commands before the kill / teleport the abuser away / wait
+before the kill / right after the kill / only after staff approval / when they respawn*, `-` = nothing, and an
+empty teleport or a 0-second wait skips that step).
 
 **Who is allowed** (⚙️ Settings → 🛡️ Admin abuse protection):
 - `ABUSE_EXEMPT_ROLE_IDS` – Discord roles such as *Owner* and *Co-Owner*. The bot recognises their in-game

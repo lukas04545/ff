@@ -178,19 +178,30 @@ class AbuseGuard(commands.Cog):
         return list(await asyncio.gather(*(self._run(t, name) for t in templates)))
 
     async def punish(self, player: str, item: str, amount: float | None) -> list[tuple[str, str]]:
-        """Removes admin, god mode off, kill (+ after-kill commands) – automatically. The approval commands
-        (entity.deleteby …) become a case that staff approves or rejects. Returns (command, reply) of what ran."""
+        """Removes admin, god mode off, teleports the abuser away, waits, then kills (+ after-kill commands) –
+        automatically. The approval commands (entity.deleteby …) become a case that staff approves or rejects.
+        Returns (command, reply) of what ran."""
         cfg = self.bot.config
         name = sanitize_player_name(player)
-        results = await self._run_all((*cfg.abuse_remove_admin_commands, *cfg.abuse_before_kill_commands,
-                                       cfg.abuse_kill_command), name)
+        # First: strip admin, turn god mode off and (optionally) teleport the abuser far away.
+        pre = [*cfg.abuse_remove_admin_commands, *cfg.abuse_before_kill_commands]
+        if cfg.abuse_teleport_command:
+            pre.append(cfg.abuse_teleport_command)
+        results = await self._run_all(pre, name)
+        # Then wait (so the teleport takes effect) before the kill command.
+        if cfg.abuse_kill_delay > 0:
+            await asyncio.sleep(cfg.abuse_kill_delay)
+        results += await self._run_all((cfg.abuse_kill_command,), name)
         if cfg.abuse_after_kill_commands:
             await asyncio.sleep(1)       # let the kill go through first
             results += await self._run_all(cfg.abuse_after_kill_commands, name)
         if cfg.abuse_on_respawn_commands:
             self._await_respawn[name.lower()] = time.monotonic()
         what = f"{amount:g} × {item}" if amount else item
-        done = "admin removed, killed in-game"
+        if cfg.abuse_teleport_command:
+            done = f"admin removed, teleported away, killed in-game after {cfg.abuse_kill_delay}s"
+        else:
+            done = "admin removed, killed in-game"
         if cfg.abuse_on_respawn_commands:
             done += " – on respawn: " + ", ".join(t.split(" ")[0] for t in cfg.abuse_on_respawn_commands)
         case_id = None

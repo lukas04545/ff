@@ -203,6 +203,8 @@ class Config:
     abuse_items: tuple[str, ...]           # keywords of forbidden items (lowercase)
     abuse_remove_admin_commands: tuple[str, ...]   # templates with {name}
     abuse_before_kill_commands: tuple[str, ...]  # right before the kill, e.g. global.god 0 "{name}"
+    abuse_teleport_command: str            # teleport the abuser away before the kill (empty = don't); {name}
+    abuse_kill_delay: int                  # seconds to wait after the teleport before the kill command runs
     abuse_kill_command: str                # template with {name}
     abuse_after_kill_commands: tuple[str, ...]   # run right after the kill (default: none)
     abuse_approval_commands: tuple[str, ...]     # only after staff approval, e.g. entity.deleteby "{name}"
@@ -407,6 +409,8 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         abuse_remove_admin_commands=tuple(c.strip() for c in (_get("ABUSE_REMOVE_ADMIN_COMMANDS") or
                                           'removeowner "{name}";removemoderator "{name}"').split(";") if c.strip()),
         abuse_before_kill_commands=_commands("ABUSE_BEFORE_KILL_COMMANDS", 'global.god 0 "{name}"'),
+        abuse_teleport_command=_get("ABUSE_TELEPORT_COMMAND", 'global.teleportpos (999,999,999) "{name}"').strip(),
+        abuse_kill_delay=max(0, min(_int("ABUSE_KILL_DELAY", 10), 300)),
         abuse_kill_command=_get("ABUSE_KILL_COMMAND", 'global.killplayer "{name}"'),
         abuse_after_kill_commands=_commands("ABUSE_AFTER_KILL_COMMANDS", "-"),
         abuse_approval_commands=_commands("ABUSE_APPROVAL_COMMANDS", 'entity.deleteby "{name}"'),

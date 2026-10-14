@@ -19,6 +19,7 @@ def guard(tmp_path):
                           abuse_items=("rocket", "c4", "timed explosive", "explosive.timed"),
                           abuse_remove_admin_commands=('removeowner "{name}"', 'removemoderator "{name}"'),
                           abuse_before_kill_commands=('global.god 0 "{name}"',),
+                          abuse_teleport_command="", abuse_kill_delay=0,
                           abuse_kill_command='global.killplayer "{name}"',
                           abuse_after_kill_commands=(), abuse_approval_commands=('entity.deleteby "{name}"',),
                           abuse_on_respawn_commands=('global.sleep "{name}"',), guild_id=1, alert_channel_id=9,
@@ -167,6 +168,31 @@ def test_commands_go_out_at_once_in_order(guard):
     assert t.monotonic() - start < 2.5                                 # not 4 × 1 s one after another
     assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.god 0 "RogueAdmin"',
                           'global.killplayer "RogueAdmin"']
+
+
+def test_teleport_then_delay_then_kill(guard, monkeypatch):
+    """With a teleport command + kill delay: remove admin, god off and teleport run first, then (after the wait)
+    the kill, then after-kill commands."""
+    guard.cfg.abuse_teleport_command = 'global.teleportpos (999,999,999) "{name}"'
+    guard.cfg.abuse_kill_delay = 10
+    guard.cfg.abuse_after_kill_commands = ()
+    guard.cfg.abuse_on_respawn_commands = ()
+    waits = []
+
+    async def fake_sleep(sec):
+        waits.append(sec)
+    monkeypatch.setattr("cogs.abuse.asyncio.sleep", fake_sleep)
+
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
+    # Teleport is sent before the kill; the kill comes after a 10 s wait
+    assert guard.sent == ['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"', 'global.god 0 "RogueAdmin"',
+                          'global.teleportpos (999,999,999) "RogueAdmin"', 'global.killplayer "RogueAdmin"']
+    tp, kill = guard.sent.index('global.teleportpos (999,999,999) "RogueAdmin"'), \
+        guard.sent.index('global.killplayer "RogueAdmin"')
+    assert tp < kill and 10 in waits                                     # teleport first, then the 10 s wait
+    content, embed = guard.alerts[0]
+    assert "teleportpos" in embed.fields[0].value                        # the teleport is in the "done" results
+    assert any("teleported away" in a and "after 10s" in a for a in guard.audit)   # summary in the admin log
 
 
 def test_punished_again_when_they_do_it_again(guard):
