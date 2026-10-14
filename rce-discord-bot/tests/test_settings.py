@@ -265,7 +265,8 @@ def test_preflight_only_blocks_invalid_token(tmp_path, monkeypatch):
 def test_required_intents():
     from config import required_intents
     cfg = type("Cfg", (), dict(chat_channel_id=None, chat_bridge_to_game=True, ticket_category_id=None,
-                               discord_log_channel_id=None, welcome_channel_id=None, auto_role_id=None))()
+                               discord_log_channel_id=None, welcome_channel_id=None, auto_role_id=None,
+                               prison_role_id=None, prison_channel_id=None))()
     assert required_intents(cfg) == {"message_content": [], "members": []}
     cfg.ticket_category_id, cfg.auto_role_id = 5, 7
     need = required_intents(cfg)

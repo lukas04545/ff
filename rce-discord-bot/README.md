@@ -194,7 +194,8 @@ rce-discord-bot/
 │   ├── store.py           # Tip4Serv purchases (polled every minute) → automatic approval
 │   ├── automod.py         # AI chat moderation: warns offensive members in chosen channels
 │   ├── webshop.py         # Web store: PayPal checkout, gift cards, delivery of bought kits
-│   ├── aichat.py          # AI chats with members in chosen channels (own instructions)
+│   ├── aichat.py          # AI chats with members in chosen channels + acts as prison guard
+│   ├── prison.py          # /prison jail/free/list: lock a member to the prison channel (timed too)
 │   ├── countdown.py       # /countdown: one self-editing countdown message
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── plugins/               # Built-in plugins (one file each, on/off in the web interface → 🧩 Plugins)
@@ -792,6 +793,25 @@ itself, 5 minutes to 2 hours, by how bad the message is and the member's warning
 take priority over the defaults, e.g. "Be strict: also warn for 'stfu'", "Swearing in German is fine", "Never warn
 for 'noob'", "Warnings should sound friendly and mention #rules". Staff and bots are never checked. `/automod warnings @member` and `/automod clear @member`
 (staff). Needs the DeepSeek API key and the Message Content intent; the watched messages are sent to DeepSeek.
+
+**Prison (jail):** lock a member down so they can only see one **prison channel** and their own support ticket –
+nothing else. Set a **Prison role** and **Prison channel** in **Settings → 🎉 Community** (`PRISON_ROLE_ID`,
+`PRISON_CHANNEL_ID`; drag the bot's role above the prison role). `/prison jail @member [reason] [minutes]` gives
+them the prison role, takes away their other roles (saved and restored when freed), denies the prison role *View
+Channel* everywhere except the prison channel (new channels are locked too), and DMs them why. Their own ticket
+stays visible because a ticket grants its owner a per-member overwrite, which beats the role deny. With `minutes`
+it's a **timed jail** – the bot releases them automatically when the time is up (checked once a minute) and gives
+their roles back. `/prison free @member` lets them out by hand; `/prison list` shows who's in. Staff only
+(*Moderate Members*).
+
+**AI moderation can jail, too:** turn on *AI moderation: send serious offenders to prison* (`AI_MOD_JAIL`, needs
+the prison role + channel). For serious or repeated offences the AI then puts the member in the prison channel for
+a while instead of only warning/timing out – it picks the length itself up to *AI moderation: longest jail*
+(`AI_MOD_JAIL_MINUTES`, default 60, max 28 days), then they're auto-released. **AI prison guard:** turn on *AI prison
+guard* (`AI_MOD_GUARD`, needs the DeepSeek key + prison channel) and the AI replies to jailed members in the prison
+channel as a calm, firm guard – it explains why they're there and how long is left, stays respectful even if they
+aren't, and points appeals to staff (it can't actually free anyone). Your *AI moderation: your own rules* also
+shape how strict the guard is.
 
 **The AI learns from staff answers:** when a ticket is closed, the bot sends the staff answers of that ticket
 (including `/aiconfirm` messages; the player's messages only as context) to the AI and asks for **general, new**

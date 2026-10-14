@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cogs.aichat import AIChat, clean_reply, system_prompt, whole_sentences
+from cogs.aichat import AIChat, clean_reply, guard_prompt, system_prompt, whole_sentences
 from tests.test_kit_requests import env  # noqa: F401
 
 
@@ -96,6 +96,40 @@ def test_mode_all_and_switched_off(chat, monkeypatch):
     assert len(chat.calls) == 2
     from config import required_intents
     assert "AI chat" in required_intents(chat.env.bot.config)["message_content"]
+
+
+def test_guard_prompt_builds():
+    p = guard_prompt("Warden", "Kryvon", "Be extra strict.", "Reason for jail: griefing. Time left: about 1h.")
+    assert "You are Warden" in p and "prison guard" in p and "Reason for jail: griefing." in p
+    assert "INSTRUCTIONS FROM THE SERVER OWNER" in p and "Be extra strict." in p
+
+
+def test_prison_guard_answers_in_prison_channel(chat, monkeypatch):
+    import cogs.aichat as ac
+    monkeypatch.setattr(ac, "CHANNEL_GAP", 0)
+    # Guard on, prison channel 700. AI chat itself stays on "mentions" and this channel is NOT in ai_chat_channel_ids.
+    chat.env.bot.config = replace(chat.env.bot.config, ai_mod_guard=True, prison_channel_id=700, ai_chat_cooldown=0,
+                                  ai_mod_instructions="Keep order firmly.")
+    chat.env.db.jail(1, 7, [], "griefing other bases", "AI moderation")
+    prison = NS(id=700)
+
+    @asynccontextmanager
+    async def typing():
+        yield
+    prison.typing = typing
+    send(chat, chat.message(1, "let me out!!", ch=prison))                     # no @mention needed – guard answers all
+    assert len(chat.calls) == 1
+    system = chat.calls[0][0]["content"]
+    assert "prison guard" in system and "Reason for jail: griefing other bases." in system
+    assert "Keep order firmly." in system and "KNOWLEDGE BASE" not in system   # guard persona, not the chat persona
+    assert chat.replies[-1][0] == 1
+    # The prison channel is watched only while guard mode is on
+    assert chat.cog.watching(700) and chat.cog.is_prison(700)
+    chat.env.bot.config = replace(chat.env.bot.config, ai_mod_guard=False)
+    assert not chat.cog.watching(700)
+    from config import required_intents
+    cfg = replace(chat.env.bot.config, ai_mod_guard=True)
+    assert "AI prison guard" in required_intents(cfg)["message_content"]
 
 
 def test_cut_off_reply_keeps_whole_sentences(chat, monkeypatch):

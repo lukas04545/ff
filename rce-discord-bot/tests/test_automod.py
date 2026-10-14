@@ -14,9 +14,12 @@ def test_parse_flags():
     raw = json.dumps({"flags": [{"id": "1", "severity": "HIGH", "reason": "racist slur"},
                                 {"id": "99", "severity": "low", "reason": "x"}, "junk"]})
     assert parse_flags(raw, {"1", "2"}) == [{"id": "1", "severity": "high", "reason": "racist slur", "warning": None,
-                                             "mute_minutes": None}]
+                                             "mute_minutes": None, "jail_minutes": None}]
     clamp = lambda m: parse_flags(json.dumps({"flags": [{"id": "1", "mute_minutes": m}]}), {"1"})[0]["mute_minutes"]  # noqa
     assert (clamp(1), clamp(45), clamp("90"), clamp(500), clamp("x")) == (5, 45, 90, 120, None)
+    # jail_minutes only when jailing is on (jail_max > 0), clamped to 1..jail_max; 0/blank/invalid -> None
+    jail = lambda m, mx=60: parse_flags(json.dumps({"flags": [{"id": "1", "jail_minutes": m}]}), {"1"}, mx)[0]["jail_minutes"]  # noqa
+    assert (jail(30), jail(500), jail(0), jail("x"), jail(30, 0)) == (30, 60, None, None, None)
     w = parse_flags(json.dumps({"flags": [{"id": "1", "warning": "Hey, das war beleidigend @everyone <@123> – "
                                                                 "bitte bleib respektvoll. https://x.y"}]}), {"1"})
     assert w[0]["warning"] == "Hey, das war beleidigend – bitte bleib respektvoll."
@@ -120,11 +123,46 @@ def test_staff_commands(mod):
     assert "1 warning(s)" in answers[-1] and mod.env.db.count_ai_warnings(1, 10) == 0
 
 
+def test_ai_jails_serious_offender(mod):
+    """With AI_MOD_JAIL on and the prison set up, a jail_minutes verdict puts the member in prison (no timeout)."""
+    mod.env.bot.config = replace(mod.env.bot.config, ai_mod_jail=True, ai_mod_jail_minutes=60,
+                                 prison_role_id=50, prison_channel_id=900)
+    jailed = []
+
+    async def jail_member(guild, member, reason, by, *, minutes=None, announce=True):
+        jailed.append((member.id, reason, by, minutes, announce))
+        return None
+    real_get_cog = mod.env.bot.__class__.get_cog.__get__(mod.env.bot)
+    mod.env.bot.get_cog = lambda name: NS(jail_member=jail_member) if name == "Prison" else real_get_cog(name)
+
+    troll = mod.Member(10)
+    mod.verdicts["1"] = {"severity": "high", "reason": "racist slur", "jail_minutes": 120}
+    say(mod, 1, "[slur]", troll)
+    asyncio.run(mod.cog.flush())
+    # The AI asked for 120 but the cap is 60; parse clamps it, and the member is jailed, not timed out
+    assert jailed == [(10, "AI moderation: racist slur", "AI moderation", 60, False)]
+    assert mod.out.timeouts == [] and "🔒 Sent to prison for 1 hour" in mod.out.sent[-1]
+
+
+def test_ai_jail_off_without_setup(mod):
+    """No prison role/channel (or AI_MOD_JAIL off): jail_minutes is ignored, the AI falls back to timeouts."""
+    mod.env.bot.config = replace(mod.env.bot.config, ai_mod_jail=True, prison_role_id=None, prison_channel_id=None)
+    assert mod.cog._jail_max() == 0                                   # not set up -> AI isn't told it may jail
+    troll = mod.Member(10)
+    mod.verdicts["1"] = {"severity": "high", "reason": "slur", "jail_minutes": 30}
+    say(mod, 1, "[slur]", troll)
+    asyncio.run(mod.cog.flush())
+    assert not any("prison" in a.lower() for a in mod.out.sent)       # jail_minutes dropped (jail_max 0)
+
+
 def test_owner_instructions_reach_the_ai(mod):
     from cogs.automod import SYSTEM, system_prompt
-    assert system_prompt("") == SYSTEM
+    assert system_prompt("").startswith(SYSTEM) and "PRISON is OFF" in system_prompt("")
     p = system_prompt("Be strict: warn for 'stfu'.\nNever warn for 'noob'.")
     assert p.startswith(SYSTEM) and "RULES FROM THE SERVER OWNER" in p and "Never warn for 'noob'." in p
+    # When jailing is enabled the prompt tells the AI it may set jail_minutes within the allowed range
+    jp = system_prompt("", jail_max=120)
+    assert "PRISON is enabled" in jp and "between 1 and 120" in jp
     mod.env.bot.config = replace(mod.env.bot.config, ai_mod_instructions="Warn for 'stfu'.")
     seen = []
 
