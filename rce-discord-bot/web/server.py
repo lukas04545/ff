@@ -383,6 +383,7 @@ class WebInterface:
         r.add_post("/api/webshop/orders/{order_id:\\d+}/retry", self.webshop_retry)
         r.add_get("/api/plugins", self.plugins_list)
         r.add_post("/api/plugins/upload", self.plugin_upload)
+        r.add_post("/api/plugins/generate", self.plugin_generate)
         r.add_post("/api/plugins/{pid}/toggle", self.plugin_toggle)
         r.add_put("/api/plugins/{pid}/settings", self.plugin_settings)
         r.add_post("/api/plugins/{pid}/reload", self.plugin_reload)
@@ -797,6 +798,30 @@ class WebInterface:
         info = await self._plugin_call(self._plugins().install(name, code))
         self._audit(f"plugin file {info['file']} uploaded")
         return web.json_response({"plugin": info})
+
+    def _ai_client(self):
+        """The shared DeepSeek client (owned by the Tickets cog). Raises ApiError if the bot/AI isn't ready."""
+        tickets = self.bot.get_cog("Tickets") if self.bot is not None else None
+        ai = getattr(tickets, "ai", None)
+        if ai is None or not getattr(ai, "enabled", False):
+            raise ApiError("The AI is off – set a DeepSeek API key in Settings → 🎫 Support first.")
+        return ai
+
+    async def plugin_generate(self, request: web.Request) -> web.Response:
+        """AI writes a plugin from a description. Returns the code for review – it is NOT installed here."""
+        from support.plugin_ai import generate_plugin
+        data = await self._json(request)
+        description = self._text(data, "description", limit=2000)
+        if not description:
+            raise ApiError("Describe the plugin you want.")
+        self._plugins()                                   # 503 early if plugins aren't loaded
+        ai = self._ai_client()
+        try:
+            result = await generate_plugin(ai, description)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        self._audit(f"AI drafted a plugin ({result['filename']})")
+        return web.json_response({"draft": result})
 
     async def plugin_file_get(self, request: web.Request) -> web.Response:
         path = self._plugins().file_path(request.match_info["pid"], request.match_info["key"])

@@ -224,6 +224,40 @@ def test_web_api_and_player_website(pb):
     asyncio.run(main())
 
 
+def test_ai_plugin_generate_endpoint(pb, monkeypatch):
+    """POST /api/plugins/generate drafts a plugin with the AI but does NOT install it; needs the AI on."""
+    async def main():
+        from web.server import WebInterface
+        await pb.m.load_all()
+        web = WebInterface(pb.bot, env_path=pb.tmp / ".env", secret_path=pb.tmp / "web_secret.key")
+
+        async def chat_json(messages, **kw):
+            return json.dumps({"filename": "greeter.py", "name": "Greeter", "summary": "Greets players.",
+                               "code": HELLO})
+        real_get_cog = pb.bot.__class__.get_cog.__get__(pb.bot)
+        fake_ai = NS(enabled=True, chat_json=chat_json)
+        monkeypatch.setattr(pb.bot, "get_cog",
+                            lambda name: NS(ai=fake_ai) if name == "Tickets" else real_get_cog(name))
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            r = await c.post("/api/plugins/generate", json={"description": "greet players on join"}, headers=H)
+            assert r.status == 200
+            draft = (await r.json())["draft"]
+            assert draft["filename"] == "greeter.py" and draft["warnings"] == [] and "class Hello" in draft["code"]
+            assert "greeter" not in {p["id"] for p in (await (await c.get("/api/plugins")).json())["plugins"]}
+            # Empty description is rejected; AI off -> clear error
+            assert (await c.post("/api/plugins/generate", json={"description": " "}, headers=H)).status == 400
+            fake_ai.enabled = False
+            r = await c.post("/api/plugins/generate", json={"description": "greet players"}, headers=H)
+            assert r.status == 400 and "AI is off" in (await r.json())["error"]
+        finally:
+            await c.close()
+            await pb.bot.rcon.close()
+    asyncio.run(main())
+
+
 def test_item_pictures_are_cached(pb, monkeypatch):
     from web import item_images
     png = b"\x89PNG\r\n\x1a\n" + b"x" * 50
