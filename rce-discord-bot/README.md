@@ -1234,6 +1234,13 @@ and `global.teleportpos (999,999,999) "<name>"` (teleports the abuser far away),
 (*Wait before the kill*, `ABUSE_KILL_DELAY`, default **10 seconds**) – `global.killplayer "<name>"`. When that
 player **respawns** (within an hour), it runs `global.sleep "<name>"`.
 
+**Reliability:** if RCON blinks while a punishment runs, the commands that failed are sent again (in order) as soon
+as the connection is back – up to 3 times – and the alert says loudly if any command still didn't go through (run it
+by hand with `/rcon`). The bot's own gives only hide a spawn when they contain a raid item (a shop kit with wood or
+metal no longer silences the protection). The log reaches the bot over RCON, so while RCON is down nothing can be
+seen: when it reconnects after more than 3 seconds, the admin log says *"Abuse protection was blind for N s"*, so you
+know to check the server log. ⚙️ Settings → 🛡️ Admin abuse protection shows the last spawns and what happened.
+
 Deleting their stuff is **never automatic**: the alert in the alert channel (with a ping for `ALERT_ROLE_IDS`) is a
 **case** with the buttons **🗑️ Approve deletion** and **✖️ Reject** (bot admins only). Only on approval does the
 bot run `entity.deleteby "<name>"` (**deletes everything that player owns** – bases, deployables). Staff can also
