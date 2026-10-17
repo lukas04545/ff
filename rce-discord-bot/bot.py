@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits", "cogs.tickets",
         "cogs.community", "cogs.moderation", "cogs.giveaways", "cogs.updates", "cogs.timed_roles", "cogs.monitor",
         "cogs.economy", "cogs.wipe", "cogs.schedule", "cogs.reports", "cogs.abuse", "cogs.kit_requests", "cogs.store", "cogs.automod", "cogs.abusewatch",
-        "cogs.webshop", "cogs.aichat", "cogs.countdown", "cogs.prison")
+        "cogs.webshop", "cogs.aichat", "cogs.countdown", "cogs.prison", "cogs.player_accounts")
 
 # Event class -> Discord event name (listeners are then called on_<name>)
 EVENT_NAMES: dict[type, str] = {

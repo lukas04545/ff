@@ -196,6 +196,7 @@ rce-discord-bot/
 │   ├── webshop.py         # Web store: PayPal checkout, gift cards, delivery of bought kits
 │   ├── aichat.py          # AI chats with members in chosen channels + acts as prison guard
 │   ├── prison.py          # /prison jail/free/list: lock a member to the prison channel (timed too)
+│   ├── player_accounts.py # Player website login (one-time code) + team slots on custom kits
 │   ├── countdown.py       # /countdown: one self-editing countdown message
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── plugins/               # Built-in plugins (one file each, on/off in the web interface → 🧩 Plugins)
@@ -227,6 +228,7 @@ rce-discord-bot/
 │   ├── server.py          # Web interface: login + JSON API (runs inside the bot process)
 │   ├── item_images.py     # Item pictures: downloaded once (ITEM_IMAGE_URL), cached in data/item_images/
 │   ├── store_pages.py     # Web store pages of the player website (/play/store)
+│   ├── account_pages.py   # Player account pages (/play/account): manage own kits, team slots
 │   └── static/            # Frontend (HTML/CSS/JS, no external files)
 ├── logbuffer.py           # Recent log lines for the web interface
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
@@ -1063,6 +1065,23 @@ Orders. Wrong keys: 5 tries per 15 minutes per visitor. Empty = off (default).
 2. Test with `PAYPAL_MODE=sandbox` (default, PayPal's test system with test accounts – no real money; the store
    shows a "Test mode" note). For real payments switch to `live` with your **live** Client ID/Secret.
 3. Optional: `STORE_CURRENCY` (default: the price list's currency), `STORE_GIFTCARD_VALUES`, `STORE_CHANNEL_ID`.
+
+### Player accounts & team slots (My account)
+
+Players can log in on the website to manage their **own** custom kits (the ones they bought): **your web link +
+`/play/account`** (the *My account* link appears when `PLAYER_ACCOUNTS` is on, the default).
+
+- **Login** is a one-time code – no password, nothing to set up. The player enters their in-game name; the bot DMs
+  a 6-digit code to the linked Discord account (linked with `/customkit link`); entering it logs them in for 30
+  days (a cookie; only a hash of it is stored). They must have DMs from server members on.
+- **Add items** to one of their kits: the same item picker as the store, priced by the price list. After payment
+  the items are added to that kit.
+- **Team slots** let a teammate use the kit. Set a price with `STORE_SLOT_PRICE` (per slot per 30 days, `0` = off)
+  and a cap with `STORE_SLOT_MAX`. On My account the owner buys slots (per month, PayPal/gift card) and then puts a
+  teammate on each slot by their in-game name – that teammate gets the kit's role and can `/customkit claim` it.
+  When a slot's month runs out the bot takes the role back (unless the teammate still has the kit another way) and
+  DMs the owner; the owner can free a slot or re-assign it any time. Players only ever see and change their own
+  kits and slots.
 
 **Safety:** prices are always calculated by the bot – the browser only sends what was picked. The bot creates the
 PayPal order for the exact amount and delivers only after it captured the payment and PayPal reports COMPLETED for

@@ -180,6 +180,11 @@ class PlayerWebsite(Plugin):
         paypal_only = shop.paypal is not None and (shop.builder_problem() is None or bool(shop.giftcard_values()))
         return shop if kits or paypal_only else None
 
+    def accounts(self):
+        """The PlayerAccounts cog if player login is on, else None."""
+        cog = self.bot.get_cog("PlayerAccounts")
+        return cog if cog is not None and cog.enabled else None
+
     def find_player(self, name: str):
         name = " ".join(str(name or "").split())[:64]
         return self.bot.db.player(name) if name else None
@@ -192,6 +197,8 @@ class PlayerWebsite(Plugin):
             links += [("leaderboard", "Leaderboard"), ("player", "Players")]
         if self.store() is not None:
             links.append(("store", "Store"))
+        if self.accounts() is not None:
+            links.append(("account", "My account"))
         if self.setting("shop") and self.points_enabled:
             links.append(("shop", "Points"))
         if self.setting("rules"):
@@ -453,6 +460,19 @@ class PlayerWebsite(Plugin):
             return web.Response(body=data, content_type=kind,
                                 headers={**headers, "Cache-Control": "public, max-age=86400"})
         base = "/play" if request.path.startswith("/play") else f"/p/{self.plugin_id}"
+        if path == "account" or path.startswith("account/"):
+            accounts = self.accounts()
+            if accounts is None:
+                return web.Response(status=404, text=self.not_found(base), content_type="text/html",
+                                    headers={**headers, "Cache-Control": "no-store"})
+            from web.account_pages import handle as account_handle
+            from web.server import WebInterface
+            resp = await account_handle(self, accounts, self.store(), request, base, path,
+                                        WebInterface._client_ip(request))
+            for key, value in headers.items():
+                resp.headers.setdefault(key, value)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
         if path == "store" or path.startswith("store/"):
             shop = self.store()
             if shop is None:

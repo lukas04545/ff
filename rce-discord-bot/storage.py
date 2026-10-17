@@ -369,6 +369,25 @@ class Storage:
                 expires_at INTEGER,                   -- auto-release time (epoch seconds); NULL = until freed by hand
                 PRIMARY KEY (guild_id, user_id)
             );
+            -- Player logins on the website ("Login with Discord"); only a hash of the cookie is stored
+            CREATE TABLE IF NOT EXISTS player_sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                name TEXT,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
+            -- Team slots on a player's own custom kit: each lets one more player claim it until expires_at
+            CREATE TABLE IF NOT EXISTS kit_slots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kit TEXT NOT NULL COLLATE NOCASE,
+                owner_id INTEGER NOT NULL,
+                member_id INTEGER,                    -- who is on the slot (Discord ID), NULL = free
+                player TEXT,                          -- their in-game name (shown on the website)
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_kit_slots_kit ON kit_slots (kit);
             CREATE TABLE IF NOT EXISTS plugin_data (
                 plugin TEXT NOT NULL,
                 key TEXT NOT NULL,
@@ -445,6 +464,9 @@ class Storage:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN admin_key INTEGER NOT NULL DEFAULT 0")
         if "kit_name" not in columns:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN kit_name TEXT")
+        for column in ("slot_count", "months", "slot_id"):          # team slot orders (kind "slots")
+            if column not in columns:
+                self._db.execute(f"ALTER TABLE store_orders ADD COLUMN {column} INTEGER")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 
@@ -1552,6 +1574,64 @@ class Storage:
         self._db.execute("DELETE FROM prison WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
         self._db.commit()
         return [int(r) for r in (row["roles"] or "").split(",") if r.strip().isdigit()]
+
+    # ------------------------------------------------------------ Player logins (website)
+
+    def add_player_session(self, token_hash: str, user_id: int, name: str, expires_at: int) -> None:
+        now = int(time.time())
+        self._db.execute("DELETE FROM player_sessions WHERE expires_at <= ?", (now,))
+        self._db.execute("INSERT OR REPLACE INTO player_sessions (token_hash, user_id, name, created_at, expires_at) "
+                         "VALUES (?, ?, ?, ?, ?)", (token_hash, user_id, name, now, expires_at))
+        self._db.commit()
+
+    def player_session(self, token_hash: str) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM player_sessions WHERE token_hash = ? AND expires_at > ?",
+                                (token_hash, int(time.time()))).fetchone()
+
+    def delete_player_session(self, token_hash: str) -> None:
+        self._db.execute("DELETE FROM player_sessions WHERE token_hash = ?", (token_hash,))
+        self._db.commit()
+
+    # ------------------------------------------------------------ Team slots on custom kits
+
+    def add_kit_slots(self, kit: str, owner_id: int, count: int, expires_at: int) -> list[int]:
+        now = int(time.time())
+        ids = [int(self._db.execute("INSERT INTO kit_slots (kit, owner_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+                                    (kit, owner_id, expires_at, now)).lastrowid) for _ in range(count)]
+        self._db.commit()
+        return ids
+
+    def kit_slot(self, slot_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM kit_slots WHERE id = ?", (slot_id,)).fetchone()
+
+    def kit_slots(self, *, kit: str | None = None, owner_id: int | None = None) -> list[sqlite3.Row]:
+        where, args = [], []
+        if kit is not None:
+            where.append("kit = ? COLLATE NOCASE")
+            args.append(kit)
+        if owner_id is not None:
+            where.append("owner_id = ?")
+            args.append(owner_id)
+        sql = "SELECT * FROM kit_slots" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id"
+        return self._db.execute(sql, args).fetchall()
+
+    def set_kit_slot_member(self, slot_id: int, member_id: int | None, player: str | None) -> None:
+        self._db.execute("UPDATE kit_slots SET member_id = ?, player = ? WHERE id = ?", (member_id, player, slot_id))
+        self._db.commit()
+
+    def extend_kit_slot(self, slot_id: int, expires_at: int) -> None:
+        self._db.execute("UPDATE kit_slots SET expires_at = ? WHERE id = ?", (expires_at, slot_id))
+        self._db.commit()
+
+    def expired_kit_slots(self, now: int | None = None) -> list[sqlite3.Row]:
+        """Slots whose time ran out while someone is still on them."""
+        return self._db.execute("SELECT * FROM kit_slots WHERE member_id IS NOT NULL AND expires_at <= ? ORDER BY id",
+                                (now if now is not None else int(time.time()),)).fetchall()
+
+    def has_kit_purchase(self, user_id: int, kit: str) -> bool:
+        """Did this member get the kit by an approved purchase/prize of their own (not a team slot)?"""
+        return self._db.execute("SELECT 1 FROM kit_requests WHERE user_id = ? AND kit = ? COLLATE NOCASE AND "
+                                "status = 'approved' AND addon = 0 LIMIT 1", (user_id, kit)).fetchone() is not None
 
     def close(self) -> None:
         self._db.close()

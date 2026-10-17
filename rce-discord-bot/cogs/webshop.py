@@ -331,11 +331,22 @@ class WebShop(commands.Cog):
                                 "player with /customkit link first – the kit is given to that account.")
         return self.bot.db.linked_player(user_id) or player, user_id
 
+    def _owned_kit(self, user_id: int, kit: str):
+        """The custom kit `kit`, but only if `user_id` is the player who bought it. Raises otherwise."""
+        name = kitparse.clean_arg(kit or "")[:40].strip()
+        row = self.bot.db.custom_kit(name)
+        if row is None:
+            raise CheckoutError("That kit doesn't exist (any more).")
+        if self.bot.db.kit_buyer(row["name"]) != user_id:
+            raise CheckoutError("That isn't one of your kits.")
+        return row
+
     async def checkout(self, kind: str, *, base_url: str, kit_id=None, items: dict | None = None,
                        timer_hours: int | None = None, value=None, player: str = "", gift_code: str = "",
-                       name: str = "", admin_key: str = "", ip: str = "?") -> dict:
+                       name: str = "", admin_key: str = "", ip: str = "?", user_id: int | None = None,
+                       slot_count: int | None = None, months: int | None = None) -> dict:
         """Starts an order. Returns {"token", "redirect"} (PayPal) or {"token"} (paid with a gift card or free with
-        the admin key)."""
+        the admin key). `user_id` (a logged-in player) is required for the "addon" and "slots" kinds."""
         db = self.bot.db
         if self._checkouts.hit(ip) is not None:
             raise CheckoutError("Too many orders started – please wait a few minutes.")
@@ -343,6 +354,36 @@ class WebShop(commands.Cog):
         if kind == "kit":
             row = self.store_kit(kit_id)
             fields.update(title=row["name"], store_kit_id=row["id"], total=round(float(row["price"]), 2))
+        elif kind == "addon":
+            if user_id is None:
+                raise CheckoutError("Log in first.")
+            kit_row = self._owned_kit(user_id, name)
+            q, picked = self.price_custom(items or {}, None)
+            fields.update(title=f"Add items to {kit_row['name']}", total=q.total, items=json.dumps(picked),
+                          kit_name=kit_row["name"])
+        elif kind == "slots":
+            if user_id is None:
+                raise CheckoutError("Log in first.")
+            if self.bot.config.store_slot_price <= 0:
+                raise CheckoutError("Team slots aren't for sale right now.")
+            kit_row = self._owned_kit(user_id, name)
+            try:
+                slot_count = int(slot_count)
+                months = int(months)
+            except (TypeError, ValueError):
+                raise CheckoutError("Pick how many slots and months.") from None
+            if not 1 <= slot_count <= self.bot.config.store_slot_max:
+                raise CheckoutError(f"Between 1 and {self.bot.config.store_slot_max} slots.")
+            if not 1 <= months <= 12:
+                raise CheckoutError("Between 1 and 12 months.")
+            have = len(db.kit_slots(kit=kit_row["name"]))
+            if have + slot_count > self.bot.config.store_slot_max:
+                raise CheckoutError(f"That kit can have at most {self.bot.config.store_slot_max} team slots "
+                                    f"(it already has {have}).")
+            total = round(self.bot.config.store_slot_price * slot_count * months, 2)
+            unit = f"{slot_count} slot{'s' if slot_count != 1 else ''} × {months} month{'s' if months != 1 else ''}"
+            fields.update(title=f"{unit} on {kit_row['name']}", total=total, kit_name=kit_row["name"],
+                          slot_count=slot_count, months=months)
         elif kind == "custom":
             q, picked = self.price_custom(items or {}, timer_hours)
             kit_name = kitparse.clean_arg(name or "")[:40].strip()
@@ -364,6 +405,9 @@ class WebShop(commands.Cog):
             raise CheckoutError("Unknown product.")
         if kind in ("kit", "custom"):
             fields["player"], fields["user_id"] = self._buyer(player)
+        elif kind in ("addon", "slots"):
+            fields["user_id"] = user_id
+            fields["player"] = db.linked_player(user_id) or ""
         if admin_key.strip():
             self.check_admin_key(admin_key, ip)
             token = secrets.token_urlsafe(18)
@@ -483,6 +527,25 @@ class WebShop(commands.Cog):
                 code = self.create_gift_cards(float(order["total"]), 1, f"store order #{order_id}",
                                               order_id=order_id)[0]
                 result = f"Gift card {code}"
+            elif order["kind"] == "slots":
+                expires = int(time.time()) + int(order["months"]) * 30 * 86400
+                db.add_kit_slots(order["kit_name"], order["user_id"], int(order["slot_count"]), expires)
+                result = f"{order['slot_count']} team slot(s) on {order['kit_name']}"
+            elif order["kind"] == "addon":
+                kr = self.bot.get_cog("KitRequests")
+                if kr is None or db.custom_kit(order["kit_name"]) is None:
+                    raise CheckoutError("the kit no longer exists")
+                proof = f"Web store order #{order_id} ({pay.strip()})"
+                earlier = db.kit_request(order["request_id"]) if order["request_id"] else None
+                rid = earlier["id"] if earlier is not None and earlier["status"] == "pending" else \
+                    db.add_kit_request(None, order["user_id"], order["kit_name"], 0, proof, order["items"],
+                                       source="store", price=order["total"], currency=order["currency"],
+                                       checkout_name=order["player"], addon=True)
+                db.update_store_order(order_id, request_id=rid)
+                ok, text = await kr.decide(rid, True, STORE_BY)
+                if not ok:
+                    raise CheckoutError(text)
+                result = f"items added to {order['kit_name']}"
             elif order["kind"] == "kit" and skit is not None and skit["source"] == "ingame":
                 result = await self._give_ingame(order, skit)
                 if result is None:            # buyer is offline: given when they join
@@ -523,7 +586,13 @@ class WebShop(commands.Cog):
                         + (f" for <@{order['user_id']}> ({safe_md(order['player'] or '')})" if order["user_id"] else "")
                         + f" – {safe_md(pay.strip())} – delivered", alert=bool(order["admin_key"]))
         if order["user_id"] and order["kind"] != "giftcard":
-            if skit is not None and skit["source"] == "ingame":
+            if order["kind"] == "slots":
+                text = (f"✅ Thanks! You added **{order['slot_count']} team slot(s)** to **{safe_md(order['kit_name'])}** "
+                        f"for {order['months']} month(s). Put your teammates on them under **My account** on the website.")
+            elif order["kind"] == "addon":
+                text = (f"✅ Thanks! Your items were added to **{safe_md(order['kit_name'])}**. Claim it in-game with "
+                        f"`/customkit claim {order['kit_name']}` while you're online.")
+            elif skit is not None and skit["source"] == "ingame":
                 text = f"✅ Thanks for your purchase! **{safe_md(order['title'])}** was given to you in-game."
             else:
                 text = (f"✅ Thanks for your purchase! **{safe_md(order['title'])}** is yours: claim it in-game with "
