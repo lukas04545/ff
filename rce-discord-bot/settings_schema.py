@@ -247,6 +247,17 @@ FIELDS: list[Field] = [
           help="Lets staff take any store item without paying: open the store with ?admin=1 at the end of the address "
                "(e.g. …/play/store?admin=1) and enter this key at checkout. At least 12 characters – share it only "
                "with staff. Every use is posted in the purchase log with a ping. Empty = off."),
+    Field("DISCORD_CLIENT_ID", "Player login: Discord Client ID", "store",
+          help="Lets players log in on the website with Discord (My account: their custom kits, add items, team "
+               "slots). Developer Portal → your bot's application → OAuth2 → Client ID. Add the redirect "
+               "<your website address>/play/account/callback there (OAuth2 → Redirects). Empty = player login off."),
+    Field("DISCORD_CLIENT_SECRET", "Player login: Discord Client Secret", "store", "secret",
+          help="Developer Portal → OAuth2 → Client Secret (Reset Secret). Only used to log players in (scope: "
+               "identify – their Discord ID and name, nothing else)."),
+    Field("STORE_SLOT_PRICE", "Team slot price (per slot per month)", "store", placeholder="0",
+          help="Players can buy team slots on their own custom kit on My account: each slot lets one more player "
+               "(e.g. a teammate) claim the kit, for 30 days per month bought. 0 = team slots off."),
+    Field("STORE_SLOT_MAX", "Most team slots per kit", "store", "int", placeholder="5"),
     Field("STORE_CHANNEL_ID", "Store purchase log channel", "store", "id", pick="text_channel",
           help="Every web store purchase and problem is posted here. Empty = admin log."),
     # Tip4Serv store (custom kit purchases)
