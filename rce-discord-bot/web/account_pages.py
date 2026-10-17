@@ -12,7 +12,7 @@ from urllib.parse import quote
 from aiohttp import web
 
 from cogs.player_accounts import SESSION_TTL
-from web.store_pages import STORE_CSS, esc, item_name, notice
+from web.store_pages import STORE_CSS, esc, item_name, notice, picker_groups
 
 COOKIE = "rce_player"
 ACCOUNT_CSS = STORE_CSS + """
@@ -132,18 +132,10 @@ def additems_page(site, shop, base: str, kit: str, query, *, error: str = "") ->
     if pl is None:
         return _resp(site, base, "account", "Add items", notice("Building items isn't available right now.", "bad"))
     amounts = {k[2:]: v for k, v in query.items() if k.startswith("q.") and str(v).strip() not in ("", "0")}
-    groups = []
-    for rule in pl.rules:
-        shorts = sorted(rule.items, key=item_name) + sorted(rule.extras - rule.items, key=item_name)
-        per = f"{shop.fmt(rule.price)} per {rule.per:,}".replace(",", " ")
-        tiles = "".join(
-            f'<div class="bi"><img src="/img/items/{quote(s)}.png?ph=1" alt="" loading="lazy"><label>'
-            f'{esc(item_name(s))}<input type="number" name="q.{esc(s)}" min="0" max="100000" step="1" '
-            f'inputmode="numeric" value="{esc(amounts.get(s, ""))}" placeholder="0"></label></div>' for s in shorts)
-        groups.append(f'<div class="build-group"><h3>{esc(per)}</h3><div class="build-items">{tiles}</div></div>')
+    groups_html = picker_groups(shop, amounts)
     form = (f'<form method="get" action="{base}/account/additems"><input type="hidden" name="kit" value="{esc(kit)}">'
             f'<div class="card"><h2>Add items to {esc(kit)}</h2><p class="muted">Pick items to add. They are added to '
-            f'your kit after payment.</p><div class="build-wrap">{"".join(groups)}</div>'
+            f'your kit after payment.</p><div class="build-wrap">{groups_html}</div>'
             '<div style="margin-top:12px"><button class="ghost" type="submit">Calculate price</button></div></div></form>')
     summary = ""
     if amounts and not error:

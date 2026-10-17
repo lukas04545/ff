@@ -2289,11 +2289,48 @@ views.makeplugin = async (main) => {
 const money = (v, cur) => `${Number(v).toFixed(2)} ${cur}`;
 const ORDER_PILL = { delivered: "ok", failed: "bad", review: "warn", pending: "warn", paid: "warn", waiting: "warn" };
 
+function itemPicturesCard() {
+  const out = h("div", {});
+  const btn = h("button", { class: "primary", text: "🔍 Search item pictures" });
+  const show = (st) => {
+    if (st.never) { out.replaceChildren(h("p", { class: "muted", text: "Not scanned yet." })); return; }
+    const kids = [];
+    if (st.error) kids.push(h("div", { class: "banner bad", text: st.error }));
+    if (st.running) kids.push(h("p", { text: `Searching … ${st.done} / ${st.total}` }));
+    else {
+      kids.push(h("p", { text: `${st.found} items have a picture, ${st.missing.length} don't.` }));
+      if (st.missing.length) {
+        kids.push(h("details", {}, h("summary", { class: "muted", text: "Items without a picture" }),
+          h("p", { class: "muted", text: st.missing.join(", ") }),
+          h("p", { class: "muted", text: "Put your own picture into data/item_images/<shortname>.img (PNG/JPG/WebP) and it is used right away." })));
+      }
+    }
+    out.replaceChildren(...kids);
+  };
+  const poll = async () => {
+    try {
+      const st = await api("/api/item-images/scan");
+      show(st);
+      if (st.running && out.isConnected) setTimeout(poll, 2000);
+      else btn.disabled = false;
+    } catch (e) { out.replaceChildren(h("div", { class: "banner bad", text: e.message })); btn.disabled = false; }
+  };
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try { show(await api("/api/item-images/scan", { method: "POST", body: {} })); setTimeout(poll, 1500); }
+    catch (e) { toast(e.message, true); btn.disabled = false; }
+  });
+  setTimeout(poll, 0);
+  return h("div", { class: "card" }, h("h2", { text: "🖼️ Item pictures" }),
+    h("p", { class: "muted", text: "Pictures are fetched once and kept on the bot. This looks for every item of the kit builder now (several sources, alternative spellings) and lists the ones still without a picture." }),
+    h("div", { class: "row" }, btn), out);
+}
+
 views.webstore = async (main) => {
   main.append(h("h1", { text: "Store" }),
     h("p", { class: "muted", text: "Players buy kits on the player website (Store) with PayPal or gift cards. The kit is given to the Discord account their in-game name is linked to (/customkit link) – they claim it with /customkit claim." }));
   const holder = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
-  main.append(holder);
+  main.append(holder, itemPicturesCard());
   let editId = null, rechecked = false;
 
   const load = async () => {

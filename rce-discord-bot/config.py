@@ -181,6 +181,7 @@ class Config:
     store_channel_id: int | None         # purchase log (empty = admin log)
     store_admin_key: str                 # checkout without payment with this key (empty = off)
     player_accounts: bool                # players can log in on the website (one-time Discord code) to manage kits
+    store_default_item_price: float      # price per item for catalogue items without a price-list rule (0 = not for sale)
     store_slot_price: float              # team slot on a custom kit, price per slot per 30 days (0 = off)
     store_slot_max: int                  # most team slots per kit
     price_list_file: Path                # prices.txt
@@ -394,6 +395,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         store_channel_id=_int("STORE_CHANNEL_ID"),
         store_admin_key=_get("STORE_ADMIN_KEY") if len(_get("STORE_ADMIN_KEY")) >= 12 else "",
         player_accounts=_bool("PLAYER_ACCOUNTS", True),
+        store_default_item_price=_money("STORE_DEFAULT_ITEM_PRICE"),
         store_slot_price=_money("STORE_SLOT_PRICE"),
         store_slot_max=max(1, min(_int("STORE_SLOT_MAX", 5), 25)),
         price_list_file=Path(_get("PRICE_LIST_FILE", "prices.txt") or "prices.txt"),
