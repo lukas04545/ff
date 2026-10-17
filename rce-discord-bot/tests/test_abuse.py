@@ -195,6 +195,87 @@ def test_teleport_then_delay_then_kill(guard, monkeypatch):
     assert any("teleported away" in a and "after 10s" in a for a in guard.audit)   # summary in the admin log
 
 
+def test_commands_are_retried_when_rcon_was_down(guard, monkeypatch):
+    """A command that fails because RCON is reconnecting is sent again once it is back – the abuser must not escape
+    just because the connection blinked."""
+    from rce.rcon_client import RconNotConnected
+    fail = {'global.killplayer "RogueAdmin"': 2, 'removeowner "RogueAdmin"': 1}      # failures left per command
+    real = guard.bot.rcon.command
+    waits = []
+
+    async def flaky(cmd, **kw):
+        if fail.get(cmd, 0) > 0:
+            fail[cmd] -= 1
+            raise RconNotConnected("No RCON connection to the Rust server (connecting...).")
+        return await real(cmd, **kw)
+
+    async def wait_until_connected(timeout=None):
+        waits.append(timeout)
+        return True
+
+    async def fast_sleep(seconds):
+        return None
+    guard.bot.rcon.command = flaky
+    guard.bot.rcon.wait_until_connected = wait_until_connected
+    guard.cfg.abuse_on_respawn_commands = ()
+    monkeypatch.setattr("cogs.abuse.asyncio.sleep", fast_sleep)
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
+    assert sorted(guard.sent) == sorted(['removeowner "RogueAdmin"', 'removemoderator "RogueAdmin"',
+                                         'global.god 0 "RogueAdmin"', 'global.killplayer "RogueAdmin"'])
+    assert waits                                                              # it waited for the connection
+    case = guard.bot.db.abuse_cases()[0]
+    assert "retry" in case["done"] and "failed:" not in case["done"]          # all went through in the end
+    assert not any("FAILED" in a for a in guard.audit)
+
+
+def test_alert_says_when_commands_never_went_through(guard, monkeypatch):
+    from rce.rcon_client import RconNotConnected
+
+    async def dead(cmd, **kw):
+        raise RconNotConnected("No RCON connection to the Rust server (connecting...).")
+
+    async def wait_until_connected(timeout=None):
+        return False
+
+    async def fast_sleep(seconds):
+        return None
+    guard.bot.rcon.command = dead
+    guard.bot.rcon.wait_until_connected = wait_until_connected
+    guard.cfg.abuse_on_respawn_commands = ()
+    monkeypatch.setattr("cogs.abuse.asyncio.sleep", fast_sleep)
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
+    assert any("COMMAND(S) FAILED" in a and "run them by hand" in a for a in guard.audit)
+
+
+def test_unrelated_bot_gives_dont_hide_a_spawn(guard):
+    """Only a bot give that contains a raid item counts; a shop kit with wood must not silence the protection."""
+    asyncio.run(guard.bot.rcon.command('inventory.giveto "RogueAdmin" "wood" 1000'))
+    asyncio.run(guard.bot.rcon.command('inventory.giveto "RogueAdmin" "metal.fragments" 500'))
+    guard.sent.clear()
+    spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
+    assert 'global.killplayer "RogueAdmin"' in guard.sent
+    # ...but a give of rockets by the bot (a kit) is still recognised as the bot's
+    guard.sent.clear()
+    guard.cog._punished.clear()
+    asyncio.run(guard.bot.rcon.command('inventory.giveto "RogueAdmin" "explosive.timed" 2'))
+    guard.sent.clear()
+    spawn(guard, "[ServerVar] giving RogueAdmin 2 x Timed Explosive Charge")
+    assert guard.sent == []
+
+
+def test_connection_gap_is_reported(guard):
+    asyncio.run(guard.cog.on_rce_connection(False))
+    guard.cog._lost_at = time.monotonic() - 12                 # RCON was down for 12 s
+    asyncio.run(guard.cog.on_rce_connection(True))
+    assert any("blind" in a and "12 s" in a for a in guard.audit)
+    assert guard.cog.status()["recent"][0]["what"] == "connection"
+    guard.audit.clear()
+    asyncio.run(guard.cog.on_rce_connection(False))            # a blink of less than 3 s isn't worth a message
+    guard.cog._lost_at = time.monotonic() - 1
+    asyncio.run(guard.cog.on_rce_connection(True))
+    assert guard.audit == []
+
+
 def test_punished_again_when_they_do_it_again(guard):
     """Admin given back, rockets spawned again right away -> punished again (the bot's own removeowner/killplayer/
     sleep commands for this player don't count as "the bot gave items")."""

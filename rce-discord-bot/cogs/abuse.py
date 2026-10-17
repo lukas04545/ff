@@ -35,6 +35,9 @@ OWN_GIVE_WINDOW = 15         # seconds: an item line this soon after the bot's o
 RESPAWN_WAIT = 3600         # on-respawn commands only within 1 hour after the punishment
 PUNISH_COOLDOWN = 10         # one spawn of several stacks makes several lines within a second – handle it once
 IGNORED_WORDS = ("launcher",)   # "Rocket Launcher" is not a rocket
+RETRIES = 3                  # a command that failed (RCON down) is sent again this many times
+RECONNECT_WAIT = 30          # seconds to wait for RCON to come back before each retry
+BLIND_NOTICE = 3             # RCON gaps longer than this many seconds are reported (spawns in them can't be seen)
 
 
 class AbuseGuard(commands.Cog):
@@ -44,6 +47,7 @@ class AbuseGuard(commands.Cog):
         self._noted: dict[str, float] = {}      # spawns reported but not punished (allowed / not set up)
         self.recent: deque[dict] = deque(maxlen=15)   # last raid item spawns seen (web interface status box)
         self._await_respawn: dict[str, float] = {}     # punished players -> on-respawn commands still to run
+        self._lost_at: float | None = None             # when the RCON connection was lost (monotonic)
 
     async def cog_load(self) -> None:
         self.bot.add_view(CaseView(self))
@@ -58,12 +62,19 @@ class AbuseGuard(commands.Cog):
         return any(k in name for k in self.bot.config.abuse_items) and not any(w in name for w in IGNORED_WORDS)
 
     def bot_gave(self, player: str) -> bool:
-        """Did the bot itself just give this player items (shop, kit, reward, /rcon)? Only give commands count –
-        not e.g. the bot's own removeowner/killplayer/sleep for this player."""
+        """Did the bot itself just give this player RAID ITEMS (shop, kit, reward, /rcon)? Only give commands that
+        contain one of the forbidden items count – a kit with wood, points or the bot's own removeowner/killplayer/
+        sleep for this player must not hide a real spawn."""
         quoted = f'"{player.lower()}"'
+        keys = (*self.bot.config.abuse_items, "explosive.timed")
         cutoff = time.monotonic() - OWN_GIVE_WINDOW
-        return any(ts >= cutoff and quoted in cmd.lower() and "give" in cmd.lower().split(quoted)[0]
-                   for ts, cmd in reversed(self.bot.rcon.recent_commands))
+        for ts, cmd in reversed(self.bot.rcon.recent_commands):
+            if ts < cutoff:
+                break
+            low = cmd.lower()
+            if quoted in low and "give" in low.split(quoted)[0] and any(k in low for k in keys):
+                return True
+        return False
 
     async def exempt(self, player: str) -> str | None:
         """Why this player may spawn (or None)."""
@@ -120,6 +131,23 @@ class AbuseGuard(commands.Cog):
         self._remember(player, what, "PUNISHED: " + " · ".join(f"{c} → {r}" for c, r in results))
 
     @commands.Cog.listener()
+    async def on_rce_connection(self, connected: bool) -> None:
+        """The log reaches the bot over RCON: while it is down nothing can be seen. Say so when it comes back."""
+        if not connected:
+            if self._lost_at is None:
+                self._lost_at = time.monotonic()
+            return
+        lost, self._lost_at = self._lost_at, None
+        if lost is None or not self.active:
+            return
+        gap = time.monotonic() - lost
+        if gap >= BLIND_NOTICE:
+            text = f"RCON was down for {gap:.0f} s – raid-item spawns in that time could not be seen"
+            self._remember("-", "connection", text)
+            log.warning("Admin abuse protection: %s.", text)
+            self.bot.audit(f"🛡️ ⚠️ Abuse protection was blind: {text}. Check the server log if someone was online.")
+
+    @commands.Cog.listener()
     async def on_rce_respawn(self, ev) -> None:
         """The punished player respawned: run the on-respawn commands (e.g. global.sleep) once."""
         key = ev.player.strip().lower()
@@ -162,20 +190,46 @@ class AbuseGuard(commands.Cog):
         log.warning(text.replace("**", ""))
         self.bot.audit(text)
 
-    async def _run(self, template: str, name: str) -> tuple[str, str]:
+    async def _run_once(self, template: str, name: str) -> tuple[str, str, bool]:
         cmd = template.format(name=name)
         try:
             # Console Edition often doesn't answer these commands – don't wait long (and don't count it as a
             # dead connection)
             reply = (await self.bot.rcon.command(cmd, timeout=3, expect_response=False)).strip() or "sent (no reply)"
+            return cmd, reply, True
         except RconError as exc:
-            reply = f"failed: {exc}"
+            return cmd, f"failed: {exc}", False
+
+    async def _run(self, template: str, name: str) -> tuple[str, str]:
+        cmd, reply, _ = await self._run_once(template, name)
         return cmd, reply
 
     async def _run_all(self, templates, name: str) -> list[tuple[str, str]]:
         """Sends all commands right away, in this order (one RCON connection, sent one after another without
-        waiting for replies in between) – then collects the replies."""
-        return list(await asyncio.gather(*(self._run(t, name) for t in templates)))
+        waiting for replies in between) – then collects the replies. Commands that failed because RCON was down are
+        sent again (in order) once it is back, up to RETRIES times."""
+        templates = list(templates)
+        first = await asyncio.gather(*(self._run_once(t, name) for t in templates))
+        results = [(cmd, reply) for cmd, reply, _ in first]
+        pending = [i for i, (_, _, ok) in enumerate(first) if not ok]
+        for attempt in range(1, RETRIES + 1):
+            if not pending:
+                break
+            waiter = getattr(self.bot.rcon, "wait_until_connected", None)
+            if waiter is not None:
+                await waiter(RECONNECT_WAIT)
+            else:
+                await asyncio.sleep(1)
+            still = []
+            for i in pending:
+                cmd, reply, ok = await self._run_once(templates[i], name)
+                results[i] = (cmd, f"{reply} (retry {attempt})" if ok else reply)
+                if not ok:
+                    still.append(i)
+            pending = still
+            if pending:
+                await asyncio.sleep(2)
+        return results
 
     async def punish(self, player: str, item: str, amount: float | None) -> list[tuple[str, str]]:
         """Removes admin, god mode off, teleports the abuser away, waits, then kills (+ after-kill commands) –
@@ -204,6 +258,10 @@ class AbuseGuard(commands.Cog):
             done = "admin removed, killed in-game"
         if cfg.abuse_on_respawn_commands:
             done += " – on respawn: " + ", ".join(t.split(" ")[0] for t in cfg.abuse_on_respawn_commands)
+        failed = [c for c, r in results if r.startswith("failed:")]
+        if failed:
+            done += (f" – ⚠️ {len(failed)} COMMAND(S) FAILED even after {RETRIES} retries ("
+                     + ", ".join(c.split(" ")[0] for c in failed) + ") – run them by hand with /rcon")
         case_id = None
         if cfg.abuse_approval_commands:
             case_id = self.bot.db.add_abuse_case(player, what, "\n".join(f"{c} → {r}" for c, r in results))
