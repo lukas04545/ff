@@ -33,6 +33,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from rce import items as itemlist
 from rce import kits as kitparse
 from rce.rcon_client import RconError
 from support import pricing
@@ -106,6 +107,27 @@ class WebShop(commands.Cog):
     def price_list(self) -> pricing.PriceList | None:
         kr = self.bot.get_cog("KitRequests")
         return kr.price_list() if kr is not None else None
+
+    def effective_price_list(self) -> "pricing.PriceList | None":
+        """The price list plus a rule per catalogue item that has none, at STORE_DEFAULT_ITEM_PRICE per item – so the
+        website offers every item of the staff kit builder. Without a default price those items stay unpriced."""
+        pl = self.price_list()
+        default = self.bot.config.store_default_item_price
+        if pl is None or default <= 0:
+            return pl
+        covered = {s for r in pl.rules for s in r.items} | {s for r in pl.rules for s in r.extras}
+        extra = [pricing.PriceRule(frozenset({short}), default, 1) for short in itemlist.COMMON_ITEMS
+                 if short not in covered]
+        return pricing.PriceList(currency=pl.currency, rules=[*pl.rules, *extra], caps=pl.caps, timers=pl.timers,
+                                 warnings=pl.warnings)
+
+    def unpriced_items(self) -> list[str]:
+        """Catalogue items that can't be bought yet (no rule and no default price)."""
+        pl = self.effective_price_list()
+        if pl is None:
+            return []
+        covered = {s for r in pl.rules for s in r.items} | {s for r in pl.rules for s in r.extras}
+        return [short for short in itemlist.COMMON_ITEMS if short not in covered]
 
     @property
     def currency(self) -> str:
@@ -203,7 +225,7 @@ class WebShop(commands.Cog):
         from cogs.custom_kits import MAX_ITEMS_PER_KIT
         if (problem := self.builder_problem()) is not None:
             raise CheckoutError(f"Building your own kit isn't available ({problem}).")
-        pl = self.price_list()
+        pl = self.effective_price_list()
         items = []
         for short, amount in amounts.items():
             short = str(short).strip().lower()

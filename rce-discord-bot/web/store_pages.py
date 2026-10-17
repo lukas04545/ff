@@ -38,6 +38,7 @@ background:rgba(61,220,106,.1)}.days{font-size:.85rem;color:var(--muted)}
 line-height:1.2;min-width:0;flex:1}.bi input{width:100%;margin-top:4px;padding:5px 6px;border:1px solid var(--line);
 background:rgba(0,0,0,.5);color:var(--text);font:inherit}.code{font-family:ui-monospace,Consolas,monospace;
 font-size:1.4rem;letter-spacing:.08em;color:var(--gold);user-select:all}
+.bi.off{opacity:.4}.bi.off input{cursor:not-allowed}details.build-group summary{cursor:pointer;margin-bottom:6px}
 .tabs-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 """
 STATUS_TEXT = {
@@ -55,6 +56,49 @@ STATUS_TEXT = {
 
 def esc(text) -> str:
     return html.escape(str(text), quote=True)
+
+
+def _tile(short: str, amounts: dict, disabled: bool = False) -> str:
+    cls = " off" if disabled else ""
+    field = ('<input type="number" disabled placeholder="–">' if disabled else
+             f'<input type="number" name="q.{esc(short)}" min="0" max="100000" step="1" inputmode="numeric" '
+             f'value="{esc(amounts.get(short, ""))}" placeholder="0">')
+    return (f'<div class="bi{cls}"><img src="/img/items/{quote(short)}.png?ph=1" alt="" loading="lazy">'
+            f'<label>{esc(item_name(short))}{field}</label></div>')
+
+
+def picker_groups(shop, amounts: dict) -> str:
+    """The item picker: first the price-list rules, then every other item of the staff kit builder grouped by
+    category (at STORE_DEFAULT_ITEM_PRICE per item, or greyed out as "no price yet")."""
+    pl = shop.price_list()
+    groups = []
+    covered: set[str] = set()
+    for rule in pl.rules:
+        shorts = sorted(rule.items, key=item_name) + sorted(rule.extras - rule.items, key=item_name)
+        covered |= rule.items | rule.extras
+        per = f"{shop.fmt(rule.price)} per {rule.per:,}".replace(",", " ")
+        extras = (f' · free with it (same amount): {", ".join(esc(item_name(e)) for e in sorted(rule.extras))}'
+                  if rule.extras else "")
+        groups.append(f'<div class="build-group"><h3>{esc(per)}<span class="muted" style="font-family:inherit;'
+                      f'text-transform:none;letter-spacing:0;font-size:.85rem">{extras}</span></h3>'
+                      f'<div class="build-items">{"".join(_tile(s, amounts) for s in shorts)}</div></div>')
+    default = shop.bot.config.store_default_item_price
+    unpriced: list[str] = []
+    for (category, icon), items in itemlist.CATALOGUE.items():
+        rest = sorted((s for s in items if s not in covered), key=item_name)
+        if not rest:
+            continue
+        if default > 0:
+            groups.append(f'<div class="build-group"><h3>{esc(icon)} {esc(category)} – {esc(shop.fmt(default))} per '
+                          f'item</h3><div class="build-items">{"".join(_tile(s, amounts) for s in rest)}</div></div>')
+        else:
+            unpriced += rest
+    if unpriced:
+        tiles = "".join(_tile(s, amounts, disabled=True) for s in unpriced)
+        groups.append(f'<details class="build-group"><summary class="muted">No price yet ({len(unpriced)} items) – '
+                      f'the shop owner can add them</summary><div class="build-items" style="margin-top:8px">'
+                      f'{tiles}</div></details>')
+    return "".join(groups)
 
 
 def item_name(short: str) -> str:
@@ -148,19 +192,7 @@ def build_page(site, shop, base: str, query, error: str = "", admin: bool = Fals
     pl = shop.price_list()
     amounts = {k[2:]: v for k, v in query.items() if k.startswith("q.") and str(v).strip() not in ("", "0")}
     timer = query.get("timer")
-    groups = []
-    for rule in pl.rules:
-        shorts = sorted(rule.items, key=item_name) + sorted(rule.extras - rule.items, key=item_name)
-        per = f"{shop.fmt(rule.price)} per {rule.per:,}".replace(",", " ")
-        tiles = "".join(
-            f'<div class="bi"><img src="/img/items/{quote(s)}.png?ph=1" alt="" loading="lazy"><label>{esc(item_name(s))}'
-            f'<input type="number" name="q.{esc(s)}" min="0" max="100000" step="1" inputmode="numeric" '
-            f'value="{esc(amounts.get(s, ""))}" placeholder="0"></label></div>' for s in shorts)
-        extras = (f' · free with it (same amount): {", ".join(esc(item_name(e)) for e in sorted(rule.extras))}'
-                  if rule.extras else "")
-        groups.append(f'<div class="build-group"><h3>{esc(per)}<span class="muted" style="font-family:inherit;'
-                      f'text-transform:none;letter-spacing:0;font-size:.85rem">{extras}</span></h3>'
-                      f'<div class="build-items">{tiles}</div></div>')
+    groups_html = picker_groups(shop, amounts)
     timers = ""
     if pl.timers:
         opts = "".join(f'<option value="{h}" {"selected" if str(h) == str(timer or pl.default_timer) else ""}>'
@@ -172,7 +204,7 @@ def build_page(site, shop, base: str, query, error: str = "", admin: bool = Fals
     form = (f'<form method="get" action="{base}/store/build"><div class="card"><h2>Pick your items</h2>'
             f'<p class="muted">Enter how many you want. Prices are per bundle and rounded up to full bundles.</p>'
             + (f'<details><summary class="muted">Limits</summary><ul class="muted">{caps}</ul></details>' if caps else "")
-            + f'<div class="build-wrap">{"".join(groups)}</div>' + timers
+            + f'<div class="build-wrap">{groups_html}</div>' + timers
             + ('<input type="hidden" name="admin" value="1">' if admin else "") +
             '<div style="margin-top:12px"><button class="ghost" type="submit">Calculate price</button></div></div></form>')
     summary = ""

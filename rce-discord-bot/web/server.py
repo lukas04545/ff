@@ -68,7 +68,7 @@ PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
-                       "/api/plugins", "/api/webshop")
+                       "/api/plugins", "/api/webshop", "/api/item-images")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -265,6 +265,8 @@ class WebInterface:
         self.restart_required = False
         self.restart_for: list[str] = []     # saved settings that only apply after a restart
         from web.item_images import ItemImages
+        self._scan: dict = {}
+        self._scan_task = None
         self.item_images = ItemImages((bot.config.database_path.parent if bot else Path("data")) / "item_images")
         self.app = self._build_app()
 
@@ -290,6 +292,8 @@ class WebInterface:
         r = app.router
         r.add_get("/", self._index)
         r.add_static("/static/", STATIC_DIR)
+        r.add_post("/api/item-images/scan", self.item_images_scan)
+        r.add_get("/api/item-images/scan", self.item_images_scan_state)
         r.add_get("/img/items/{name}", self.item_image)            # public: item pictures (cached by the bot)
         r.add_get("/auth", self.auth_link)
         r.add_post("/api/login", self.login)
@@ -740,6 +744,38 @@ class WebInterface:
         data, kind = found
         return web.Response(body=data, content_type=kind,
                             headers={"Cache-Control": "public, max-age=604800", "X-Content-Type-Options": "nosniff"})
+
+    async def item_images_scan(self, request: web.Request) -> web.Response:
+        """Owner: fetch the pictures of every catalogue item now and report which ones have none."""
+        template = self.bot.config.item_image_url if self.bot is not None else ""
+        if not template or template.lower() == "off":
+            raise ApiError("Item pictures are switched off (Settings → Web → Item pictures from).")
+        state = self._scan
+        if state.get("running"):
+            return web.json_response(state)
+        self.item_images.url_template = template
+        state.clear()
+        state.update(running=True, done=0, total=len(itemlist.COMMON_ITEMS), found=0, missing=[])
+
+        def progress(done: int, total: int) -> None:
+            state.update(done=done, total=total)
+
+        async def run() -> None:
+            try:
+                result = await self.item_images.scan(itemlist.COMMON_ITEMS, progress=progress)
+                state.update(found=len(result["found"]), missing=result["missing"])
+            except Exception as exc:                 # never leave the page waiting forever
+                log.exception("Item picture scan failed")
+                state.update(error=str(exc)[:200])
+            finally:
+                state["running"] = False
+        self._scan_task = asyncio.create_task(run())
+        self._audit("item picture scan started")
+        return web.json_response(state)
+
+    async def item_images_scan_state(self, request: web.Request) -> web.Response:
+        return web.json_response(self._scan or {"running": False, "done": 0, "total": 0, "found": 0, "missing": [],
+                                                "never": True})
 
     # ------------------------------------------------------------ Plugins
 

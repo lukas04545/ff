@@ -21,12 +21,28 @@ from web.ratelimit import RateLimiter
 log = logging.getLogger("rce.items.images")
 
 DEFAULT_URL = "https://rustlabs.com/img/items180/{shortname}.png"
+# Tried after the configured source when it has no picture for an item (best effort – a source that is down or
+# doesn't know the item is simply skipped). Your own pictures always win: put <shortname>.img in data/item_images/.
+FALLBACK_URLS = (
+    "https://cdn.rusthelp.com/images/public/{shortname}.png",
+    "https://files.facepunch.com/rust/item/{shortname}_512.png",
+)
 SHORTNAME = re.compile(r"^[a-z0-9][a-z0-9._ -]{0,63}$")
 MAX_BYTES = 512 * 1024
 MISSING_RETRY = 86400           # seconds before an item without a picture is tried again
 DOWNLOADS_PER_MINUTE = 60       # new downloads from the source, all visitors together
 MAGIC = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"RIFF", "image/webp"),
          (b"GIF8", "image/gif"))
+
+
+def name_variants(shortname: str) -> list[str]:
+    """Spellings of a shortname to try: console names sometimes use spaces/underscores where PC uses dots."""
+    out = [shortname]
+    for variant in (shortname.replace(" ", "."), shortname.replace(" ", "_"), shortname.replace("_", "."),
+                    shortname.replace(".", "_"), shortname.replace(" ", "").replace("_", "")):
+        if variant not in out and SHORTNAME.match(variant):
+            out.append(variant)
+    return out[:4]
 
 
 def image_type(data: bytes) -> str | None:
@@ -73,19 +89,37 @@ class ItemImages:
         kind = image_type(data) if data else None
         return (data, kind) if kind else None
 
+    def _sources(self) -> list[str]:
+        return [self.url_template, *(u for u in FALLBACK_URLS if u != self.url_template)]
+
+    async def _fetch(self, url: str) -> bytes:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15),
+                                                  headers={"User-Agent": "rce-discord-bot"})
+        async with self._session.get(url) as resp:
+            return await resp.content.read(MAX_BYTES + 1) if resp.status == 200 else b""
+
     async def _download(self, shortname: str) -> bytes | None:
         if self._downloads.hit("all") is not None:
             return None                     # too many new pictures right now – the next request tries again
-        url = self.url_template.replace("{shortname}", quote(shortname))
-        try:
-            async with self._parallel:
-                if self._session is None or self._session.closed:
-                    self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15),
-                                                          headers={"User-Agent": "rce-discord-bot"})
-                async with self._session.get(url) as resp:
-                    data = await resp.content.read(MAX_BYTES + 1) if resp.status == 200 else b""
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-            log.debug("Item picture %s: %s", shortname, exc)
+        data, network_error = b"", False
+        async with self._parallel:
+            for template in self._sources():
+                for variant in name_variants(shortname):
+                    url = template.replace("{shortname}", quote(variant))
+                    try:
+                        data = await self._fetch(url)
+                    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+                        log.debug("Item picture %s (%s): %s", shortname, url, exc)
+                        network_error = True
+                        data = b""
+                        break               # this source is down – try the next one
+                    if data and len(data) <= MAX_BYTES and image_type(data) is not None:
+                        break
+                    data = b""
+                if data:
+                    break
+        if not data and network_error:
             self._missing[shortname] = time.time() - MISSING_RETRY + 300     # network problem: retry in 5 min
             return None
         if not data or len(data) > MAX_BYTES or image_type(data) is None:
@@ -99,6 +133,28 @@ class ItemImages:
         except OSError as exc:
             log.warning("Could not save the picture of %s: %s", shortname, exc)
         return data
+
+    async def scan(self, shortnames, *, retry: bool = True, progress=None) -> dict[str, list[str]]:
+        """Fetches the pictures of all given items (4 at a time). Returns {"found": [...], "missing": [...]}.
+        retry: also tries items that were marked "no picture" recently. progress(done, total) is called as it goes."""
+        shortnames = list(shortnames)
+        found: list[str] = []
+        missing: list[str] = []
+        limiter, self._downloads = self._downloads, RateLimiter(10 ** 9, 60)    # a scan is meant to fetch many
+        try:
+            async def one(short: str) -> None:
+                if retry:
+                    self._missing.pop(short, None)
+                if self.cached(short) is not None or await self.get(short) is not None:
+                    found.append(short)
+                else:
+                    missing.append(short)
+                if progress is not None:
+                    progress(len(found) + len(missing), len(shortnames))
+            await asyncio.gather(*(one(s) for s in shortnames))
+        finally:
+            self._downloads = limiter
+        return {"found": sorted(found), "missing": sorted(missing)}
 
     async def close(self) -> None:
         if self._session is not None:

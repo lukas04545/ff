@@ -247,6 +247,10 @@ FIELDS: list[Field] = [
           help="Lets staff take any store item without paying: open the store with ?admin=1 at the end of the address "
                "(e.g. …/play/store?admin=1) and enter this key at checkout. At least 12 characters – share it only "
                "with staff. Every use is posted in the purchase log with a ping. Empty = off."),
+    Field("STORE_DEFAULT_ITEM_PRICE", "Price for every other item (per item)", "store", placeholder="0",
+          help="The custom-kit builder on the website shows every item of the staff kit builder. Items with a rule in "
+               "the price list (prices.txt) use it. For all other items, set a price per single item here, e.g. 0.05. "
+               "0 = those items are shown greyed out as \"no price yet\" and can't be bought."),
     Field("PLAYER_ACCOUNTS", "Players can log in to manage their kits", "store", "bool",
           help="On (default): the website has a My account page. Players log in with a one-time code the bot DMs to "
                "their linked Discord account (link with /customkit link), then manage their own custom kits – add "

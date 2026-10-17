@@ -483,7 +483,10 @@ into your home network instead.
 **Item pictures:** the kit builder, the kit lists and the player website show pictures of the items. The bot
 downloads each picture once from `ITEM_IMAGE_URL` (default: RustLabs, `{shortname}` is replaced) and keeps it in
 `data/item_images/` – browsers only ever load them from the bot. Items without a picture show their category emoji.
-`ITEM_IMAGE_URL=off` switches pictures off.
+`ITEM_IMAGE_URL=off` switches pictures off. If the configured source has no picture, the bot tries other sources and
+alternative spellings of the shortname (spaces, dots, underscores). **Store → 🖼️ Item pictures → Search item
+pictures** fetches every item of the kit builder now and lists the ones that still have none; for those, put your
+own PNG/JPG/WebP into `data/item_images/<shortname>.img` and it is used right away.
 
 ### Accounts for other admins
 
@@ -1039,7 +1042,10 @@ plugin must be on). Three tabs:
   added again. You can also add a bot kit by hand with its own name, price and duration.
 - **Build your own** – players pick items and amounts; the price comes from the price list (`prices.txt`, the same
   one the ticket AI and Tip4Serv use: bundles, free "with" items, caps and claim timers). Buyers can also give their kit a
-  name (optional; otherwise it's named after their player). `STORE_CUSTOM_KITS`.
+  name (optional; otherwise it's named after their player). `STORE_CUSTOM_KITS`. The picker shows **every item of
+  the staff kit builder**, grouped by category. Items with a rule in `prices.txt` use it; for all the others set
+  *Price for every other item* (`STORE_DEFAULT_ITEM_PRICE`, per single item, e.g. `0.05`). While it is `0` those
+  items are shown greyed out under "No price yet" and can't be bought – nothing is priced behind your back.
 - **Gift cards** – players can buy gift cards (`STORE_GIFTCARD_VALUES`, e.g. `10,25,50`) and check a card's balance.
 
 **Checkout:** the buyer enters their in-game name – it must be linked to their Discord account (`/customkit link`),
