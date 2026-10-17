@@ -180,8 +180,7 @@ class Config:
     store_giftcard_values: tuple[float, ...]   # gift cards players can buy (empty = owners only)
     store_channel_id: int | None         # purchase log (empty = admin log)
     store_admin_key: str                 # checkout without payment with this key (empty = off)
-    discord_client_id: str               # player login on the website ("Login with Discord", OAuth2)
-    discord_client_secret: str           # both set = player accounts on (/play/account)
+    player_accounts: bool                # players can log in on the website (one-time Discord code) to manage kits
     store_slot_price: float              # team slot on a custom kit, price per slot per 30 days (0 = off)
     store_slot_max: int                  # most team slots per kit
     price_list_file: Path                # prices.txt
@@ -394,8 +393,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
                                             if v.strip().replace(".", "", 1).isdigit() and float(v) > 0})),
         store_channel_id=_int("STORE_CHANNEL_ID"),
         store_admin_key=_get("STORE_ADMIN_KEY") if len(_get("STORE_ADMIN_KEY")) >= 12 else "",
-        discord_client_id=_get("DISCORD_CLIENT_ID") if _get("DISCORD_CLIENT_ID").isdigit() else "",
-        discord_client_secret=_get("DISCORD_CLIENT_SECRET"),
+        player_accounts=_bool("PLAYER_ACCOUNTS", True),
         store_slot_price=_money("STORE_SLOT_PRICE"),
         store_slot_max=max(1, min(_int("STORE_SLOT_MAX", 5), 25)),
         price_list_file=Path(_get("PRICE_LIST_FILE", "prices.txt") or "prices.txt"),
