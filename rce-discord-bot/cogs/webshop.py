@@ -207,6 +207,38 @@ class WebShop(commands.Cog):
             raise CheckoutError("This gift card is used up.")
         return row
 
+    MAX_COMBINE = 10
+
+    async def combine_gift_cards(self, target: str, sources, ip: str = "?") -> dict:
+        """Moves the balance of other gift cards onto one (`target`). Returns {"code", "moved", "balance",
+        "expires_at", "count"}; CheckoutError with a message for the player otherwise."""
+        target_code = normalize_code(target)
+        codes = list(dict.fromkeys(normalize_code(c) for c in sources if str(c or "").strip()))
+        codes = [c for c in codes if c != target_code]
+        if not target_code:
+            raise CheckoutError("Enter the gift card code to put everything on.")
+        if not codes:
+            raise CheckoutError("Enter at least one other gift card code to move onto it.")
+        if len(codes) > self.MAX_COMBINE:
+            raise CheckoutError(f"At most {self.MAX_COMBINE} gift cards at once.")
+        try:
+            self.gift_card(target_code, ip)
+        except CheckoutError as exc:
+            if "used up" not in str(exc):           # an empty card is fine as the one to fill up
+                raise CheckoutError(f"{target_code[:4]}…: {exc}") from None
+        for code in codes:
+            try:
+                self.gift_card(code, ip)
+            except CheckoutError as exc:
+                raise CheckoutError(f"{code[:4]}…: {exc}") from None
+        try:
+            moved, balance, expires_at = self.bot.db.merge_gift_cards(target_code, codes, int(time.time()))
+        except ValueError as exc:
+            raise CheckoutError(str(exc)) from None
+        await self._log(f"🎁 Gift cards combined: {len(codes)} card(s) → `{target_code[:4]}…` (+{self.fmt(moved)}, "
+                        f"now {self.fmt(balance)})")
+        return {"code": target_code, "moved": moved, "balance": balance, "expires_at": expires_at, "count": len(codes)}
+
     # ------------------------------------------------------------ Prices
 
     def store_kit(self, kit_id) -> "object":
@@ -766,6 +798,21 @@ class WebShop(commands.Cog):
             await interaction.response.send_message(f"⚠️ {exc}", ephemeral=True)
             return
         await interaction.response.send_message(f"🎁 {self._card_line(row)}", ephemeral=True)
+
+    @giftcard.command(name="combine", description="Move the balance of other gift cards onto one card.")
+    @app_commands.describe(code="The card to put everything on",
+                           others="The other card codes (separated by spaces or commas)")
+    async def gc_combine(self, interaction: discord.Interaction, code: str, others: str) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            r = await self.combine_gift_cards(code, re.split(r"[\s,;]+", others[:600]),
+                                              f"discord:{interaction.user.id}")
+        except CheckoutError as exc:
+            await interaction.followup.send(f"⚠️ {exc}", ephemeral=True)
+            return
+        until = f" · valid until <t:{r['expires_at']}:D>" if r["expires_at"] else ""
+        await interaction.followup.send(f"🎁 Done: {r['count']} card(s) moved onto `{r['code']}`. New balance: "
+                                        f"**{self.fmt(r['balance'])}**{until}.", ephemeral=True)
 
     # ------------------------------------------------------------ Background check
 

@@ -145,6 +145,77 @@ def test_gift_cards_pay_all_or_part(shop):
         s.create_gift_cards(0, 1, "owner")
 
 
+def test_combine_gift_cards(shop):
+    """Players move the balance of several gift cards onto one (website + /giftcard combine)."""
+    import time as _t
+    from cogs.webshop import CheckoutError
+    s, db = shop.s, shop.db
+    a, b, c = s.create_gift_cards(10, 1, "owner")[0], s.create_gift_cards(5, 1, "owner")[0], \
+        s.create_gift_cards(2.5, 1, "owner", days=30)[0]
+    r = run(s.combine_gift_cards(a, [b.lower().replace("-", ""), c, a, ""]))     # any spelling; self/blank ignored
+    assert r["count"] == 2 and r["moved"] == 7.5 and r["balance"] == 17.5
+    assert db.gift_card(a)["balance"] == 17.5 and db.gift_card(b)["balance"] == 0 and db.gift_card(c)["balance"] == 0
+    assert db.gift_card(a)["expires_at"] == db.gift_card(c)["expires_at"] == r["expires_at"]   # earliest expiry kept
+    assert "merged into" in db.gift_card(b)["note"]
+    # The combined card pays a 9.99 kit; a cancelled partial payment returns its held amount fully
+    db.update_store_kit(shop.kit_id, price=30)
+    t = run(s.checkout("kit", base_url="https://x/play", kit_id=shop.kit_id, player="Gamer7", gift_code=a))
+    assert db.gift_card(a)["balance"] == 0
+    run(s.cancel(t["token"]))
+    assert db.gift_card(a)["balance"] == 17.5                                     # initial raised with the merge
+    # Errors: nothing to move, used-up / unknown / disabled cards; all-or-nothing
+    with pytest.raises(CheckoutError, match="at least one"):
+        run(s.combine_gift_cards(a, [a]))
+    with pytest.raises(CheckoutError, match="used up"):
+        run(s.combine_gift_cards(a, [b]))
+    d = s.create_gift_cards(4, 1, "owner")[0]
+    with pytest.raises(CheckoutError, match="doesn't exist"):
+        run(s.combine_gift_cards(a, [d, "AAAA-BBBB-CCCC-DDDD"]))
+    assert db.gift_card(d)["balance"] == 4 and db.gift_card(a)["balance"] == 17.5   # nothing moved
+    db.set_gift_card_disabled(d, True)
+    with pytest.raises(CheckoutError, match="disabled"):
+        run(s.combine_gift_cards(a, [d]))
+    # An empty card can be filled up; expired cards can't be moved
+    e = s.create_gift_cards(3, 1, "owner")[0]
+    run(s.combine_gift_cards(b, [e]))
+    assert db.gift_card(b)["balance"] == 3
+    f = s.create_gift_cards(1, 1, "owner")[0]
+    db._db.execute("UPDATE gift_cards SET expires_at = ? WHERE code = ?", (int(_t.time()) - 5, f)); db._db.commit()
+    with pytest.raises(CheckoutError, match="expired"):
+        run(s.combine_gift_cards(a, [f]))
+    with pytest.raises(CheckoutError, match="At most"):
+        run(s.combine_gift_cards(a, [f"AAAA-BBBB-CCCC-{i:04d}" for i in range(11)]))
+
+
+def test_combine_gift_cards_on_the_website(shop):
+    from web.store_pages import handle
+    from types import SimpleNamespace as NSS
+    s, db = shop.s, shop.db
+    a, b = s.create_gift_cards(10, 1, "owner")[0], s.create_gift_cards(5, 1, "owner")[0]
+
+    class Site:
+        def page(self, base, active, title, body):
+            return f"<html><style></style>{body}</html>"
+
+        def not_found(self, base):
+            return "nf"
+
+    async def post():
+        return {"target": a, "codes": f"{b}\n"}
+    req = NSS(method="POST", query={}, post=post, headers={}, remote="1.2.3.4", scheme="https", host="x")
+    status, html = run(handle(Site(), s, req, "/play", "store/giftcards/combine", "1.2.3.4"))
+    assert status == 200 and f"New balance: {s.fmt(15)}" in html and db.gift_card(b)["balance"] == 0
+
+    async def bad():
+        return {"target": a, "codes": "nope"}
+    req.post = bad
+    status, html = run(handle(Site(), s, req, "/play", "store/giftcards/combine", "1.2.3.4"))
+    assert status == 400 and "doesn&#x27;t exist" in html and "Combine gift cards" in html
+    status, html = run(handle(Site(), s, NSS(method="GET", query={}, headers={}, remote="1.2.3.4"), "/play",
+                              "store/giftcards", "1.2.3.4"))
+    assert "Combine gift cards" in html and 'action="/play/store/giftcards/combine"' in html
+
+
 def test_custom_kit_and_gift_card_purchase(shop):
     from cogs.webshop import CheckoutError
     s, db = shop.s, shop.db
