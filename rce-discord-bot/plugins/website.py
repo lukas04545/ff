@@ -113,7 +113,7 @@ def esc(text) -> str:
 class PlayerWebsite(Plugin):
     NAME = "Player website"
     ICON = "🌍"
-    PUBLIC_PATH = "/play"
+    PUBLIC_PATH = "/"                    # the site root (the control panel is at /admin)
     DESCRIPTION = ("A public website for your players: live status, next wipe, leaderboards, player profiles, the "
                    "points shop with item pictures, rules and how to join. Share the link everywhere.")
     SETTINGS = (
@@ -448,7 +448,7 @@ class PlayerWebsite(Plugin):
         return data, image_type(data) or "image/png"
 
     async def web_public(self, request, path: str):
-        """Public (no login): /play/… (and /p/website/…); /play/status.json for other tools."""
+        """Public (no login): the site root /… (also /p/website/…); /status.json for other tools."""
         from aiohttp import web
         headers = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
                    "Referrer-Policy": "no-referrer", "Cache-Control": "public, max-age=20"}
@@ -459,7 +459,13 @@ class PlayerWebsite(Plugin):
             data, kind = self.picture(path)
             return web.Response(body=data, content_type=kind,
                                 headers={**headers, "Cache-Control": "public, max-age=86400"})
-        base = "/play" if request.path.startswith("/play") else f"/p/{self.plugin_id}"
+        # Links inside the site: "" at the root, /p/website/… there, /play/… for forms of a page opened before the move
+        if request.path.startswith(f"/p/{self.plugin_id}"):
+            base = f"/p/{self.plugin_id}"
+        elif request.path == "/play" or request.path.startswith("/play/"):
+            base = "/play"
+        else:
+            base = ""
         if path == "account" or path.startswith("account/"):
             accounts = self.accounts()
             if accounts is None:

@@ -201,7 +201,7 @@ rce-discord-bot/
 │   └── updates.py         # Automatic updates: checks GitHub regularly, restarts after an update
 ├── plugins/               # Built-in plugins (one file each, on/off in the web interface → 🧩 Plugins)
 │   ├── invites.py         # Invite rewards
-│   ├── website.py         # Player website (/play)
+│   ├── website.py         # Player website (site root /)
 │   ├── starter_kit.py     # Starter kit for brand-new players
 │   ├── lowpop_bonus.py    # Extra points while the server is nearly empty
 │   ├── filling_ping.py    # "Server is filling up" ping (/pingme)
@@ -227,8 +227,8 @@ rce-discord-bot/
 ├── web/
 │   ├── server.py          # Web interface: login + JSON API (runs inside the bot process)
 │   ├── item_images.py     # Item pictures: downloaded once (ITEM_IMAGE_URL), cached in data/item_images/
-│   ├── store_pages.py     # Web store pages of the player website (/play/store)
-│   ├── account_pages.py   # Player account pages (/play/account): manage own kits, team slots
+│   ├── store_pages.py     # Web store pages of the player website (/store)
+│   ├── account_pages.py   # Player account pages (/account): manage own kits, team slots
 │   └── static/            # Frontend (HTML/CSS/JS, no external files): style.css, neon.css (neon theme), bg.js (animated background)
 ├── logbuffer.py           # Recent log lines for the web interface
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
@@ -339,7 +339,7 @@ feature is off. Recommended: create `CONSOLE_LOG_CHANNEL_ID` and `ADMIN_LOG_CHAN
 `start.bat` (Windows) or `./start.sh` (Linux/macOS) – or manually `python bot.py`.
 
 The window should show `RCON connected.`, `Logged in as …` and `Web interface running:
-http://localhost:8080`; the browser opens the web interface automatically. With `GUILD_ID` set,
+http://localhost:8080/admin`; the browser opens the web interface automatically. With `GUILD_ID` set,
 the slash commands are available immediately. Without `GUILD_ID` they are registered globally,
 which can take up to an hour.
 
@@ -443,7 +443,8 @@ Every section (card) can be **collapsed** by tapping its title – the page reme
 wide tables scroll sideways inside their card).
 
 The web interface runs **inside the bot** – no extra program, no extra packages. After startup
-your browser opens automatically; otherwise go to **<http://localhost:8080>**.
+your browser opens automatically; otherwise go to **<http://localhost:8080/admin>**. The control panel is at **`/admin`**; the address
+itself (`/`) is the 🌍 Player website (when that plugin is on – otherwise it forwards to `/admin`).
 
 | Page | Features |
 |---|---|
@@ -468,7 +469,7 @@ Everything you do in the web interface is posted to the admin log channel in Dis
 | Variable | Default | Meaning |
 |---|---|---|
 | `WEB_PASSWORD` | empty | Login password. **Empty = sign in via the link in the bot window** (or the random password shown there). Best to set your own – you can also do that under ⚙️ Settings. |
-| `WEB_HOST` | `127.0.0.1` | `127.0.0.1` = this PC only. `0.0.0.0` = also phone/laptop on the **same home network** via `http://<your-PC-IP>:8080` (Windows then asks once for firewall access → allow "Private networks"). |
+| `WEB_HOST` | `127.0.0.1` | `127.0.0.1` = this PC only. `0.0.0.0` = also phone/laptop on the **same home network** via `http://<your-PC-IP>:8080/admin` (Windows then asks once for firewall access → allow "Private networks"). |
 | `WEB_PORT` | `8080` | Port, in case 8080 is already in use |
 | `WEB_OPEN_BROWSER` | `true` | Open the browser automatically on startup |
 | `WEB_ENABLED` | `true` | Turn the web interface off completely |
@@ -528,7 +529,8 @@ role:
   ```
   ========================================================================
     🌍 YOUR WEB INTERFACE LINK – works from anywhere (phone, other PCs):
-       https://quiet-fox-123.trycloudflare.com
+       Control panel:  https://quiet-fox-123.trycloudflare.com/admin
+       Player website: https://quiet-fox-123.trycloudflare.com/
     Login: owner / <your password>
   ========================================================================
   ```
@@ -549,7 +551,8 @@ role:
     token* with **Account › Cloudflare Tunnel › Edit**, **Zone › DNS › Edit** and **Zone › Zone › Read** for your
     domain. The API token is only used for this setup and is **not saved**. Existing DNS records the bot didn't
     make (e.g. an `A` record for your website) are never changed – pick another name then. Running it again
-    reuses the same tunnel. The player website then lives at `https://panel.yourdomain.com/play`.
+    reuses the same tunnel. Use the bare domain (e.g. `yourdomain.com`) to get the player website at `https://yourdomain.com/` and
+    the control panel at `https://yourdomain.com/admin`.
     By hand instead: create a tunnel in the Cloudflare dashboard (Zero Trust → Networks → Tunnels), point its
     public hostname to `http://127.0.0.1:8080` (your `WEB_PORT`; use 127.0.0.1, not `localhost` – that can be
     IPv6 and give a 502), then paste the tunnel **token** into *Cloudflare tunnel token* and the address into
@@ -558,7 +561,7 @@ role:
     logins are rate-limited per visitor IP and per account.
   - macOS: install it once with `brew install cloudflared`.
 - **Same home network only:** Settings → Web interface → *Reachable from* → "Also home network
-  (0.0.0.0)", restart the bot. Others open `http://<your PC's local IP>:8080` (find it with `ipconfig`).
+  (0.0.0.0)", restart the bot. Others open `http://<your PC's local IP>:8080/admin` (find it with `ipconfig`).
 - **Alternative:** [Tailscale](https://tailscale.com/) (private network between your devices).
 - **Don't** forward the port on your router: the web interface speaks plain HTTP, so passwords would
   travel unencrypted over the internet. The tunnel gives you HTTPS instead.
@@ -1050,7 +1053,7 @@ an API key, the ticket system works entirely without AI.
 
 ## Web store (PayPal & gift cards)
 
-Players buy kits for real money on the player website: **your web link + `/play/store`** (the 🌍 Player website
+Players buy kits for real money on the player website: **your web link + `/store`** (the 🌍 Player website
 plugin must be on). Three tabs:
 
 - **Kits** – web interface → **💳 Store** → *Kits for sale*. Every kit staff make (Kit builder / Kits page – not
@@ -1082,7 +1085,7 @@ codes like `NUSF-UHNP-CXSX-EXJ3`. A card pays all or part of an order (the rest 
 remaining balance. Cards can be disabled any time. Wrong codes are rate-limited (10 per 15 minutes per visitor).
 
 **Admin key (free checkout for staff):** set *Admin key* (`STORE_ADMIN_KEY`, at least 12 characters) in Settings →
-💳 Store. Staff open the store with `?admin=1` at the end of the address (e.g. `…/play/store?admin=1`); the checkout
+💳 Store. Staff open the store with `?admin=1` at the end of the address (e.g. `…/store?admin=1`); the checkout
 then has an *Admin key* field – with the right key the item is delivered right away without any payment (works
 without PayPal too). Every use is posted in the purchase log with a ping and marked "🔑 free (admin key)" under
 Orders. Wrong keys: 5 tries per 15 minutes per visitor. Empty = off (default).
@@ -1097,7 +1100,7 @@ Orders. Wrong keys: 5 tries per 15 minutes per visitor. Empty = off (default).
 ### Player accounts & team slots (My account)
 
 Players can log in on the website to manage their **own** custom kits (the ones they bought): **your web link +
-`/play/account`** (the *My account* link appears when `PLAYER_ACCOUNTS` is on, the default).
+`/account`** (the *My account* link appears when `PLAYER_ACCOUNTS` is on, the default).
 
 - **Login** is a one-time code – no password, nothing to set up. The player enters their in-game name; the bot DMs
   a 6-digit code to the linked Discord account (linked with `/customkit link`); entering it logs them in for 30
@@ -1149,7 +1152,7 @@ restart. A broken plugin never stops the bot: it shows the error on its card and
 | Plugin | What it does | Default |
 |---|---|---|
 | 🤝 **Invite rewards** | `/invites stats`, `/invites top`. When someone a member invited links their player and plays *N* hours, both get points (optional recruiter role). Rejoins, self-invites and brand-new Discord accounts don't count. Needs the **Server Members Intent** and the bot permission **Manage Server**. | off |
-| 🌍 **Player website** | A public website at *your web link* + **`/play`** in the Kryvon look (dark, rusty red/orange, your logo – upload another one on the plugin card): live status, next wipe, leaderboards (kills, K/D, playtime, teams), player profiles with search (stats, team, badges, bounty), the points shop with item pictures, rules, about, how to join, Discord and store buttons. Read-only – no login, no secrets, no Discord IDs. | off |
+| 🌍 **Player website** | A public website at the root of *your web link* (e.g. `https://yourdomain.com/`; old `/play` links forward there) in the Kryvon look (dark, rusty red/orange, your logo – upload another one on the plugin card): live status, next wipe, leaderboards (kills, K/D, playtime, teams), player profiles with search (stats, team, badges, bounty), the points shop with item pictures, rules, about, how to join, Discord and store buttons. Read-only – no login, no secrets, no Discord IDs. | off |
 | 🎁 **Starter kit** | A name the bot has never seen gets a welcome message in-game and a one-time kit. | on (choose the kit) |
 | 🌱 **Low-pop bonus** | While fewer than *N* players are online, playtime points are multiplied – pays people to seed the server. | on |
 | 🔥 **Filling-up ping** | Members opt in with `/pingme on`; the role is pinged when the server reaches e.g. 10 or 20 players (cooldown per threshold). | off (choose a role) |

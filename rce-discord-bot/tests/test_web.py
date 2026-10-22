@@ -40,7 +40,7 @@ def run(bot, scenario, **kwargs):
 
 def test_login_csrf_and_auth(bot):
     async def scenario(c):
-        assert (await c.get("/")).status == 200
+        assert (await c.get("/admin")).status == 200
         assert (await c.get("/static/app.js")).status == 200
         assert (await c.get("/api/status")).status == 401
         # Without the CSRF header every write request is rejected – including login
@@ -239,7 +239,7 @@ def test_admin_accounts(bot):
 def test_neon_theme_files(bot):
     """The neon look (neon.css + animated background bg.js) is served and loaded by the page; light mode is left alone."""
     async def scenario(c):
-        page = await (await c.get("/")).text()
+        page = await (await c.get("/admin")).text()
         assert "/static/neon.css" in page and "/static/bg.js" in page
         assert page.index("/static/style.css") < page.index("/static/neon.css")      # neon overrides the base theme
         css = await c.get("/static/neon.css")
@@ -256,4 +256,23 @@ def test_neon_theme_files(bot):
         assert "buildLayers" in src and "sprites[" in src                             # cached layers, ember sprites
         app = await (await c.get("/static/app.js")).text()
         assert 'THEME_NAMES = { dark: "neon", light: "light" }' in app                # theme button: neon <-> light
+    run(bot, scenario)
+
+
+def test_panel_at_admin_website_at_root(bot):
+    """The control panel is at /admin; the site root belongs to the player website (old /play links redirect)."""
+    async def scenario(c):
+        page = await (await c.get("/admin")).text()
+        assert "RCE Bot Panel" in page and (await c.get("/admin/")).status == 200
+        r = await c.get("/", allow_redirects=False)                 # website plugin not running: root -> panel
+        assert r.status == 302 and r.headers["Location"] == "/admin"
+        r = await c.get("/play/store/order/abc?x=1&y=2", allow_redirects=False)
+        assert r.status == 301 and r.headers["Location"] == "/store/order/abc?x=1&y=2"
+        r = await c.get("/play", allow_redirects=False)
+        assert r.status == 301 and r.headers["Location"] == "/"
+        for reserved in ("/api/nope", "/static/nope.css", "/hooks/x", "/p/website"):  # never served by the website
+            assert (await c.get(reserved)).status in (401, 404)
+        assert (await c.get("/api/login")).status == 404             # wrong method on an API address: not the site
+        r = await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        assert r.status == 200
     run(bot, scenario)

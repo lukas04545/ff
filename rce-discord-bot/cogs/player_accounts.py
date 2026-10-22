@@ -1,4 +1,4 @@
-"""Player accounts on the website (/play/account): players log in with a one-time code the bot DMs to their linked
+"""Player accounts on the website (/account): players log in with a one-time code the bot DMs to their linked
 Discord account, then manage their own custom kits – add items, buy team slots per month and pick who sits on them.
 
 Login: the player enters their in-game name (linked with /customkit link). The bot DMs a 6-digit code to that

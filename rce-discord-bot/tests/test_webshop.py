@@ -302,26 +302,26 @@ def test_website_store_and_admin_api(shop, monkeypatch):
         c = TestClient(TestServer(web.app))
         await c.start_server()
         try:
-            page = await (await c.get("/play/store")).text()
-            assert "AK kit" in page and "9.99" in page and 'action="/play/store/checkout"' in page
-            r = await c.get("/play/store")
+            page = await (await c.get("/store")).text()
+            assert "AK kit" in page and "9.99" in page and 'action="/store/checkout"' in page
+            r = await c.get("/store")
             assert "https://www.sandbox.paypal.com" in r.headers["Content-Security-Policy"]
             assert "Test mode" in page
-            r = await c.post("/play/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Nobody"})
+            r = await c.post("/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Nobody"})
             assert r.status == 400 and "isn&#x27;t linked" in await r.text()
-            r = await c.post("/play/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7"},
+            r = await c.post("/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7"},
                              allow_redirects=False)
             assert r.status == 303 and r.headers["Location"].startswith("https://www.sandbox.paypal.com/")
             token = db.store_orders()[0]["token"]
-            r = await c.get(f"/play/store/return?o={token}", allow_redirects=False)
-            assert r.status == 303 and r.headers["Location"] == f"/play/store/order/{token}"
-            page = await (await c.get(f"/play/store/order/{token}")).text()
+            r = await c.get(f"/store/return?o={token}", allow_redirects=False)
+            assert r.status == 303 and r.headers["Location"] == f"/store/order/{token}"
+            page = await (await c.get(f"/store/order/{token}")).text()
             assert "Done!" in page and "/customkit claim Ak Kit" in page
-            page = await (await c.get("/play/store/build?q.rifle.ak=1&q.ammo.rifle=250")).text()
+            page = await (await c.get("/store/build?q.rifle.ak=1&q.ammo.rifle=250")).text()
             assert "6.00" in page and 'name="q.rifle.ak" value="1"' in page and 'name="name"' in page
-            page = await (await c.get("/play/store/giftcards")).text()
+            page = await (await c.get("/store/giftcards")).text()
             assert "25.00" in page
-            assert (await c.get("/play/store/order/nope")).status == 404
+            assert (await c.get("/store/order/nope")).status == 404
             # Admin API (owner only)
             assert (await c.get("/api/webshop")).status == 401
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
@@ -409,20 +409,20 @@ def test_admin_key_on_the_website(shop, monkeypatch):
         c = TestClient(TestServer(web.app))
         await c.start_server()
         try:
-            assert 'name="admin_key"' not in await (await c.get("/play/store")).text()   # hidden normally
-            page = await (await c.get("/play/store?admin=1")).text()
+            assert 'name="admin_key"' not in await (await c.get("/store")).text()   # hidden normally
+            page = await (await c.get("/store?admin=1")).text()
             assert 'name="admin_key"' in page and "Admin mode" in page and "store/build?admin=1" in page
-            r = await c.post("/play/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
+            r = await c.post("/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
                                                           "admin": "1", "admin_key": "wrong"})
             text = await r.text()
             assert r.status == 400 and "Wrong admin key" in text and "wrong" not in text.split("Wrong admin key")[1][:300]
-            r = await c.post("/play/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
+            r = await c.post("/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
                                                           "admin_key": "staff-only-key-123"}, allow_redirects=False)
             assert r.status == 303 and r.headers["Location"].startswith("https://www.sandbox.paypal.com/")  # no ?admin=1
-            r = await c.post("/play/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
+            r = await c.post("/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
                                                           "admin": "1", "admin_key": "staff-only-key-123"},
                              allow_redirects=False)
-            assert r.status == 303 and r.headers["Location"].startswith("/play/store/order/")
+            assert r.status == 303 and r.headers["Location"].startswith("/store/order/")
             page = await (await c.get(r.headers["Location"])).text()
             assert "Done!" in page and "free – admin key" in page
         finally:

@@ -1,4 +1,4 @@
-"""Store pages of the player website (/play/store …): kits for sale, build your own kit, gift cards, checkout.
+"""Store pages of the player website (/store …): kits for sale, build your own kit, gift cards, checkout.
 
 Pure server-rendered HTML forms – no scripts. Prices are always calculated by the bot (cogs/webshop.py); the
 browser only sends what was picked. Checkout redirects to PayPal; PayPal sends the buyer back to /store/return.
