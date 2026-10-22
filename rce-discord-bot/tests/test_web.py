@@ -248,10 +248,12 @@ def test_neon_theme_files(bot):
         # every rule is scoped to "not light", so the light theme keeps its look
         assert ':not([data-theme="light"])' in text and ':root[data-theme="light"] #bg { display: none; }' in text
         assert "prefers-reduced-motion: reduce" in text                              # calm mode switches animations off
+        assert "--line-a: #00f0ff" in text and "mask-composite: exclude" in text      # animated cyan outlines
         js = await c.get("/static/bg.js")
         src = await js.text()
         assert js.status == 200 and 'canvas.id = "bg"' in src
         assert "visibilitychange" in src and "prefers-reduced-motion" in src and "requestAnimationFrame" in src
+        assert "buildLayers" in src and "sprites[" in src                             # cached layers, ember sprites
         app = await (await c.get("/static/app.js")).text()
         assert 'THEME_NAMES = { dark: "neon", light: "light" }' in app                # theme button: neon <-> light
     run(bot, scenario)

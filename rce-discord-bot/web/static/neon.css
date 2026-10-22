@@ -6,10 +6,13 @@
 html:root:not([data-theme="light"]) {
   color-scheme: dark;
   --neon: #ff7a1a; --neon-2: #ffb347; --neon-hot: #ff3d00;
+  /* outlines: electric cyan with a violet / orange light running around them – change these two to recolour */
+  --line-a: #00f0ff; --line-b: #b14bff;
+  --ease-out: cubic-bezier(.16, 1, .3, 1); --ease-io: cubic-bezier(.65, 0, .35, 1);
   --bg: #07050a; --sidebar: rgba(12, 8, 7, .74); --panel: rgba(18, 11, 9, .78); --panel-2: rgba(48, 27, 14, .6);
   --input: rgba(8, 5, 4, .74);
   --text: #fbefe4; --muted: #c4ae9c; --faint: #8f7b6a;
-  --border: rgba(255, 122, 26, .22); --border-strong: rgba(255, 122, 26, .42);
+  --border: rgba(0, 240, 255, .2); --border-strong: rgba(0, 240, 255, .42);
   --accent: #ff7a1a; --accent-hover: #ff9440; --accent-text: #160800;
   --accent-soft: rgba(255, 122, 26, .15); --accent-ring: rgba(255, 122, 26, .5);
   --ok: #35ff95; --ok-soft: rgba(53, 255, 149, .12); --warn: #ffd23a; --warn-soft: rgba(255, 210, 58, .13);
@@ -41,8 +44,8 @@ html:root:not([data-theme="light"]) ::-webkit-scrollbar-thumb { background: line
 /* a neon line sweeping along the top edge */
 html:root:not([data-theme="light"]) body::before {
   content: ""; position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 60; pointer-events: none;
-  background: linear-gradient(90deg, transparent, var(--neon), var(--neon-2), var(--neon-hot), transparent);
-  background-size: 200% 100%; animation: neon-sweep 5s linear infinite; box-shadow: 0 0 14px var(--neon), 0 0 30px rgba(255, 90, 0, .5);
+  background: linear-gradient(90deg, transparent, var(--line-a), var(--line-b), var(--neon), transparent);
+  background-size: 200% 100%; animation: neon-sweep 6s linear infinite; box-shadow: 0 0 14px var(--neon), 0 0 30px rgba(255, 90, 0, .5);
 }
 @keyframes neon-sweep { to { background-position: -200% 0; } }
 
@@ -52,14 +55,14 @@ html:root:not([data-theme="light"]) h1 {
   background: linear-gradient(90deg, #fff3e6, var(--neon-2), var(--neon), var(--neon-2), #fff3e6);
   background-size: 300% 100%; -webkit-background-clip: text; background-clip: text;
   color: transparent; -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 10px rgba(255, 122, 26, .5)); animation: neon-shift 9s linear infinite;
+  filter: drop-shadow(0 0 10px rgba(255, 122, 26, .5)); animation: neon-shift 7s var(--ease-io) infinite alternate;
 }
-@keyframes neon-shift { to { background-position: -300% 0; } }
+@keyframes neon-shift { from { background-position: 0 0; } to { background-position: -200% 0; } }
 html:root:not([data-theme="light"]) h2 { text-shadow: 0 0 12px rgba(255, 122, 26, .35); }
 
 /* ------------------------------------------------------------ Sidebar */
 html:root:not([data-theme="light"]) .sidebar {
-  background: var(--sidebar); border-right: 1px solid var(--border-strong);
+  background: var(--sidebar); border-right: 1px solid rgba(0, 240, 255, .28);
   box-shadow: 0 0 40px -10px rgba(255, 122, 26, .35); backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
 }
 html:root:not([data-theme="light"]) .logo {
@@ -69,71 +72,114 @@ html:root:not([data-theme="light"]) .logo {
 @keyframes logo-pulse { 50% { box-shadow: 0 0 30px rgba(255, 122, 26, 1), 0 0 60px rgba(255, 90, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .4); } }
 html:root:not([data-theme="light"]) .brand-text strong { text-shadow: 0 0 14px rgba(255, 122, 26, .7); letter-spacing: .04em; text-transform: uppercase; }
 html:root:not([data-theme="light"]) .nav-label { color: var(--neon); opacity: .8; text-shadow: 0 0 8px rgba(255, 122, 26, .6); }
-html:root:not([data-theme="light"]) nav a { transition: background .15s, color .15s, transform .15s, box-shadow .15s; }
+html:root:not([data-theme="light"]) nav a { transition: background .35s var(--ease-out), color .35s var(--ease-out), transform .35s var(--ease-out), box-shadow .35s var(--ease-out); }
 html:root:not([data-theme="light"]) nav a:hover { background: rgba(255, 122, 26, .10); color: var(--text); transform: translateX(3px); }
 html:root:not([data-theme="light"]) nav a.active {
   color: var(--neon-2); background: linear-gradient(90deg, rgba(255, 122, 26, .26), rgba(255, 122, 26, .04));
   box-shadow: inset 0 0 0 1px rgba(255, 122, 26, .4), 0 0 18px -3px rgba(255, 122, 26, .55); text-shadow: 0 0 10px rgba(255, 170, 70, .8);
 }
-html:root:not([data-theme="light"]) nav a.active::before { background: var(--neon); box-shadow: 0 0 12px var(--neon), 0 0 24px var(--neon); }
+html:root:not([data-theme="light"]) nav a.active::before {
+  background: linear-gradient(var(--line-a), var(--neon), var(--line-b)); background-size: 100% 300%;
+  box-shadow: 0 0 12px var(--line-a), 0 0 24px var(--neon); animation: bar-flow 3s var(--ease-io) infinite alternate;
+}
+@keyframes bar-flow { to { background-position: 0 100%; } }
 html:root:not([data-theme="light"]) .avatar { box-shadow: 0 0 14px -2px rgba(255, 122, 26, .7); }
 
-/* ------------------------------------------------------------ Cards, stats, banners (glass + glow) */
+/* ------------------------------------------------------------ Cards, stats, banners: glass + animated outlines */
 html:root:not([data-theme="light"]) .card,
 html:root:not([data-theme="light"]) .stat,
 html:root:not([data-theme="light"]) .banner,
 html:root:not([data-theme="light"]) .toast {
   backdrop-filter: blur(12px) saturate(1.25); -webkit-backdrop-filter: blur(12px) saturate(1.25);
 }
-html:root:not([data-theme="light"]) .card { position: relative; transition: border-color .2s, box-shadow .25s, transform .2s; }
-html:root:not([data-theme="light"]) .card::before {
-  content: ""; position: absolute; left: 10%; right: 10%; top: -1px; height: 1px; pointer-events: none;
-  background: linear-gradient(90deg, transparent, var(--neon), transparent); opacity: .75;
+html:root:not([data-theme="light"]) .card,
+html:root:not([data-theme="light"]) .stat,
+html:root:not([data-theme="light"]) .banner { position: relative; border-color: rgba(0, 240, 255, .14); isolation: isolate; }
+/* the outline: a thin ring (mask) with a light running around it – only the ring is repainted */
+html:root:not([data-theme="light"]) .card::before,
+html:root:not([data-theme="light"]) .stat::before,
+html:root:not([data-theme="light"]) .banner::before {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none; z-index: 1;
+  background: conic-gradient(from var(--angle),
+    rgba(0, 240, 255, .35) 0deg, var(--line-a) 40deg, var(--line-b) 80deg, var(--neon) 110deg,
+    rgba(0, 240, 255, .35) 150deg, rgba(0, 240, 255, .35) 210deg, var(--line-a) 250deg, var(--line-b) 290deg,
+    rgba(0, 240, 255, .35) 330deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
+  animation: border-spin 9s linear infinite; opacity: .8; transition: opacity .4s var(--ease-out), filter .4s var(--ease-out);
 }
+html:root:not([data-theme="light"]) .stat::before { animation-duration: 6s; }
+html:root:not([data-theme="light"]) .banner::before { animation-duration: 12s; }
+html:root:not([data-theme="light"]) .card { transition: box-shadow .5s var(--ease-out), transform .5s var(--ease-out); }
+html:root:not([data-theme="light"]) .card:hover::before,
+html:root:not([data-theme="light"]) .stat:hover::before { opacity: 1; filter: drop-shadow(0 0 6px var(--line-a)); animation-duration: 3s; }
 html:root:not([data-theme="light"]) .card:hover {
-  border-color: var(--border-strong); box-shadow: 0 0 0 1px rgba(255, 122, 26, .12), 0 0 32px -8px rgba(255, 122, 26, .4), var(--shadow);
+  box-shadow: 0 0 0 1px rgba(0, 240, 255, .12), 0 0 34px -8px rgba(0, 240, 255, .35), 0 0 60px -20px rgba(177, 75, 255, .4), var(--shadow);
 }
-html:root:not([data-theme="light"]) .stat { transition: transform .2s, box-shadow .25s, border-color .2s; animation: rise .5s ease-out both; }
-html:root:not([data-theme="light"]) .stat:hover { transform: translateY(-3px); border-color: var(--border-strong); box-shadow: 0 0 26px -6px rgba(255, 122, 26, .55); }
-html:root:not([data-theme="light"]) .stat::after { height: 3px; box-shadow: 0 0 12px var(--tone, transparent); }
+html:root:not([data-theme="light"]) .stat { transition: transform .45s var(--ease-out), box-shadow .45s var(--ease-out); }
+html:root:not([data-theme="light"]) .stat:hover { transform: translateY(-4px) scale(1.015); box-shadow: 0 10px 30px -10px rgba(0, 240, 255, .45); }
+html:root:not([data-theme="light"]) .stat::after { height: 3px; box-shadow: 0 0 12px var(--tone, transparent); z-index: 2; }
 html:root:not([data-theme="light"]) .stat .value { text-shadow: 0 0 16px rgba(255, 122, 26, .35); }
 html:root:not([data-theme="light"]) .stat.ok .value { text-shadow: 0 0 14px var(--ok); }
 html:root:not([data-theme="light"]) .stat.bad .value { text-shadow: 0 0 14px var(--bad); }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(2) { animation-delay: .05s; }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(3) { animation-delay: .1s; }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(4) { animation-delay: .15s; }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(5) { animation-delay: .2s; }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(n+6) { animation-delay: .25s; }
-@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-html:root:not([data-theme="light"]) main > .card { animation: rise .45s ease-out both; }
-html:root:not([data-theme="light"]) .toast { border-color: var(--neon); box-shadow: 0 0 22px -4px rgba(255, 122, 26, .6), var(--shadow-lg); }
+html:root:not([data-theme="light"]) .toast { border-color: var(--line-a); box-shadow: 0 0 22px -4px rgba(0, 240, 255, .55), var(--shadow-lg); }
 html:root:not([data-theme="light"]) .toast.bad { border-color: var(--bad); box-shadow: 0 0 22px -4px var(--bad), var(--shadow-lg); }
+
+/* entrance: content rises in, one after another */
+@keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.985); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+html:root:not([data-theme="light"]) main { animation: none; }
+html:root:not([data-theme="light"]) main > * { animation: rise .7s var(--ease-out) both; }
+html:root:not([data-theme="light"]) main > :nth-child(2) { animation-delay: .04s; }
+html:root:not([data-theme="light"]) main > :nth-child(3) { animation-delay: .08s; }
+html:root:not([data-theme="light"]) main > :nth-child(4) { animation-delay: .12s; }
+html:root:not([data-theme="light"]) main > :nth-child(5) { animation-delay: .16s; }
+html:root:not([data-theme="light"]) main > :nth-child(6) { animation-delay: .2s; }
+html:root:not([data-theme="light"]) main > :nth-child(n+7) { animation-delay: .24s; }
+html:root:not([data-theme="light"]) .grid .stat { animation: rise .7s var(--ease-out) both; }
+html:root:not([data-theme="light"]) .grid .stat:nth-child(2) { animation-delay: .06s; }
+html:root:not([data-theme="light"]) .grid .stat:nth-child(3) { animation-delay: .12s; }
+html:root:not([data-theme="light"]) .grid .stat:nth-child(4) { animation-delay: .18s; }
+html:root:not([data-theme="light"]) .grid .stat:nth-child(5) { animation-delay: .24s; }
+html:root:not([data-theme="light"]) .grid .stat:nth-child(n+6) { animation-delay: .3s; }
 
 /* ------------------------------------------------------------ Pills */
 html:root:not([data-theme="light"]) .pill { backdrop-filter: blur(6px); }
 html:root:not([data-theme="light"]) .pill.ok { box-shadow: 0 0 14px -3px var(--ok); text-shadow: 0 0 8px var(--ok); }
 html:root:not([data-theme="light"]) .pill.bad { box-shadow: 0 0 14px -3px var(--bad); text-shadow: 0 0 8px var(--bad); }
 html:root:not([data-theme="light"]) .pill.warn { box-shadow: 0 0 14px -3px var(--warn); text-shadow: 0 0 8px var(--warn); }
-html:root:not([data-theme="light"]) .pill.ok::before { box-shadow: 0 0 8px var(--ok), 0 0 0 3px var(--ok-soft); }
+html:root:not([data-theme="light"]) .pill.ok::before { box-shadow: 0 0 8px var(--ok), 0 0 0 3px var(--ok-soft); animation: breathe 2.4s var(--ease-io) infinite; }
+@keyframes breathe { 50% { box-shadow: 0 0 14px var(--ok), 0 0 0 5px rgba(53, 255, 149, .05); } }
 
 /* ------------------------------------------------------------ Forms & buttons */
+html:root:not([data-theme="light"]) input,
+html:root:not([data-theme="light"]) select,
+html:root:not([data-theme="light"]) textarea { border-color: rgba(0, 240, 255, .28); transition: border-color .3s var(--ease-out), box-shadow .3s var(--ease-out); }
 html:root:not([data-theme="light"]) input:hover,
 html:root:not([data-theme="light"]) select:hover,
-html:root:not([data-theme="light"]) textarea:hover { border-color: rgba(255, 122, 26, .6); }
+html:root:not([data-theme="light"]) textarea:hover { border-color: rgba(0, 240, 255, .6); }
 html:root:not([data-theme="light"]) input:focus,
 html:root:not([data-theme="light"]) select:focus,
 html:root:not([data-theme="light"]) textarea:focus {
-  border-color: var(--neon); box-shadow: 0 0 0 1px var(--neon), 0 0 20px -2px rgba(255, 122, 26, .6);
+  border-color: var(--line-a); box-shadow: 0 0 0 1px var(--line-a), 0 0 22px -2px rgba(0, 240, 255, .55), 0 0 40px -12px var(--line-b);
 }
-html:root:not([data-theme="light"]) button:hover { border-color: var(--neon); background: rgba(255, 122, 26, .12); box-shadow: 0 0 14px -2px rgba(255, 122, 26, .55); }
+html:root:not([data-theme="light"]) button { border-color: rgba(0, 240, 255, .3); transition: background .3s var(--ease-out), border-color .3s var(--ease-out), box-shadow .3s var(--ease-out), transform .2s var(--ease-out), color .3s; }
+html:root:not([data-theme="light"]) button:hover { border-color: var(--line-a); background: rgba(0, 240, 255, .08); box-shadow: 0 0 16px -3px rgba(0, 240, 255, .6); }
 html:root:not([data-theme="light"]) button:focus-visible,
 html:root:not([data-theme="light"]) a:focus-visible,
 html:root:not([data-theme="light"]) summary:focus-visible { box-shadow: 0 0 0 2px var(--neon), 0 0 18px rgba(255, 122, 26, .7); }
 html:root:not([data-theme="light"]) button.primary {
   background: linear-gradient(110deg, var(--neon-hot), var(--neon) 38%, var(--neon-2) 62%, var(--neon)); background-size: 230% 100%;
   color: var(--accent-text); border-color: var(--neon-2); font-weight: 750;
-  box-shadow: 0 0 16px rgba(255, 122, 26, .6), inset 0 1px 0 rgba(255, 255, 255, .4); transition: background-position .5s, box-shadow .2s, transform .1s;
+  box-shadow: 0 0 16px rgba(255, 122, 26, .6), inset 0 1px 0 rgba(255, 255, 255, .4);
+  transition: background-position .8s var(--ease-out), box-shadow .4s var(--ease-out), transform .25s var(--ease-out);
+  position: relative; overflow: hidden;
 }
+html:root:not([data-theme="light"]) button.primary::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%; pointer-events: none;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .55), transparent); transform: skewX(-20deg);
+  transition: left .8s var(--ease-out);
+}
+html:root:not([data-theme="light"]) button.primary:hover::after { left: 130%; }
 html:root:not([data-theme="light"]) button.primary:hover {
   background-position: 100% 0; border-color: #ffd9a8; transform: translateY(-1px);
   box-shadow: 0 0 28px rgba(255, 122, 26, .9), 0 0 56px rgba(255, 90, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .5);
@@ -151,7 +197,7 @@ html:root:not([data-theme="light"]) tbody tr:hover { background: rgba(255, 122, 
 html:root:not([data-theme="light"]) tr.clickable:hover td:first-child { box-shadow: inset 3px 0 0 var(--neon), inset 8px 0 14px -8px var(--neon); }
 html:root:not([data-theme="light"]) .console,
 html:root:not([data-theme="light"]) pre.transcript {
-  border-color: var(--border-strong);
+  border-color: rgba(0, 240, 255, .35);
   background-image: repeating-linear-gradient(0deg, rgba(255, 122, 26, .035) 0 1px, transparent 1px 3px);
   box-shadow: inset 0 0 30px rgba(0, 0, 0, .6), 0 0 22px -8px rgba(255, 122, 26, .4);
 }
@@ -165,12 +211,12 @@ html:root:not([data-theme="light"]) .login-card {
   border: 2px solid transparent;
   background:
     linear-gradient(#0d0806, #0d0806) padding-box,
-    conic-gradient(from var(--angle), transparent 0 55%, var(--neon-hot) 70%, var(--neon) 80%, var(--neon-2) 90%, transparent 100%) border-box;
+    conic-gradient(from var(--angle), rgba(0, 240, 255, .25) 0 45%, var(--line-a) 60%, var(--line-b) 72%, var(--neon) 84%, rgba(0, 240, 255, .25) 100%) border-box;
   box-shadow: 0 0 50px -6px rgba(255, 122, 26, .55), 0 30px 80px -10px rgba(0, 0, 0, .9);
-  animation: card-in .5s ease-out both, border-spin 5s linear infinite;
+  animation: card-in .9s var(--ease-out) both, border-spin 6s linear infinite;
 }
 @keyframes border-spin { to { --angle: 360deg; } }
-@keyframes card-in { from { opacity: 0; transform: translateY(14px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes card-in { from { opacity: 0; transform: translateY(24px) scale(.96); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
 html:root:not([data-theme="light"]) .login-card input { background: rgba(255, 122, 26, .06); }
 html:root:not([data-theme="light"]) .login-hint { border-top-color: var(--border-strong); }
 
