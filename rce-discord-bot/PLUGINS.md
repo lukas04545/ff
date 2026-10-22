@@ -4,6 +4,10 @@ A plugin adds a feature to the bot without changing the bot's own code. It is **
 derived from `Plugin`. Put it in `data/plugins/` (or upload it in the web interface → 🧩 Plugins), switch it on,
 done. Updates never overwrite your plugins, and they are included in backups.
 
+**Changing a built-in plugin?** Don't edit it in `plugins/` – copy it to `data/plugins/` with the same file name
+and edit the copy. Your copy replaces the built-in and survives every update (delete it to get the built-in
+back). If you did edit `plugins/` directly, the updater saves your version to `data/plugins/` for you.
+
 > A plugin runs inside the bot with full access (Discord, RCON, database). Only install plugins you wrote yourself
 > or got from someone you trust.
 

@@ -1,7 +1,9 @@
 """Finds, loads and unloads plugins, and keeps their on/off state and settings.
 
 Built-in plugins live in plugins/ (updated together with the bot), your own in data/plugins/ (never touched by
-updates). State and settings are kept in data/plugins.json:
+updates). A file in data/plugins/ with the same name as a built-in REPLACES the built-in – that's how you keep a
+changed built-in across updates (delete your copy to get the built-in back). State and settings are kept in
+data/plugins.json:
 
     {"enabled": {"bounties": true}, "settings": {"bounties": {"min_amount": 50}},
      "known": {"invites": {"intents": ["members"], "default": false}}}
@@ -89,6 +91,7 @@ class PluginInfo:
     cls: type[Plugin] | None = None
     error: str | None = None
     mtime: float = 0.0               # file time when it was read (changed file -> read again)
+    overrides: bool = False          # your own file in data/plugins/ that replaces the built-in with this name
 
     @property
     def module_name(self) -> str:
@@ -130,6 +133,7 @@ class PluginManager:
         self.infos: dict[str, PluginInfo] = {}
         self.instances: dict[str, Plugin] = {}
         self.load_errors: dict[str, str] = {}
+        self.startup_failures: list[tuple[str, str]] = []    # (plugin, error) of switched-on plugins at the start
 
     # ------------------------------------------------------------ State
 
@@ -140,9 +144,28 @@ class PluginManager:
         os.replace(tmp, self.state_path)
 
     def is_enabled(self, pid: str) -> bool:
-        info = self.infos.get(pid)
-        default = bool(info and info.cls and info.cls.DEFAULT_ENABLED and info.builtin)
-        return bool(self.state["enabled"].get(pid, default))
+        return bool(self.state["enabled"].get(pid, self._default_on(self.infos.get(pid))))
+
+    def _keep_on_off(self, pid: str) -> None:
+        """Your copy is replacing the built-in: it keeps the on/off state the built-in had (also its "on by
+        default" – known from data/plugins.json after a restart)."""
+        if pid in self.state["enabled"]:
+            return
+        prev = self.infos.get(pid)
+        if prev is not None and prev.builtin:
+            on = self._default_on(prev)
+        else:
+            on = bool((self.state["known"].get(pid) or {}).get("default"))
+        self.state["enabled"][pid] = on
+        try:
+            self._save()
+        except OSError as exc:
+            log.warning("Could not save %s: %s", self.state_path, exc)
+
+    @staticmethod
+    def _default_on(info: "PluginInfo | None") -> bool:
+        """Built-in plugins (and your own copy replacing one) may be on without the owner switching them on."""
+        return bool(info and info.cls and info.cls.DEFAULT_ENABLED and (info.builtin or info.overrides))
 
     def settings_of(self, pid: str) -> dict[str, Any]:
         values = self.state["settings"].get(pid)
@@ -154,8 +177,10 @@ class PluginManager:
     # ------------------------------------------------------------ Discovery
 
     def discover(self) -> None:
-        """Finds every plugin file and reads its class (imports it)."""
-        found: dict[str, PluginInfo] = {}
+        """Finds every plugin file and reads its class (imports it). Your own file in data/plugins/ wins over a
+        built-in with the same name (so an update that adds a built-in called like your plugin can't hide it)."""
+        candidates: dict[str, tuple[Path, bool]] = {}
+        overrides: set[str] = set()
         for builtin, folder in ((True, self.builtin_dir), (False, self.user_dir)):
             if not folder.is_dir():
                 continue
@@ -166,18 +191,28 @@ class PluginManager:
                 if not PLUGIN_ID.match(pid):
                     log.warning("Plugin file %s ignored: names may only use a-z, 0-9 and _.", path.name)
                     continue
-                if pid in found:
-                    log.warning("Plugin %s in %s ignored: a built-in plugin has the same name.", pid, folder)
-                    continue
-                info = self.infos.get(pid) or PluginInfo(pid, path, builtin)
-                info.path, info.builtin = path, builtin
-                try:
-                    mtime = path.stat().st_mtime
-                except OSError:
-                    continue
-                if pid not in self.instances and (info.mtime != mtime or (info.cls is None and info.error is None)):
-                    self._import(info, fresh=info.mtime != 0.0)
-                found[pid] = info
+                if pid in candidates and not builtin:
+                    overrides.add(pid)
+                candidates[pid] = (path, builtin)
+        found: dict[str, PluginInfo] = {}
+        for pid, (path, builtin) in candidates.items():
+            info = self.infos.get(pid)
+            if info is not None and pid in self.instances:
+                found[pid] = info                  # running: switched over on its next reload / restart
+                continue
+            if info is None or info.path != path or info.builtin != builtin:
+                info = PluginInfo(pid, path, builtin)
+            if pid in overrides and not info.overrides:
+                log.info("Plugin %s: your own copy in %s replaces the built-in.", pid, self.user_dir)
+                self._keep_on_off(pid)
+            info.overrides = pid in overrides
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if info.mtime != mtime or (info.cls is None and info.error is None):
+                self._import(info, fresh=info.mtime != 0.0)
+            found[pid] = info
         self.infos = found
         self._remember_meta()
 
@@ -226,7 +261,7 @@ class PluginManager:
         for pid, info in self.infos.items():
             if info.cls is not None:
                 known[pid] = {"name": info.cls.NAME, "intents": [i for i in info.cls.INTENTS if i in KNOWN_INTENTS],
-                              "default": bool(info.cls.DEFAULT_ENABLED and info.builtin)}
+                              "default": self._default_on(info)}
         if known != self.state["known"]:
             self.state["known"] = known
             try:
@@ -244,6 +279,10 @@ class PluginManager:
                 await self._start(pid)
         if self.instances:
             log.info("Plugins running: %s", ", ".join(sorted(self.instances)))
+        # Switched-on plugins that couldn't start (e.g. written for an older bot version) – reported once ready
+        self.startup_failures = [(pid, info.error or self.load_errors.get(pid) or "unknown error")
+                                 for pid, info in sorted(self.infos.items())
+                                 if self.state["enabled"].get(pid) and pid not in self.instances]
 
     async def _start(self, pid: str) -> bool:
         info = self.infos.get(pid)
@@ -420,8 +459,6 @@ class PluginManager:
         if not PLUGIN_ID.match(pid):
             raise PluginError("File name: use a-z, 0-9 and _ only (2–40 characters), e.g. my_plugin.py.")
         existing = self.infos.get(pid)
-        if existing is not None and existing.builtin:
-            raise PluginError(f"A built-in plugin is already called {pid} – rename your file.")
         data = (code or "").encode("utf-8")
         if not data.strip():
             raise PluginError("The file is empty.")
@@ -434,11 +471,14 @@ class PluginManager:
         self.user_dir.mkdir(parents=True, exist_ok=True)
         path = self.user_dir / f"{pid}.py"
         backup = path.read_bytes() if path.exists() else None
+        if existing is not None and existing.builtin:
+            self._keep_on_off(pid)
         tmp = path.with_suffix(".tmp")
         tmp.write_bytes(data)
         await self._stop(pid)
         os.replace(tmp, path)
-        info = existing or PluginInfo(pid, path, False)
+        info = existing if existing is not None and not existing.builtin else PluginInfo(pid, path, False)
+        info.overrides = (self.builtin_dir / f"{pid}.py").is_file()       # same name as a built-in: yours wins
         self._import(info, fresh=True)
         if info.cls is None:
             error = info.error
@@ -449,7 +489,12 @@ class PluginManager:
                     await self._start(pid)
             else:
                 path.unlink(missing_ok=True)
-                self.infos.pop(pid, None)
+                if existing is not None and existing.builtin:      # the built-in stays as it was
+                    self.infos[pid] = existing
+                    if existing.cls is not None and self.is_enabled(pid):
+                        await self._start(pid)
+                else:
+                    self.infos.pop(pid, None)
             raise PluginError(f"The plugin can't be used: {error}")
         self.infos[pid] = info
         self._remember_meta()
@@ -467,14 +512,20 @@ class PluginManager:
         was_running = pid in self.instances
         await self._stop(pid)
         info.path.unlink(missing_ok=True)
-        shutil.rmtree(self.files_dir / pid, ignore_errors=True)
-        self.infos.pop(pid, None)
-        self.state["enabled"].pop(pid, None)
-        self.state["settings"].pop(pid, None)
-        self._remember_meta()
-        self._save()
         sys.modules.pop(info.module_name, None)
-        if was_running:
+        self.infos.pop(pid, None)
+        if info.overrides:
+            # Your copy of a built-in: the built-in comes back with the same on/off state and settings
+            self.discover()
+            if self.is_enabled(pid) and pid in self.infos:
+                await self._start(pid)
+        else:
+            shutil.rmtree(self.files_dir / pid, ignore_errors=True)
+            self.state["enabled"].pop(pid, None)
+            self.state["settings"].pop(pid, None)
+            self._remember_meta()
+        self._save()
+        if was_running or pid in self.instances:
             await self._sync()
 
     # ------------------------------------------------------------ Info
@@ -490,7 +541,8 @@ class PluginManager:
         cls = info.cls
         plugin = self.instances.get(pid)
         values = self.settings_of(pid)
-        out = {"id": pid, "builtin": info.builtin, "enabled": self.is_enabled(pid), "running": plugin is not None,
+        out = {"id": pid, "builtin": info.builtin, "overrides": info.overrides, "enabled": self.is_enabled(pid),
+               "running": plugin is not None,
                "error": info.error or self.load_errors.get(pid), "file": info.path.name,
                "name": cls.NAME if cls else pid, "description": cls.DESCRIPTION if cls else "",
                "version": cls.VERSION if cls else "", "icon": cls.ICON if cls else "🧩",

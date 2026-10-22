@@ -1112,6 +1112,14 @@ restart. A broken plugin never stops the bot: it shows the error on its card and
 - **Your own plugins** go to `data/plugins/` (upload a `.py` file on the Plugins page, or copy it there and click
   ↻ Reload). Updates never touch them, and they are in every backup. How to write one: [PLUGINS.md](PLUGINS.md).
   Only use plugins from people you trust – a plugin runs inside the bot with full access.
+- **Plugins survive updates.** Everything in `data/plugins/` (uploaded, AI-made, copied there) plus all on/off
+  states and settings (`data/plugins.json`) are never touched by an update. A file there with the **same name as a
+  built-in** replaces that built-in – so an update that adds a built-in called like your plugin can't hide yours, and
+  you can keep a changed built-in (card shows *Your copy – replaces the built-in*; *Delete my copy* brings the
+  built-in back with the same on/off state and settings). If you edited a built-in file in `plugins/` directly (or
+  put your own file there), the updater copies your version into `data/plugins/` before it replaces or deletes
+  that file, says so in the admin log, and a changed plugin no longer blocks git updates. A switched-on plugin that
+  can't start after a restart (e.g. written for an older bot version) is reported in the admin log.
 - **Create a plugin with AI:** its own **✨ Create plugin** page in the sidebar: describe what you want in plain
   words and the integrated AI (DeepSeek, the same key as the support AI) writes the plugin for you. You see the
   code, a short summary and any safety warnings in the window, can edit it, and only when you click *Create* is it

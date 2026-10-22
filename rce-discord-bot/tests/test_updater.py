@@ -193,3 +193,72 @@ def test_update_settings_validation():
     assert validate("AUTO_UPDATE_REPO", "https://github.com/x") is not None
     assert validate("AUTO_UPDATE_BRANCH", "main") is None and validate("AUTO_UPDATE_BRANCH", "a b") is not None
     assert validate("AUTO_UPDATE_INTERVAL", "10") is None
+
+
+def test_zip_update_keeps_changed_and_own_plugins(tmp_path):
+    """Built-in plugin files you changed (or your own file in plugins/) are kept in data/plugins/ before the update
+    replaces or deletes them; untouched built-ins are simply updated; your plugins in data/plugins/ are never touched."""
+    import hashlib
+    h = lambda text: hashlib.sha256(text.encode()).hexdigest()  # noqa: E731
+    _write(tmp_path, {
+        "bot.py": "print('old')\n",
+        "plugins/bounties.py": "BOUNTIES = 'my edit'\n",           # built-in, edited by the owner
+        "plugins/invites.py": "INVITES = 1\n",                     # built-in, untouched
+        "plugins/oldie.py": "OLDIE = 'my edit'\n",                 # built-in removed upstream, edited by the owner
+        "plugins/mine.py": "MINE = 1\n",                           # owner's own file; the update adds a built-in "mine"
+        "data/plugins/hello.py": "HELLO = 1\n",                    # owner's plugin in the safe folder
+    })
+    (tmp_path / "data/update_state.json").write_text(json.dumps({"sha": "b" * 40, "files": {
+        "bot.py": h("print('old')\n"), "plugins/bounties.py": h("BOUNTIES = 1\n"),
+        "plugins/invites.py": h("INVITES = 1\n"), "plugins/oldie.py": h("OLDIE = 1\n")}}))
+    up = Updater("lukas04545/ff", base_dir=tmp_path, pip_install=lambda req: None, http_get=_fake_github({
+        "bot.py": "print('new')\n", "plugins/bounties.py": "BOUNTIES = 2\n", "plugins/invites.py": "INVITES = 2\n",
+        "plugins/mine.py": "BUILTIN_MINE = 1\n", "data/plugins/hello.py": "FROM_ZIP = 1\n"}))
+    r = up.check()
+    assert r.status == "updated"
+    read = lambda rel: (tmp_path / rel).read_text()  # noqa: E731
+    # built-ins updated
+    assert read("plugins/bounties.py") == "BOUNTIES = 2\n" and read("plugins/invites.py") == "INVITES = 2\n"
+    assert read("plugins/mine.py") == "BUILTIN_MINE = 1\n" and not (tmp_path / "plugins/oldie.py").exists()
+    # ... and the owner's versions survive in data/plugins/ (they replace the built-ins there)
+    assert read("data/plugins/bounties.py") == "BOUNTIES = 'my edit'\n"
+    assert read("data/plugins/oldie.py") == "OLDIE = 'my edit'\n"
+    assert read("data/plugins/mine.py") == "MINE = 1\n"
+    assert not (tmp_path / "data/plugins/invites.py").exists()           # untouched built-in: nothing to keep
+    assert read("data/plugins/hello.py") == "HELLO = 1\n"                 # data/ is never written by the update
+    assert sorted(x.split(" -> ")[0] for x in r.rescued) == ["plugins/bounties.py", "plugins/mine.py", "plugins/oldie.py"]
+    assert "Kept your plugin file(s)" in r.message
+
+    # A later update never overwrites a different file that is already in data/plugins/
+    (tmp_path / "plugins/bounties.py").write_text("BOUNTIES = 'second edit'\n")
+    up.http_get = _fake_github({"bot.py": "print('newer')\n", "plugins/bounties.py": "BOUNTIES = 3\n",
+                                "plugins/invites.py": "INVITES = 2\n", "plugins/mine.py": "BUILTIN_MINE = 1\n"},
+                               sha="d" * 40)
+    r = up.check()
+    assert read("data/plugins/bounties.py") == "BOUNTIES = 'my edit'\n"
+    kept = [p for p in (tmp_path / "data/plugins/rescued").iterdir()]
+    assert len(kept) == 1 and kept[0].read_text() == "BOUNTIES = 'second edit'\n"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_git_update_keeps_changed_and_own_plugins(tmp_path):
+    origin = tmp_path / "origin"
+    _write(origin, {"rce-discord-bot/bot.py": "v = 1\n", "rce-discord-bot/plugins/bounties.py": "B = 1\n"})
+    _git(origin, "init", "-q"); _git(origin, "add", "."); _git(origin, "commit", "-qm", "first")
+    _git(tmp_path, "clone", "-q", str(origin), "clone")
+    bot_dir = tmp_path / "clone" / "rce-discord-bot"
+    up = Updater("lukas04545/ff", base_dir=bot_dir, pip_install=lambda req: None)
+
+    (bot_dir / "plugins/bounties.py").write_text("B = 'my edit'\n")      # changed a built-in plugin
+    (bot_dir / "plugins/mine.py").write_text("MINE = 1\n")              # own file; upstream will add "mine" too
+    _write(origin, {"rce-discord-bot/bot.py": "v = 2\n", "rce-discord-bot/plugins/bounties.py": "B = 2\n",
+                    "rce-discord-bot/plugins/mine.py": "BUILTIN_MINE = 1\n"})
+    _git(origin, "add", "."); _git(origin, "commit", "-qm", "second")
+    r = up.check()
+    assert r.status == "updated", r.message                              # a changed plugin no longer blocks it
+    assert (bot_dir / "bot.py").read_text() == "v = 2\n"
+    assert (bot_dir / "plugins/bounties.py").read_text() == "B = 2\n"
+    assert (bot_dir / "plugins/mine.py").read_text() == "BUILTIN_MINE = 1\n"
+    assert (bot_dir / "data/plugins/bounties.py").read_text() == "B = 'my edit'\n"
+    assert (bot_dir / "data/plugins/mine.py").read_text() == "MINE = 1\n"
+    assert len(r.rescued) == 2 and up.check().status == "up_to_date"

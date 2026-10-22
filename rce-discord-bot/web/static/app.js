@@ -2165,13 +2165,16 @@ function pluginCard(p, opts, kits, reload) {
     card.append(form, h("div", { class: "row", style: "margin-top:.6rem" }, save));
   }
   const foot = h("div", { class: "row muted", style: "margin-top:.6rem;font-size:.83rem" },
-    h("span", { text: `${p.builtin ? "Built-in" : "Your plugin"} · ${p.file}${p.version ? " · v" + p.version : ""}${p.author ? " · by " + p.author : ""}` }),
+    h("span", { text: `${p.builtin ? "Built-in" : p.overrides ? "Your copy – replaces the built-in" : "Your plugin"} · ${p.file}${p.version ? " · v" + p.version : ""}${p.author ? " · by " + p.author : ""}`,
+      title: p.builtin ? "Comes with the bot and is updated with it" : "In data/plugins/ – never touched by updates" }),
     h("button", { class: "small ghost", text: "↻ Reload", title: "Read the file again (after editing it)", onclick: async () => {
       await act(() => api(`/api/plugins/${p.id}/reload`, { method: "POST" }), "Reloaded"); reload();
     } }),
-    p.builtin ? null : h("button", { class: "small danger", text: "Delete", onclick: async () => {
-      if (!confirm(`Delete the plugin file ${p.file}? Its settings are removed too.`)) return;
-      await act(() => api(`/api/plugins/${p.id}`, { method: "DELETE" }), "Plugin deleted"); reload();
+    p.builtin ? null : h("button", { class: "small danger", text: p.overrides ? "Delete my copy" : "Delete", onclick: async () => {
+      const q = p.overrides ? `Delete your copy ${p.file}? The built-in plugin comes back (same on/off state and settings).`
+        : `Delete the plugin file ${p.file}? Its settings are removed too.`;
+      if (!confirm(q)) return;
+      await act(() => api(`/api/plugins/${p.id}`, { method: "DELETE" }), p.overrides ? "Back to the built-in" : "Plugin deleted"); reload();
     } }));
   card.append(foot);
   return card;
@@ -2194,7 +2197,7 @@ function pluginUploadCard(reload) {
     } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
   });
   return h("div", { class: "card" }, h("h2", { text: "⬆️ Add your own plugin" }),
-    h("p", { class: "muted", text: "A plugin is one .py file. It is saved in data/plugins/ (never touched by updates) and starts switched off. How to write one: PLUGINS.md in the bot folder." }),
+    h("p", { class: "muted", text: "A plugin is one .py file. It is saved in data/plugins/ (never touched by updates) and starts switched off. A file with the same name as a built-in plugin replaces it – that's how you keep a changed built-in across updates. How to write one: PLUGINS.md in the bot folder." }),
     h("div", { class: "banner warn" }, "Only upload plugins from people you trust – a plugin runs inside the bot with full access."),
     h("div", { class: "row" }, file, btn));
 }

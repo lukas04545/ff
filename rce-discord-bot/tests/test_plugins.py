@@ -119,8 +119,6 @@ def test_own_plugin_upload_reload_and_delete(pb):
         with pytest.raises(PluginError, match="same key: text"):
             await m.install("hello.py", HELLO.replace('Setting("times"', 'Setting("text"'))
         assert m.running("hello") is not None and "Hi" in (m.user_dir / "hello.py").read_text()
-        with pytest.raises(PluginError, match="built-in"):
-            await m.install("bounties.py", HELLO)
         with pytest.raises(PluginError, match="File name"):
             await m.install("../evil.py.txt", HELLO)
         (m.user_dir / "hello.py").write_text(HELLO.replace("Hi {player}!", "Yo {player}!"))
@@ -133,6 +131,64 @@ def test_own_plugin_upload_reload_and_delete(pb):
             await m.uninstall("bounties")
         await m.uninstall("hello")
         assert "hello" not in m.infos and not (m.user_dir / "hello.py").exists()
+    asyncio.run(main())
+
+
+def test_own_copy_replaces_a_builtin_and_survives(pb):
+    """A file in data/plugins/ with a built-in's name replaces it (so an update adding a built-in with your plugin's
+    name can't hide yours, and a changed built-in can be kept); deleting it brings the built-in back."""
+    from plugin_manager import PluginError
+    MINE = HELLO.replace("class Hello", "class MyBounties").replace('NAME = "Hello"', 'NAME = "My bounties"')
+
+    async def main():
+        m = pb.m
+        await m.load_all()
+        assert m.infos["bounties"].builtin and m.running("bounties") is not None         # built-in, on by default
+        await m.save_settings("bounties", {})
+        info = await m.install("bounties.py", MINE)
+        assert info["name"] == "My bounties" and info["overrides"] and not info["builtin"]
+        assert info["enabled"] and m.running("bounties").NAME == "My bounties"            # took over, stayed on
+        m.discover()                                                                       # e.g. after a restart
+        assert m.infos["bounties"].overrides and m.running("bounties").NAME == "My bounties"
+        # Deleting your copy brings the built-in back (still on)
+        await m.uninstall("bounties")
+        assert m.infos["bounties"].builtin and m.running("bounties") is not None
+        # A broken copy never takes down the built-in
+        with pytest.raises(PluginError, match="can't be used"):
+            await m.install("bounties.py", "x = 1\n")
+        assert m.infos["bounties"].builtin and m.running("bounties") is not None
+        assert not (m.user_dir / "bounties.py").exists()
+        with pytest.raises(PluginError, match="Built-in"):
+            await m.uninstall("bounties")
+    asyncio.run(main())
+
+
+def test_copy_found_at_start_keeps_on_off(pb):
+    """The updater put your changed copy of a built-in into data/plugins/ – after the restart it runs, still on."""
+    async def main():
+        m = pb.m
+        await m.load_all()                       # first start: remembers that bounties is on by default
+        await m.unload_all()
+        from plugin_manager import PluginManager
+        m.user_dir.mkdir(parents=True, exist_ok=True)
+        src = (m.builtin_dir / "bounties.py").read_text().replace("DEFAULT_ENABLED = True", "DEFAULT_ENABLED = False")
+        (m.user_dir / "bounties.py").write_text(src)
+        fresh = PluginManager(pb.bot)            # = the restart after the update
+        pb.bot.plugins = fresh
+        await fresh.load_all()
+        assert fresh.infos["bounties"].overrides and fresh.running("bounties") is not None
+        await fresh.unload_all()
+    asyncio.run(main())
+
+
+def test_failed_plugins_are_reported_at_start(pb):
+    async def main():
+        m = pb.m
+        m.user_dir.mkdir(parents=True, exist_ok=True)
+        (m.user_dir / "oldone.py").write_text("from plugin_api import Gone\n")         # e.g. made for an older bot
+        m.state["enabled"]["oldone"] = True
+        await m.load_all()
+        assert [p for p, _ in m.startup_failures] == ["oldone"] and "Gone" in m.startup_failures[0][1]
     asyncio.run(main())
 
 
