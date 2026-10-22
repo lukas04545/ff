@@ -539,10 +539,21 @@ role:
     **Overview** (with a copy button) and posted in your **admin log channel** – so your admins always find
     the current one.
   - It stays the same while the bot runs (also across restarts from the web interface) and **changes when
-    you close the bot window**. For a **fixed address** (needs your own domain on Cloudflare): create a
-    tunnel in the Cloudflare dashboard (Zero Trust → Networks → Tunnels), point its public hostname to
-    `http://localhost:8080`, then paste the tunnel **token** into *Cloudflare tunnel token* and the
-    address into *Fixed public address* (advanced settings).
+    you close the bot window**.
+  - **Your own domain (fixed address):** if your domain is on Cloudflare (bought there, or its nameservers
+    moved there), open ⚙️ Settings → Web interface → **🌐 Use your own domain (Cloudflare)**, enter the address
+    you want (e.g. `panel.yourdomain.com`, or the domain itself) and a Cloudflare **API token**, and click
+    *Connect my domain*. The bot creates the tunnel, points it at the web interface, adds the DNS record
+    (`CNAME` → the tunnel, proxied) and saves the tunnel token + address – then it checks that the address
+    reaches the bot. Create the token at Cloudflare → My Profile → API Tokens → *Create Token* → *Custom
+    token* with **Account › Cloudflare Tunnel › Edit**, **Zone › DNS › Edit** and **Zone › Zone › Read** for your
+    domain. The API token is only used for this setup and is **not saved**. Existing DNS records the bot didn't
+    make (e.g. an `A` record for your website) are never changed – pick another name then. Running it again
+    reuses the same tunnel. The player website then lives at `https://panel.yourdomain.com/play`.
+    By hand instead: create a tunnel in the Cloudflare dashboard (Zero Trust → Networks → Tunnels), point its
+    public hostname to `http://127.0.0.1:8080` (your `WEB_PORT`; use 127.0.0.1, not `localhost` – that can be
+    IPv6 and give a 502), then paste the tunnel **token** into *Cloudflare tunnel token* and the address into
+    *Fixed public address* (advanced settings).
   - The address is public, so give every admin their own account with a strong password (👥 Users) –
     logins are rate-limited per visitor IP and per account.
   - macOS: install it once with `brew install cloudflared`.

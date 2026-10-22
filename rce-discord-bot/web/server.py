@@ -304,6 +304,8 @@ class WebInterface:
         r.add_put("/api/settings", self.put_settings)
         r.add_post("/api/settings/test-rcon", self.settings_test_rcon)
         r.add_post("/api/settings/test-discord", self.settings_test_discord)
+        r.add_post("/api/settings/cloudflare-domain", self.cloudflare_domain)              # own domain (owner)
+        r.add_post("/api/settings/cloudflare-domain/check", self.cloudflare_domain_check)
         r.add_get("/api/settings/discord-options", self.settings_discord_options)
         r.add_get("/api/users", self.list_users)
         r.add_post("/api/users", self.create_user)
@@ -472,7 +474,8 @@ class WebInterface:
         try:
             (self.env_path.parent / PUBLIC_LINK_FILE).write_text(
                 f"{url}\n\nLogin: owner + your WEB_PASSWORD (in the .env), other admins: their own account.\n"
-                "This address changes when the bot window is closed.\n", encoding="utf-8")
+                + ("This is your own domain – it stays the same.\n" if self.ws.public_url
+                   else "This address changes when the bot window is closed.\n"), encoding="utf-8")
         except OSError:
             pass
         if announce and self.bot is not None:
@@ -1170,6 +1173,42 @@ class WebInterface:
         if "WEB_PASSWORD" in updates:
             self._set_session_cookie(resp, request["user"])
         return resp
+
+    async def cloudflare_domain(self, request: web.Request) -> web.Response:
+        """Owner: use your own Cloudflare domain – creates tunnel + route + DNS record via the Cloudflare API and
+        saves the tunnel token / address. The API token itself is not stored."""
+        from support.cloudflare import CloudflareAPI, CloudflareError
+        data = await self._json(request)
+        try:
+            api = CloudflareAPI(str(data.get("api_token") or ""))
+            setup = await api.setup(str(data.get("hostname") or ""), self.ws.port)
+        except CloudflareError as exc:
+            raise ApiError(str(exc)) from None
+        update_env(self.env_path, {"WEB_TUNNEL": "true", "WEB_TUNNEL_TOKEN": setup.token, "WEB_PUBLIC_URL": setup.url},
+                   template=ENV_TEMPLATE)
+        self._audit(f"own domain set up: {setup.url} (tunnel {setup.tunnel}, DNS record {setup.dns})")
+        applied = False
+        if self.bot is not None and not self.setup_mode:
+            try:
+                await self._apply_live(load_config(self.env_path))
+                applied = True
+            except ConfigError:
+                pass
+        if not applied:                                # setup mode / config not complete: just switch the tunnel
+            self.ws.tunnel, self.ws.tunnel_token, self.ws.public_url = True, setup.token, setup.url
+            self._start_tunnel()
+        return web.json_response({"ok": True, "url": setup.url, "hostname": setup.hostname, "dns": setup.dns,
+                                  "tunnel": setup.tunnel, "tunnel_name": setup.tunnel_name})
+
+    async def cloudflare_domain_check(self, request: web.Request) -> web.Response:
+        """Opens the fixed public address like a visitor would and says whether it reaches this bot."""
+        from support.cloudflare import check_reachable
+        url = self.ws.public_url
+        if not url:
+            raise ApiError("No own domain set up yet.")
+        ok, message = await check_reachable(url)
+        return web.json_response({"ok": ok, "url": url, "message": message,
+                                  "tunnel_state": getattr(self.tunnel, "state", None)})
 
     async def _apply_live(self, cfg) -> list[str]:
         """New settings without a restart: bot + cogs, RCON connection, tunnel. Returns what needs a restart."""
