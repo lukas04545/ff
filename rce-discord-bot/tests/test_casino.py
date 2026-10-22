@@ -242,6 +242,7 @@ def test_casino_pages(casino_env):
             r = await c.post("/casino/slots", data={"bet": "100"})
             text = await r.text()
             assert r.status == 200 and "reel" in text and r.headers["Cache-Control"] == "no-store"
+            assert text.count('class="strip"') == 3 and "--t:5.10s" in text and "Spinning" in text   # 5 s spin
             r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "https://evil.example"})
             assert r.status == 403
             r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "null"})     # privacy mode
@@ -259,3 +260,16 @@ def test_casino_pages(casino_env):
             await c.close()
             await casino_env.bot.rcon.close()
     asyncio.run(main())
+
+
+def test_roulette_wheel_stops_on_the_winning_pocket():
+    import re
+    from web import casino_pages as cp
+    for pocket in (0, 17, 26, 32):
+        html = cp._wheel(pocket)
+        end = float(re.search(r"--end:(-?[\d.]+)deg", html)[1])
+        # the pocket's centre turns to the top (the pointer), within its own slice
+        offset = (-end) % 360
+        i = cp.WHEEL.index(pocket)
+        assert i * cp.STEP <= offset <= (i + 1) * cp.STEP and -end > 360 * 5
+    assert "animation:none" in cp._wheel(None)

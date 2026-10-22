@@ -186,7 +186,7 @@ def bj_deal(bet: int, rng: random.Random = RNG) -> dict:
     shoe = new_shoe(rng)
     player = [shoe.pop(), shoe.pop()]
     dealer = [shoe.pop(), shoe.pop()]
-    state = {"shoe": shoe, "dealer": dealer, "active": 0, "finished": False, "step": 0,
+    state = {"shoe": shoe, "dealer": dealer, "active": 0, "finished": False, "step": 0, "moved": "deal",
              "hands": [{"cards": player, "bet": bet, "done": False, "doubled": False, "split_aces": False}]}
     dealer_bj, player_bj = is_blackjack(dealer), is_blackjack(player)
     if dealer_bj or player_bj:          # the dealer peeks: a blackjack on either side ends the round at once
@@ -219,6 +219,7 @@ def bj_act(state: dict, action: str) -> dict:
     hands, shoe = state["hands"], state["shoe"]
     hand = hands[state["active"]]
     state["step"] += 1
+    state["moved"] = [0, 1] if action == "split" else [state["active"]]     # hands that got a card (animation)
     if action == "hit":
         hand["cards"].append(shoe.pop())
         if hand_total(hand["cards"])[0] >= 21:
