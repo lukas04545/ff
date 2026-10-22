@@ -658,7 +658,7 @@ async function loadMeta() { if (!meta) meta = await api("/api/meta"); return met
 function itemPic(short, emoji, cls = "pic") {
   const fallback = h("span", { class: cls + " emoji", text: emoji || "📦" });
   if (!short || meta?.item_images === false) return fallback;
-  const img = h("img", { class: cls, src: `/img/items/${encodeURIComponent(short)}.png`, alt: "", loading: "lazy", draggable: "false" });
+  const img = h("img", { class: cls, src: `/img/items/${encodeURIComponent(short)}.png?s=96`, alt: "", loading: "lazy", decoding: "async", draggable: "false" });
   img.addEventListener("error", () => img.replaceWith(fallback), { once: true });
   return img;
 }

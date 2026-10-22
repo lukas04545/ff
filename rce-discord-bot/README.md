@@ -497,6 +497,13 @@ alternative spellings of the shortname (spaces, dots, underscores). **Store → 
 pictures** fetches every item of the kit builder now and lists the ones that still have none; for those, put your
 own PNG/JPG/WebP into `data/item_images/<shortname>.img` and it is used right away.
 
+**Speed:** pages show small WebP copies of the item pictures and the logo (made once with Pillow, kept in
+`data/item_images/thumbs/`), many times smaller than the originals. Pages, CSS, JS and JSON are sent gzip-compressed;
+pictures and panel files carry an ETag, so browsers re-check them with a tiny "unchanged" reply instead of
+downloading them again. Panel files are linked by their content hash, so browsers keep them until they change. The
+website's background is painted once instead of on every scroll. Without Pillow (`pip install -r requirements.txt`
+installs it) the full-size pictures are sent.
+
 ### Accounts for other admins
 
 The server owner logs in with username **`owner`** and the `WEB_PASSWORD`. Under **👥 Users** (owners

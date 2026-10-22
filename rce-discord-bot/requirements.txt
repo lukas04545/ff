@@ -3,3 +3,5 @@ python-dotenv>=1.0
 # Time zones for the wipe schedule (Windows has no built-in time zone database)
 tzdata>=2023.3
 # aiohttp (WebSocket client for RCON, web interface) is installed together with discord.py
+# Small, fast item pictures and logo for the websites (optional – without it the full-size pictures are sent)
+Pillow>=10.0

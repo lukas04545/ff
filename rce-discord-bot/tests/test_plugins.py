@@ -388,7 +388,7 @@ def test_website_logo_upload_and_default(pb):
             assert r.status == 200 and r.content_type == "image/webp"
             assert (await c.get("/icon")).content_type == "image/png"
             page = await (await c.get("/")).text()
-            assert 'src="/logo"' in page and "Build · Survive · Dominate" in page
+            assert 'src="/logo?s=96&amp;v=' in page and "Build · Survive · Dominate" in page
             url = "/api/plugins/website/file/logo"
             assert (await c.post(url, json={"data": base64.b64encode(png).decode()}, headers=H)).status == 401
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
