@@ -9,6 +9,7 @@
   <script>
     // Apply the saved theme before the first paint (no flash)
     try { const t = localStorage.getItem("rce-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) { /* storage blocked */ }
+    try { if (localStorage.getItem("rce-motion") === "off") document.documentElement.dataset.motion = "off"; } catch (e) { /* storage blocked */ }
   </script>
   <link rel="stylesheet" href="/static/style.css?v=28">
   <link rel="stylesheet" href="/static/neon.css?v=2">
@@ -85,6 +86,7 @@
         <div class="me">
           <span id="avatar" class="avatar">?</span>
           <div id="whoami" class="whoami"></div>
+          <button id="motion" class="icon-btn" type="button" title="Animations: on">✨</button>
           <button id="theme" class="icon-btn" type="button" title="Theme: neon">🌙</button>
         </div>
         <div class="row tight">

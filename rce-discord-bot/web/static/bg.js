@@ -1,9 +1,10 @@
 // Animated neon background for the admin panel: a synthwave grid gliding towards you, a glowing striped sun that
 // breathes on the horizon, embers drifting up, the odd shooting star, and a gentle parallax following the mouse.
 // One <canvas> behind everything (z-index -1).
-// Smooth but cheap: frame-rate independent motion, the sky/sun/vignette are drawn once into a cached image and the
-// embers are pre-rendered sprites. Pauses while the tab is hidden or the light theme is on; a single still frame when
-// the system asks for reduced motion.
+// Cheap on purpose: 30 frames a second at normal resolution, the sky/vignette are drawn once into a cached image,
+// the embers are pre-rendered sprites. Pauses while the tab is hidden or the light theme is on; a single still frame
+// when the system asks for reduced motion, when animations are switched off (✨ button, html[data-motion="off"]),
+// or when the computer can't keep up (it switches itself to the still frame).
 (() => {
   "use strict";
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -22,10 +23,13 @@
   let sky = null, vignette = null;                    // cached layers
   const sprites = {};                                 // ember glow sprites
   let embers = [], stars = [], shooting = null;
-  let running = false, last = 0, t = 0;
+  let running = false, last = 0, t = 0, drawn = 0;
+  let slowFrames = 0, slow = false;                   // can't keep up -> still frame
+  const FRAME = 1000 / 30;
   let mx = 0, my = 0, px = 0, py = 0;                 // mouse target / smoothed parallax (-1..1)
 
   const isLight = () => root.dataset.theme === "light";
+  const motionOff = () => root.dataset.motion === "off";
   const layer = (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; };
 
   function skyColor(y) {
@@ -81,7 +85,7 @@
   }
 
   function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    dpr = 1;                                          // a soft background doesn't need retina pixels
     W = window.innerWidth; H = window.innerHeight;
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     canvas.style.width = W + "px"; canvas.style.height = H + "px";
@@ -89,7 +93,7 @@
     horizon = Math.round(H * 0.62);
     sunR = Math.min(W, H) * 0.19;
     buildLayers();
-    const count = Math.max(30, Math.min(110, Math.round((W * H) / 18000)));
+    const count = Math.max(20, Math.min(55, Math.round((W * H) / 30000)));
     embers = Array.from({ length: count }, () => ember(true));
     stars = Array.from({ length: Math.round(count * 0.8) }, () => ({
       x: Math.random() * W, y: Math.random() * horizon * 0.8, r: Math.random() * 1.1 + 0.2, ph: Math.random() * 6.28,
@@ -131,8 +135,6 @@
       const p = (i + scroll) / lines;
       const y = horizon + gh * Math.pow(p, 2.4);
       const a = Math.min(1, p * 1.25);
-      ctx.strokeStyle = rgba(HOT, a * 0.22); ctx.lineWidth = 6 * p + 2;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
       ctx.strokeStyle = rgba(ORANGE, 0.15 + a * 0.75); ctx.lineWidth = 0.7 + 1.3 * p;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     }
@@ -141,9 +143,7 @@
     for (let k = -n; k <= n; k++) {
       const f = Math.abs(k) / n, xb = vx + (k / n) * W * 0.95;
       const c = f > 0.6 ? CYAN : ORANGE, a = 0.55 - f * 0.32;
-      ctx.strokeStyle = rgba(c, a * 0.28); ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.moveTo(vx, horizon); ctx.lineTo(xb, H); ctx.stroke();
-      ctx.strokeStyle = rgba(c, a); ctx.lineWidth = 1;
+      ctx.strokeStyle = rgba(c, a); ctx.lineWidth = 1.2;
       ctx.beginPath(); ctx.moveTo(vx, horizon); ctx.lineTo(xb, H); ctx.stroke();
     }
     // haze where the grid meets the horizon
@@ -202,7 +202,13 @@
   function step(now) {
     if (!running) return;
     requestAnimationFrame(step);
-    const dt = Math.min((now - last) / 1000, 0.05);  // frame-rate independent, no jumps after a stall
+    if (now - drawn < FRAME - 2) return;              // 30 fps is plenty for a background
+    const took = now - last;
+    drawn = now;
+    // frames keep coming late (> 2 per 30 fps slot): the computer is busy – stop and keep a still frame
+    slowFrames = took > FRAME * 2.2 ? slowFrames + 1 : Math.max(0, slowFrames - 1);
+    if (slowFrames > 45) { slow = true; stop(); return; }
+    const dt = Math.min(took / 1000, 0.05);           // frame-rate independent, no jumps after a stall
     last = now; t += dt;
     px += (mx - px) * Math.min(1, dt * 2.5);         // parallax glides to the mouse
     py += (my - py) * Math.min(1, dt * 2.5);
@@ -214,18 +220,18 @@
   }
 
   function start() {
-    if (running || reduce || isLight() || document.hidden) return;
-    running = true; last = performance.now(); requestAnimationFrame(step);
+    if (running || reduce || slow || motionOff() || isLight() || document.hidden) return;
+    running = true; last = drawn = performance.now(); slowFrames = 0; requestAnimationFrame(step);
   }
   function stop() { running = false; }
-  function sync() { if (isLight() || document.hidden) stop(); else start(); }
+  function sync() { if (isLight() || document.hidden || motionOff()) stop(); else start(); }
 
   window.addEventListener("resize", () => { clearTimeout(resize.timer); resize.timer = setTimeout(resize, 150); });
   window.addEventListener("pointermove", (ev) => {
     mx = (ev.clientX / (W || 1)) * 2 - 1; my = (ev.clientY / (H || 1)) * 2 - 1;
   }, { passive: true });
   document.addEventListener("visibilitychange", sync);
-  new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+  new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ["data-theme", "data-motion"] });
 
   buildSprites();
   resize();
