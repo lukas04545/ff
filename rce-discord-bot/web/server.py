@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import secrets
 import time
 import webbrowser
@@ -38,6 +39,8 @@ from rce.diagnostics import diagnose_rcon
 
 from logbuffer import memory_log
 from web import tunnel as tunnelmod
+from web.caching import YEAR, conditional, maybe_compress
+from web.item_images import THUMB_SIZES
 from web.ratelimit import RateLimiter
 from web.users import OWNER, UserError, UserStore, same_secret
 from cogs.economy import SHOP_KINDS
@@ -57,13 +60,17 @@ if TYPE_CHECKING:
 log = logging.getLogger("rce.web")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+STATIC_TYPES = {".js": "application/javascript", ".css": "text/css", ".html": "text/html", ".png": "image/png",
+                ".svg": "image/svg+xml", ".webp": "image/webp", ".ico": "image/x-icon"}
+STATIC_NAME = re.compile(r"^[\w-]+(\.[\w-]+)*$")
+STATIC_LINK = re.compile(r'(/static/([\w.-]+))\?v=[\w]+')     # index.html: ?v=… becomes the file's content hash
 SESSION_COOKIE = "rce_session"
 PUBLIC_LINK_FILE = "PUBLIC_LINK.txt"  # current public address (Cloudflare tunnel), next to start.bat
 SESSION_TTL = 12 * 3600
 LOGIN_ATTEMPTS_PER_MINUTE = 5          # per IP and per username (every attempt counts)
 LOGIN_FAILURES_PER_15_MIN = 15         # failed attempts -> locked for up to 15 minutes
 PUBLIC_PAGES_PER_MINUTE = 60           # player website per visitor
-PUBLIC_IMAGES_PER_MINUTE = 300         # item pictures per visitor (a shop page shows many)
+PUBLIC_IMAGES_PER_MINUTE = 1200        # item pictures per visitor (the store's kit builder shows ~570)
 PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
@@ -260,6 +267,7 @@ class WebInterface:
         self._public_pages = RateLimiter(PUBLIC_PAGES_PER_MINUTE, 60)
         self._public_images = RateLimiter(PUBLIC_IMAGES_PER_MINUTE, 60)
         self._public_total = RateLimiter(PUBLIC_PAGES_TOTAL_PER_MINUTE, 60)
+        self._static_cache: dict[str, tuple[int, bytes, str]] = {}
         self._runner: web.AppRunner | None = None
         self.tunnel: tunnelmod.Tunnel | None = None
         self.tunnel_problem: str | None = None
@@ -289,13 +297,14 @@ class WebInterface:
     # ------------------------------------------------------------ Start/stop
 
     def _build_app(self) -> web.Application:
-        app = web.Application(middlewares=[self._error_middleware, self._host_middleware, self._auth_middleware],
+        app = web.Application(middlewares=[self._compress_middleware, self._error_middleware, self._host_middleware,
+                                           self._auth_middleware],
                               client_max_size=1024 ** 2)
         r = app.router
         r.add_get("/", self._root)                                  # player website (or -> /admin if it's off)
         r.add_get("/admin", self._index)                            # the control panel
         r.add_get("/admin/", self._index)
-        r.add_static("/static/", STATIC_DIR)
+        r.add_get("/static/{name}", self._static)
         r.add_post("/api/item-images/scan", self.item_images_scan)
         r.add_get("/api/item-images/scan", self.item_images_scan_state)
         r.add_get("/img/items/{name}", self.item_image)            # public: item pictures (cached by the bot)
@@ -504,6 +513,12 @@ class WebInterface:
             await self._runner.cleanup()
 
     # ------------------------------------------------------------ Middleware
+
+    @web.middleware
+    async def _compress_middleware(self, request: web.Request, handler):
+        resp = await handler(request)
+        maybe_compress(request, resp)
+        return resp
 
     @web.middleware
     async def _error_middleware(self, request: web.Request, handler):
@@ -746,7 +761,8 @@ class WebInterface:
         name = request.match_info["name"]
         for ext in (".png", ".jpg", ".webp"):
             name = name.removesuffix(ext)
-        found = await self.item_images.get(name)
+        size = int(request.query["s"]) if request.query.get("s", "").isdigit() else None
+        found = await self.item_images.get(name, size if size in THUMB_SIZES else None)
         if found is None:
             if request.query.get("ph"):        # player website: a neutral tile with the shortname instead of a 404
                 return web.Response(text=placeholder_svg(name), content_type="image/svg+xml",
@@ -754,8 +770,7 @@ class WebInterface:
                                              "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"})
             raise web.HTTPNotFound(headers={"Cache-Control": "public, max-age=3600"})
         data, kind = found
-        return web.Response(body=data, content_type=kind,
-                            headers={"Cache-Control": "public, max-age=604800", "X-Content-Type-Options": "nosniff"})
+        return conditional(request, data, kind, "public, max-age=604800")
 
     async def item_images_scan(self, request: web.Request) -> web.Response:
         """Owner: fetch the pictures of every catalogue item now and report which ones have none."""
@@ -951,8 +966,41 @@ class WebInterface:
 
     # ------------------------------------------------------------ Pages & login
 
-    async def _index(self, request: web.Request) -> web.FileResponse:
-        return web.FileResponse(STATIC_DIR / "index.html")
+    def _static_file(self, name: str) -> tuple[bytes, str] | None:
+        """(content, short hash) of a file in web/static, kept in memory until the file changes."""
+        path = STATIC_DIR / name
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        cached = self._static_cache.get(name)
+        if cached is None or cached[0] != mtime:
+            data = path.read_bytes()
+            cached = (mtime, data, hashlib.blake2s(data, digest_size=6).hexdigest())
+            self._static_cache[name] = cached
+        return cached[1], cached[2]
+
+    async def _static(self, request: web.Request) -> web.Response:
+        """Panel files. With ?v=… (index.html links them by content hash) the browser keeps them for a year."""
+        name = request.match_info["name"]
+        kind = STATIC_TYPES.get(Path(name).suffix.lower())
+        found = self._static_file(name) if kind and STATIC_NAME.match(name) else None
+        if found is None:
+            raise web.HTTPNotFound()
+        cache = YEAR if request.query.get("v") else "no-cache"
+        charset = "utf-8" if kind.startswith(("text/", "application/")) else None
+        return conditional(request, found[0], kind, cache, charset=charset)
+
+    async def _index(self, request: web.Request) -> web.Response:
+        found = self._static_file("index.html")
+        if found is None:
+            raise web.HTTPNotFound()
+
+        def versioned(m: re.Match) -> str:
+            linked = self._static_file(m[2])
+            return f"{m[1]}?v={linked[1] if linked else '0'}"
+        page = STATIC_LINK.sub(versioned, found[0].decode("utf-8"))
+        return conditional(request, page.encode("utf-8"), "text/html", "no-cache", charset="utf-8")
 
     def _login_blocked(self, *keys: str, count: bool = True) -> float | None:
         """Seconds to wait if one of the keys (IP, username …) is locked. count=True counts this attempt."""

@@ -1,11 +1,12 @@
 """Player website: a public website for your players – live status, next wipe, leaderboards, player profiles,
 the points shop (with item pictures), rules and how to join.
 
-Address: your web interface link + /play (shown on the plugin card). Share it in server lists, ads, Discord and
+Address: the root of your web interface link (shown on the plugin card). Share it in server lists, ads, Discord and
 social media bios. Read-only: no login, no settings, no Discord IDs – only what's already public on Discord.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
@@ -15,6 +16,7 @@ from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from plugin_api import Plugin, Setting
+from web.caching import YEAR, conditional
 from utils import format_duration, strip_rich_text
 
 INVITE = re.compile(r"^https://(discord\.gg|discord\.com/invite)/[\w-]{2,40}$")
@@ -22,6 +24,7 @@ CSP = ("default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; bas
        "form-action 'self' https://www.paypal.com https://www.sandbox.paypal.com; frame-ancestors 'none'")
 BOARDS = {"kills": "Kills", "kd": "K/D", "playtime": "Playtime", "teams": "Teams"}
 CACHE_SECONDS = 20
+HEADER_LOGO = 96                     # px of the small logo in the header (2× its 42 px for sharp phone screens)
 
 ASSETS = Path(__file__).resolve().parent / "website_assets"     # default logo (replace it on the Plugins page)
 NOISE = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E"
@@ -35,14 +38,15 @@ STYLE = """
 --grad:linear-gradient(90deg,var(--red),var(--orange));--cut:14px;
 --head:Impact,"Haettenschweiler","Arial Narrow Bold","Franklin Gothic Heavy","Oswald",sans-serif}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%;background:var(--bg)}
-body{margin:0;color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;
+body{margin:0;color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
 background:url("NOISE"),radial-gradient(ellipse 90% 55% at 50% -8%,rgba(247,110,30,.32),transparent 70%),
 radial-gradient(ellipse 60% 40% at 85% 10%,rgba(229,52,28,.18),transparent 70%),
-linear-gradient(180deg,#120a07 0%,var(--bg) 55%);background-attachment:fixed}
+linear-gradient(180deg,#120a07 0%,var(--bg) 55%)}
 a{color:inherit}a:hover{color:var(--orange)}td a,.card p a{text-decoration:none;border-bottom:1px solid rgba(247,147,30,.4)}
 h1,h2,h3,.brand,nav a,.tabs a,.btn,th,.big,.kicker{font-family:var(--head);text-transform:uppercase;letter-spacing:.06em;
 font-weight:400}
-header{background:rgba(6,6,6,.82);backdrop-filter:blur(8px);position:sticky;top:0;z-index:5}
+header{background:rgba(6,6,6,.94);position:sticky;top:0;z-index:5}
 header::after{content:"";display:block;height:2px;background:var(--grad);opacity:.85}
 .bar{max-width:1080px;margin:0 auto;padding:8px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .brand{font-size:1.3rem;text-decoration:none;display:flex;align-items:center;gap:10px;color:#fff}
@@ -141,6 +145,8 @@ class PlayerWebsite(Plugin):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._status: tuple[float, dict] | None = None
+        self._pictures: dict[tuple, tuple[bytes, str]] = {}     # (which, size, logo file state) -> picture
+        self._style: tuple[str, str] | None = None              # (accent, finished CSS)
 
     # ------------------------------------------------------------ Data
 
@@ -207,6 +213,9 @@ class PlayerWebsite(Plugin):
                       for path, label in links)
         accent = self.setting("accent").strip()
         accent = accent if re.fullmatch(r"#[0-9a-fA-F]{6}", accent) else "#e5341c"
+        if self._style is None or self._style[0] != accent:
+            self._style = (accent, STYLE.replace("ACCENT", accent))
+        version = self.picture_version()
         live = self.live()
         site = self.site_title()
         motto = f'<div class="motto">{esc(self.setting("motto"))}</div>' if self.setting("motto").strip() else ""
@@ -215,9 +224,10 @@ class PlayerWebsite(Plugin):
                 f'<meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<title>{esc(title + " – " if title else "")}{esc(site)}</title>'
                 f'<meta name="description" content="{esc(self.setting("tagline"))}">'
-                f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon">'
-                f'<style>{STYLE.replace("ACCENT", accent)}</style></head><body>'
-                f'<header><div class="bar"><a class="brand" href="{base}/"><img src="{base}/logo" alt="">'
+                f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon?v={version}">'
+                f'<style>{self._style[1]}</style></head><body>'
+                f'<header><div class="bar"><a class="brand" href="{base}/"><img src="{base}/logo?s={HEADER_LOGO}'
+                f'&amp;v={version}" alt="" width="42" height="42" decoding="async">'
                 f'<span class="name">{esc(site)}</span><span class="dot{" on" if live["online"] else ""}" '
                 f'title="{"Online" if live["online"] else "Offline"}"></span></a><nav>{nav}</nav></div></header>'
                 f'<main>{body}</main><footer>{motto}Updated {esc(updated)} · '
@@ -227,9 +237,9 @@ class PlayerWebsite(Plugin):
         tiles = []
         for short, amount in items[:40]:
             short_q = quote(short)
-            tiles.append(f'<div class="it" title="{esc(short)} × {amount}"><img src="/img/items/{short_q}.png?ph=1" '
-                         f'alt="{esc(short)}" loading="lazy"><span class="q">{"×" + str(amount) if amount > 1 else ""}'
-                         f'</span></div>')
+            tiles.append(f'<div class="it" title="{esc(short)} × {amount}"><img src="/img/items/{short_q}.png?ph=1&amp;'
+                         f's=96" alt="{esc(short)}" width="46" height="46" loading="lazy" decoding="async">'
+                         f'<span class="q">{"×" + str(amount) if amount > 1 else ""}</span></div>')
         return f'<div class="items">{"".join(tiles)}</div>' if tiles else ""
 
     # ------------------------------------------------------------ Pages
@@ -250,7 +260,8 @@ class PlayerWebsite(Plugin):
         else:
             wipe, wipe_sub = self.bot.config.rust_server_wipe or "Announced on Discord", ""
         tagline, motto = self.setting("tagline").strip(), self.setting("motto").strip()
-        body = (f'<section class="hero"><img class="logo" src="{base}/logo" alt="{esc(self.site_title())}">'
+        body = (f'<section class="hero"><img class="logo" src="{base}/logo?v={self.picture_version()}" '
+                f'alt="{esc(self.site_title())}" width="360" height="360" fetchpriority="high">'
                 f'<h1>{esc(self.site_title())}</h1>'
                 + (f'<div class="kicker">{esc(tagline)}</div>' if tagline else "")
                 + (f'<div class="motto">{esc(motto)}</div>' if motto else "")
@@ -435,17 +446,39 @@ class PlayerWebsite(Plugin):
             return 200, self.rules(base)
         return 404, self.not_found(base)
 
-    def picture(self, which: str) -> tuple[bytes, str]:
-        """The logo (uploaded on the Plugins page, else the bundled one) or the small icon for the browser tab."""
-        from web.item_images import image_type
+    def _logo_state(self) -> tuple:
+        custom = self.file("logo")
+        try:
+            return (custom.name, custom.stat().st_mtime_ns, custom.stat().st_size) if custom is not None else ()
+        except OSError:
+            return ()
+
+    def picture_version(self) -> str:
+        """Changes when another logo is uploaded – the pictures' addresses carry it, so browsers keep them a year."""
+        return hashlib.blake2s(repr(self._logo_state()).encode(), digest_size=4).hexdigest()
+
+    def picture(self, which: str, size: int | None = None) -> tuple[bytes, str]:
+        """The logo (uploaded on the Plugins page, else the bundled one) or the small icon for the browser tab.
+        size: a smaller WebP copy (made once and kept in memory)."""
+        key = (which, size, self._logo_state())
+        if key not in self._pictures:
+            if len(self._pictures) > 8:
+                self._pictures.clear()
+            self._pictures[key] = self._load_picture(which, size)
+        return self._pictures[key]
+
+    def _load_picture(self, which: str, size: int | None) -> tuple[bytes, str]:
+        from web.item_images import image_type, shrink
+        data, kind = b"", None
         custom = self.file("logo")
         if custom is not None:
             data = custom.read_bytes()
             kind = image_type(data)
-            if kind:
-                return data, kind
-        data = (ASSETS / ("icon.png" if which == "icon" else "logo.webp")).read_bytes()
-        return data, image_type(data) or "image/png"
+        if not kind:
+            data = (ASSETS / ("icon.png" if which == "icon" else "logo.webp")).read_bytes()
+            kind = image_type(data) or "image/png"
+        small = shrink(data, size) if size else None
+        return (small, "image/webp") if small else (data, kind)
 
     async def web_public(self, request, path: str):
         """Public (no login): the site root /… (also /p/website/…); /status.json for other tools."""
@@ -456,9 +489,11 @@ class PlayerWebsite(Plugin):
             data = {"name": self.site_title(), **self.live()}
             return web.Response(text=json.dumps(data), content_type="application/json", headers=headers)
         if path in ("logo", "icon"):
-            data, kind = self.picture(path)
-            return web.Response(body=data, content_type=kind,
-                                headers={**headers, "Cache-Control": "public, max-age=86400"})
+            size = HEADER_LOGO if request.query.get("s") == str(HEADER_LOGO) else None
+            data, kind = self.picture(path, size)
+            versioned = request.query.get("v") == self.picture_version()
+            return conditional(request, data, kind, YEAR if versioned else "public, max-age=3600",
+                               headers={k: v for k, v in headers.items() if k != "Cache-Control"})
         # Links inside the site: "" at the root, /p/website/… there, /play/… for forms of a page opened before the move
         if request.path.startswith(f"/p/{self.plugin_id}"):
             base = f"/p/{self.plugin_id}"

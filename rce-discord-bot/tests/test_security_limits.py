@@ -120,7 +120,7 @@ def test_player_website_and_pictures_are_limited(bot, monkeypatch):
         r = await c.get("/leaderboard")
         assert r.status == 429 and "Retry-After" in r.headers
         assert (await c.get("/p/website")).status == 429
-        statuses = {(await c.get("/img/items/rifle.ak.png")).status for _ in range(300)}
+        statuses = {(await c.get("/img/items/rifle.ak.png")).status for _ in range(1200)}   # store builder: ~570
         assert 429 not in statuses and (await c.get("/img/items/rifle.ak.png")).status == 429
         await c.post("/api/login", json={"password": "secret123"}, headers=H)
         assert (await c.get("/img/items/rifle.ak.png")).status != 429   # logged-in admins: no limit

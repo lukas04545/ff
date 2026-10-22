@@ -8,6 +8,7 @@ the web interface then shows the category emoji instead.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import re
 import time
@@ -20,6 +21,11 @@ from web.ratelimit import RateLimiter
 
 log = logging.getLogger("rce.items.images")
 
+try:                                    # optional: without Pillow the original pictures are sent
+    from PIL import Image
+except ImportError:                     # pragma: no cover
+    Image = None
+
 DEFAULT_URL = "https://rustlabs.com/img/items180/{shortname}.png"
 # Tried after the configured source when it has no picture for an item (best effort – a source that is down or
 # doesn't know the item is simply skipped). Your own pictures always win: put <shortname>.img in data/item_images/.
@@ -31,6 +37,8 @@ SHORTNAME = re.compile(r"^[a-z0-9][a-z0-9._ -]{0,63}$")
 MAX_BYTES = 512 * 1024
 MISSING_RETRY = 86400           # seconds before an item without a picture is tried again
 DOWNLOADS_PER_MINUTE = 60       # new downloads from the source, all visitors together
+THUMB_SIZES = (96,)              # sizes a page may ask for (?s=96): small WebP copies, many times smaller
+MAX_PIXELS = 16_000_000         # bigger pictures aren't shrunk (decompression bombs)
 MAGIC = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"RIFF", "image/webp"),
          (b"GIF8", "image/gif"))
 
@@ -52,6 +60,25 @@ def image_type(data: bytes) -> str | None:
     return None
 
 
+def shrink(data: bytes, size: int) -> bytes | None:
+    """A WebP copy of a picture that fits in size × size, or None (no Pillow, unreadable, or not smaller)."""
+    if Image is None:
+        return None
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            if im.width * im.height > MAX_PIXELS:
+                return None
+            im = im.convert("RGBA")
+            im.thumbnail((size, size), Image.LANCZOS)
+            out = io.BytesIO()
+            im.save(out, "WEBP", quality=82, method=4)
+    except Exception as exc:            # broken/unsupported file: send the original
+        log.debug("Could not shrink a picture: %s", exc)
+        return None
+    small = out.getvalue()
+    return small if len(small) < len(data) else None
+
+
 class ItemImages:
     def __init__(self, folder: Path, url_template: str = DEFAULT_URL) -> None:
         self.folder = Path(folder)
@@ -71,8 +98,9 @@ class ItemImages:
         except OSError:
             return None
 
-    async def get(self, shortname: str) -> tuple[bytes, str] | None:
-        """(image bytes, content type) or None if there is no picture for this item."""
+    async def get(self, shortname: str, size: int | None = None) -> tuple[bytes, str] | None:
+        """(image bytes, content type) or None if there is no picture for this item.
+        size: one of THUMB_SIZES for a small WebP copy (made once, kept in data/item_images/thumbs/)."""
         shortname = (shortname or "").strip().lower()
         if not SHORTNAME.match(shortname):
             return None
@@ -87,7 +115,35 @@ class ItemImages:
                     data = await self._download(shortname)
             self._locks.pop(shortname, None)
         kind = image_type(data) if data else None
-        return (data, kind) if kind else None
+        if not kind:
+            return None
+        if size in THUMB_SIZES:
+            small = await self._thumb(shortname, data, size)
+            if small:
+                return small, "image/webp"
+        return data, kind
+
+    async def _thumb(self, shortname: str, data: bytes, size: int) -> bytes | None:
+        """The small copy from disk (remade when the original is newer), else made now. An empty file means
+        "the original is already small" – then None."""
+        if Image is None:
+            return None
+        original = self._path(shortname)
+        path = self.folder / "thumbs" / f"{original.stem}.{size}.webp"
+        try:
+            if path.stat().st_mtime >= original.stat().st_mtime:
+                return path.read_bytes() or None
+        except OSError:
+            pass
+        small = await asyncio.get_running_loop().run_in_executor(None, shrink, data, size)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".part")
+            tmp.write_bytes(small or b"")
+            tmp.replace(path)
+        except OSError as exc:
+            log.debug("Could not save the small picture of %s: %s", shortname, exc)
+        return small
 
     def _sources(self) -> list[str]:
         return [self.url_template, *(u for u in FALLBACK_URLS if u != self.url_template)]
