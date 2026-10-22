@@ -308,3 +308,78 @@ def test_the_server_decides_and_keeps_its_secrets(casino_env, monkeypatch):
             await c.close()
             await casino_env.bot.rcon.close()
     asyncio.run(main())
+
+
+# ------------------------------------------------------------ Poker tables
+
+def test_poker_tables_money_flow_and_restart_refund(casino_env):
+    from cogs.player_accounts import _hash
+    casino = casino_env.m.running("casino")
+    db = casino_env.db
+    db.add_player_session(_hash("tok8"), 8, "Mate8", int(time.time()) + 3600)
+    db.add_points(8, 1000, "test")
+    assert set(casino.tables) == {"low-stakes", "high-stakes"}
+    t = casino.tables["low-stakes"]
+    with pytest.raises(g.GameError, match="Buy in"):
+        casino.poker_sit(7, "Gamer7", "low-stakes", 50)                      # below the smallest buy-in
+    casino.poker_sit(7, "Gamer7", "low-stakes", 400)
+    casino.poker_sit(8, "Mate8", "low-stakes", 300)
+    assert casino.balance(7) == 600 and casino.balance(8) == 700
+    with pytest.raises(g.GameError, match="already sitting"):
+        casino.poker_sit(7, "Gamer7", "high-stakes", 2000)
+    assert t.tick(time.time() + 3) and t.in_hand_now
+    casino._after(t)
+    view7, view8 = casino.poker_view(7, "low-stakes"), casino.poker_view(8, "low-stakes")
+    me7 = view7["seats"][view7["you"]]
+    assert len(me7["cards"]) == 2 and view8["seats"][view7["you"]]["cards"] is None    # can't see my cards
+    actor = t.seats[t.to_act].user_id
+    casino.poker_act(actor, "low-stakes", "call")
+    # crash: the saved table comes back on the next start and every chip is returned
+    saved = casino.data.get("poker")
+    assert saved["low-stakes"]["street"] == "preflop"
+    asyncio.run(casino_env.m.set_enabled("casino", False))                # stops the plugin: tables closed
+    assert casino.balance(7) == 1000 and casino.balance(8) == 1000
+    casino.data.set("poker", saved)                                       # as if the bot had crashed instead
+    asyncio.run(casino_env.m.set_enabled("casino", True))
+    assert casino_env.db.wallet(7)["points"] + casino_env.db.wallet(8)["points"] == 2000 + 400 + 300
+
+
+def test_poker_pages_and_long_poll(casino_env):
+    casino = casino_env.m.running("casino")
+
+    async def main():
+        from web.server import WebInterface
+        web = WebInterface(casino_env.bot, env_path=casino_env.tmp / ".env",
+                           secret_path=casino_env.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            c.session.cookie_jar.update_cookies({"rce_player": "tok"})
+            page = await (await c.get("/casino/poker")).text()
+            assert "Low stakes" in page and "Blinds <b>5 / 10</b>" in page
+            page = await (await c.get("/casino/poker/low-stakes")).text()
+            assert re.search(r'<script src="/poker\.js\?v=\w+" defer>', page) and 'data-table="low-stakes"' in page
+            js = await c.get(re.search(r'src="(/poker\.js\?v=\w+)"', page)[1])
+            assert js.content_type == "application/javascript"
+            r = await (await c.post("/casino/poker/low-stakes/sit", data={"buyin": "300"})).json()
+            assert r["ok"] and r["balance"] == 700 and r["state"]["you"] is not None
+            r = await (await c.post("/casino/poker/low-stakes/sit", data={"buyin": "300"})).json()
+            assert "already sitting" in r["error"]
+            v = r["state"]["version"]
+            state = await (await c.get(f"/casino/poker/low-stakes/state?v={v - 1}")).json()   # changed: at once
+            assert state["version"] == v
+            waited = asyncio.create_task(c.get(f"/casino/poker/low-stakes/state?v={v}"))
+            await asyncio.sleep(0.2)
+            assert not waited.done()                                         # nothing changed: it waits …
+            casino.poker_act(7, "low-stakes", "away")                        # … until the table changes
+            got = await asyncio.wait_for(waited, 3)
+            assert (await got.json())["version"] > v
+            r = await (await c.post("/casino/poker/low-stakes/leave", data={})).json()
+            assert r["ok"] and r["balance"] == 1000
+            assert (await c.post("/casino/poker/low-stakes/sit", data={"buyin": "300"},
+                                 headers={"Origin": "https://evil.example"})).status == 403
+            assert (await c.get("/casino/poker/nope", allow_redirects=False)).status == 303
+        finally:
+            await c.close()
+            await casino_env.bot.rcon.close()
+    asyncio.run(main())
