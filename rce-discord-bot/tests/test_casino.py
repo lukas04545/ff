@@ -280,3 +280,31 @@ def test_roulette_wheel_stops_on_the_winning_pocket():
         i = cp.WHEEL.index(pocket)
         assert i * cp.STEP <= offset <= (i + 1) * cp.STEP and -end > 360 * 5
     assert "animation:none" in cp._wheel(None)
+
+
+def test_the_server_decides_and_keeps_its_secrets(casino_env, monkeypatch):
+    """Results come only from the server's OS random source: the browser sends its choices, never a seed, and
+    the page never shows the dealer's hidden card or the deck."""
+    import secrets
+    assert isinstance(g.RNG, secrets.SystemRandom)              # OS entropy – there is no seed to know or send
+    order = [card("8"), card("7"), card("10"), card("9", 1)]     # dealer's hole card: 9♥
+    monkeypatch.setattr(g, "new_shoe", lambda rng=None: [card("2")] * 30 + list(reversed(order)))
+
+    async def main():
+        from web.server import WebInterface
+        web = WebInterface(casino_env.bot, env_path=casino_env.tmp / ".env",
+                           secret_path=casino_env.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            c.session.cookie_jar.update_cookies({"rce_player": "tok"})
+            # extra fields (a "seed", a forced result) are simply ignored
+            r = await c.post("/casino/blackjack", data={"bet": "100", "action": "deal", "seed": "1", "card": "A♠"})
+            text = await r.text()
+            assert "10♠" in text and "9♥" not in text and "2♠" not in text          # hole card + deck stay hidden
+            assert "shoe" not in text and casino_env.m.running("casino").bj_state(7)["dealer"][1] == card("9", 1)
+            assert set(re.findall(r'<(?:input|select|button)[^>]*\bname="(\w+)"', text)) <= {"action", "step", "bet"}
+        finally:
+            await c.close()
+            await casino_env.bot.rcon.close()
+    asyncio.run(main())
