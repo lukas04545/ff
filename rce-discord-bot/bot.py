@@ -153,6 +153,13 @@ class RceBot(commands.Bot):
                     await self.tree.sync(guild=guild)
                 except discord.HTTPException as exc:
                     log.warning("Could not remove old slash commands on %s: %s", guild.name, exc)
+        failures = self.plugins.startup_failures if self.plugins is not None else []
+        if failures and not getattr(self, "_plugin_failures_reported", False):
+            self._plugin_failures_reported = True        # once per start (on_ready also runs after reconnects)
+            for pid, error in failures:
+                log.warning("Plugin %s is switched on but couldn't start: %s", pid, error)
+                self.audit(f"🧩 ⚠️ Plugin **{pid}** is switched on but couldn't start: `{error[:300]}` – a plugin made "
+                           "for an older bot version may need a small change (web interface → 🧩 Plugins).")
         problems = check_permissions(self)
         if problems:
             log.warning("The bot is missing Discord permissions (details also in the web interface → Overview):")

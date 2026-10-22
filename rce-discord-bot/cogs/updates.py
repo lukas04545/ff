@@ -21,7 +21,10 @@ class Updates(commands.Cog):
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
         cfg = bot.config
-        self.updater = Updater(cfg.auto_update_repo, cfg.auto_update_branch, before_apply=self._backup)
+        from plugin_manager import user_dir_for
+        db_path = getattr(cfg, "database_path", None)
+        self.updater = Updater(cfg.auto_update_repo, cfg.auto_update_branch, before_apply=self._backup,
+                               plugin_dir=user_dir_for(db_path) if db_path else None)    # your plugins (kept)
         self._lock = asyncio.Lock()
 
     def _backup(self) -> None:
@@ -73,6 +76,10 @@ class Updates(commands.Cog):
         elif result.restart_needed:
             text = (f"🔄 Update installed: `{(result.sha or '')[:7]}` {result.title} – restarting the bot "
                     f"({len(result.changed)} file(s) changed).")
+            if result.rescued:
+                text += (" 🧩 Your changed plugin file(s) were kept in data/plugins/ (they replace the built-in with the "
+                         "same name – delete them on the Plugins page to use the new built-in): "
+                         + ", ".join(f"`{r}`" for r in result.rescued))
             log.warning(text.replace("`", ""))
             self.bot.audit(text)
             self.bot.request_update_restart()
