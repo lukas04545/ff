@@ -236,7 +236,9 @@ def test_web_api_and_player_website(pb):
         await c.start_server()
         try:
             assert (await c.get("/api/plugins")).status == 401
-            assert (await c.get("/play")).status == 404                          # off -> no website
+            r = await c.get("/", allow_redirects=False)                          # website off -> the panel
+            assert r.status == 302 and r.headers["Location"] == "/admin"
+            assert (await c.get("/leaderboard")).status == 404
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
             r = await (await c.get("/api/plugins")).json()
             assert {p["id"] for p in r["plugins"]} == ALL
@@ -254,26 +256,26 @@ def test_web_api_and_player_website(pb):
             r = await c.post("/api/plugins/upload", json={"filename": "x.py", "code": "nope("}, headers=H)
             assert r.status == 400
             c.session.cookie_jar.clear()                                          # the website needs no login
-            r = await c.get("/play")
+            r = await c.get("/")
             page = await r.text()
             assert r.status == 200 and "<script>" not in page and "javascript:" not in page
             assert "https://discord.gg/abc" in page and "#123456" in page and "&lt;b&gt;solo/duo&lt;/b&gt;" in page
             assert "default-src 'none'" in r.headers["Content-Security-Policy"]
-            page = await (await c.get("/play/leaderboard?by=kills")).text()
+            page = await (await c.get("/leaderboard?by=kills")).text()
             assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "player?name=Ace" in page
-            page = await (await c.get("/play/player?name=ace")).text()
+            page = await (await c.get("/player?name=ace")).text()
             assert ">Ace <span" in page and "2h" in page
-            page = await (await c.get("/play/player?name=A")).text()
+            page = await (await c.get("/player?name=A")).text()
             assert "Did you mean" in page and "player?name=Ace" in page
-            page = await (await c.get("/play/shop")).text()
+            page = await (await c.get("/shop")).text()
             assert "Raid kit" in page and "/img/items/ammo.rocket.basic.png?ph=1" in page and "500" in page
-            assert (await c.get("/play/rules")).status == 200
-            assert (await c.get("/play/nope")).status == 404
+            assert (await c.get("/rules")).status == 200
+            assert (await c.get("/nope")).status == 404
             assert (await c.get("/p/website/leaderboard")).status == 200
-            data = await (await c.get("/play/status.json")).json()
+            data = await (await c.get("/status.json")).json()
             assert data["online"] is False and "password" not in json.dumps(data).lower()
             await m.save_settings("website", {"leaderboards": False})
-            assert (await c.get("/play/leaderboard")).status == 404
+            assert (await c.get("/leaderboard")).status == 404
         finally:
             await c.close()
             await pb.bot.rcon.close()
@@ -382,11 +384,11 @@ def test_website_logo_upload_and_default(pb):
         c = TestClient(TestServer(web.app))
         await c.start_server()
         try:
-            r = await c.get("/play/logo")                                         # bundled default logo
+            r = await c.get("/logo")                                         # bundled default logo
             assert r.status == 200 and r.content_type == "image/webp"
-            assert (await c.get("/play/icon")).content_type == "image/png"
-            page = await (await c.get("/play")).text()
-            assert 'src="/play/logo"' in page and "Build · Survive · Dominate" in page
+            assert (await c.get("/icon")).content_type == "image/png"
+            page = await (await c.get("/")).text()
+            assert 'src="/logo"' in page and "Build · Survive · Dominate" in page
             url = "/api/plugins/website/file/logo"
             assert (await c.post(url, json={"data": base64.b64encode(png).decode()}, headers=H)).status == 401
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
@@ -401,10 +403,10 @@ def test_website_logo_upload_and_default(pb):
             r = await c.put("/api/plugins/website/settings", json={"values": {"logo": "../../.env"}}, headers=H)
             assert r.status == 200 and m.settings_of("website")["logo"] == "logo.png"     # can't be set by hand
             c.session.cookie_jar.clear()
-            assert await (await c.get("/play/logo")).read() == png                 # the uploaded logo is used
+            assert await (await c.get("/logo")).read() == png                 # the uploaded logo is used
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
             assert (await c.delete(url, headers=H)).status == 200
-            assert (await c.get("/play/logo")).content_type == "image/webp"        # back to the default
+            assert (await c.get("/logo")).content_type == "image/webp"        # back to the default
             assert (await c.post("/api/plugins/bounties/file/min_amount", json={"data": ""}, headers=H)).status == 400
         finally:
             await c.close()

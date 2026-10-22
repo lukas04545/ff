@@ -1,4 +1,4 @@
-"""Player account pages (/play/account …): log in with a one-time Discord code, then manage your own custom kits –
+"""Player account pages (/account …): log in with a one-time Discord code, then manage your own custom kits –
 add items, buy team slots per month and pick which teammate sits on each slot.
 
 Server-rendered HTML forms, no scripts. The login cookie holds a random token; only its hash is stored. Buying
@@ -186,14 +186,14 @@ async def handle(site, accounts, shop, request, base: str, path: str, ip: str):
                 return login_page(site, base, error=str(exc), player=player, stage="code")
             resp = web.HTTPSeeOther(f"{base}/account")
             resp.set_cookie(COOKIE, new_token, max_age=SESSION_TTL, httponly=True, samesite="Lax",
-                            secure=_secure(request), path=base)
+                            secure=_secure(request), path=base or "/")
             raise resp
         if sess is None:
             raise web.HTTPSeeOther(f"{base}/account")
         if sub == "logout":
             accounts.logout(token)
             resp = web.HTTPSeeOther(f"{base}/account")
-            resp.del_cookie(COOKIE, path=base)
+            resp.del_cookie(COOKIE, path=base or "/")
             raise resp
         if sub == "slot":
             action = str(form.get("action", ""))

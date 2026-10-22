@@ -116,8 +116,8 @@ def test_player_website_and_pictures_are_limited(bot, monkeypatch):
 
     async def scenario(c, web):
         for _ in range(60):
-            assert (await c.get("/play")).status == 404       # plugins not loaded here: 404, but counted
-        r = await c.get("/play")
+            assert (await c.get("/leaderboard")).status == 404       # plugins not loaded here: 404, but counted
+        r = await c.get("/leaderboard")
         assert r.status == 429 and "Retry-After" in r.headers
         assert (await c.get("/p/website")).status == 429
         statuses = {(await c.get("/img/items/rifle.ak.png")).status for _ in range(300)}
@@ -126,6 +126,6 @@ def test_player_website_and_pictures_are_limited(bot, monkeypatch):
         assert (await c.get("/img/items/rifle.ak.png")).status != 429   # logged-in admins: no limit
         clock[0] += 61
         c.session.cookie_jar.clear()
-        assert (await c.get("/play")).status == 404                    # a minute later: allowed again
+        assert (await c.get("/leaderboard")).status == 404                    # a minute later: allowed again
         assert web._public_total.limit == 1200
     run(bot, scenario)

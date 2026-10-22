@@ -245,7 +245,7 @@ FIELDS: list[Field] = [
                "owners (web interface → Store)."),
     Field("STORE_ADMIN_KEY", "Admin key (free checkout)", "store", "secret",
           help="Lets staff take any store item without paying: open the store with ?admin=1 at the end of the address "
-               "(e.g. …/play/store?admin=1) and enter this key at checkout. At least 12 characters – share it only "
+               "(e.g. …/store?admin=1) and enter this key at checkout. At least 12 characters – share it only "
                "with staff. Every use is posted in the purchase log with a ping. Empty = off."),
     Field("STORE_DEFAULT_ITEM_PRICE", "Price for every other item (per item)", "store", placeholder="0",
           help="The custom-kit builder on the website shows every item of the staff kit builder. Items with a rule in "

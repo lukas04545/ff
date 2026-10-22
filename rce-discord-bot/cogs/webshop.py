@@ -1,4 +1,4 @@
-"""Web store: players buy kits on the player website (/play/store) with PayPal and/or gift cards.
+"""Web store: players buy kits on the player website (/store) with PayPal and/or gift cards.
 
 What can be bought
   * Kits for sale – staff-made bot kits (kit builder) and the server's in-game kits are added automatically (hidden

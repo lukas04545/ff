@@ -67,6 +67,8 @@ PUBLIC_IMAGES_PER_MINUTE = 300         # item pictures per visitor (a shop page 
 PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
+# First path segments that are never a page of the player website (it lives at the site root)
+ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
                        "/api/plugins", "/api/webshop", "/api/item-images")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
@@ -290,7 +292,9 @@ class WebInterface:
         app = web.Application(middlewares=[self._error_middleware, self._host_middleware, self._auth_middleware],
                               client_max_size=1024 ** 2)
         r = app.router
-        r.add_get("/", self._index)
+        r.add_get("/", self._root)                                  # player website (or -> /admin if it's off)
+        r.add_get("/admin", self._index)                            # the control panel
+        r.add_get("/admin/", self._index)
         r.add_static("/static/", STATIC_DIR)
         r.add_post("/api/item-images/scan", self.item_images_scan)
         r.add_get("/api/item-images/scan", self.item_images_scan_state)
@@ -397,12 +401,15 @@ class WebInterface:
         r.add_get("/api/plugins/{pid}/file/{key}", self.plugin_file_get)
         r.add_post("/api/plugins/{pid}/file/{key}", self.plugin_file_upload)
         r.add_delete("/api/plugins/{pid}/file/{key}", self.plugin_file_delete)
-        r.add_get("/play", self.player_website)                     # public player website (plugin "website")
-        r.add_get("/play/{tail:.*}", self.player_website)
-        r.add_post("/play/{tail:.*}", self.player_website)          # store checkout forms
+        r.add_get("/play", self._old_play)                          # old address of the website -> the same page at /
+        r.add_get("/play/{tail:.*}", self._old_play)
+        r.add_post("/play/{tail:.*}", self.player_website)          # forms on a page opened before the move
         r.add_get("/p/{pid}", self.plugin_public)                  # public plugin pages (no login)
         r.add_get("/p/{pid}/{tail:.*}", self.plugin_public)
         r.add_post("/p/{pid}/{tail:.*}", self.plugin_public)
+        # Last: everything else is a page of the player website at the root (/leaderboard, /store, /account …)
+        r.add_get("/{tail:.+}", self._root)
+        r.add_post("/{tail:.+}", self._root)
         return app
 
     async def start(self, *, open_browser: bool | None = None) -> bool:
@@ -421,7 +428,7 @@ class WebInterface:
         if self.setup_mode:
             log.warning("SETUP: Open %s in your browser to fill in the missing settings.", login_url)
         else:
-            log.info("Web interface running: %s", url)
+            log.info("Web interface running: %s/admin (player website: %s/)", url, url)
             if not ws.password:
                 log.warning("No WEB_PASSWORD set – log in via this link: %s  (or password: %s)",
                             login_url, self.password)
@@ -461,25 +468,27 @@ class WebInterface:
             self._tunnel_online(self.tunnel.url, announce=False)
 
     def _tunnel_online(self, url: str | None, announce: bool = True) -> None:
-        url = url or self.ws.public_url or "(your fixed tunnel address)"
+        url = (url or self.ws.public_url or "(your fixed tunnel address)").rstrip("/")
+        panel = f"{url}/admin"
         if self.tunnel is not None and self.tunnel.adopted:
             announce = False     # same link as before the update restart – no new announcement
         login = (f"owner / {self.generated_password}   (new password, saved in .env as WEB_PASSWORD)"
                  if self.generated_password else "owner / your WEB_PASSWORD   (other admins: their own account)")
         bar = "=" * 72
-        for line in ("", bar, "  🌍 YOUR WEB INTERFACE LINK – works from anywhere (phone, other PCs):", "",
-                     f"     {url}", "", f"  Login: {login}", "  The link is also saved in PUBLIC_LINK.txt "
-                     "and posted in the admin log channel.", bar, ""):
+        for line in ("", bar, "  🌍 YOUR CONTROL PANEL – works from anywhere (phone, other PCs):", "",
+                     f"     {panel}", "", f"  Login: {login}", f"  Player website: {url}/",
+                     "  The links are also saved in PUBLIC_LINK.txt and posted in the admin log channel.", bar, ""):
             log.warning(line)
         try:
             (self.env_path.parent / PUBLIC_LINK_FILE).write_text(
-                f"{url}\n\nLogin: owner + your WEB_PASSWORD (in the .env), other admins: their own account.\n"
+                f"Control panel: {panel}\nPlayer website: {url}/\n\n"
+                "Login: owner + your WEB_PASSWORD (in the .env), other admins: their own account.\n"
                 + ("This is your own domain – it stays the same.\n" if self.ws.public_url
                    else "This address changes when the bot window is closed.\n"), encoding="utf-8")
         except OSError:
             pass
         if announce and self.bot is not None:
-            self.bot.audit(f"🌍 Web interface reachable from anywhere: {url}")
+            self.bot.audit(f"🌍 Control panel reachable from anywhere: {panel} – player website: {url}/")
 
     @property
     def public_url(self) -> str | None:
@@ -899,9 +908,34 @@ class WebInterface:
     async def player_website(self, request: web.Request) -> web.StreamResponse:
         return await self.plugin_public(request, pid="website")
 
+    def _website_running(self) -> bool:
+        manager = getattr(self.bot, "plugins", None) if self.bot is not None else None
+        return bool(manager is not None and manager.running("website") is not None)
+
+    async def _root(self, request: web.Request) -> web.StreamResponse:
+        """The site root is the player website; the control panel lives at /admin."""
+        tail = request.match_info.get("tail", "").strip("/")
+        if tail.split("/", 1)[0] in ROOT_RESERVED:
+            raise web.HTTPNotFound(text="Not found.")       # e.g. a wrong method on an API address
+        self._public_limit(request)                          # every public page counts, also with the website off
+        if not self._website_running():
+            if not tail:
+                raise web.HTTPFound("/admin")                # no website: the address opens the panel
+            raise web.HTTPNotFound(text="Not found.")
+        return await self._serve_plugin(request, "website")
+
+    async def _old_play(self, request: web.Request) -> web.Response:
+        """/play/… was the website's old address: same page at the root (old links in Discord keep working)."""
+        self._public_limit(request)
+        tail = request.match_info.get("tail", "").strip("/")
+        query = f"?{request.query_string}" if request.query_string else ""
+        raise web.HTTPMovedPermanently(f"/{tail}{query}")
+
     async def plugin_public(self, request: web.Request, pid: str | None = None) -> web.StreamResponse:
         self._public_limit(request)
-        pid = pid or request.match_info["pid"]
+        return await self._serve_plugin(request, pid or request.match_info["pid"])
+
+    async def _serve_plugin(self, request: web.Request, pid: str) -> web.StreamResponse:
         manager = getattr(self.bot, "plugins", None) if self.bot is not None else None
         plugin = manager.running(pid) if manager is not None else None
         handler = getattr(plugin, "web_public", None)
@@ -1000,9 +1034,9 @@ class WebInterface:
         key = "link:" + self._client_ip(request)
         if self._login_blocked(key) is not None or not same_secret(request.query.get("token", ""), self.login_token):
             self._login_failed(key)
-            raise web.HTTPFound("/")
+            raise web.HTTPFound("/admin")
         self._login_ok(key)
-        resp = web.HTTPFound("/#settings" if self.setup_mode else "/#overview")
+        resp = web.HTTPFound("/admin#settings" if self.setup_mode else "/admin#overview")
         self._set_session_cookie(resp)
         raise resp
 

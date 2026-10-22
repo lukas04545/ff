@@ -264,7 +264,7 @@ views.users = async (main) => {
       e.preventDefault();
       const r = await act(() => api("/api/users", { method: "POST", body: { username: name.value.trim(), password: pw.value, role: role.value } }), "Account created").catch(() => null);
       if (!r) return;
-      const address = (await api("/api/me").catch(() => ({}))).public_url || location.origin;
+      const address = ((await api("/api/me").catch(() => ({}))).public_url || location.origin).replace(/\/$/, "") + "/admin";
       alert(`Account created – send this to the admin:\n\nAddress: ${address}\nUsername: ${name.value.trim()}\nPassword: ${pw.value}\n\nThey can change the password after logging in (🔑 My password).`);
       name.value = ""; pw.value = ""; pw.type = "password";
       load();
@@ -506,11 +506,15 @@ views.overview = (main) => {
     shownPublic = key;
     publicCard.style.borderLeft = "4px solid var(" + (url ? "--ok" : err ? "--bad" : "--warn") + ")";
     if (url) {
+      const root = url.replace(/\/$/, ""), panel = root + "/admin";
+      const copy = (text) => h("button", { class: "small", text: "📋 Copy", onclick: async () => {
+        try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { prompt("Copy the address:", text); }
+      } });
       publicCard.replaceChildren(h("h2", { text: "🌍 Reachable from anywhere" }),
-        h("div", { class: "row" }, h("a", { href: url, target: "_blank", rel: "noopener" }, h("code", { text: url })),
-          h("button", { class: "small", text: "📋 Copy", onclick: async () => {
-            try { await navigator.clipboard.writeText(url); toast("Copied"); } catch { prompt("Copy the address:", url); }
-          } })),
+        h("div", { class: "row" }, h("span", { class: "muted", text: "Control panel:" }),
+          h("a", { href: panel, target: "_blank", rel: "noopener" }, h("code", { text: panel })), copy(panel)),
+        h("div", { class: "row", style: "margin-top:.35rem" }, h("span", { class: "muted", text: "Player website:" }),
+          h("a", { href: root + "/", target: "_blank", rel: "noopener" }, h("code", { text: root + "/" })), copy(root + "/")),
         h("p", { class: "muted", style: "margin:.5rem 0 0", text: "Encrypted Cloudflare tunnel – share it only with your admins (they log in with their account from 👥 Users). A random address changes when the bot window is closed; the current one is always posted in the admin log channel." }));
     } else {
       publicCard.replaceChildren(h("h2", { text: err ? "🌍 Tunnel problem" : "🌍 Tunnel is starting …" }),
@@ -2414,7 +2418,7 @@ views.webstore = async (main) => {
         st.admin_key ? h("span", { class: "pill warn", text: "🔑 Admin key on (store address + ?admin=1)" }) : h("span", { class: "pill", text: "Admin key off" })),
       h("p", { class: "muted", style: "margin:.6rem 0 0" },
         "PayPal, currency and gift card values: Settings → 💳 Store. The store shows up on the player website (Plugins → Player website) at ",
-        h("a", { href: "/play/store", target: "_blank", rel: "noopener", text: "/play/store" }), "."),
+        h("a", { href: "/store", target: "_blank", rel: "noopener", text: "/store" }), "."),
       st.paypal && st.paypal_mode === "sandbox" ? h("div", { class: "banner warn", style: "margin:.6rem 0 0", text: "PayPal is in sandbox (test) mode – no real money. Switch PAYPAL_MODE to live with your live Client ID/Secret when you're ready." }) : null);
 
     // --- Kits for sale

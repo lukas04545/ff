@@ -104,7 +104,7 @@ def test_setup_mode_flow(tmp_path, monkeypatch):
         try:
             # One-time link logs in and leads to the settings
             r = await c.get(f"/auth?token={w.login_token}", allow_redirects=False)
-            assert r.status == 302 and r.headers["Location"] == "/#settings"
+            assert r.status == 302 and r.headers["Location"] == "/admin#settings"
             assert (await (await c.get("/api/me")).json())["setup_mode"] is True
             assert (await c.get("/api/kits")).status == 404  # setup mode only serves settings
 
