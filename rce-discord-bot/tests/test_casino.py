@@ -1,0 +1,261 @@
+"""Casino: exact RTP of every game, real blackjack rules, the plugin's money handling and the website pages."""
+import asyncio
+import random
+import time
+from dataclasses import replace
+from fractions import Fraction
+
+import pytest
+from aiohttp.test_utils import TestClient, TestServer
+
+from support import casino_games as g
+from tests.test_plugins import pb  # noqa: F401
+
+
+# ------------------------------------------------------------ Exact return to player
+
+def test_slots_rtp_is_exactly_95_percent():
+    class Roll(random.Random):     # walks through every possible roll once
+        def randrange(self, n):
+            return self.value
+    rng, paid = Roll(1), 0
+    for value in range(g.SLOT_TOTAL):
+        rng.value = value
+        spin = g.spin_slots(100, rng)
+        paid += spin.payout
+        three = len(set(spin.reels)) == 1
+        cherries = spin.reels.count("🍒")
+        if spin.multiplier == 0:
+            assert not three and cherries < 2                       # a loss never looks like a win
+        elif spin.multiplier == 2:
+            assert cherries == 2
+        else:
+            assert three
+    assert Fraction(paid, 100 * g.SLOT_TOTAL) == Fraction(95, 100) and g.SLOT_RTP == 0.95
+
+
+class Fixed(random.Random):
+    def __init__(self, value):
+        super().__init__(0)
+        self.value = value
+
+    def randrange(self, n):
+        return self.value
+
+
+def test_coinflip_and_dice_rtp_is_95_percent():
+    assert Fraction(1, 2) * Fraction(19, 10) == Fraction(95, 100)
+    assert g.flip_coin(100, "heads", random.Random(1))[1] in (0, 190)
+    assert g.flip_coin(10, "heads", random.Random(1))[1] in (0, 19)
+    for target in range(g.DICE_MIN, g.DICE_MAX + 1):
+        assert Fraction(target, 100) * Fraction(95, target) == Fraction(95, 100)
+    for bet, target in ((1000, 90), (7, 3), (15, 50)):              # fair rounding: exact on average
+        whole, rest = divmod(bet * 95, target)
+        expected_payout = whole + Fraction(rest, target)
+        assert Fraction(target, 100) * expected_payout / bet == Fraction(95, 100)
+        assert sum(g.fair(bet * 95, target, Fixed(k)) for k in range(target)) == bet * 95   # every remainder case
+    assert g.fair(15 * 19, 10, Fixed(4)) == 29 and g.fair(15 * 19, 10, Fixed(5)) == 28
+    with pytest.raises(ValueError):
+        g.roll_dice(10, 95)
+
+
+def test_roulette_is_a_real_european_wheel():
+    assert len(g.RED) == 18
+    for kind, (_, pays) in g.ROULETTE_BETS.items():
+        numbers = [7] if kind == "number" else [None]
+        for number in numbers:
+            wins = sum(1 for n in range(37) if g.roulette_wins(kind, number, n))
+            assert Fraction(wins * pays, 37) == Fraction(36, 37), kind     # 97.3 %
+    assert all(not g.roulette_wins(k, None, 0) for k in g.ROULETTE_BETS if k != "number")
+    assert g.roulette_wins("number", 0, 0)
+    assert g.roulette_colour(0) == "green" and g.roulette_colour(1) == "red" and g.roulette_colour(2) == "black"
+
+
+# ------------------------------------------------------------ Blackjack rules
+
+def card(rank: str, suit: int = 0) -> int:
+    return suit * 13 + g.RANKS.index(rank)
+
+
+def deal(monkeypatch, player, dealer, rest=(), bet=10):
+    """Deals a fixed shoe: player 2 cards, dealer 2 cards, then `rest` in order."""
+    order = [player[0], player[1], dealer[0], dealer[1], *rest]
+    monkeypatch.setattr(g, "new_shoe", lambda rng=None: [card(r) for r in reversed(order)] or [])
+    return g.bj_deal(bet)
+
+
+def test_blackjack_pays_3_to_2_and_dealer_peeks(monkeypatch):
+    s = deal(monkeypatch, ["A", "K"], ["9", "7"])
+    assert s["finished"] and s["payout"] == 25 and s["hands"][0]["result"] == "blackjack"
+    s = deal(monkeypatch, ["9", "7"], ["A", "Q"])                 # dealer blackjack: over at once
+    assert s["finished"] and s["payout"] == 0 and len(s["dealer"]) == 2
+    s = deal(monkeypatch, ["A", "K"], ["9", "7"], bet=15)          # 37.5: 37 or 38, fair on average
+    assert s["payout"] in (37, 38)
+    s = deal(monkeypatch, ["A", "Q"], ["K", "A"])
+    assert s["hands"][0]["result"] == "push" and s["payout"] == 10
+
+
+def test_dealer_stands_on_soft_17_and_hits_16(monkeypatch):
+    s = deal(monkeypatch, ["10", "8"], ["A", "6"], rest=["5"])
+    g.bj_act(s, "stand")
+    assert len(s["dealer"]) == 2 and s["hands"][0]["result"] == "win" and s["payout"] == 20
+    s = deal(monkeypatch, ["10", "7"], ["10", "6"], rest=["5"])
+    g.bj_act(s, "stand")
+    assert g.hand_total(s["dealer"])[0] == 21 and s["hands"][0]["result"] == "lose"
+
+
+def test_hit_bust_and_double(monkeypatch):
+    s = deal(monkeypatch, ["10", "6"], ["10", "7"], rest=["K"])
+    assert g.bj_actions(s) == ["hit", "stand", "double"]
+    g.bj_act(s, "hit")
+    assert s["finished"] and s["hands"][0]["result"] == "bust" and len(s["dealer"]) == 2   # dealer doesn't draw
+    s = deal(monkeypatch, ["6", "5"], ["10", "6"], rest=["10", "9"])
+    assert g.bj_extra_bet(s, "double") == 10
+    g.bj_act(s, "double")
+    assert s["hands"][0]["bet"] == 20 and len(s["hands"][0]["cards"]) == 3 and s["payout"] == 40
+
+
+def test_split_and_split_aces(monkeypatch):
+    s = deal(monkeypatch, ["8", "8"], ["10", "7"], rest=["3", "10", "10"])
+    assert "split" in g.bj_actions(s)
+    g.bj_act(s, "split")
+    assert len(s["hands"]) == 2 and s["active"] == 0 and "split" not in g.bj_actions(s)
+    assert "double" in g.bj_actions(s)                             # double after split
+    g.bj_act(s, "stand")                                           # 8+3 = 11 stands
+    g.bj_act(s, "stand")                                           # 8+10 = 18
+    assert s["finished"] and [h["result"] for h in s["hands"]] == ["lose", "win"]
+    s = deal(monkeypatch, ["A", "A"], ["10", "7"], rest=["K", "5"])
+    g.bj_act(s, "split")                                           # aces: one card each, 21 is not a blackjack
+    assert s["finished"] and s["hands"][0]["result"] == "win" and s["hands"][0]["payout"] == 20
+    with pytest.raises(g.GameError):
+        g.bj_act(s, "hit")
+
+
+def basic_strategy(state) -> str:
+    hand = state["hands"][state["active"]]
+    up = g.card_value(state["dealer"][0])
+    total, soft = g.hand_total(hand["cards"])
+    acts = g.bj_actions(state)
+    if "split" in acts and g.card_value(hand["cards"][0]) in (11, 8):
+        return "split"
+    if soft:
+        if total >= 19 or (total == 18 and up <= 8):
+            return "stand"
+        return "hit"
+    if total >= 17 or (total >= 13 and up <= 6) or (total == 12 and 4 <= up <= 6):
+        return "stand"
+    if "double" in acts and (total == 11 or (total == 10 and up <= 9)):
+        return "double"
+    return "hit"
+
+
+def test_blackjack_rtp_is_close_to_a_real_casino():
+    rng = random.Random(2024)
+    bet, wagered, paid = 100, 0, 0
+    for _ in range(20_000):
+        shoe = g.new_shoe(rng)
+        orig = g.new_shoe
+        g.new_shoe = lambda r=None, s=shoe: s
+        try:
+            s = g.bj_deal(bet)
+        finally:
+            g.new_shoe = orig
+        while not s["finished"]:
+            g.bj_act(s, basic_strategy(s))
+        wagered += g.bj_wagered(s)
+        paid += s["payout"]
+    assert 0.97 < paid / wagered < 1.02          # ≈ 99.5 % with full basic strategy (this one is simplified)
+
+
+# ------------------------------------------------------------ Plugin + website
+
+@pytest.fixture
+def casino_env(pb, monkeypatch):  # noqa: F811
+    from cogs.player_accounts import PlayerAccounts, _hash
+    pb.bot.config = replace(pb.bot.config, player_accounts=True, economy_enabled=True)
+
+    async def no_loop(self):
+        return None
+    monkeypatch.setattr(PlayerAccounts, "cog_load", no_loop)
+
+    async def setup():
+        await pb.bot.add_cog(PlayerAccounts(pb.bot))
+        await pb.m.load_all()
+        await pb.m.set_enabled("website", True)
+        await pb.m.set_enabled("casino", True)
+    asyncio.run(setup())
+    pb.db.add_player_session(_hash("tok"), 7, "Gamer7", int(time.time()) + 3600)
+    pb.db.add_points(7, 1000, "test")
+    return pb
+
+
+def test_plugin_money_and_limits(casino_env, monkeypatch):
+    casino = casino_env.m.running("casino")
+    db = casino_env.db
+    spin = casino.play_slots(7, 100)
+    assert casino.balance(7) == 1000 - 100 + spin.payout
+    with pytest.raises(g.GameError, match="between"):
+        casino.play_slots(7, 5)                                    # below the smallest bet
+    with pytest.raises(g.GameError, match="Not enough"):
+        casino.play_slots(7, 5000)
+    db.add_points(7, 100_000, "test")
+    assert casino._lost_today(7) == 0                              # only tracked while a limit is set
+    asyncio.run(casino_env.m.save_settings("casino", {"daily_loss_limit": 250}))
+    monkeypatch.setattr(g, "flip_coin", lambda bet, pick, rng=None: ("tails", 0))     # always lose
+    casino.play_coinflip(7, 100, "heads")
+    casino.play_coinflip(7, 100, "heads")
+    with pytest.raises(g.GameError, match="loss limit"):
+        casino.play_coinflip(7, 100, "heads")                      # 300 > 250
+    casino.play_coinflip(7, 50, "heads")                           # 250 is still allowed
+    assert casino._lost_today(7) == 250
+    status = casino.status()
+    assert status["Rounds played"] >= 2 and status["Points bet"] - status["Points paid out"] == status["House profit"]
+
+
+def test_blackjack_through_the_plugin(casino_env, monkeypatch):
+    casino = casino_env.m.running("casino")
+    order = [card("10"), card("6"), card("10"), card("7"), card("5")]
+    monkeypatch.setattr(g, "new_shoe", lambda rng=None: list(reversed(order)))
+    s = casino.bj_start(7, 100)
+    assert not s["finished"] and casino.balance(7) == 900
+    with pytest.raises(g.GameError, match="Finish"):
+        casino.bj_start(7, 100)
+    with pytest.raises(g.GameError, match="older page"):
+        casino.bj_action(7, "hit", 99)
+    s = casino.bj_action(7, "double", 0)                          # 16 + 5 = 21 vs 17
+    assert s["finished"] and s["payout"] == 400 and casino.balance(7) == 900 - 100 + 400
+
+
+def test_casino_pages(casino_env):
+    async def main():
+        from web.server import WebInterface
+        web = WebInterface(casino_env.bot, env_path=casino_env.tmp / ".env",
+                           secret_path=casino_env.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            page = await (await c.get("/casino")).text()
+            assert "Log in to play" in page and 'href="/casino"' in page            # nav link
+            c.session.cookie_jar.update_cookies({"rce_player": "tok"})
+            page = await (await c.get("/casino")).text()
+            assert "Slots" in page and "Blackjack" in page and "97.3 %" in page and "1 000" in page
+            r = await c.post("/casino/slots", data={"bet": "100"})
+            text = await r.text()
+            assert r.status == 200 and "reel" in text and r.headers["Cache-Control"] == "no-store"
+            r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "https://evil.example"})
+            assert r.status == 403
+            r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "null"})     # privacy mode
+            assert r.status == 200
+            r = await c.post("/casino/roulette", data={"bet": "100", "kind": "number", "number": "40"})
+            assert "Pick a number from 0 to 36" in await r.text()
+            r = await c.post("/casino/dice", data={"bet": "50", "target": "50"})
+            assert "rolled" in await r.text()
+            r = await c.post("/casino/blackjack", data={"bet": "50", "action": "deal"})
+            assert "Dealer" in await r.text()
+            assert (await c.get("/casino/coinflip")).status == 200
+            await casino_env.m.save_settings("casino", {"slots": False})
+            assert (await c.get("/casino/slots")).status == 404
+        finally:
+            await c.close()
+            await casino_env.bot.rcon.close()
+    asyncio.run(main())

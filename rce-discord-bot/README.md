@@ -202,6 +202,7 @@ rce-discord-bot/
 ├── plugins/               # Built-in plugins (one file each, on/off in the web interface → 🧩 Plugins)
 │   ├── invites.py         # Invite rewards
 │   ├── website.py         # Player website (site root /)
+│   ├── casino.py          # Casino on the player website: bets, payouts, stats, daily loss limit
 │   ├── starter_kit.py     # Starter kit for brand-new players
 │   ├── lowpop_bonus.py    # Extra points while the server is nearly empty
 │   ├── filling_ping.py    # "Server is filling up" ping (/pingme)
@@ -216,6 +217,7 @@ rce-discord-bot/
 ├── PLUGINS.md             # How to write your own plugin
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
+│   ├── casino_games.py    # Casino games: slots, coin flip, dice, roulette, blackjack (exact RTP)
 │   ├── plugin_ai.py       # AI writes a plugin from a description (Plugins page → Create with AI)
 │   ├── paypal.py          # PayPal checkout (Orders v2: create, capture, verify)
 │   ├── pricing.py         # Price list for custom kits (prices.txt)
@@ -229,6 +231,7 @@ rce-discord-bot/
 │   ├── item_images.py     # Item pictures: downloaded once (ITEM_IMAGE_URL), cached in data/item_images/
 │   ├── store_pages.py     # Web store pages of the player website (/store)
 │   ├── account_pages.py   # Player account pages (/account): manage own kits, team slots
+│   ├── casino_pages.py    # Casino pages of the player website (/casino)
 │   └── static/            # Frontend (HTML/CSS/JS, no external files): style.css, neon.css (neon theme), bg.js (animated background)
 ├── logbuffer.py           # Recent log lines for the web interface
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
@@ -481,13 +484,14 @@ text only. However, the web interface has **no HTTPS** – **never expose it to 
 port forwarding on your router**. For access on the go, use a VPN such as Tailscale or WireGuard
 into your home network instead.
 
-**Neon look:** the web interface comes in a neon-orange theme by default – glass panels with **animated cyan outlines**
-(a violet/orange light runs around every card), a glowing active menu entry and an animated background (a neon grid
+**Neon look:** the web interface comes in a neon-orange theme by default – panels with **cyan/violet neon outlines**
+(a light runs around the card under the mouse), a glowing active menu entry and an animated background (a neon grid
 gliding towards a breathing striped sun, embers and stars, the odd shooting star, a gentle parallax with the mouse).
 The outline colours are two variables at the top of `web/static/neon.css` (`--line-a`, `--line-b`).
-The 🌙/☀️ button at the bottom of the menu switches between *neon* and *light* (remembered per browser). The
-background animation is smooth but light (cached layers, paused while the tab is hidden) and is drawn as one still
-picture if your system has "reduce motion" switched on.
+The 🌙/☀️ button at the bottom of the menu switches between *neon* and *light*, the ✨/⏸️ button switches the
+animations on and off (both remembered per browser). The background is kept light: 30 frames a second, cached layers,
+no glass blur on top of it, paused while the tab is hidden. It turns into one still picture when animations are off,
+when your system has "reduce motion" switched on, or by itself when the computer can't keep up.
 
 **Item pictures:** the kit builder, the kit lists and the player website show pictures of the items. The bot
 downloads each picture once from `ITEM_IMAGE_URL` (default: RustLabs, `{shortname}` is replaced) and keeps it in
@@ -1160,6 +1164,7 @@ restart. A broken plugin never stops the bot: it shows the error on its card and
 |---|---|---|
 | 🤝 **Invite rewards** | `/invites stats`, `/invites top`. When someone a member invited links their player and plays *N* hours, both get points (optional recruiter role). Rejoins, self-invites and brand-new Discord accounts don't count. Needs the **Server Members Intent** and the bot permission **Manage Server**. | off |
 | 🌍 **Player website** | A public website at the root of *your web link* (e.g. `https://yourdomain.com/`; old `/play` links forward there) in the Kryvon look (dark, rusty red/orange, your logo – upload another one on the plugin card): live status, next wipe, leaderboards (kills, K/D, playtime, teams), player profiles with search (stats, team, badges, bounty), the points shop with item pictures, rules, about, how to join, Discord and store buttons. Read-only – no login, no secrets, no Discord IDs. | off |
+| 🎰 **Casino** | A *Casino* page on the player website (`/casino`) where logged-in players (player login, *My account*) gamble their points: 🎰 slots, 🪙 coin flip and 🎲 dice with a return to player of exactly 95 %, 🎡 European roulette (one zero – the real 97.3 %) and 🃏 blackjack with real casino rules (6 decks, dealer stands on soft 17 and peeks, 3:2 blackjack, double incl. after a split, one split – ≈ 99.5 % with basic strategy). Results come from a secure random generator on the server; fractions of a point are rounded fairly, so the RTP is exact. Settings: smallest/biggest bet, a daily loss limit per player, each game on/off. The plugin card shows rounds played, points bet/paid out and the house profit. Play money only – points are earned in-game and can't be bought or cashed out. | off |
 | 🎁 **Starter kit** | A name the bot has never seen gets a welcome message in-game and a one-time kit. | on (choose the kit) |
 | 🌱 **Low-pop bonus** | While fewer than *N* players are online, playtime points are multiplied – pays people to seed the server. | on |
 | 🔥 **Filling-up ping** | Members opt in with `/pingme on`; the role is pinged when the server reaches e.g. 10 or 20 players (cooldown per threshold). | off (choose a role) |

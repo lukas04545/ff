@@ -191,6 +191,11 @@ class PlayerWebsite(Plugin):
         cog = self.bot.get_cog("PlayerAccounts")
         return cog if cog is not None and cog.enabled else None
 
+    def casino(self):
+        """The Casino plugin if it's on and players can log in, else None."""
+        casino = self.plugin("casino")
+        return casino if casino is not None and casino.points_enabled and self.accounts() is not None else None
+
     def find_player(self, name: str):
         name = " ".join(str(name or "").split())[:64]
         return self.bot.db.player(name) if name else None
@@ -203,6 +208,8 @@ class PlayerWebsite(Plugin):
             links += [("leaderboard", "Leaderboard"), ("player", "Players")]
         if self.store() is not None:
             links.append(("store", "Store"))
+        if self.casino() is not None:
+            links.append(("casino", "Casino"))
         if self.accounts() is not None:
             links.append(("account", "My account"))
         if self.setting("shop") and self.points_enabled:
@@ -484,7 +491,7 @@ class PlayerWebsite(Plugin):
         """Public (no login): the site root /… (also /p/website/…); /status.json for other tools."""
         from aiohttp import web
         headers = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
-                   "Referrer-Policy": "no-referrer", "Cache-Control": "public, max-age=20"}
+                   "Referrer-Policy": "same-origin", "Cache-Control": "public, max-age=20"}
         if path == "status.json":
             data = {"name": self.site_title(), **self.live()}
             return web.Response(text=json.dumps(data), content_type="application/json", headers=headers)
@@ -510,6 +517,17 @@ class PlayerWebsite(Plugin):
             from web.server import WebInterface
             resp = await account_handle(self, accounts, self.store(), request, base, path,
                                         WebInterface._client_ip(request))
+            for key, value in headers.items():
+                resp.headers.setdefault(key, value)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        if path == "casino" or path.startswith("casino/"):
+            casino = self.casino()
+            if casino is None:
+                return web.Response(status=404, text=self.not_found(base), content_type="text/html",
+                                    headers={**headers, "Cache-Control": "no-store"})
+            from web.casino_pages import handle as casino_handle
+            resp = await casino_handle(self, casino, request, base, path)
             for key, value in headers.items():
                 resp.headers.setdefault(key, value)
             resp.headers["Cache-Control"] = "no-store"

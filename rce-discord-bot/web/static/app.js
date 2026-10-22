@@ -105,6 +105,21 @@ $("#theme").addEventListener("click", () => {
   applyTheme(theme);
 });
 
+// Animations on/off (✨): off = still background, no moving outlines – for slow PCs and phones
+function applyMotion(on) {
+  if (on) delete document.documentElement.dataset.motion; else document.documentElement.dataset.motion = "off";
+  $("#motion").textContent = on ? "✨" : "⏸️";
+  $("#motion").title = on ? "Animations: on (click to switch off)" : "Animations: off (click to switch on)";
+}
+let motion = true;
+try { motion = localStorage.getItem("rce-motion") !== "off"; } catch { /* storage blocked */ }
+applyMotion(motion);
+$("#motion").addEventListener("click", () => {
+  motion = !motion;
+  try { localStorage.setItem("rce-motion", motion ? "on" : "off"); } catch { /* storage blocked */ }
+  applyMotion(motion);
+});
+
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" }).catch(() => {});
   showLogin();

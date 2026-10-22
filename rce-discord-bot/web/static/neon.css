@@ -1,5 +1,7 @@
 /* RCE Bot Panel – NEON theme. Loaded after style.css; it is the default look (light mode stays available).
-   Everything here is scoped to "not light", so the ☀️ theme is untouched. The animated background is drawn by bg.js. */
+   Everything here is scoped to "not light", so the ☀️ theme is untouched. The animated background is drawn by bg.js.
+   Kept cheap on purpose: no glass blur on top of the moving background (it was recomputed every frame), outlines
+   only animate on hover, and html[data-motion="off"] (the ✨ button) stops every animation. */
 
 @property --angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
 
@@ -9,7 +11,7 @@ html:root:not([data-theme="light"]) {
   /* outlines: electric cyan with a violet / orange light running around them – change these two to recolour */
   --line-a: #00f0ff; --line-b: #b14bff;
   --ease-out: cubic-bezier(.16, 1, .3, 1); --ease-io: cubic-bezier(.65, 0, .35, 1);
-  --bg: #07050a; --sidebar: rgba(12, 8, 7, .74); --panel: rgba(18, 11, 9, .78); --panel-2: rgba(48, 27, 14, .6);
+  --bg: #07050a; --sidebar: rgba(12, 8, 7, .93); --panel: rgba(18, 11, 9, .9); --panel-2: rgba(48, 27, 14, .72);
   --input: rgba(8, 5, 4, .74);
   --text: #fbefe4; --muted: #c4ae9c; --faint: #8f7b6a;
   --border: rgba(0, 240, 255, .2); --border-strong: rgba(0, 240, 255, .42);
@@ -29,7 +31,6 @@ html:root:not([data-theme="light"]) body {
     radial-gradient(60rem 40rem at 12% -8%, rgba(255, 90, 0, .16), transparent 60%),
     radial-gradient(50rem 36rem at 105% 105%, rgba(255, 170, 40, .10), transparent 60%),
     var(--bg);
-  background-attachment: fixed;
 }
 html:root:not([data-theme="light"]) ::selection { background: rgba(255, 122, 26, .55); color: #fff; }
 html:root:not([data-theme="light"]) a { color: var(--neon-2); }
@@ -49,21 +50,25 @@ html:root:not([data-theme="light"]) body::before {
 }
 @keyframes neon-sweep { to { background-position: -200% 0; } }
 
+/* no glass blur over the moving background (phones: sticky top bar, save bar) */
+html:root:not([data-theme="light"]) .sidebar,
+html:root:not([data-theme="light"]) .savebar { backdrop-filter: none; -webkit-backdrop-filter: none; }
+html:root:not([data-theme="light"]) .savebar { background: var(--panel); }
+
 /* ------------------------------------------------------------ Headings */
 html:root:not([data-theme="light"]) h1 {
   text-transform: uppercase; letter-spacing: .06em; font-weight: 800;
   background: linear-gradient(90deg, #fff3e6, var(--neon-2), var(--neon), var(--neon-2), #fff3e6);
   background-size: 300% 100%; -webkit-background-clip: text; background-clip: text;
   color: transparent; -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 10px rgba(255, 122, 26, .5)); animation: neon-shift 7s var(--ease-io) infinite alternate;
+  background-position: 30% 0;
 }
-@keyframes neon-shift { from { background-position: 0 0; } to { background-position: -200% 0; } }
 html:root:not([data-theme="light"]) h2 { text-shadow: 0 0 12px rgba(255, 122, 26, .35); }
 
 /* ------------------------------------------------------------ Sidebar */
 html:root:not([data-theme="light"]) .sidebar {
   background: var(--sidebar); border-right: 1px solid rgba(0, 240, 255, .28);
-  box-shadow: 0 0 40px -10px rgba(255, 122, 26, .35); backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 0 40px -10px rgba(255, 122, 26, .35);
 }
 html:root:not([data-theme="light"]) .logo {
   background: linear-gradient(140deg, var(--neon-2), var(--neon) 50%, var(--neon-hot));
@@ -85,17 +90,11 @@ html:root:not([data-theme="light"]) nav a.active::before {
 @keyframes bar-flow { to { background-position: 0 100%; } }
 html:root:not([data-theme="light"]) .avatar { box-shadow: 0 0 14px -2px rgba(255, 122, 26, .7); }
 
-/* ------------------------------------------------------------ Cards, stats, banners: glass + animated outlines */
-html:root:not([data-theme="light"]) .card,
-html:root:not([data-theme="light"]) .stat,
-html:root:not([data-theme="light"]) .banner,
-html:root:not([data-theme="light"]) .toast {
-  backdrop-filter: blur(12px) saturate(1.25); -webkit-backdrop-filter: blur(12px) saturate(1.25);
-}
+/* ------------------------------------------------------------ Cards, stats, banners: neon outlines */
 html:root:not([data-theme="light"]) .card,
 html:root:not([data-theme="light"]) .stat,
 html:root:not([data-theme="light"]) .banner { position: relative; border-color: rgba(0, 240, 255, .14); isolation: isolate; }
-/* the outline: a thin ring (mask) with a light running around it – only the ring is repainted */
+/* the outline: a thin gradient ring (mask); the light only runs around the card under the mouse */
 html:root:not([data-theme="light"]) .card::before,
 html:root:not([data-theme="light"]) .stat::before,
 html:root:not([data-theme="light"]) .banner::before {
@@ -106,13 +105,11 @@ html:root:not([data-theme="light"]) .banner::before {
     rgba(0, 240, 255, .35) 330deg);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
-  animation: border-spin 9s linear infinite; opacity: .8; transition: opacity .4s var(--ease-out), filter .4s var(--ease-out);
+  --angle: 200deg; opacity: .75; transition: opacity .4s var(--ease-out);
 }
-html:root:not([data-theme="light"]) .stat::before { animation-duration: 6s; }
-html:root:not([data-theme="light"]) .banner::before { animation-duration: 12s; }
 html:root:not([data-theme="light"]) .card { transition: box-shadow .5s var(--ease-out), transform .5s var(--ease-out); }
 html:root:not([data-theme="light"]) .card:hover::before,
-html:root:not([data-theme="light"]) .stat:hover::before { opacity: 1; filter: drop-shadow(0 0 6px var(--line-a)); animation-duration: 3s; }
+html:root:not([data-theme="light"]) .stat:hover::before { opacity: 1; animation: border-spin 3s linear infinite; }
 html:root:not([data-theme="light"]) .card:hover {
   box-shadow: 0 0 0 1px rgba(0, 240, 255, .12), 0 0 34px -8px rgba(0, 240, 255, .35), 0 0 60px -20px rgba(177, 75, 255, .4), var(--shadow);
 }
@@ -126,7 +123,7 @@ html:root:not([data-theme="light"]) .toast { border-color: var(--line-a); box-sh
 html:root:not([data-theme="light"]) .toast.bad { border-color: var(--bad); box-shadow: 0 0 22px -4px var(--bad), var(--shadow-lg); }
 
 /* entrance: content rises in, one after another */
-@keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.985); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 html:root:not([data-theme="light"]) main { animation: none; }
 html:root:not([data-theme="light"]) main > * { animation: rise .7s var(--ease-out) both; }
 html:root:not([data-theme="light"]) main > :nth-child(2) { animation-delay: .04s; }
@@ -143,7 +140,6 @@ html:root:not([data-theme="light"]) .grid .stat:nth-child(5) { animation-delay: 
 html:root:not([data-theme="light"]) .grid .stat:nth-child(n+6) { animation-delay: .3s; }
 
 /* ------------------------------------------------------------ Pills */
-html:root:not([data-theme="light"]) .pill { backdrop-filter: blur(6px); }
 html:root:not([data-theme="light"]) .pill.ok { box-shadow: 0 0 14px -3px var(--ok); text-shadow: 0 0 8px var(--ok); }
 html:root:not([data-theme="light"]) .pill.bad { box-shadow: 0 0 14px -3px var(--bad); text-shadow: 0 0 8px var(--bad); }
 html:root:not([data-theme="light"]) .pill.warn { box-shadow: 0 0 14px -3px var(--warn); text-shadow: 0 0 8px var(--warn); }
@@ -216,13 +212,16 @@ html:root:not([data-theme="light"]) .login-card {
   animation: card-in .9s var(--ease-out) both, border-spin 6s linear infinite;
 }
 @keyframes border-spin { to { --angle: 360deg; } }
-@keyframes card-in { from { opacity: 0; transform: translateY(24px) scale(.96); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes card-in { from { opacity: 0; transform: translateY(24px) scale(.96); } to { opacity: 1; transform: none; } }
 html:root:not([data-theme="light"]) .login-card input { background: rgba(255, 122, 26, .06); }
 html:root:not([data-theme="light"]) .login-hint { border-top-color: var(--border-strong); }
 
-/* ------------------------------------------------------------ Calm mode */
+/* ------------------------------------------------------------ Calm mode (system setting or the ✨ button) */
 @media (prefers-reduced-motion: reduce) {
   html:root:not([data-theme="light"]) *, html:root:not([data-theme="light"]) *::before, html:root:not([data-theme="light"]) *::after {
     animation: none !important; transition: none !important;
   }
+}
+html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="off"] *::after {
+  animation: none !important; transition: none !important;
 }
