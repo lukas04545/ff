@@ -1,7 +1,9 @@
 """Casino pages of the player website (/casino â€¦): play the plugins/casino.py games with your points.
 
-Server-rendered forms, no scripts (the website allows none). Players log in with the website's player login; the
-login cookie is SameSite=Lax, so other websites can't place bets for them; a POST naming another origin is refused.
+Server-rendered forms that work on their own; casino.js (website_assets/, scripts only from the site itself) plays
+without reloading the page, counts the balance and fires confetti on a win. Players log in with the website's player
+login; the login cookie is SameSite=Lax, so other websites can't place bets for them, and a POST naming another
+origin is refused.
 """
 from __future__ import annotations
 
@@ -21,7 +23,7 @@ WHEEL = (0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 
 STEP = 360 / len(WHEEL)
 CELL = 84                   # px: height of a slot/dice window
 
-# Animations are pure CSS (the website allows no scripts) and only move transform/opacity, so they stay smooth.
+# Animations are CSS (they also run without the script) and only move transform/opacity, so they stay smooth.
 # The result, the new balance and the play button appear when the spin ends (var --t); "reduce motion" skips it all.
 CASINO_CSS = STORE_CSS + """
 .games{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
@@ -102,7 +104,8 @@ FX = random.Random()        # only for the look of the spins (filler symbols) â€
 
 
 def _page(site, base: str, title: str, body: str, status: int = 200) -> web.Response:
-    page = site.page(base, "casino", title, f'<h1>{esc(title)}</h1><div class="casino">{body}</div>')
+    script = f'<script src="{base}/casino.js?v={site.asset_version("casino.js")}" defer></script>'
+    page = site.page(base, "casino", title, f'<h1>{esc(title)}</h1><div class="casino">{body}</div>{script}')
     return web.Response(status=status, text=page.replace("</style>", CASINO_CSS + "</style>", 1),
                         content_type="text/html", headers={"Cache-Control": "no-store"})
 
@@ -135,7 +138,8 @@ def _balance(casino, uid: int, base: str, back: bool = True, before: int | None 
     now = casino.balance(uid)
     points = f'<span class="price">{esc(casino.fmt_points(now))}</span>'
     if before is not None and before != now:
-        points = (f'<span class="swap" style="--t:{t:.2f}s"><span class="price hide-at-end">'
+        points = (f'<span class="swap" style="--t:{t:.2f}s" data-before="{before}" data-after="{now}">'
+                  f'<span class="price hide-at-end">'
                   f'{esc(casino.fmt_points(before))}</span><span class="price reveal">'
                   f'{esc(casino.fmt_points(now))}</span></span>')
     return f'<div class="card bal"><div>Your balance: {points}</div>{link}</div>'

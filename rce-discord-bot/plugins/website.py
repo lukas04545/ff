@@ -20,10 +20,13 @@ from web.caching import YEAR, conditional
 from utils import format_duration, strip_rich_text
 
 INVITE = re.compile(r"^https://(discord\.gg|discord\.com/invite)/[\w-]{2,40}$")
-CSP = ("default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; "
+# Scripts only from the website itself (no inline or third-party scripts – injected code can't run)
+CSP = ("default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; "
+       "img-src 'self' data:; base-uri 'none'; "
        "form-action 'self' https://www.paypal.com https://www.sandbox.paypal.com; frame-ancestors 'none'")
 BOARDS = {"kills": "Kills", "kd": "K/D", "playtime": "Playtime", "teams": "Teams"}
 CACHE_SECONDS = 20
+SCRIPTS = ("casino.js",)             # scripts served from website_assets/
 HEADER_LOGO = 96                     # px of the small logo in the header (2× its 42 px for sharp phone screens)
 
 ASSETS = Path(__file__).resolve().parent / "website_assets"     # default logo (replace it on the Plugins page)
@@ -147,6 +150,7 @@ class PlayerWebsite(Plugin):
         self._status: tuple[float, dict] | None = None
         self._pictures: dict[tuple, tuple[bytes, str]] = {}     # (which, size, logo file state) -> picture
         self._style: tuple[str, str] | None = None              # (accent, finished CSS)
+        self._assets: dict[str, tuple] = {}                      # script name -> (file state, bytes, hash)
 
     # ------------------------------------------------------------ Data
 
@@ -453,6 +457,18 @@ class PlayerWebsite(Plugin):
             return 200, self.rules(base)
         return 404, self.not_found(base)
 
+    def asset(self, name: str) -> tuple[bytes, str]:
+        """A script from website_assets/ and its content hash (the address carries it, browsers keep it a year)."""
+        path = ASSETS / name
+        key = (name, path.stat().st_mtime_ns)
+        if self._assets.get(name, (None,))[0] != key:
+            data = path.read_bytes()
+            self._assets[name] = (key, data, hashlib.blake2s(data, digest_size=6).hexdigest())
+        return self._assets[name][1], self._assets[name][2]
+
+    def asset_version(self, name: str) -> str:
+        return self.asset(name)[1]
+
     def _logo_state(self) -> tuple:
         custom = self.file("logo")
         try:
@@ -495,6 +511,11 @@ class PlayerWebsite(Plugin):
         if path == "status.json":
             data = {"name": self.site_title(), **self.live()}
             return web.Response(text=json.dumps(data), content_type="application/json", headers=headers)
+        if path in SCRIPTS:
+            data, version = self.asset(path)
+            return conditional(request, data, "application/javascript",
+                               YEAR if request.query.get("v") == version else "no-cache", charset="utf-8",
+                               headers={k: v for k, v in headers.items() if k != "Cache-Control"})
         if path in ("logo", "icon"):
             size = HEADER_LOGO if request.query.get("s") == str(HEADER_LOGO) else None
             data, kind = self.picture(path, size)

@@ -1,6 +1,7 @@
 """Casino: exact RTP of every game, real blackjack rules, the plugin's money handling and the website pages."""
 import asyncio
 import random
+import re
 import time
 from dataclasses import replace
 from fractions import Fraction
@@ -243,6 +244,12 @@ def test_casino_pages(casino_env):
             text = await r.text()
             assert r.status == 200 and "reel" in text and r.headers["Cache-Control"] == "no-store"
             assert text.count('class="strip"') == 3 and "--t:5.10s" in text and "Spinning" in text   # 5 s spin
+            assert "script-src 'self'" in r.headers["Content-Security-Policy"] and "'unsafe-inline'" not in \
+                r.headers["Content-Security-Policy"].split("script-src")[1].split(";")[0]
+            src = re.search(r'<script src="(/casino\.js\?v=\w+)" defer>', text)[1]
+            js = await c.get(src)
+            assert js.content_type == "application/javascript" and "immutable" in js.headers["Cache-Control"]
+            assert "fetch(" in await js.text()
             r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "https://evil.example"})
             assert r.status == 403
             r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "null"})     # privacy mode
