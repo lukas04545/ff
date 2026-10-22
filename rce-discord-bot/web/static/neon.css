@@ -1,7 +1,8 @@
 /* RCE Bot Panel – NEON theme. Loaded after style.css; it is the default look (light mode stays available).
    Everything here is scoped to "not light", so the ☀️ theme is untouched. The animated background is drawn by bg.js.
    Kept cheap on purpose: no glass blur on top of the moving background (it was recomputed every frame), outlines
-   only animate on hover, and html[data-motion="off"] (the ✨ button) stops every animation. */
+   only animate on hover, and html[data-motion="off"] stops every animation – that's the default; the ✨ button
+   switches the moving background and the effects on. */
 
 @property --angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
 
@@ -132,12 +133,7 @@ html:root:not([data-theme="light"]) main > :nth-child(4) { animation-delay: .12s
 html:root:not([data-theme="light"]) main > :nth-child(5) { animation-delay: .16s; }
 html:root:not([data-theme="light"]) main > :nth-child(6) { animation-delay: .2s; }
 html:root:not([data-theme="light"]) main > :nth-child(n+7) { animation-delay: .24s; }
-html:root:not([data-theme="light"]) .grid .stat { animation: rise .7s var(--ease-out) both; }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(2) { animation-delay: .06s; }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(3) { animation-delay: .12s; }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(4) { animation-delay: .18s; }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(5) { animation-delay: .24s; }
-html:root:not([data-theme="light"]) .grid .stat:nth-child(n+6) { animation-delay: .3s; }
+/* (stat cards are rebuilt every few seconds – they don't get their own entrance animation) */
 
 /* ------------------------------------------------------------ Pills */
 html:root:not([data-theme="light"]) .pill.ok { box-shadow: 0 0 14px -3px var(--ok); text-shadow: 0 0 8px var(--ok); }

@@ -105,14 +105,14 @@ $("#theme").addEventListener("click", () => {
   applyTheme(theme);
 });
 
-// Animations on/off (✨): off = still background, no moving outlines – for slow PCs and phones
+// Animations on/off (✨): off (the default) = still neon background, no moving effects – light on any PC
 function applyMotion(on) {
   if (on) delete document.documentElement.dataset.motion; else document.documentElement.dataset.motion = "off";
   $("#motion").textContent = on ? "✨" : "⏸️";
   $("#motion").title = on ? "Animations: on (click to switch off)" : "Animations: off (click to switch on)";
 }
-let motion = true;
-try { motion = localStorage.getItem("rce-motion") !== "off"; } catch { /* storage blocked */ }
+let motion = false;
+try { motion = localStorage.getItem("rce-motion") === "on"; } catch { /* storage blocked */ }
 applyMotion(motion);
 $("#motion").addEventListener("click", () => {
   motion = !motion;

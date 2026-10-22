@@ -488,10 +488,11 @@ into your home network instead.
 (a light runs around the card under the mouse), a glowing active menu entry and an animated background (a neon grid
 gliding towards a breathing striped sun, embers and stars, the odd shooting star, a gentle parallax with the mouse).
 The outline colours are two variables at the top of `web/static/neon.css` (`--line-a`, `--line-b`).
-The 🌙/☀️ button at the bottom of the menu switches between *neon* and *light*, the ✨/⏸️ button switches the
-animations on and off (both remembered per browser). The background is kept light: 30 frames a second, cached layers,
-no glass blur on top of it, paused while the tab is hidden. It turns into one still picture when animations are off,
-when your system has "reduce motion" switched on, or by itself when the computer can't keep up.
+The 🌙/☀️ button at the bottom of the menu switches between *neon* and *light*. Animations are **off by default** –
+the neon background is drawn once as a still picture, so the panel stays fast on any PC; the ⏸️/✨ button switches the
+moving background and effects on (both remembered per browser). Even then it's kept light: 30 frames a second, cached
+layers, no glass blur on top of it, paused while the tab is hidden, and back to the still picture when your system
+has "reduce motion" switched on or the computer can't keep up.
 
 **Item pictures:** the kit builder, the kit lists and the player website show pictures of the items. The bot
 downloads each picture once from `ITEM_IMAGE_URL` (default: RustLabs, `{shortname}` is replaced) and keeps it in
