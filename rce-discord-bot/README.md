@@ -480,10 +480,12 @@ text only. However, the web interface has **no HTTPS** – **never expose it to 
 port forwarding on your router**. For access on the go, use a VPN such as Tailscale or WireGuard
 into your home network instead.
 
-**Neon look:** the web interface comes in a neon-orange theme by default – glass panels with glow, a glowing
-active menu entry and an animated background (a neon grid racing towards a striped sun, with embers drifting up).
+**Neon look:** the web interface comes in a neon-orange theme by default – glass panels with **animated cyan outlines**
+(a violet/orange light runs around every card), a glowing active menu entry and an animated background (a neon grid
+gliding towards a breathing striped sun, embers and stars, the odd shooting star, a gentle parallax with the mouse).
+The outline colours are two variables at the top of `web/static/neon.css` (`--line-a`, `--line-b`).
 The 🌙/☀️ button at the bottom of the menu switches between *neon* and *light* (remembered per browser). The
-background animation uses very little power (about 30 fps, paused while the tab is hidden) and is drawn as one still
+background animation is smooth but light (cached layers, paused while the tab is hidden) and is drawn as one still
 picture if your system has "reduce motion" switched on.
 
 **Item pictures:** the kit builder, the kit lists and the player website show pictures of the items. The bot
