@@ -103,10 +103,11 @@ RESULT_WORDS = {"win": "Win", "blackjack": "Blackjack!", "push": "Push – bet b
 FX = random.Random()        # only for the look of the spins (filler symbols) – results come from the game RNG
 
 
-def _page(site, base: str, title: str, body: str, status: int = 200) -> web.Response:
-    script = f'<script src="{base}/casino.js?v={site.asset_version("casino.js")}" defer></script>'
-    page = site.page(base, "casino", title, f'<h1>{esc(title)}</h1><div class="casino">{body}</div>{script}')
-    return web.Response(status=status, text=page.replace("</style>", CASINO_CSS + "</style>", 1),
+def _page(site, base: str, title: str, body: str, status: int = 200, *, scripts=("casino.js",),
+          css: str = "") -> web.Response:
+    tags = "".join(f'<script src="{base}/{name}?v={site.asset_version(name)}" defer></script>' for name in scripts)
+    page = site.page(base, "casino", title, f'<h1>{esc(title)}</h1><div class="casino">{body}</div>{tags}')
+    return web.Response(status=status, text=page.replace("</style>", CASINO_CSS + css + "</style>", 1),
                         content_type="text/html", headers={"Cache-Control": "no-store"})
 
 
@@ -172,7 +173,7 @@ def _strip(final: str, fillers, count: int, seconds: float) -> str:
 
 def lobby(site, casino, base: str, uid: int) -> web.Response:
     tiles = "".join(f'<a class="card game" href="{base}/casino/{gid}"><div class="ico">{icon}</div><h2>{esc(name)}</h2>'
-                    f'<div class="rtp">Return to player {esc(rtp)}</div></a>'
+                    f'<div class="rtp">{esc(rtp)}</div></a>'
                     for gid, (name, icon, rtp) in casino_games(casino).items())
     body = (_balance(casino, uid, base, back=False)
             + (f'<div class="games">{tiles}</div>' if tiles else '<p class="muted">All games are closed right now.</p>')
@@ -355,6 +356,121 @@ def blackjack_page(site, casino, base, uid, *, bet=None, error="", before=None, 
     return _page(site, base, "Blackjack", body)
 
 
+POKER_CSS = """
+.ptables{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.ptables .card{text-decoration:none;display:block}.ptables .seats{color:var(--muted);font-size:.9rem}
+.felt{position:relative;width:100%;max-width:820px;aspect-ratio:16/9;margin:70px auto 120px;border-radius:50%/45%;
+background:radial-gradient(ellipse at 50% 40%,#1f7a46,#0c4426 70%,#062a17);
+box-shadow:0 0 0 10px #4a2410,0 0 0 13px #8a5a2b,0 18px 40px rgba(0,0,0,.6),inset 0 0 60px rgba(0,0,0,.55)}
+.felt .center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;width:70%}
+.felt .board{display:flex;gap:6px;justify-content:center;min-height:62px}
+.felt .pot{margin-top:8px;font-family:var(--head);color:var(--gold);letter-spacing:.06em;font-size:1.1rem}
+.felt .banner{margin-top:6px;color:#fff;font-weight:700;text-shadow:0 1px 3px #000;min-height:1.4em}
+.pcard{width:42px;height:60px;border-radius:5px;background:#f6f1ea;color:#111;display:inline-flex;align-items:center;
+justify-content:center;font-weight:800;font-size:1rem;box-shadow:0 2px 5px rgba(0,0,0,.5);
+animation:pdeal .35s cubic-bezier(.2,.8,.3,1) both}
+.pcard.red{color:#c1121f}.pcard.back{background:repeating-linear-gradient(45deg,#7a1d0e 0 5px,#a8290f 5px 10px)}
+@keyframes pdeal{from{opacity:0;transform:translateY(-14px) rotateY(80deg)}to{opacity:1;transform:none}}
+.pseat{position:absolute;transform:translate(-50%,-50%);width:132px;text-align:center}
+.pseat .box{background:rgba(10,7,5,.92);border:1px solid var(--line);border-radius:10px;padding:6px 6px 5px;
+position:relative;overflow:hidden}
+.pseat.turn .box{border-color:var(--gold);box-shadow:0 0 18px rgba(255,182,39,.55)}
+.pseat.folded .box,.pseat.away .box{opacity:.5}.pseat .nm{font-weight:700;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis}.pseat .st{color:var(--gold);font-family:var(--head);letter-spacing:.04em}
+.pseat .act{font-size:.78rem;color:var(--muted);min-height:1.1em}.pseat .hole{display:flex;gap:4px;justify-content:center;
+margin-bottom:4px;min-height:60px}.pseat .bet{position:absolute;left:50%;transform:translateX(-50%);
+background:rgba(0,0,0,.6);color:var(--gold);border-radius:12px;padding:1px 9px;font-size:.85rem;white-space:nowrap}
+.pseat .timer{position:absolute;left:0;bottom:0;height:3px;background:var(--gold);transform-origin:left}
+.pseat .dealer{position:absolute;right:-10px;top:50%;z-index:2;width:22px;height:22px;border-radius:50%;background:#fff;color:#111;
+font-weight:800;font-size:.8rem;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px #000}
+.pseat.empty .box{border-style:dashed;cursor:pointer;color:var(--muted)}.pseat.win .box{border-color:var(--ok);
+box-shadow:0 0 22px rgba(61,220,106,.6)}
+.pbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center}
+.pbar button{margin:0;width:auto;min-width:96px;padding:11px 16px}.pbar input[type=range]{flex:1;min-width:160px}
+.pbar .amt{width:110px;padding:9px;border:1px solid var(--line);background:rgba(0,0,0,.5);color:var(--text);font:inherit}
+.plog{font-size:.85rem;color:var(--muted);max-height:160px;overflow:auto}
+@media (max-width:640px){.pseat{width:92px;font-size:.8rem}.pcard{width:30px;height:44px;font-size:.78rem}
+.pseat .hole{min-height:44px}.felt{width:calc(100% - 70px);aspect-ratio:3/4;border-radius:44%/36%;margin:80px auto 130px}}
+"""
+
+
+def _poker_page(site, base: str, title: str, body: str) -> web.Response:
+    return _page(site, base, title, body, scripts=("poker.js",), css=POKER_CSS)
+
+
+def poker_lobby(site, casino, base: str, uid: int) -> web.Response:
+    cards = []
+    for t in casino.tables.values():
+        seated = [s for s in t.seats if s is not None]
+        mine = t.seat_of(uid) is not None
+        cards.append(f'<a class="card" href="{base}/casino/poker/{esc(t.id)}"><h2>{esc(t.name)}'
+                     f'{" · you sit here" if mine else ""}</h2><div>Blinds <b>{t.sb} / {t.bb}</b> · buy-in '
+                     f'{esc(casino.fmt_points(t.min_buy))} – {esc(casino.fmt_points(t.max_buy))}</div>'
+                     f'<div class="seats">{len(seated)} / {poker_seats()} players'
+                     f'{": " + esc(", ".join(s.name for s in seated)) if seated else ""}</div></a>')
+    body = (_balance(casino, uid, base)
+            + (f'<div class="ptables">{"".join(cards)}</div>' if cards else
+               '<p class="muted">No poker tables are set up.</p>')
+            + '<div class="card"><h2>How it works</h2><p class="muted">Texas Hold\'em, no limit, up to 6 players. '
+              'Sit down with a buy-in from your points; when you leave, your chips go back to your points. You play '
+              'against the other players – the casino deals and keeps the rules. If you run out of time you check or '
+              'fold and sit out until you click "I\'m back".</p></div>')
+    return _poker_page(site, base, "Poker", body)
+
+
+def poker_seats() -> int:
+    from support.poker import MAX_SEATS
+    return MAX_SEATS
+
+
+def poker_table_page(site, casino, base: str, uid: int, tid: str) -> web.Response:
+    t = casino.table(tid)
+    body = (_balance(casino, uid, base).replace(f'href="{base}/casino"', f'href="{base}/casino/poker"', 1)
+            .replace("← All games", "← All tables")
+            + f'<div id="poker" data-base="{esc(base)}" data-table="{esc(t.id)}" data-min="{t.min_buy}" '
+              f'data-max="{t.max_buy}" data-points="{esc(casino.bot.config.points_name)}">'
+              f'<div class="card"><h2>{esc(t.name)} · blinds {t.sb} / {t.bb}</h2>'
+              '<noscript><p class="notice bad">Poker needs JavaScript switched on.</p></noscript>'
+              '<div class="felt"><div class="center"><div class="board"></div><div class="pot"></div>'
+              '<div class="banner"></div></div></div><div class="pbar" id="pbar"></div></div>'
+              '<div class="card"><h2>Table log</h2><div class="plog" id="plog"></div></div></div>')
+    return _poker_page(site, base, t.name, body)
+
+
+async def poker_handle(site, casino, request, base: str, uid: int, name: str, parts: list[str]) -> web.Response:
+    if not parts:
+        return poker_lobby(site, casino, base, uid)
+    tid = parts[0]
+    try:
+        casino.table(tid)
+    except GameError:
+        raise web.HTTPSeeOther(f"{base}/casino/poker") from None
+    what = parts[1] if len(parts) > 1 else ""
+    if request.method != "POST":
+        if what == "state":
+            version = _int(request.query.get("v"), -1)
+            await casino.poker_wait(tid, version)
+            return web.json_response(casino.poker_view(uid, tid), headers={"Cache-Control": "no-store"})
+        return poker_table_page(site, casino, base, uid, tid)
+    if not _same_origin(request):
+        raise web.HTTPForbidden(text="Only from this website.")
+    form = await request.post()
+    try:
+        if what == "sit":
+            casino.poker_sit(uid, name, tid, _int(form.get("buyin"), 0) or 0)
+        elif what == "leave":
+            casino.poker_leave(uid, tid)
+        elif what == "act":
+            casino.poker_act(uid, tid, str(form.get("action", "")), _int(form.get("amount"), 0) or 0)
+        else:
+            raise GameError("Unknown action.")
+    except GameError as exc:
+        return web.json_response({"error": str(exc), "state": casino.poker_view(uid, tid),
+                                  "balance": casino.balance(uid)}, headers={"Cache-Control": "no-store"})
+    return web.json_response({"ok": True, "state": casino.poker_view(uid, tid), "balance": casino.balance(uid)},
+                             headers={"Cache-Control": "no-store"})
+
+
 PAGES = {"slots": slots_page, "coinflip": coinflip_page, "dice": dice_page, "roulette": roulette_page,
          "blackjack": blackjack_page}
 
@@ -373,6 +489,11 @@ async def handle(site, casino, request, base: str, path: str) -> web.Response:
     uid = sess["user_id"]
     if not casino.points_enabled:
         return _page(site, base, "Casino", notice("The casino is closed right now.", "bad"))
+    parts = [p for p in sub.split("/") if p]
+    if parts[:1] == ["poker"]:
+        if "poker" not in casino.enabled_games():
+            return _page(site, base, "Casino", notice("This game is closed.", "bad"), status=404)
+        return await poker_handle(site, casino, request, base, uid, sess["name"], parts[1:])
     if sub not in PAGES:
         if sub:
             raise web.HTTPSeeOther(f"{base}/casino")

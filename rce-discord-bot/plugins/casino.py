@@ -1,5 +1,6 @@
-"""Casino: players gamble their points on the player website (/casino) – slots, coin flip, dice, roulette and
-blackjack. Play money only: points are earned in-game and can't be bought or cashed out.
+"""Casino: players gamble their points on the player website (/casino) – slots, coin flip, dice, roulette,
+blackjack, and Texas Hold'em poker tables where players play against each other. Play money only: points are
+earned in-game and can't be bought or cashed out.
 
 Slots, coin flip and dice return 95 % of the bets on average, roulette is a real European wheel (97.3 %) and
 blackjack is played with real casino rules (≈ 99.5 %). The games themselves are in support/casino_games.py, the
@@ -7,19 +8,29 @@ pages in web/casino_pages.py. Players log in with the website's player login (/a
 """
 from __future__ import annotations
 
+import asyncio
+import re
 import time
+
+from discord.ext import tasks
 
 from plugin_api import Plugin, Setting
 from support import casino_games as games
+from support import poker
 from support.casino_games import GameError
+from support.poker import PokerError
 
-GAMES = {           # id -> (name, icon, RTP shown to players)
-    "slots": ("Slots", "🎰", "95 %"),
-    "coinflip": ("Coin flip", "🪙", "95 %"),
-    "dice": ("Dice", "🎲", "95 %"),
-    "roulette": ("Roulette", "🎡", "97.3 %"),
-    "blackjack": ("Blackjack", "🃏", "≈ 99.5 %"),
+GAMES = {           # id -> (name, icon, line shown under it)
+    "slots": ("Slots", "🎰", "Return to player 95 %"),
+    "coinflip": ("Coin flip", "🪙", "Return to player 95 %"),
+    "dice": ("Dice", "🎲", "Return to player 95 %"),
+    "roulette": ("Roulette", "🎡", "Return to player 97.3 %"),
+    "blackjack": ("Blackjack", "🃏", "Return to player ≈ 99.5 %"),
+    "poker": ("Poker", "♠️", "Texas Hold'em against other players"),
 }
+DEFAULT_TABLES = "Low stakes | 5 | 10 | 200 | 2000\nHigh stakes | 50 | 100 | 2000 | 20000"
+TABLE_LINE = re.compile(r"^\s*([^|]{1,40}?)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*$")
+POLL_SECONDS = 20                   # a table page waits this long for a change before asking again
 
 
 class Casino(Plugin):
@@ -33,9 +44,24 @@ class Casino(Plugin):
         Setting("max_bet", "Biggest bet", "int", 5000, min=1, max=100_000_000,
                 help="Per game (blackjack: per hand before doubling or splitting)."),
         Setting("daily_loss_limit", "Daily loss limit per player", "int", 0, min=0, max=1_000_000_000,
-                help="Points a player may lose in total per day (UTC). 0 = no limit."),
+                help="Points a player may lose in total per day (UTC). 0 = no limit. (Poker buy-ins don't count.)"),
         *(Setting(gid, f"{icon} {name}", "bool", True) for gid, (name, icon, _) in GAMES.items()),
+        Setting("poker_tables", "Poker tables", "textarea", DEFAULT_TABLES,
+                help="One table per line: name | small blind | big blind | smallest buy-in | biggest buy-in. "
+                     "Up to 6 players per table. Changing a table stands its players up (chips go back)."),
+        Setting("poker_turn_time", "Poker: seconds per turn", "int", 30, min=10, max=120,
+                help="Who runs out of time checks or folds and sits out until he's back."),
+        Setting("poker_rake", "Poker: house cut (rake) in %", "int", 0, min=0, max=10,
+                help="Taken from every pot that saw a flop and was played by 2+ players. 0 = none "
+                     "(players only win from each other)."),
+        Setting("poker_rake_cap", "Poker: biggest cut per hand", "int", 0, min=0, max=10_000_000,
+                help="0 = no cap."),
     )
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.tables: dict[str, poker.Table] = {}
+        self._changed: dict[str, asyncio.Event] = {}
 
     # ------------------------------------------------------------ Setup
 
@@ -43,7 +69,8 @@ class Casino(Plugin):
         return [gid for gid in GAMES if self.setting(gid)]
 
     def problems(self) -> list[str]:
-        out = []
+        out = [f"Poker tables, line {n}: {line.strip()[:40]} – use name | small blind | big blind | min | max "
+               "buy-in (big blind ≥ small blind, min ≤ max)." for n, line in self._bad_table_lines()]
         if not self.points_enabled:
             out.append("Points & shop are switched off – the casino plays with points.")
         if self.plugin("website") is None:
@@ -60,8 +87,170 @@ class Casino(Plugin):
         for gid in GAMES:
             s = self.data.get(f"stats:{gid}", {})
             wagered, paid, rounds = wagered + s.get("wagered", 0), paid + s.get("paid", 0), rounds + s.get("rounds", 0)
+        seated = sum(1 for t in self.tables.values() for s in t.seats if s is not None)
         return {"Rounds played": rounds, "Points bet": wagered, "Points paid out": paid,
-                "House profit": wagered - paid}
+                "House profit": wagered - paid, "Players at poker tables": seated,
+                "Poker rake": int(self.data.get("poker_rake_total", 0))}
+
+    # ------------------------------------------------------------ Poker tables
+
+    async def on_load(self) -> None:
+        self._refund_saved()
+        self._build_tables()
+
+    async def on_unload(self) -> None:
+        for t in self.tables.values():
+            self._cash_out(t, t.refund_all(), "table closed")
+        self.tables = {}
+        self.data.delete("poker")
+
+    async def on_settings_changed(self) -> None:
+        self._build_tables()
+
+    def _table_specs(self) -> dict[str, tuple]:
+        specs = {}
+        for line in str(self.setting("poker_tables") or "").splitlines():
+            m = TABLE_LINE.match(line)
+            if not m:
+                continue
+            name, sb, bb, low, high = m[1], *(int(x) for x in m.groups()[1:])
+            tid = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:30] or "table"
+            if 0 < sb <= bb and 0 < low <= high and tid not in specs:
+                specs[tid] = (name, sb, bb, low, high)
+        return specs
+
+    def _bad_table_lines(self) -> list[tuple[int, str]]:
+        bad = []
+        for n, line in enumerate(str(self.setting("poker_tables") or "").splitlines(), 1):
+            m = TABLE_LINE.match(line) if line.strip() else True
+            if m is None or (m is not True and not (0 < int(m[2]) <= int(m[3]) and 0 < int(m[4]) <= int(m[5]))):
+                bad.append((n, line))
+        return bad
+
+    def _build_tables(self) -> None:
+        """Tables from the settings. A table whose settings changed (or that was removed) stands its players up."""
+        specs = self._table_specs()
+        turn, rake, cap = self.setting("poker_turn_time"), self.setting("poker_rake"), self.setting("poker_rake_cap")
+        for tid, t in list(self.tables.items()):
+            spec = specs.get(tid)
+            same = spec is not None and (t.name, t.sb, t.bb, t.min_buy, t.max_buy) == spec
+            if same:
+                t.turn_time, t.rake_pct, t.rake_cap = turn, rake, cap
+                continue
+            self._cash_out(t, t.refund_all(), "table changed")
+            self._notify(tid)
+            del self.tables[tid]
+        for tid, (name, sb, bb, low, high) in specs.items():
+            if tid not in self.tables:
+                self.tables[tid] = poker.Table(id=tid, name=name, sb=sb, bb=bb, min_buy=low, max_buy=high,
+                                               turn_time=turn, rake_pct=rake, rake_cap=cap)
+        self._save()
+
+    def _refund_saved(self) -> None:
+        """After a crash/restart: every player gets back his chips, also those in an unfinished hand."""
+        for raw in (self.data.get("poker") or {}).values():
+            try:
+                t = poker.Table.from_dict(raw)
+            except (TypeError, ValueError, KeyError):
+                self.log.warning("Could not read a saved poker table")
+                continue
+            self._cash_out(t, t.refund_all(), "table closed (restart)")
+        self.data.delete("poker")
+
+    def _cash_out(self, t: poker.Table, payouts, why: str) -> None:
+        for user_id, amount in payouts:
+            if amount > 0:
+                self.bot.db.add_points(user_id, amount, f"{self.NAME}: poker {why} ({t.name})")
+
+    def _after(self, t: poker.Table) -> None:
+        """After every change: pay out who left, count the rake, save, wake the waiting pages."""
+        if t.cashouts:
+            self._cash_out(t, t.cashouts, "chips back")
+            t.cashouts = []
+        if t.rake_total:
+            self.data.set("poker_rake_total", int(self.data.get("poker_rake_total", 0)) + t.rake_total)
+            t.rake_total = 0
+        self._save()
+        self._notify(t.id)
+
+    def _save(self) -> None:
+        self.data.set("poker", {tid: t.to_dict() for tid, t in self.tables.items()})
+
+    def _notify(self, tid: str) -> None:
+        event = self._changed.pop(tid, None)
+        if event is not None:
+            event.set()
+
+    @tasks.loop(seconds=1)
+    async def poker_clock(self) -> None:
+        now = time.time()
+        for t in list(self.tables.values()):
+            try:
+                if t.tick(now):
+                    self._after(t)
+            except Exception:
+                self.log.exception("Poker table %s", t.id)
+
+    def table(self, tid: str) -> poker.Table:
+        t = self.tables.get(tid)
+        if t is None or "poker" not in self.enabled_games():
+            raise GameError("This table doesn't exist.")
+        return t
+
+    def poker_sit(self, user_id: int, name: str, tid: str, buy_in: int) -> None:
+        t = self.table(tid)
+        if not self.points_enabled:
+            raise GameError("The casino is closed right now.")
+        elsewhere = next((o for o in self.tables.values() if o.seat_of(user_id) is not None), None)
+        if elsewhere is not None and elsewhere is not t:
+            raise GameError(f"You're already sitting at {elsewhere.name} – leave it first.")
+        if not t.min_buy <= buy_in <= t.max_buy:
+            raise GameError(f"Buy in with {self.fmt_points(t.min_buy)} – {self.fmt_points(t.max_buy)}.")
+        if self.take_points(user_id, buy_in, f"poker buy-in ({t.name})") is None:
+            raise GameError(f"Not enough points – you have {self.fmt_points(self.balance(user_id))}.")
+        try:
+            t.sit(user_id, name, buy_in, time.time())
+        except PokerError as exc:
+            self.bot.db.add_points(user_id, buy_in, f"{self.NAME}: poker buy-in back ({t.name})")
+            raise GameError(str(exc)) from None
+        self._after(t)
+
+    def poker_leave(self, user_id: int, tid: str) -> int:
+        t = self.table(tid)
+        try:
+            chips = t.leave(user_id, time.time())
+        except PokerError as exc:
+            raise GameError(str(exc)) from None
+        self._cash_out(t, [(user_id, chips)], "cash-out")
+        self._after(t)
+        return chips
+
+    def poker_act(self, user_id: int, tid: str, action: str, amount: int = 0) -> None:
+        t = self.table(tid)
+        try:
+            if action == "back":
+                t.set_back(user_id, True)
+            elif action == "away":
+                t.set_back(user_id, False)
+            else:
+                t.act(user_id, action, amount, time.time())
+        except PokerError as exc:
+            raise GameError(str(exc)) from None
+        self._after(t)
+
+    def poker_view(self, user_id: int, tid: str) -> dict:
+        return self.table(tid).view(user_id, time.time())
+
+    async def poker_wait(self, tid: str, version: int, timeout: float = POLL_SECONDS) -> None:
+        """Waits until the table changes (long polling – the page asks again right after)."""
+        t = self.table(tid)
+        if t.version != version:
+            return
+        event = self._changed.setdefault(tid, asyncio.Event())
+        try:
+            await asyncio.wait_for(event.wait(), timeout)
+        except asyncio.TimeoutError:
+            pass
 
     # ------------------------------------------------------------ Money
 
