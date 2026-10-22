@@ -1495,6 +1495,35 @@ class Storage:
                          (amount, code))
         self._db.commit()
 
+    def merge_gift_cards(self, target: str, sources: list[str], now: int) -> tuple[float, float, int | None]:
+        """Moves the whole balance of the `sources` onto `target` – all or nothing. The combined card gets the
+        earliest expiry date of the cards involved (no money lives longer than it would have). Emptied cards stay
+        (balance 0, noted as merged) so an amount held for one of their unpaid orders can still come back to them.
+        Returns (moved, new balance, expires_at); ValueError if a card changed meanwhile."""
+        rows = {code: self.gift_card(code) for code in (target, *sources)}
+        moved = round(sum(float(rows[c]["balance"]) for c in sources), 2)
+        expiries = [r["expires_at"] for r in rows.values() if r["expires_at"]]
+        expires_at = min(expiries) if expiries else None
+        try:
+            for code in sources:
+                cur = self._db.execute(
+                    "UPDATE gift_cards SET balance = 0, note = TRIM(COALESCE(note, '') || ' · merged into ' || ?) "
+                    "WHERE code = ? AND balance = ? AND disabled = 0 AND (expires_at IS NULL OR expires_at > ?)",
+                    (target[:4] + "…", code, rows[code]["balance"], now))
+                if cur.rowcount != 1:
+                    raise ValueError("A gift card changed while combining – please try again.")
+            cur = self._db.execute(
+                "UPDATE gift_cards SET balance = ROUND(balance + ?, 2), initial = ROUND(initial + ?, 2), "
+                "expires_at = ? WHERE code = ? AND balance = ? AND disabled = 0 AND (expires_at IS NULL OR expires_at > ?)",
+                (moved, moved, expires_at, target, rows[target]["balance"], now))
+            if cur.rowcount != 1:
+                raise ValueError("The gift card changed while combining – please try again.")
+        except BaseException:
+            self._db.rollback()
+            raise
+        self._db.commit()
+        return moved, round(float(rows[target]["balance"]) + moved, 2), expires_at
+
     def set_gift_card_disabled(self, code: str, disabled: bool) -> bool:
         cur = self._db.execute("UPDATE gift_cards SET disabled = ? WHERE code = ?", (int(disabled), code))
         self._db.commit()

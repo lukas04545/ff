@@ -1055,6 +1055,9 @@ plugin must be on). Three tabs:
   *Price for every other item* (`STORE_DEFAULT_ITEM_PRICE`, per single item, e.g. `0.05`). While it is `0` those
   items are shown greyed out under "No price yet" and can't be bought – nothing is priced behind your back.
 - **Gift cards** – players can buy gift cards (`STORE_GIFTCARD_VALUES`, e.g. `10,25,50`) and check a card's balance.
+  They can also **combine** several gift cards onto one (Gift cards page → *Combine gift cards*, or
+  `/giftcard combine` on Discord): the whole balance moves onto one card, the others are emptied; the combined card
+  keeps the earliest expiry date of the cards involved.
 
 **Checkout:** the buyer enters their in-game name – it must be linked to their Discord account (`/customkit link`),
 that's who gets the kit – and optionally a gift card code, then pays with **PayPal**. Right after the payment the

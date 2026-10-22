@@ -6,6 +6,7 @@ browser only sends what was picked. Checkout redirects to PayPal; PayPal sends t
 from __future__ import annotations
 
 import html
+import re
 import time
 from datetime import datetime
 from urllib.parse import quote
@@ -234,9 +235,11 @@ def build_page(site, shop, base: str, query, error: str = "", admin: bool = Fals
     return wrap(site, shop, base, "store/build", "Build your own kit", notice(error, "bad") + summary + form, admin)
 
 
-def giftcards_page(site, shop, base: str, query, ip: str, error: str = "", admin: bool = False) -> str:
+def giftcards_page(site, shop, base: str, query, ip: str, error: str = "", admin: bool = False,
+                   ok: str = "", form: dict | None = None) -> str:
     from cogs.webshop import CheckoutError
-    body = notice(error, "bad")
+    form = form or {}
+    body = notice(error, "bad") + notice(ok, "ok")
     code = str(query.get("code", "")).strip()
     if code:
         try:
@@ -261,6 +264,17 @@ def giftcards_page(site, shop, base: str, query, ip: str, error: str = "", admin
              f'action="{base}/store/giftcards"><input name="code" maxlength="40" placeholder="XXXX-XXXX-XXXX-XXXX" '
              f'required><button type="submit">Check</button></form><p class="muted">Use a gift card at checkout: '
              f'enter its code in the "Gift card code" field. If it covers the whole price, no PayPal is needed.</p></div>')
+    body += (f'<div class="card"><h2>Combine gift cards</h2><p class="muted">Got several gift cards? Put everything '
+             f'on one card: the whole balance of the other cards moves onto it and they are emptied. The combined card '
+             f'keeps the earliest expiry date of the cards (if any has one).</p>'
+             f'<form method="post" action="{base}/store/giftcards/combine">'
+             f'<label class="field"><span>Card to put everything on</span><input name="target" maxlength="40" required '
+             f'placeholder="XXXX-XXXX-XXXX-XXXX" value="{esc(form.get("target", ""))}"></label>'
+             f'<label class="field"><span>Cards to move onto it (one per line, up to {shop.MAX_COMBINE})</span>'
+             f'<textarea name="codes" rows="4" maxlength="600" required placeholder="XXXX-XXXX-XXXX-XXXX" '
+             f'style="padding:10px 12px;border:1px solid var(--line);background:rgba(0,0,0,.45);color:var(--text);'
+             f'font:inherit;resize:vertical">{esc(form.get("codes", ""))}</textarea></label>'
+             f'<button class="pay" type="submit">Combine</button></form></div>')
     return wrap(site, shop, base, "store/giftcards", "Gift cards", body, admin)
 
 
@@ -312,6 +326,18 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
     sub = path.removeprefix("store").strip("/")
     query = request.query
     admin_on = bool(shop.bot.config.store_admin_key)
+    if request.method == "POST" and sub == "giftcards/combine":
+        form = await request.post()
+        target, codes = str(form.get("target", ""))[:40], str(form.get("codes", ""))[:600]
+        try:
+            result = await shop.combine_gift_cards(target, re.split(r"[\s,;]+", codes), ip)
+        except CheckoutError as exc:
+            return 400, giftcards_page(site, shop, base, {}, ip, str(exc), form={"target": target, "codes": codes})
+        until = (f" · valid until {datetime.fromtimestamp(result['expires_at']).strftime('%Y-%m-%d')}"
+                 if result["expires_at"] else "")
+        return 200, giftcards_page(site, shop, base, {}, ip, ok=(
+            f"Done: {result['count']} card(s) moved onto {result['code']}. New balance: "
+            f"{shop.fmt(result['balance'])}{until}."))
     if request.method == "POST":
         if sub != "checkout":
             return 404, site.not_found(base)
