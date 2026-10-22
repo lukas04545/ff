@@ -229,7 +229,7 @@ rce-discord-bot/
 │   ├── item_images.py     # Item pictures: downloaded once (ITEM_IMAGE_URL), cached in data/item_images/
 │   ├── store_pages.py     # Web store pages of the player website (/play/store)
 │   ├── account_pages.py   # Player account pages (/play/account): manage own kits, team slots
-│   └── static/            # Frontend (HTML/CSS/JS, no external files)
+│   └── static/            # Frontend (HTML/CSS/JS, no external files): style.css, neon.css (neon theme), bg.js (animated background)
 ├── logbuffer.py           # Recent log lines for the web interface
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
 ├── envfile.py             # Read/write .env (comments are preserved)
@@ -479,6 +479,12 @@ protection against other websites (CSRF), all player and console texts are displ
 text only. However, the web interface has **no HTTPS** – **never expose it to the internet via
 port forwarding on your router**. For access on the go, use a VPN such as Tailscale or WireGuard
 into your home network instead.
+
+**Neon look:** the web interface comes in a neon-orange theme by default – glass panels with glow, a glowing
+active menu entry and an animated background (a neon grid racing towards a striped sun, with embers drifting up).
+The 🌙/☀️ button at the bottom of the menu switches between *neon* and *light* (remembered per browser). The
+background animation uses very little power (about 30 fps, paused while the tab is hidden) and is drawn as one still
+picture if your system has "reduce motion" switched on.
 
 **Item pictures:** the kit builder, the kit lists and the player website show pictures of the items. The bot
 downloads each picture once from `ITEM_IMAGE_URL` (default: RustLabs, `{shortname}` is replaced) and keeps it in

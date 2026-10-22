@@ -234,3 +234,24 @@ def test_admin_accounts(bot):
             await login("someone", "guess")
         assert (await login("someone", "guess")).status == 429
     run(bot, scenario)
+
+
+def test_neon_theme_files(bot):
+    """The neon look (neon.css + animated background bg.js) is served and loaded by the page; light mode is left alone."""
+    async def scenario(c):
+        page = await (await c.get("/")).text()
+        assert "/static/neon.css" in page and "/static/bg.js" in page
+        assert page.index("/static/style.css") < page.index("/static/neon.css")      # neon overrides the base theme
+        css = await c.get("/static/neon.css")
+        text = await css.text()
+        assert css.status == 200 and "--neon: #ff7a1a" in text and "@keyframes border-spin" in text
+        # every rule is scoped to "not light", so the light theme keeps its look
+        assert ':not([data-theme="light"])' in text and ':root[data-theme="light"] #bg { display: none; }' in text
+        assert "prefers-reduced-motion: reduce" in text                              # calm mode switches animations off
+        js = await c.get("/static/bg.js")
+        src = await js.text()
+        assert js.status == 200 and 'canvas.id = "bg"' in src
+        assert "visibilitychange" in src and "prefers-reduced-motion" in src and "requestAnimationFrame" in src
+        app = await (await c.get("/static/app.js")).text()
+        assert 'THEME_NAMES = { dark: "neon", light: "light" }' in app                # theme button: neon <-> light
+    run(bot, scenario)

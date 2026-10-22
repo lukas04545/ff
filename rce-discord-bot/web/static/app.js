@@ -87,19 +87,20 @@ $("#login-form").addEventListener("submit", async (ev) => {
 
 $("#account").addEventListener("click", () => { location.hash = "#account"; });
 
-// Theme: auto (follows the system) -> light -> dark
-const THEMES = { auto: "🌓", light: "☀️", dark: "🌙" };
+// Theme: neon (default) <-> light
+const THEMES = { dark: "🌙", light: "☀️" };
+const THEME_NAMES = { dark: "neon", light: "light" };
 function applyTheme(theme) {
-  if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
-  else delete document.documentElement.dataset.theme;
-  $("#theme").textContent = THEMES[theme] || THEMES.auto;
-  $("#theme").title = `Theme: ${theme} (click to change)`;
+  document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
+  const shown = theme === "light" ? "light" : "dark";
+  $("#theme").textContent = THEMES[shown];
+  $("#theme").title = `Theme: ${THEME_NAMES[shown]} (click for ${THEME_NAMES[shown === "light" ? "dark" : "light"]})`;
 }
-let theme = "auto";
-try { theme = localStorage.getItem("rce-theme") || "auto"; } catch { /* storage blocked */ }
+let theme = "dark";
+try { theme = localStorage.getItem("rce-theme") === "light" ? "light" : "dark"; } catch { /* storage blocked */ }
 applyTheme(theme);
 $("#theme").addEventListener("click", () => {
-  theme = { auto: "light", light: "dark", dark: "auto" }[theme] || "auto";
+  theme = theme === "light" ? "dark" : "light";
   try { localStorage.setItem("rce-theme", theme); } catch { /* storage blocked */ }
   applyTheme(theme);
 });
