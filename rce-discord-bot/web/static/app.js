@@ -1698,6 +1698,57 @@ views.community = async (main) => {
 
 // ------------------------------------------------------------------ Settings
 
+// "Use your own domain": tunnel + DNS record are created through the Cloudflare API (token is not stored)
+function ownDomainBox(rows) {
+  // the settings form's own fields – kept in sync so a later "Save" doesn't write the old values back
+  const field = (key) => rows[key] && rows[key].row.querySelector("input, select, textarea");
+  const current = (field("WEB_PUBLIC_URL") && field("WEB_PUBLIC_URL").value) || "";
+  const host = h("input", { placeholder: "panel.yourdomain.com", maxlength: 253, autocomplete: "off",
+    value: current.replace(/^https?:\/\//, "") });
+  const token = h("input", { type: "password", placeholder: "Cloudflare API token", autocomplete: "off" });
+  const out = h("div");
+  const btn = h("button", { class: "primary", type: "button", text: "🌐 Connect my domain" });
+  const checkBtn = h("button", { type: "button", text: "Check the address" });
+  const check = async (tries = 1) => {
+    checkBtn.disabled = true;
+    for (let i = 0; i < tries; i++) {
+      try {
+        const r = await api("/api/settings/cloudflare-domain/check", { method: "POST", body: {} });
+        out.replaceChildren(h("div", { class: "banner " + (r.ok ? "ok" : "warn") },
+          r.ok ? h("span", {}, "✅ ", r.message, " ", h("a", { href: r.url, target: "_blank", rel: "noopener", text: "Open ↗" })) : r.message));
+        if (r.ok) break;
+      } catch (e) { out.replaceChildren(h("div", { class: "banner bad", text: e.message })); break; }
+      if (i < tries - 1) await new Promise((res) => setTimeout(res, 6000));
+    }
+    checkBtn.disabled = false;
+  };
+  checkBtn.addEventListener("click", () => check(1));
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    out.replaceChildren(h("p", { class: "muted", text: "Setting up the tunnel and the DNS record at Cloudflare …" }));
+    try {
+      const r = await api("/api/settings/cloudflare-domain", { method: "POST", body: { hostname: host.value, api_token: token.value } });
+      token.value = "";
+      if (field("WEB_PUBLIC_URL")) field("WEB_PUBLIC_URL").value = r.url;
+      const on = field("WEB_TUNNEL");
+      if (on) { if (on.type === "checkbox") on.checked = true; else on.value = "true"; }
+      out.replaceChildren(h("div", { class: "banner ok", text: `Done: tunnel ${r.tunnel}, DNS record ${r.dns}. The bot is connecting ${r.url} now – checking …` }));
+      await check(8);                           // new DNS + tunnel: give it up to ~45 s
+    } catch (e) { out.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
+    btn.disabled = false;
+  });
+  return h("div", { class: "card", style: "margin-top:1rem" },
+    h("h2", { text: "🌐 Use your own domain (Cloudflare)" }),
+    h("p", { class: "muted", text: "Your domain must be on Cloudflare (bought there, or its nameservers moved there). The bot creates the tunnel and the DNS record for you – the address then never changes." }),
+    h("ol", { class: "muted", style: "margin:.3rem 0 .8rem 1.1rem;padding:0" },
+      h("li", {}, "Cloudflare → My Profile → ", h("a", { href: "https://dash.cloudflare.com/profile/api-tokens", target: "_blank", rel: "noopener", text: "API Tokens ↗" }),
+        " → Create Token → Custom token."),
+      h("li", { text: "Permissions: Account › Cloudflare Tunnel › Edit, Zone › DNS › Edit, Zone › Zone › Read. Zone resources: your domain." }),
+      h("li", { text: "Paste the token below with the address you want (e.g. panel.yourdomain.com) and click Connect. The token is only used for this and is not saved." })),
+    h("div", { class: "row" }, host, token),
+    h("div", { class: "row", style: "margin-top:.5rem" }, btn, current ? checkBtn : null), out);
+}
+
 views.settings = async (main) => {
   main.append(h("h1", { text: setupMode ? "Setup" : "Settings" }));
   const banner = h("div");
@@ -1786,6 +1837,7 @@ views.settings = async (main) => {
     }
     if (g.id === "discord") card.append(discordTester(inputs));
     if (g.id === "rcon") card.append(rconTester(inputs));
+    if (g.id === "web") card.append(ownDomainBox(rows));
     if (g.id === "updates" && !data.setup_mode) card.firstChild.after(updateStatus());
     if (g.id === "alerts" && !data.setup_mode) card.firstChild.after(backupBox());
     if (g.id === "abuse" && !data.setup_mode) card.firstChild.after(abuseBox());

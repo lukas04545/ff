@@ -391,8 +391,8 @@ FIELDS: list[Field] = [
                "needed. The link is shown in the bot window, in PUBLIC_LINK.txt, on the Overview and in the admin "
                "log channel. Without a WEB_PASSWORD the bot generates one and saves it."),
     Field("WEB_TUNNEL_TOKEN", "Cloudflare tunnel token (fixed address)", "web", "secret", advanced=True,
-          help="Optional. Empty = random address (changes when the bot window is closed). For a fixed address "
-               "create a tunnel in the Cloudflare dashboard (needs your own domain) and paste its token."),
+          help="Optional. Empty = random address (changes when the bot window is closed). For your own domain use "
+               "\"Use your own domain (Cloudflare)\" below – it fills this in for you."),
     Field("WEB_PUBLIC_URL", "Fixed public address", "web", advanced=True, placeholder="https://panel.example.com",
           help="Only with a tunnel token: the address you configured for it in Cloudflare."),
     Field("WEB_OPEN_BROWSER", "Open browser on start", "web", "bool"),
