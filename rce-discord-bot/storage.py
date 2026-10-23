@@ -1090,6 +1090,15 @@ class Storage:
             "SELECT player FROM team_members WHERE team_id = ? ORDER BY player", (row["team_id"],))]
         return row, members
 
+    def team_by_id(self, team_id: int) -> tuple[sqlite3.Row, list[str]] | None:
+        """(team row with its leader, member names) or None if the team is gone."""
+        row = self._db.execute("SELECT * FROM teams WHERE team_id = ?", (team_id,)).fetchone()
+        if row is None:
+            return None
+        members = [r["player"] for r in self._db.execute(
+            "SELECT player FROM team_members WHERE team_id = ? ORDER BY player", (team_id,))]
+        return row, members
+
     TEAM_ORDER = {"kills": "kills DESC", "kd": "CAST(kills AS REAL) / MAX(deaths, 1) DESC, kills DESC",
                   "playtime": "playtime DESC", "members": "members DESC, kills DESC"}
 
