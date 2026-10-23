@@ -40,7 +40,7 @@ from rce.diagnostics import diagnose_rcon
 from logbuffer import memory_log
 from web import tunnel as tunnelmod
 from web.caching import YEAR, conditional, maybe_compress
-from web.item_images import THUMB_SIZES
+from web.item_images import THUMB_SIZES, WAIT_FOR_DOWNLOAD
 from web.ratelimit import RateLimiter
 from web.users import OWNER, UserError, UserStore, same_secret
 from cogs.economy import SHOP_KINDS
@@ -277,6 +277,7 @@ class WebInterface:
         from web.item_images import ItemImages
         self._scan: dict = {}
         self._scan_task = None
+        self._warm_task: asyncio.Task | None = None
         self.item_images = ItemImages((bot.config.database_path.parent if bot else Path("data")) / "item_images")
         self.app = self._build_app()
 
@@ -442,6 +443,8 @@ class WebInterface:
             if not ws.password:
                 log.warning("No WEB_PASSWORD set – log in via this link: %s  (or password: %s)",
                             login_url, self.password)
+        if self.bot is not None:
+            self._warm_task = asyncio.create_task(self._warm_item_images())
         if ws.host not in ("127.0.0.1", "localhost"):
             log.warning("Web interface is reachable on the network (WEB_HOST=%s). Do not expose it to the internet!",
                         ws.host)
@@ -451,6 +454,26 @@ class WebInterface:
             except Exception:  # e.g. no browser on a server
                 pass
         return True
+
+    async def _warm_item_images(self) -> None:
+        """After the start: fetch the pictures of every catalogue item the bot doesn't have yet, in the
+        background – so pages don't have to wait for them. Logs which sources refused."""
+        await asyncio.sleep(30)
+        template = self.bot.config.item_image_url or ""
+        if not template or template.lower() == "off":
+            return
+        todo = [s for s in itemlist.COMMON_ITEMS if self.item_images.cached(s) is None]
+        if not todo:
+            return
+        self.item_images.url_template = template
+        try:
+            result = await self.item_images.scan(todo, retry=False)
+        except Exception:
+            log.exception("Fetching item pictures failed")
+            return
+        trouble = {h: s["last_error"] for h, s in self.item_images.sources.items() if s["errors"] and not s["ok"]}
+        log.info("Item pictures: %d new, %d still without a picture%s", len(result["found"]), len(result["missing"]),
+                 "".join(f" – {h} refused ({e})" for h, e in trouble.items()))
 
     def _start_tunnel(self) -> None:
         """Cloudflare tunnel (reachable from the internet). Keeps running across bot restarts."""
@@ -507,6 +530,8 @@ class WebInterface:
         return None
 
     async def stop(self) -> None:
+        if self._warm_task is not None:
+            self._warm_task.cancel()
         await self.item_images.close()
         if self.tunnel is not None:
             self.tunnel.on_online = None  # the tunnel itself keeps running for the restarted bot
@@ -686,13 +711,16 @@ class WebInterface:
             out["days"] = days
         if not partial or "description" in data:
             out["description"] = str(data.get("description") or "").strip()[:500] or None
+        if not partial or "category" in data:
+            out["category"] = " ".join(str(data.get("category") or "").split())[:40] or None
         if "enabled" in data:
             out["enabled"] = 1 if data.get("enabled") else 0
         return out
 
     async def webshop_kit_create(self, request: web.Request) -> web.Response:
         f = self._store_kit_fields(await self._json(request))
-        kit_id = self.bot.db.add_store_kit(f["name"], f["kit"], f["price"], f["days"], f["description"])
+        kit_id = self.bot.db.add_store_kit(f["name"], f["kit"], f["price"], f["days"], f["description"],
+                                           category=f["category"])
         self._audit(f"store: kit **{f['name']}** for sale ({f['kit']}, {f['price']})")
         return web.json_response({"id": kit_id})
 
@@ -763,13 +791,14 @@ class WebInterface:
         for ext in (".png", ".jpg", ".webp"):
             name = name.removesuffix(ext)
         size = int(request.query["s"]) if request.query.get("s", "").isdigit() else None
-        found = await self.item_images.get(name, size if size in THUMB_SIZES else None)
+        found = await self.item_images.get(name, size if size in THUMB_SIZES else None, wait=WAIT_FOR_DOWNLOAD)
         if found is None:
+            # Never cached (not by the browser, not by Cloudflare): the picture may arrive a moment later
             if request.query.get("ph"):        # player website: a neutral tile with the shortname instead of a 404
                 return web.Response(text=placeholder_svg(name), content_type="image/svg+xml",
-                                    headers={"Cache-Control": "public, max-age=3600",
+                                    headers={"Cache-Control": "no-store",
                                              "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"})
-            raise web.HTTPNotFound(headers={"Cache-Control": "public, max-age=3600"})
+            raise web.HTTPNotFound(headers={"Cache-Control": "no-store"})
         data, kind = found
         return conditional(request, data, kind, "public, max-age=604800")
 
@@ -792,6 +821,7 @@ class WebInterface:
             try:
                 result = await self.item_images.scan(itemlist.COMMON_ITEMS, progress=progress)
                 state.update(found=len(result["found"]), missing=result["missing"])
+                state["sources"] = self.item_images.sources
             except Exception as exc:                 # never leave the page waiting forever
                 log.exception("Item picture scan failed")
                 state.update(error=str(exc)[:200])

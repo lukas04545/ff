@@ -1,5 +1,6 @@
 """Web store: kits for sale, own custom kits, gift cards, PayPal checkout (faked), delivery, website + admin API."""
 import asyncio
+import re
 from dataclasses import replace
 from types import SimpleNamespace as NS
 
@@ -581,3 +582,43 @@ def test_kit_sync_is_quick(shop, monkeypatch):
         assert s.start_sync() is True and s.start_sync() is True     # one at a time, returns at once
         s._sync_task.cancel()
     run(main())
+
+
+def test_store_kit_categories(shop, monkeypatch):
+    from plugin_api import Plugin
+    from plugin_manager import PluginManager
+    bot, db = shop.env.bot, shop.db
+    monkeypatch.setattr(Plugin, "_loops", lambda self: [])
+    bot.config = replace(bot.config, web_password="secret123")
+
+    async def main():
+        from web.server import WebInterface
+        bot.plugins = PluginManager(bot)
+        await bot.plugins.load_all()
+        await bot.plugins.set_enabled("website", True)
+        tmp = bot.config.database_path.parent
+        web = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            page = await (await c.get("/store")).text()
+            assert "AK kit" in page and 'class="cats"' not in page              # one group: no category bar
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            r = await c.post("/api/webshop/kits", json={"name": "Raid", "kit": "mega raid kit", "price": 20,
+                                                        "category": "  Raid   kits "}, headers=H)
+            raid = (await r.json())["id"]
+            assert db.store_kit(raid)["category"] == "Raid kits"
+            assert (await c.put(f"/api/webshop/kits/{shop.kit_id}", json={"category": "Weapons"},
+                                headers=H)).status == 200
+            third = db.add_store_kit("Starter", "Ak Kit", 2.5, 0, None)                # no category -> "Other kits"
+            page = await (await c.get("/store")).text()
+            assert '<a href="#cat-raid-kits">Raid kits (1)</a>' in page and '<a href="#cat-weapons">Weapons (1)</a>' in page
+            heads = re.findall(r'<h2 class="cat-head" id="([^"]+)">([^<]+)</h2>', page)
+            assert heads == [("cat-raid-kits", "Raid kits"), ("cat-weapons", "Weapons"), ("cat-other", "Other kits")]
+            assert page.index("<h2>Raid</h2>") < page.index("<h2>AK kit</h2>") < page.index("<h2>Starter</h2>")
+            assert (await c.put(f"/api/webshop/kits/{raid}", json={"category": ""}, headers=H)).status == 200
+            assert db.store_kit(raid)["category"] is None and third
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    asyncio.run(main())

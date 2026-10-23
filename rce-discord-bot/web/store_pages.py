@@ -41,6 +41,9 @@ background:rgba(0,0,0,.5);color:var(--text);font:inherit}.code{font-family:ui-mo
 font-size:1.4rem;letter-spacing:.08em;color:var(--gold);user-select:all}
 .bi.off{opacity:.4}.bi.off input{cursor:not-allowed}details.build-group summary{cursor:pointer;margin-bottom:6px}
 .tabs-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.cats{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}.cats a{text-decoration:none;padding:5px 14px;
+border:1px solid var(--line);background:var(--card2);font-size:.95rem}.cats a:hover{border-color:var(--orange)}
+.cat-head{margin:22px 0 10px;font-size:1.35rem;color:#fff;scroll-margin-top:90px}
 """
 STATUS_TEXT = {
     "pending": ("Waiting for payment", "If you already paid, this page updates within a few minutes – refresh it."),
@@ -158,9 +161,13 @@ def pay_button(admin: bool, text: str = "Buy with PayPal") -> str:
     return f'<button class="pay" type="submit">{esc("Checkout (PayPal or admin key)" if admin else text)}</button>'
 
 
+def _cat_id(name: str) -> str:
+    return "cat-" + (re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "other")
+
+
 def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, admin: bool = False) -> str:
     db = shop.bot.db
-    cards = []
+    groups: dict[str, list[str]] = {}
     for row in db.store_kits(enabled_only=True):
         if row["source"] == "custom" and db.custom_kit(row["kit"]) is None:
             continue
@@ -171,6 +178,7 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
             days = f'<div class="days">{row["days"]} days</div>' if row["days"] else '<div class="days">Permanent</div>'
         desc = f'<div class="muted">{esc(row["description"])}</div>' if row["description"] else ""
         values = form if form and str(form.get("kit")) == str(row["id"]) else {}
+        cards = groups.setdefault((row["category"] or "").strip(), [])
         cards.append(f'<div class="card"><h2>{esc(row["name"])}</h2><div class="price">{esc(shop.fmt(row["price"]))}'
                      f'</div>{days}{desc}{site.item_tiles(items)}'
                      f'<form method="post" action="{base}/store/checkout"><input type="hidden" name="kind" value="kit">'
@@ -181,8 +189,20 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
              '<b>/customkit link</b>. After the payment the kit is yours right away: one-time kits are given to you '
              'in-game (when you\'re online), the others you claim with <b>/customkit claim</b> on Discord while '
              'you\'re online.</div>')
-    body = notice(error, "bad") + intro + (f'<div class="store-grid">{"".join(cards)}</div>' if cards else
-                                           '<p class="muted">No kits for sale right now.</p>')
+    # Categories (set per kit in the web interface → Store) in A–Z order, kits without one last ("Other kits")
+    named = sorted((c for c in groups if c), key=str.lower)
+    order = named + ([""] if "" in groups else [])
+    if len(order) > 1:
+        chips = "".join(f'<a href="#{_cat_id(c or "other")}">{esc(c or "Other kits")} ({len(groups[c])})</a>'
+                        for c in order)
+        sections = "".join(f'<h2 class="cat-head" id="{_cat_id(c or "other")}">{esc(c or "Other kits")}</h2>'
+                           f'<div class="store-grid">{"".join(groups[c])}</div>' for c in order)
+        listing = f'<nav class="cats">{chips}</nav>{sections}'
+    elif order:
+        listing = f'<div class="store-grid">{"".join(groups[order[0]])}</div>'
+    else:
+        listing = '<p class="muted">No kits for sale right now.</p>'
+    body = notice(error, "bad") + intro + listing
     return wrap(site, shop, base, "store", "Store", body, admin)
 
 

@@ -25,36 +25,37 @@ from plugin_api import Plugin, Setting
 from rce.rcon_client import RconError
 from utils import admin_only, sanitize_player_name
 
-DEFAULT_TIERS = """1 | points 100 | item wood 2000
-2 | - | coins 100
-3 | item stones 1000 | item metal.fragments 1000
-4 | points 150 | item ammo.rifle 128
-5 | - | coins 100
-6 | item cloth 200 | item lowgradefuel 300
-7 | points 200 | coins 100
-8 | item bandage 10 | item syringe.medical 5
-9 | - | item pistol.semiauto 1
-10 | points 300 | coins 100
-11 | item wood 3000 | item metal.refined 50
-12 | - | coins 100
-13 | points 200 | item largemedkit 3
-14 | item scrap 100 | item scrap 300
-15 | - | coins 100
-16 | points 250 | item ammo.pistol 128
-17 | item stones 3000 | coins 100
-18 | - | item rifle.semiauto 1
-19 | points 300 | item metal.refined 100
-20 | item scrap 150 | coins 100
-21 | - | item smg.thompson 1
-22 | points 300 | coins 100
-23 | item metal.fragments 2000 | item ammo.rifle 256
-24 | - | item scrap 500
-25 | points 400 | coins 100
-26 | item lowgradefuel 300 | item metal.refined 150
-27 | - | coins 100
-28 | points 500 | item largemedkit 5
-29 | item scrap 300 | item rifle.ak 1
-30 | points 1000 | coins 100"""
+COIN_TIERS = (8, 16, 25, 33, 41, 50, 58, 66, 75, 83, 91, 100)   # 12 × 100 coins = 1200 on the premium row
+_FREE = ("points", "item wood 1500", "item stones 1500", "-", "item metal.fragments 500", "points",
+         "item cloth 100", "-", "item lowgradefuel 100", "item scrap 50")
+_PREMIUM = ("item metal.refined 25", "item ammo.rifle 64", "item syringe.medical 3", "item scrap 150",
+            "item ammo.pistol 64", "item largemedkit 2", "item metal.fragments 1500", "item wood 3000",
+            "item stones 3000", "item lowgradefuel 300", "item ammo.shotgun 32", "item sulfur 1000")
+_MILESTONES = {5: "item crossbow 1", 10: "item pistol.revolver 1", 15: "item coffeecan.helmet 1",
+               20: "item pistol.semiauto 1", 30: "item shotgun.pump 1", 35: "item roadsign.jacket 1",
+               40: "item rifle.semiauto 1", 45: "item smg.thompson 1", 55: "item pistol.python 1",
+               60: "item smg.mp5 1", 65: "item metal.facemask 1", 70: "item rifle.m39 1",
+               80: "item rifle.lr300 1", 85: "item metal.plate.torso 1", 90: "item rifle.bolt 1",
+               95: "item hazmatsuit 1", 99: "item rifle.ak 1"}
+
+
+def _default_tiers() -> str:
+    """100 tiers: free row with points (growing) and resources, a 1000 points bonus every 25 tiers; premium row with
+    better loot, a weapon or armour piece every few tiers and 100 coins on 12 tiers (1200 in total)."""
+    lines = []
+    for tier in range(1, 101):
+        free = _FREE[(tier - 1) % len(_FREE)]
+        if free == "points":
+            free = f"points {100 + tier * 5}"
+        if tier % 25 == 0:
+            free = "points 1000"
+        premium = "coins 100" if tier in COIN_TIERS else \
+            _MILESTONES.get(tier) or _PREMIUM[(tier - 1) % len(_PREMIUM)]
+        lines.append(f"{tier} | {free} | {premium}")
+    return "\n".join(lines)
+
+
+DEFAULT_TIERS = _default_tiers()
 DEFAULT_PACKS = "500 | 4.99\n1100 | 9.99\n2400 | 19.99\n6000 | 44.99"
 LINE = re.compile(r"^\s*(\d+)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*$")
 PACK = re.compile(r"^\s*(\d+)\s*\|\s*(\d+(?:[.,]\d{1,2})?)\s*$")
@@ -131,14 +132,15 @@ class BattlePass(Plugin):
         Setting("currency_name", "Premium currency name", "text", "Coins"),
         Setting("currency_icon", "Premium currency icon", "text", "💎"),
         Setting("pass_price", "Premium pass price (premium currency)", "int", 1100, min=0, max=10_000_000),
-        Setting("xp_per_tier", "XP per tier", "int", 1000, min=10, max=10_000_000),
+        Setting("xp_per_tier", "XP per tier", "int", 500, min=10, max=10_000_000,
+                help="100 tiers × 500 XP ≈ 80 hours online over the season (kills and the daily bonus make it less)."),
         Setting("xp_per_minute", "XP per minute online", "int", 10, min=0, max=100_000),
         Setting("xp_per_kill", "XP per PvP kill", "int", 50, min=0, max=100_000),
         Setting("daily_xp", "Daily bonus XP", "int", 300, min=0, max=100_000,
                 help="Claimed once a day (UTC) on the battle pass page."),
         Setting("tiers", "Tiers and rewards", "textarea", DEFAULT_TIERS,
-                help="One tier per line: tier | free reward | premium reward. Rewards: points N, coins N, "
-                     "item <shortname> N, or -."),
+                help="One tier per line (default: 100 tiers): tier | free reward | premium reward. Rewards: "
+                     "points N, coins N, item <shortname> N, or -."),
         Setting("coin_packs", "Coin packs in the web store", "textarea", DEFAULT_PACKS,
                 help="One per line: amount | price (in the store currency, paid with PayPal or a gift card). "
                      "Empty = coins can't be bought."),

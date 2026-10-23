@@ -465,7 +465,7 @@ class Storage:
                 self._db.execute(f"ALTER TABLE kit_requests ADD COLUMN {column} {kind}")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(store_kits)")}
         for column, kind in (("source", "TEXT NOT NULL DEFAULT 'custom'"), ("auto", "INTEGER NOT NULL DEFAULT 0"),
-                             ("items", "TEXT")):
+                             ("items", "TEXT"), ("category", "TEXT")):
             if column not in columns:
                 self._db.execute(f"ALTER TABLE store_kits ADD COLUMN {column} {kind}")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(prison)")}
@@ -1470,7 +1470,7 @@ class Storage:
 
     # ------------------------------------------------------------ Web store
 
-    _STORE_KIT_FIELDS = ("name", "kit", "price", "days", "description", "enabled", "items")
+    _STORE_KIT_FIELDS = ("name", "kit", "price", "days", "description", "enabled", "items", "category")
 
     def store_kits(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
         """enabled_only: what is on sale (switched on and has a price)."""
@@ -1482,11 +1482,12 @@ class Storage:
         return self._db.execute("SELECT * FROM store_kits WHERE id = ?", (kit_id,)).fetchone()
 
     def add_store_kit(self, name: str, kit: str, price: float, days: int, description: str | None, *,
-                      source: str = "custom", auto: bool = False, enabled: bool = True) -> int:
+                      source: str = "custom", auto: bool = False, enabled: bool = True,
+                      category: str | None = None) -> int:
         cur = self._db.execute("INSERT INTO store_kits (name, kit, source, auto, price, days, description, enabled, "
-                               "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               "created_at, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                (name, kit, source, int(auto), price, days, description, int(enabled),
-                                int(time.time())))
+                                int(time.time()), category))
         self._db.commit()
         return int(cur.lastrowid)
 

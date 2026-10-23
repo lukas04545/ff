@@ -13,7 +13,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import aiohttp
 
@@ -35,7 +35,9 @@ FALLBACK_URLS = (
 )
 SHORTNAME = re.compile(r"^[a-z0-9][a-z0-9._ -]{0,63}$")
 MAX_BYTES = 512 * 1024
-MISSING_RETRY = 86400           # seconds before an item without a picture is tried again
+MISSING_RETRY = 86400           # seconds before an item without a picture (every source said 404) is tried again
+SOURCE_TROUBLE_RETRY = 300      # a source refused/failed (403, 429, 5xx, timeout): try again after 5 minutes
+WAIT_FOR_DOWNLOAD = 4.0         # a page request waits this long for a new picture, then gets the placeholder
 DOWNLOADS_PER_MINUTE = 60       # new downloads from the source, all visitors together
 THUMB_SIZES = (96,)              # sizes a page may ask for (?s=96): small WebP copies, many times smaller
 MAX_PIXELS = 16_000_000         # bigger pictures aren't shrunk (decompression bombs)
@@ -79,15 +81,20 @@ def shrink(data: bytes, size: int) -> bytes | None:
     return small if len(small) < len(data) else None
 
 
+class SourceTrouble(Exception):
+    """A picture source refused (403, 429 …), failed (5xx) or timed out – not "no picture"."""
+
+
 class ItemImages:
     def __init__(self, folder: Path, url_template: str = DEFAULT_URL) -> None:
         self.folder = Path(folder)
         self.url_template = url_template or DEFAULT_URL
         self._missing: dict[str, float] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
         self._parallel = asyncio.Semaphore(4)
         self._session: aiohttp.ClientSession | None = None
         self._downloads = RateLimiter(DOWNLOADS_PER_MINUTE, 60)   # random names can't make the bot spam the source
+        self._jobs: dict[str, asyncio.Task] = {}                    # downloads running in the background
+        self.sources: dict[str, dict] = {}                          # per source host: ok / last error (diagnosis)
 
     def _path(self, shortname: str) -> Path:
         return self.folder / (shortname.replace(" ", "_") + ".img")
@@ -98,22 +105,29 @@ class ItemImages:
         except OSError:
             return None
 
-    async def get(self, shortname: str, size: int | None = None) -> tuple[bytes, str] | None:
-        """(image bytes, content type) or None if there is no picture for this item.
-        size: one of THUMB_SIZES for a small WebP copy (made once, kept in data/item_images/thumbs/)."""
+    def known_missing(self, shortname: str) -> bool:
+        """True if every source recently said there's no picture (not just a hiccup)."""
+        return time.time() - self._missing.get((shortname or "").strip().lower(), 0) < MISSING_RETRY
+
+    async def get(self, shortname: str, size: int | None = None, *, wait: float | None = None
+                  ) -> tuple[bytes, str] | None:
+        """(image bytes, content type) or None if there is no picture (yet) for this item.
+        size: one of THUMB_SIZES for a small WebP copy (made once, kept in data/item_images/thumbs/).
+        wait: seconds to wait for a new download – it goes on in the background, the next request gets it."""
         shortname = (shortname or "").strip().lower()
         if not SHORTNAME.match(shortname):
             return None
         data = self.cached(shortname)
         if data is None:
-            if time.time() - self._missing.get(shortname, 0) < MISSING_RETRY:
+            if self.known_missing(shortname):
                 return None
-            lock = self._locks.setdefault(shortname, asyncio.Lock())
-            async with lock:
-                data = self.cached(shortname)
-                if data is None:
-                    data = await self._download(shortname)
-            self._locks.pop(shortname, None)
+            job = self._jobs.get(shortname)
+            if job is None:
+                job = self._jobs[shortname] = asyncio.create_task(self._download_once(shortname))
+            try:
+                data = await (asyncio.wait_for(asyncio.shield(job), wait) if wait is not None else asyncio.shield(job))
+            except asyncio.TimeoutError:
+                return None
         kind = image_type(data) if data else None
         if not kind:
             return None
@@ -145,15 +159,39 @@ class ItemImages:
             log.debug("Could not save the small picture of %s: %s", shortname, exc)
         return small
 
+    async def _download_once(self, shortname: str) -> bytes | None:
+        try:
+            data = self.cached(shortname)
+            return data if data is not None else await self._download(shortname)
+        finally:
+            self._jobs.pop(shortname, None)
+
     def _sources(self) -> list[str]:
         return [self.url_template, *(u for u in FALLBACK_URLS if u != self.url_template)]
 
     async def _fetch(self, url: str) -> bytes:
+        """The picture, b"" if the source has none (404). Raises SourceTrouble if the source refused or failed."""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15),
-                                                  headers={"User-Agent": "rce-discord-bot"})
-        async with self._session.get(url) as resp:
-            return await resp.content.read(MAX_BYTES + 1) if resp.status == 200 else b""
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10),
+                                                  headers={"User-Agent": "rce-discord-bot (item pictures)",
+                                                           "Accept": "image/*"})
+        host = urlparse(url).netloc
+        stats = self.sources.setdefault(host, {"ok": 0, "not_found": 0, "errors": 0, "last_error": ""})
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status == 200:
+                    stats["ok"] += 1
+                    return await resp.content.read(MAX_BYTES + 1)
+                if resp.status in (404, 410):
+                    stats["not_found"] += 1
+                    return b""
+                stats["errors"] += 1
+                stats["last_error"] = f"HTTP {resp.status}"
+                raise SourceTrouble(f"{host}: HTTP {resp.status}")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            stats["errors"] += 1
+            stats["last_error"] = type(exc).__name__ if not str(exc) else str(exc)[:80]
+            raise SourceTrouble(f"{host}: {stats['last_error']}") from exc
 
     async def _download(self, shortname: str) -> bytes | None:
         if self._downloads.hit("all") is not None:
@@ -165,18 +203,18 @@ class ItemImages:
                     url = template.replace("{shortname}", quote(variant))
                     try:
                         data = await self._fetch(url)
-                    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+                    except (SourceTrouble, ValueError) as exc:
                         log.debug("Item picture %s (%s): %s", shortname, url, exc)
                         network_error = True
                         data = b""
-                        break               # this source is down – try the next one
+                        break               # this source refused or is down – try the next one
                     if data and len(data) <= MAX_BYTES and image_type(data) is not None:
                         break
                     data = b""
                 if data:
                     break
         if not data and network_error:
-            self._missing[shortname] = time.time() - MISSING_RETRY + 300     # network problem: retry in 5 min
+            self._missing[shortname] = time.time() - MISSING_RETRY + SOURCE_TROUBLE_RETRY   # retry soon
             return None
         if not data or len(data) > MAX_BYTES or image_type(data) is None:
             self._missing[shortname] = time.time()

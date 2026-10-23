@@ -2392,6 +2392,16 @@ function itemPicturesCard() {
     if (st.running) kids.push(h("p", { text: `Searching … ${st.done} / ${st.total}` }));
     else {
       kids.push(h("p", { text: `${st.found} items have a picture, ${st.missing.length} don't.` }));
+      const sources = Object.entries(st.sources || {});
+      if (sources.length) {
+        kids.push(h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["Picture source", "Pictures", "Not there", "Refused / failed", "Last problem"].map((t) => h("th", { text: t })))),
+          h("tbody", {}, sources.map(([host, s]) => h("tr", {},
+            h("td", { text: host }), h("td", { text: s.ok }), h("td", { text: s.not_found }),
+            h("td", {}, s.errors ? h("span", { class: "pill " + (s.ok ? "warn" : "bad"), text: s.errors }) : "0"),
+            h("td", { class: "muted", text: s.last_error || "–" })))))));
+        if (sources.some(([, s]) => s.errors && !s.ok)) kids.push(h("p", { class: "muted", text: "A source that refuses everything (HTTP 403/429) blocks your server's connection – pick another one under Settings → Web → Item pictures from, or put your own pictures into data/item_images/<shortname>.img." }));
+      }
       if (st.missing.length) {
         kids.push(h("details", {}, h("summary", { class: "muted", text: "Items without a picture" }),
           h("p", { class: "muted", text: st.missing.join(", ") }),
@@ -2460,16 +2470,19 @@ views.webstore = async (main) => {
     const kPrice = h("input", { type: "number", min: "0.01", step: "0.01", placeholder: `Price (${cur})` });
     const kDays = h("input", { type: "number", min: "0", step: "1", placeholder: "Days (0 = permanent)" });
     const kDesc = h("input", { placeholder: "Description (optional)" });
+    const catList = h("datalist", { id: "store-cats" }, [...new Set(d.kits.map((k) => k.category).filter(Boolean))].sort().map((c) => h("option", { value: c })));
+    const kCat = h("input", { placeholder: "Category, e.g. Raid kits (optional)", list: "store-cats", maxlength: "40" });
     const kSave = h("button", { class: "primary", text: "Add kit" });
     const kCancel = h("button", { class: "ghost hidden", text: "Cancel", onclick: () => { editId = null; load(); } });
     kSave.addEventListener("click", async () => {
-      const body = { name: kName.value, kit: kKit.value, price: kPrice.value, days: kDays.value || 0, description: kDesc.value };
+      const body = { name: kName.value, kit: kKit.value, price: kPrice.value, days: kDays.value || 0, description: kDesc.value, category: kCat.value };
       await act(() => editId ? api(`/api/webshop/kits/${editId}`, { method: "PUT", body }) : api("/api/webshop/kits", { method: "POST", body }), editId ? "Kit saved" : "Kit added");
       editId = null; load();
     });
     const ingame = (k) => k.source === "ingame";
     const kitRows = d.kits.map((k) => h("tr", {},
-      h("td", {}, h("strong", { text: k.name }), k.description ? h("div", { class: "muted", text: k.description }) : null),
+      h("td", {}, h("strong", { text: k.name }), k.category ? h("span", { class: "pill", style: "margin-left:.4rem", text: k.category }) : null,
+        k.description ? h("div", { class: "muted", text: k.description }) : null),
       h("td", {}, k.kit, h("div", { class: "muted", text: (ingame(k) ? "in-game kit" : "bot kit") + (k.auto ? " · added automatically" : "")
         + (!ingame(k) && !d.custom_kits.includes(k.kit) ? " · missing!" : "") + ` · ${k.items} item${k.items === 1 ? "" : "s"}` })),
       h("td", {}, k.price > 0 ? money(k.price, cur) : h("span", { class: "pill warn", text: "needs a price" })),
@@ -2483,7 +2496,7 @@ views.webstore = async (main) => {
             await act(() => api(`/api/webshop/kits/${k.id}`, { method: "PUT", body: { price: price.replace(",", ".") } }), `${k.name} is on sale`); load();
           } }),
         h("button", { class: "small", text: "Edit", onclick: () => {
-          editId = k.id; kName.value = k.name; kKit.value = k.kit; kPrice.value = k.price; kDays.value = k.days; kDesc.value = k.description || "";
+          editId = k.id; kName.value = k.name; kKit.value = k.kit; kPrice.value = k.price; kDays.value = k.days; kDesc.value = k.description || ""; kCat.value = k.category || "";
           kSave.textContent = "Save kit"; kCancel.classList.remove("hidden"); kName.focus();
         } }),
         h("button", { class: "small danger", text: "Remove", onclick: async () => { if (!confirm(`Remove ${k.name} from the store?` + (k.auto ? " It won't be added again automatically." : "") + " (The kit itself stays.)")) return; await act(() => api(`/api/webshop/kits/${k.id}`, { method: "DELETE" }), "Removed"); load(); } }))));
@@ -2491,7 +2504,7 @@ views.webstore = async (main) => {
       h("p", { class: "muted", text: "New bot kits (Kit builder / Kits page) and the server's in-game kits are added here automatically – hidden until you set a price. Bot kits give the kit's claim role (for N days or permanently); in-game kits are given in-game once. You can also add a bot kit by hand below." }),
       d.kits.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Kit", "Custom kit", "Price", "Duration", "", ""].map((t) => h("th", { text: t })))), h("tbody", {}, kitRows))) : h("p", { class: "muted", text: "Nothing for sale yet." }),
       h("div", { class: "row", style: "margin-top:.75rem" }, kName, kKit, kPrice, kDays),
-      h("div", { class: "row", style: "margin-top:.5rem" }, kDesc, kSave, kCancel));
+      h("div", { class: "row", style: "margin-top:.5rem" }, kCat, catList, kDesc, kSave, kCancel));
 
     // --- Gift cards
     const gAmount = h("input", { type: "number", min: "0.01", step: "0.01", placeholder: `Value (${cur})` });

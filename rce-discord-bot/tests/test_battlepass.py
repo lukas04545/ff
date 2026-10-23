@@ -35,7 +35,7 @@ def bp_env(pb, monkeypatch):  # noqa: F811
 
 def test_defaults_cost_1100_and_pay_back_1200():
     tiers, problems = bpm.parse_tiers(bpm.DEFAULT_TIERS)
-    assert problems == [] and len(tiers) == 30
+    assert problems == [] and len(tiers) == 100
     assert sum(p.amount for _, p in tiers.values() if p and p.kind == "coins") == 1200
     from rce import items as itemlist
     known = {s for v in itemlist.CATALOGUE.values() for s in v}
@@ -80,26 +80,26 @@ def test_buy_pass_and_claim(bp_env):
         bp.buy_pass(7)
     with pytest.raises(bpm.PassError, match="Reach tier 1"):
         asyncio.run(bp.claim(7, 1, "free"))
-    bp.add_xp(7, 2000)                                                    # tier 2
-    assert asyncio.run(bp.claim(7, 1, "free")).startswith("100 ")        # points
-    assert db.wallet(7)["points"] == 100
+    bp.add_xp(7, 8 * 500)                                                 # tier 8 (500 XP per tier)
+    assert asyncio.run(bp.claim(7, 1, "free")) == "105 points"
+    assert db.wallet(7)["points"] == 105
     with pytest.raises(bpm.PassError, match="already claimed"):
         asyncio.run(bp.claim(7, 1, "free"))
-    assert asyncio.run(bp.claim(7, 2, "paid")) == "100 Coins" and db.coins(7) == 100
+    assert asyncio.run(bp.claim(7, 8, "paid")) == "100 Coins" and db.coins(7) == 100
     with pytest.raises(bpm.PassError, match="Join the server"):           # items need the player online
         asyncio.run(bp.claim(7, 1, "paid"))
     assert 1 not in bp.progress(7)["paid"]                                # not lost
     bp_env.bot.online_players = {"Gamer7": {}}
     bp_env.said.clear()
     asyncio.run(bp.claim(7, 1, "paid"))
-    assert bp_env.said == ['inventory.giveto "Gamer7" "wood" 2000']
+    assert bp_env.said == ['inventory.giveto "Gamer7" "metal.refined" 25']
 
 
 def test_free_player_cant_claim_premium(bp_env):
     bp = bp_env.bp
     bp.add_xp(7, 5000)
     with pytest.raises(bpm.PassError, match="premium"):
-        asyncio.run(bp.claim(7, 2, "paid"))
+        asyncio.run(bp.claim(7, 8, "paid"))
 
 
 def test_full_season_pays_back_1200(bp_env):
@@ -107,7 +107,7 @@ def test_full_season_pays_back_1200(bp_env):
     db.add_coins(7, 1100, "test")
     bp.buy_pass(7)
     bp_env.bot.online_players = {"Gamer7": {}}
-    bp.add_xp(7, 30 * 1000)
+    bp.add_xp(7, 100 * 500)
     given, failed = asyncio.run(bp.claim_all(7))
     assert failed == [] and db.coins(7) == 1200                           # enough for the next pass
     assert asyncio.run(bp.claim_all(7)) == ([], [])
@@ -155,15 +155,16 @@ def test_battlepass_page(bp_env):
             c.session.cookie_jar.update_cookies({"rce_player": "tok"})
             page = await (await c.get("/battlepass")).text()
             assert "Tier 0" in page and "Get the premium pass – 💎 1 100 Coins" in page and "1 200 Coins" in page
-            assert page.count('class="tier') == 30
+            assert page.count('class="tier') == 100
             r = await c.post("/battlepass", data={"action": "buy"})
             assert "costs" in await r.text()
             bp_env.db.add_coins(7, 1100, "test")
             r = await c.post("/battlepass", data={"action": "buy"})
             assert "Premium pass unlocked" in await r.text()
             await c.post("/battlepass", data={"action": "daily"})
-            bp_env.bp.add_xp(7, 1700)
-            page = await (await c.post("/battlepass", data={"action": "claim", "tier": "2", "track": "paid"})).text()
+            bp_env.bp.add_xp(7, 8 * 500)
+            page = await (await c.post("/battlepass", data={"action": "claim", "tier": "8", "track": "paid"})).text()
+            assert 'href="#t9">Jump to tier 9' in page
             assert "Claimed: 100 Coins" in page and re.search(r"💎 100 Coins", page)
             assert (await c.post("/battlepass", data={"action": "buy"},
                                  headers={"Origin": "https://evil.example"})).status == 403
