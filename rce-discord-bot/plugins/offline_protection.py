@@ -13,6 +13,7 @@ Zone commands – only what the Rust Console Edition community server guide "Cus
                                                   showchatmessage 0/1, entermessage "…", leavemessage "…")
   zones.deletecustomzone "Name"
   server.printpos "ID"                          (prints the current position of the given target)
+  relationshipmanager.logteamactions 1          (team log lines on – teams and leaders come from them)
 Green = building damage allowed, a green ring; red = building damage off (offline raid protection), a red ring.
 All commands are settings (defaults below) – an empty one is never sent.
 """
@@ -84,6 +85,9 @@ class OfflineProtection(Plugin):
         Setting("green_command", "Command(s): status green (team online)", "textarea", GREEN_DEFAULT,
                 help="Default: building damage on, green ring, enter message (zones.editcustomzone). "
                      + COMMAND_HELP),
+        Setting("team_logs", "Make sure the server logs team actions", "bool", True,
+                help="Runs relationshipmanager.logteamactions 1 when the plugin starts – teams and leaders are "
+                     "read from these log lines (create, join, leave, new leader). It's on by default on servers."),
         Setting("tell_leader", "Tell the leader in-game what happened", "bool", True),
         Setting("channel", "Discord channel for status changes (optional)", "channel", None),
     )
@@ -93,6 +97,17 @@ class OfflineProtection(Plugin):
         self._asked: dict[str, float] = {}        # player (lower) -> when he asked "Can I build here?"
 
     # ------------------------------------------------------------ Setup / card
+
+    async def on_load(self) -> None:
+        self._team_logs_done = False
+
+    async def _ensure_team_logs(self) -> None:
+        if self.setting("team_logs") and not getattr(self, "_team_logs_done", False):
+            try:
+                await self.bot.rcon.command("relationshipmanager.logteamactions 1", expect_response=False)
+                self._team_logs_done = True
+            except RconError as exc:
+                self.log.debug("logteamactions: %s", exc)
 
     def problems(self) -> list[str]:
         missing = [label for key, label in (
@@ -284,6 +299,7 @@ class OfflineProtection(Plugin):
 
     @tasks.loop(seconds=20)
     async def clock(self) -> None:
+        await self._ensure_team_logs()                       # once, as soon as RCON is up
         for team_id in list(self.zones()):
             try:
                 await self._update(team_id)
