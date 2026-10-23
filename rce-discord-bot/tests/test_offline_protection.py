@@ -72,7 +72,8 @@ def test_documented_commands_by_default(zp, monkeypatch):
     assert all(c.split(" ", 1)[0] in DOCUMENTED for c in zp.said if "." in c.split(" ", 1)[0])
 
 
-DOCUMENTED = {"zones.createcustomzone", "zones.editcustomzone", "zones.deletecustomzone", "server.printpos", "say"}
+DOCUMENTED = {"zones.createcustomzone", "zones.editcustomzone", "zones.deletecustomzone", "server.printpos", "say",
+              "relationshipmanager.logteamactions"}
 
 
 def test_empty_command_is_never_sent(zp):
@@ -172,3 +173,9 @@ def test_bad_position_pattern_is_reported(zp):
     chat(zp.p, "Lead", ASK)
     chat(zp.p, "Lead", YES)
     assert zp.p.zone(5)["z"] == -456.25
+
+
+def test_team_logs_switched_on_once(zp):
+    asyncio.run(zp.p.clock())
+    asyncio.run(zp.p.clock())
+    assert zp.said.count("relationshipmanager.logteamactions 1") == 1
