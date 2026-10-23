@@ -40,13 +40,23 @@ def configure(zp, **extra):
     asyncio.run(zp.m.save_settings("offline_protection", {**CONFIG, **extra}))
 
 
-def test_not_configured_sends_nothing(zp):
-    assert "Not sent to the server yet" in zp.p.problems()[0]
-    zp.said.clear()
+def test_documented_defaults_place_a_zone_and_report_missing_red_green(zp, monkeypatch):
+    async def command(cmd, **kw):
+        zp.said.append(cmd)
+        return "Lead (2, 7) position: (512.4, 31.0, -88.25)" if cmd.startswith("server.printpos") else ""
+    monkeypatch.setattr(zp.bot.rcon, "command", command)
+    problem = zp.p.problems()[0]
+    assert "the command for status red" in problem and "the create zone command" not in problem
     chat(zp.p, "Lead", ASK)
     chat(zp.p, "Lead", YES)
-    assert not any(c.startswith("TEST_") for c in zp.said) and zp.p.zones() == {}
-    assert any("aren't set up yet" in c for c in zp.said)                 # the leader is told in-game
+    assert 'server.printpos "Lead"' in zp.said                                       # guide: server.printpos "ID"
+    assert 'zones.createcustomzone "team_5" (512.4,31.0,-88.25) 0 Sphere 30 1 1 0 1 1' in zp.said
+    assert zp.p.zone(5)["state"] == "green"
+    zp.said.clear()
+    zp.bot.online_players = {}
+    asyncio.run(zp.p.on_rce_player_leave("Lead"))
+    asyncio.run(zp.p._update(5, now=zp.p.zone(5)["offline_since"] + 3600))
+    assert zp.p.zone(5)["state"] == "red" and not any(c.startswith("zones.") for c in zp.said)   # empty: not sent
 
 
 def test_only_the_leader_places_with_ask_then_yes(zp):
