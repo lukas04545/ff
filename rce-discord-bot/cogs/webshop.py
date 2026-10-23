@@ -445,6 +445,19 @@ class WebShop(commands.Cog):
             fields.update(title=f"Custom kit: {kit_name}" if kit_name else f"Own custom kit ({count})",
                           total=q.total, timer_hours=q.timer_hours, items=json.dumps(picked),
                           kit_name=kit_name or None)
+        elif kind == "coins":                  # premium currency for the battle pass (plugins/battlepass.py)
+            if user_id is None:
+                raise CheckoutError("Log in first.")
+            bp = self._battlepass()
+            try:
+                coins = int(value)
+            except (TypeError, ValueError):
+                coins = 0
+            price = dict(bp.packs()).get(coins) if bp is not None else None
+            if price is None:
+                raise CheckoutError("This pack isn't available.")
+            fields.update(title=f"{coins:,} {bp.coin_name}".replace(",", " "), total=price, coins=coins,
+                          user_id=user_id, player=db.linked_player(user_id) or "")
         elif kind == "giftcard":
             try:
                 value = round(float(value), 2)
@@ -499,6 +512,10 @@ class WebShop(commands.Cog):
             raise CheckoutError("PayPal is not available right now – please try again in a few minutes.") from exc
         db.update_store_order(order_id, paypal_order=pp_id)
         return {"token": token, "redirect": url}
+
+    def _battlepass(self):
+        manager = getattr(self.bot, "plugins", None)
+        return manager.running("battlepass") if manager is not None else None
 
     def _release(self, order_id: int, status: str, result: str) -> bool:
         """Cancels/expires a pending order and gives the held gift card amount back."""
@@ -581,6 +598,12 @@ class WebShop(commands.Cog):
                 code = self.create_gift_cards(float(order["total"]), 1, f"store order #{order_id}",
                                               order_id=order_id)[0]
                 result = f"Gift card {code}"
+            elif order["kind"] == "coins":
+                bp = self._battlepass()
+                if bp is None:
+                    raise CheckoutError("the battle pass plugin is switched off")
+                bp.add_coins_from_store(order["user_id"], int(order["coins"]), order_id)
+                result = f"{order['coins']} {bp.coin_name}"
             elif order["kind"] == "slots":
                 expires = int(time.time()) + int(order["months"]) * 30 * 86400
                 db.add_kit_slots(order["kit_name"], order["user_id"], int(order["slot_count"]), expires)
@@ -640,7 +663,10 @@ class WebShop(commands.Cog):
                         + (f" for <@{order['user_id']}> ({safe_md(order['player'] or '')})" if order["user_id"] else "")
                         + f" – {safe_md(pay.strip())} – delivered", alert=bool(order["admin_key"]))
         if order["user_id"] and order["kind"] != "giftcard":
-            if order["kind"] == "slots":
+            if order["kind"] == "coins":
+                text = (f"✅ Thanks! **{safe_md(order['title'])}** were added to your account – spend them on the "
+                        "Battle pass page of our website.")
+            elif order["kind"] == "slots":
                 text = (f"✅ Thanks! You added **{order['slot_count']} team slot(s)** to **{safe_md(order['kit_name'])}** "
                         f"for {order['months']} month(s). Put your teammates on them under **My account** on the website.")
             elif order["kind"] == "addon":

@@ -346,6 +346,19 @@ class Storage:
                 created_at INTEGER NOT NULL,
                 paid_at INTEGER
             );
+            -- Premium currency (battle pass, coin packs in the web store) – separate from points
+            CREATE TABLE IF NOT EXISTS premium_wallets (
+                user_id INTEGER PRIMARY KEY,
+                coins INTEGER NOT NULL DEFAULT 0,
+                earned_total INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS premium_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                delta INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                ts INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS gift_cards (
                 code TEXT PRIMARY KEY,
                 initial REAL NOT NULL,
@@ -464,7 +477,7 @@ class Storage:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN admin_key INTEGER NOT NULL DEFAULT 0")
         if "kit_name" not in columns:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN kit_name TEXT")
-        for column in ("slot_count", "months", "slot_id"):          # team slot orders (kind "slots")
+        for column in ("slot_count", "months", "slot_id", "coins"):  # team slots ("slots"), coin packs ("coins")
             if column not in columns:
                 self._db.execute(f"ALTER TABLE store_orders ADD COLUMN {column} INTEGER")
         self._db.execute("PRAGMA foreign_keys = ON")
@@ -893,6 +906,37 @@ class Storage:
         self._db.execute("INSERT INTO point_log (user_id, delta, reason) VALUES (?, ?, ?)", (user_id, -cost, reason[:200]))
         self._db.commit()
         return int(self.wallet(user_id)["points"])
+
+    # ------------------------------------------------------------ Premium currency
+
+    def coins(self, user_id: int) -> int:
+        row = self._db.execute("SELECT coins FROM premium_wallets WHERE user_id = ?", (user_id,)).fetchone()
+        return int(row["coins"]) if row else 0
+
+    def add_coins(self, user_id: int, delta: int, reason: str) -> int:
+        """Adds (or removes, never below 0) premium currency. Returns the new balance."""
+        with self._db:
+            self._db.execute("INSERT OR IGNORE INTO premium_wallets (user_id) VALUES (?)", (user_id,))
+            self._db.execute("UPDATE premium_wallets SET coins = MAX(coins + ?, 0), earned_total = earned_total + ? "
+                             "WHERE user_id = ?", (delta, max(delta, 0), user_id))
+            self._db.execute("INSERT INTO premium_log (user_id, delta, reason, ts) VALUES (?, ?, ?, ?)",
+                             (user_id, delta, reason[:200], int(time.time())))
+        return self.coins(user_id)
+
+    def spend_coins(self, user_id: int, cost: int, reason: str) -> int | None:
+        """Takes `cost` if the balance is high enough (atomic). New balance, or None if too few."""
+        with self._db:
+            cur = self._db.execute("UPDATE premium_wallets SET coins = coins - ? WHERE user_id = ? AND coins >= ?",
+                                   (cost, user_id, cost))
+            if cur.rowcount == 0:
+                return None
+            self._db.execute("INSERT INTO premium_log (user_id, delta, reason, ts) VALUES (?, ?, ?, ?)",
+                             (user_id, -cost, reason[:200], int(time.time())))
+        return self.coins(user_id)
+
+    def coin_history(self, user_id: int, limit: int = 20) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM premium_log WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                                (user_id, limit)).fetchall()
 
     def top_wallets(self, limit: int = 10) -> list[sqlite3.Row]:
         return self._db.execute("SELECT * FROM wallets WHERE points > 0 OR earned_total > 0 "

@@ -195,6 +195,11 @@ class PlayerWebsite(Plugin):
         cog = self.bot.get_cog("PlayerAccounts")
         return cog if cog is not None and cog.enabled else None
 
+    def battlepass(self):
+        """The Battle pass plugin if it's on and players can log in, else None."""
+        bp = self.plugin("battlepass")
+        return bp if bp is not None and self.accounts() is not None else None
+
     def casino(self):
         """The Casino plugin if it's on and players can log in, else None."""
         casino = self.plugin("casino")
@@ -212,6 +217,8 @@ class PlayerWebsite(Plugin):
             links += [("leaderboard", "Leaderboard"), ("player", "Players")]
         if self.store() is not None:
             links.append(("store", "Store"))
+        if self.battlepass() is not None:
+            links.append(("battlepass", "Battle pass"))
         if self.casino() is not None:
             links.append(("casino", "Casino"))
         if self.accounts() is not None:
@@ -538,6 +545,17 @@ class PlayerWebsite(Plugin):
             from web.server import WebInterface
             resp = await account_handle(self, accounts, self.store(), request, base, path,
                                         WebInterface._client_ip(request))
+            for key, value in headers.items():
+                resp.headers.setdefault(key, value)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        if path == "battlepass":
+            bp = self.battlepass()
+            if bp is None:
+                return web.Response(status=404, text=self.not_found(base), content_type="text/html",
+                                    headers={**headers, "Cache-Control": "no-store"})
+            from web.battlepass_pages import handle as bp_handle
+            resp = await bp_handle(self, bp, request, base)
             for key, value in headers.items():
                 resp.headers.setdefault(key, value)
             resp.headers["Cache-Control"] = "no-store"
