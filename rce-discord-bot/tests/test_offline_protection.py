@@ -40,13 +40,51 @@ def configure(zp, **extra):
     asyncio.run(zp.m.save_settings("offline_protection", {**CONFIG, **extra}))
 
 
-def test_not_configured_sends_nothing(zp):
-    assert "Not sent to the server yet" in zp.p.problems()[0]
-    zp.said.clear()
+def test_documented_commands_by_default(zp, monkeypatch):
+    """Out of the box only commands from the guide "Custom zones" are sent."""
+    async def command(cmd, **kw):
+        zp.said.append(cmd)
+        return "Lead (2, 7) position: (512.4, 31.0, -88.25)" if cmd.startswith("server.printpos") else ""
+    monkeypatch.setattr(zp.bot.rcon, "command", command)
+    assert zp.p.problems() == []
     chat(zp.p, "Lead", ASK)
     chat(zp.p, "Lead", YES)
-    assert not any(c.startswith("TEST_") for c in zp.said) and zp.p.zones() == {}
-    assert any("aren't set up yet" in c for c in zp.said)                 # the leader is told in-game
+    sent = [c for c in zp.said if c.startswith(("server.", "zones."))]
+    assert sent == ['server.printpos "Lead"',
+                    'zones.createcustomzone "team_5" (512.4,31.0,-88.25) 0 Sphere 30 1 1 0 1 1',
+                    'zones.editcustomzone "team_5" showarea 1',
+                    'zones.editcustomzone "team_5" color (0,255,0)',
+                    'zones.editcustomzone "team_5" showchatmessage 1',
+                    'zones.editcustomzone "team_5" allowbuildingdamage 1',
+                    'zones.editcustomzone "team_5" color (0,255,0)',
+                    'zones.editcustomzone "team_5" entermessage "This team is online – offline protection is off."']
+    zp.said.clear()
+    zp.bot.online_players = {}
+    asyncio.run(zp.p.on_rce_player_leave("Lead"))
+    asyncio.run(zp.p._update(5, now=zp.p.zone(5)["offline_since"] + 30 * 60))
+    assert zp.said[:2] == ['zones.editcustomzone "team_5" allowbuildingdamage 0',
+                           'zones.editcustomzone "team_5" color (255,0,0)']
+    chat(zp.p, "Lead", ASK)                                       # (offline players can't chat – just the API)
+    zp.said.clear()
+    zp.bot.online_players = {"Lead": {}}
+    chat(zp.p, "Lead", YES)                                       # moving: the old zone is deleted first
+    assert 'zones.deletecustomzone "team_5"' in zp.said
+    assert all(c.split(" ", 1)[0] in DOCUMENTED for c in zp.said if "." in c.split(" ", 1)[0])
+
+
+DOCUMENTED = {"zones.createcustomzone", "zones.editcustomzone", "zones.deletecustomzone", "server.printpos", "say"}
+
+
+def test_empty_command_is_never_sent(zp):
+    configure(zp, red_command="")
+    assert "the command for status red" in zp.p.problems()[0]
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    zp.said.clear()
+    zp.bot.online_players = {}
+    asyncio.run(zp.p.on_rce_player_leave("Lead"))
+    asyncio.run(zp.p._update(5, now=zp.p.zone(5)["offline_since"] + 3600))
+    assert zp.p.zone(5)["state"] == "red" and not any(c.startswith("TEST_RED") for c in zp.said)
 
 
 def test_only_the_leader_places_with_ask_then_yes(zp):

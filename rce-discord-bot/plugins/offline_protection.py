@@ -7,9 +7,14 @@ Only the leader of a team can place (or move) its zone; members and players with
 Status: red when every member has been offline for longer than "Offline time before red" (minutes); green as soon as
 one member comes online (checked on every join, no waiting for the timer).
 
-IMPORTANT – the zone commands themselves: this plugin runs only the server commands you enter in its settings
-(placeholders like {zone} {x} {y} {z} are filled in). Take them from the Rust Console Edition community server guide
-"Custom zones". Nothing is sent to the server while a command is left empty – the plugin card lists what's missing.
+Zone commands – only what the Rust Console Edition community server guide "Custom zones" documents:
+  zones.createcustomzone "Name" (x,y,z) rotation Sphere|Box size pvp npc_damage radiation building_damage building
+  zones.editcustomzone "Name" Setting Value     (allowbuildingdamage 0/1, showarea 0/1, color (R,G,B),
+                                                  showchatmessage 0/1, entermessage "…", leavemessage "…")
+  zones.deletecustomzone "Name"
+  server.printpos "ID"                          (prints the current position of the given target)
+Green = building damage allowed, a green ring; red = building damage off (offline raid protection), a red ring.
+All commands are settings (defaults below) – an empty one is never sent.
 """
 from __future__ import annotations
 
@@ -25,8 +30,24 @@ from utils import sanitize_player_name
 ASK = "d11_quick_chat_questions_slot_1"         # "Can I build here?"
 YES = "d11_quick_chat_responses_slot_0"         # "Yes"
 NUMBER = r"(-?\d+(?:\.\d+)?)"
-# Default way to read a position from the reply of the position command: the first three numbers in it
+# Reading a position from the reply: "(x, y, z)" like the guide writes positions, else the first three numbers
+POSITION_PAREN = re.compile(r"\(\s*" + NUMBER + r"\s*,\s*" + NUMBER + r"\s*,\s*" + NUMBER + r"\s*\)")
 POSITION_FALLBACK = re.compile(NUMBER + r"[\s,;]+" + NUMBER + r"[\s,;]+" + NUMBER)
+# Documented commands (guide "Custom zones"). Create: a sphere around the position, PvP on, NPC damage on, no
+# radiation, building damage allowed (normal, raidable while the team is online – green), building allowed; then the
+# visible ring (shown within 100 m) and the chat message when entering.
+CREATE_DEFAULT = """zones.createcustomzone "{zone}" ({x},{y},{z}) 0 Sphere {radius} 1 1 0 1 1
+zones.editcustomzone "{zone}" showarea 1
+zones.editcustomzone "{zone}" color (0,255,0)
+zones.editcustomzone "{zone}" showchatmessage 1"""
+RED_DEFAULT = """zones.editcustomzone "{zone}" allowbuildingdamage 0
+zones.editcustomzone "{zone}" color (255,0,0)
+zones.editcustomzone "{zone}" entermessage "Offline protection: this team is offline, their base can't be raided." """
+GREEN_DEFAULT = """zones.editcustomzone "{zone}" allowbuildingdamage 1
+zones.editcustomzone "{zone}" color (0,255,0)
+zones.editcustomzone "{zone}" entermessage "This team is online – offline protection is off." """
+REMOVE_DEFAULT = 'zones.deletecustomzone "{zone}"'
+POSITION_DEFAULT = 'server.printpos "{name}"'
 COMMAND_HELP = ("Placeholders: {zone} (zone name), {team} (team ID), {leader} (leader's name), {x} {y} {z} "
                 "(position), {radius}. Several commands: one per line. Empty = nothing is sent.")
 
@@ -42,22 +63,27 @@ class OfflineProtection(Plugin):
                 help="How long every member of a team must be offline before the zone turns red."),
         Setting("confirm_seconds", "Seconds to answer \"Yes\"", "int", 20, min=5, max=120,
                 help="Time between \"Can I build here?\" and \"Yes\" for the leader to place the zone."),
-        Setting("radius", "Zone size ({radius})", "int", 0, min=0, max=100000,
-                help="Filled into {radius} in the commands below – use the size unit the guide gives. "
-                     "0 = not used."),
+        Setting("radius", "Zone radius in metres ({radius})", "int", 30, min=1, max=100000,
+                help="Size of the sphere around the leader's position (zones.createcustomzone, Zone Size)."),
         Setting("zone_prefix", "Zone name prefix ({zone})", "text", "team_",
                 help="Zone names are this + the team ID, e.g. team_123."),
-        Setting("position_command", "Command that returns a player's position", "text", "",
+        Setting("position_command", "Command that returns a player's position", "text", POSITION_DEFAULT,
                 help="Run for the leader when placing ({name} = the leader). Its reply must contain the x, y, z "
-                     "position. Empty = zones can't be placed at the leader's position yet."),
+                     "position. Default: server.printpos (guide: prints the current position of the target ID)."),
         Setting("position_pattern", "Position in the reply (regular expression)", "text", "",
                 help="Optional: a regular expression with the groups (?P<x>…) (?P<y>…) (?P<z>…). Empty = the "
-                     "first three numbers in the reply."),
-        Setting("create_command", "Command(s): create the zone", "textarea", "", help=COMMAND_HELP),
-        Setting("remove_command", "Command(s): remove a zone", "textarea", "",
+                     "first (x, y, z) in the reply, else the first three numbers."),
+        Setting("create_command", "Command(s): create the zone", "textarea", CREATE_DEFAULT,
+                help="Default: zones.createcustomzone – name, position, rotation 0, Sphere, radius, PvP 1, NPC "
+                     "damage 1, radiation 0, building damage 1, building 1 (see the guide). " + COMMAND_HELP),
+        Setting("remove_command", "Command(s): remove a zone", "textarea", REMOVE_DEFAULT,
                 help="Run when a leader moves the zone or the team is gone. " + COMMAND_HELP),
-        Setting("red_command", "Command(s): status red (team offline)", "textarea", "", help=COMMAND_HELP),
-        Setting("green_command", "Command(s): status green (team online)", "textarea", "", help=COMMAND_HELP),
+        Setting("red_command", "Command(s): status red (team offline)", "textarea", RED_DEFAULT,
+                help="Default: building damage off, red ring, enter message (zones.editcustomzone). "
+                     + COMMAND_HELP),
+        Setting("green_command", "Command(s): status green (team online)", "textarea", GREEN_DEFAULT,
+                help="Default: building damage on, green ring, enter message (zones.editcustomzone). "
+                     + COMMAND_HELP),
         Setting("tell_leader", "Tell the leader in-game what happened", "bool", True),
         Setting("channel", "Discord channel for status changes (optional)", "channel", None),
     )
@@ -83,8 +109,8 @@ class OfflineProtection(Plugin):
             except re.error as exc:
                 return [f"The position pattern is not a valid regular expression: {exc}"]
             return []
-        return ["Not sent to the server yet – enter " + ", ".join(missing) + " from the Custom zones guide "
-                "(Rust Console Edition community server docs)."]
+        return ["Not sent to the server – enter " + ", ".join(missing) + " (commands: see the Custom zones "
+                "guide of the Rust Console Edition community server docs)."]
 
     def status(self) -> dict:
         zones = self.zones()
@@ -103,7 +129,8 @@ class OfflineProtection(Plugin):
         self.data.set(f"zone:{team_id}", zone)
 
     def _vars(self, zone: dict) -> dict:
-        return {"zone": zone["name"], "team": zone["team"], "leader": zone["leader"], "name": zone["leader"],
+        leader = sanitize_player_name(zone["leader"])        # no quotes: it goes into "…" in commands
+        return {"zone": zone["name"], "team": zone["team"], "leader": leader, "name": leader,
                 "x": zone["x"], "y": zone["y"], "z": zone["z"], "radius": self.setting("radius")}
 
     async def _run(self, key: str, values: dict) -> bool:
@@ -191,7 +218,8 @@ class OfflineProtection(Plugin):
             return None
         pattern = str(self.setting("position_pattern") or "").strip()
         try:
-            m = re.search(pattern, reply or "") if pattern else POSITION_FALLBACK.search(reply or "")
+            m = re.search(pattern, reply or "") if pattern else \
+                (POSITION_PAREN.search(reply or "") or POSITION_FALLBACK.search(reply or ""))
         except re.error:
             return None
         if m is None:
