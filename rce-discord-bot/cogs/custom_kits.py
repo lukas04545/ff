@@ -635,6 +635,49 @@ class CustomKits(commands.Cog):
             return
         await interaction.response.send_message("✅ Link panel posted.", ephemeral=True)
 
+    def admin_link(self, user_id: int, player: str, *, force: bool = False) -> tuple[str, int | None]:
+        """Admin: links a Discord account to an in-game player – the player doesn't have to be online.
+        Returns (exact player name, previous owner moved away or None); raises ValueError with a readable message."""
+        name = sanitize_player_name(player)
+        if not name:
+            raise ValueError("Enter an in-game name.")
+        known = next((n for n in self.bot.online_players if n.lower() == name.lower()), None) or \
+            next((n for n in self.bot.db.search_names(name, 5) if n.lower() == name.lower()), None)
+        name = known or name                      # use the exact spelling the server knows, if seen before
+        owner = self.bot.db.player_owner(name)
+        if owner == user_id:
+            return name, None
+        if owner is not None and not force:
+            raise ValueError(f"{name} is already linked to another Discord account (<@{owner}>) – tick "
+                             "\"move it\" to link it to this member instead.")
+        if owner is not None:
+            self.bot.db.unlink_player(owner)
+        if not self.bot.db.link_player(user_id, name):
+            raise ValueError(f"{name} is linked to another Discord account.")
+        return name, owner
+
+    @customkit.command(name="link-player",
+                       description="Admin: link a member to an in-game player – also when the player is offline.")
+    @app_commands.describe(member="Discord member", player="In-game name (online or not)",
+                           move="Also if the player is linked to someone else (moves the link)")
+    @app_commands.autocomplete(player=_player_ac)
+    @admin_only()
+    async def link_player_cmd(self, interaction: discord.Interaction, member: discord.Member, player: str,
+                              move: bool = False) -> None:
+        try:
+            name, previous = self.admin_link(member.id, player, force=move)
+        except ValueError as exc:
+            await interaction.response.send_message(f"⛔ {exc}", ephemeral=True,
+                                                    allowed_mentions=discord.AllowedMentions.none())
+            return
+        seen = bool(self.bot.db.player(name))
+        moved = f" (moved from <@{previous}>)" if previous else ""
+        self._audit(interaction, f"linked {member.mention} to **{safe_md(name)}**{moved}")
+        await interaction.response.send_message(
+            f"🔗 {member.mention} is now linked to **{safe_md(name)}**{moved}."
+            + ("" if seen else "\n⚠️ This name hasn't been seen on the server yet – check the spelling."),
+            ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
     @customkit.command(name="unlink", description="Removes the link between a member and their in-game player.")
     @app_commands.describe(member="Discord member")
     @admin_only()

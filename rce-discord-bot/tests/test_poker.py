@@ -225,3 +225,18 @@ def test_view_hides_other_cards_and_round_trips():
     assert "deck" not in v and "deck" not in str(t.view(None, 0))
     copy = pk.Table.from_dict(t.to_dict())
     assert copy.view(101, 0) == t.view(101, 0)
+
+
+def test_dealer_deals_by_timer():
+    t = pk.Table(id="t", name="T", sb=5, bb=10, min_buy=1, max_buy=1000, hand_delay=8)
+    t.sit(1, "A", 500, now=100)
+    assert t.view(1, 100)["next_in"] is None                            # alone: no countdown
+    t.tick(110)
+    t.sit(2, "B", 500, now=120)
+    assert t.view(1, 120)["next_in"] == 8                               # 2 players: deals in 8 s
+    assert not t.tick(127, Deck([])) and not t.in_hand_now
+    assert t.tick(128, Deck([])) and t.in_hand_now
+    while t.to_act is not None:
+        t.act(t.seats[t.to_act].user_id, "fold", now=130)
+    assert t.street == "showdown" and t.view(1, 130)["next_in"] == 8   # next hand by the timer again
+    assert not t.tick(137, Deck([])) and t.tick(138, Deck([])) and t.hand_no == 2

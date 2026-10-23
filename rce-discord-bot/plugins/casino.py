@@ -51,6 +51,8 @@ class Casino(Plugin):
                      "Up to 6 players per table. Changing a table stands its players up (chips go back)."),
         Setting("poker_turn_time", "Poker: seconds per turn", "int", 30, min=10, max=120,
                 help="Who runs out of time checks or folds and sits out until he's back."),
+        Setting("poker_hand_delay", "Poker: seconds between hands", "int", 8, min=3, max=60,
+                help="The dealer deals the next hand by this timer (also the first one, once 2 players sit)."),
         Setting("poker_rake", "Poker: house cut (rake) in %", "int", 0, min=0, max=10,
                 help="Taken from every pot that saw a flop and was played by 2+ players. 0 = none "
                      "(players only win from each other)."),
@@ -131,11 +133,12 @@ class Casino(Plugin):
         """Tables from the settings. A table whose settings changed (or that was removed) stands its players up."""
         specs = self._table_specs()
         turn, rake, cap = self.setting("poker_turn_time"), self.setting("poker_rake"), self.setting("poker_rake_cap")
+        delay = self.setting("poker_hand_delay")
         for tid, t in list(self.tables.items()):
             spec = specs.get(tid)
             same = spec is not None and (t.name, t.sb, t.bb, t.min_buy, t.max_buy) == spec
             if same:
-                t.turn_time, t.rake_pct, t.rake_cap = turn, rake, cap
+                t.turn_time, t.rake_pct, t.rake_cap, t.hand_delay = turn, rake, cap, delay
                 continue
             self._cash_out(t, t.refund_all(), "table changed")
             self._notify(tid)
@@ -143,7 +146,7 @@ class Casino(Plugin):
         for tid, (name, sb, bb, low, high) in specs.items():
             if tid not in self.tables:
                 self.tables[tid] = poker.Table(id=tid, name=name, sb=sb, bb=bb, min_buy=low, max_buy=high,
-                                               turn_time=turn, rake_pct=rake, rake_cap=cap)
+                                               turn_time=turn, rake_pct=rake, rake_cap=cap, hand_delay=delay)
         self._save()
 
     def _refund_saved(self) -> None:

@@ -327,7 +327,8 @@ def test_poker_tables_money_flow_and_restart_refund(casino_env):
     assert casino.balance(7) == 600 and casino.balance(8) == 700
     with pytest.raises(g.GameError, match="already sitting"):
         casino.poker_sit(7, "Gamer7", "high-stakes", 2000)
-    assert t.tick(time.time() + 3) and t.in_hand_now
+    assert not t.tick(time.time() + 3) and t.view(7, time.time())["next_in"] > 0      # dealer's timer runs
+    assert t.tick(time.time() + 9) and t.in_hand_now
     casino._after(t)
     view7, view8 = casino.poker_view(7, "low-stakes"), casino.poker_view(8, "low-stakes")
     me7 = view7["seats"][view7["you"]]

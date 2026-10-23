@@ -23,7 +23,7 @@ from support.casino_games import card_label
 RNG = secrets.SystemRandom()
 MAX_SEATS = 6
 SIT_OUT_LIMIT = 300                 # seconds sitting out before the bot stands the player up (chips back)
-NEXT_HAND_DELAY = 5.0               # seconds the result stays on the table before the next hand
+NEXT_HAND_DELAY = 8                 # default seconds between hands (the dealer deals by this timer)
 CATEGORIES = ("High card", "Pair", "Two pair", "Three of a kind", "Straight", "Flush", "Full house",
               "Four of a kind", "Straight flush")
 RANK_NAMES = {14: "Aces", 13: "Kings", 12: "Queens", 11: "Jacks", 10: "Tens", 9: "Nines", 8: "Eights", 7: "Sevens",
@@ -141,6 +141,7 @@ class Table:
     rake_pct: float = 0.0
     rake_cap: int = 0
     turn_time: int = 30
+    hand_delay: int = NEXT_HAND_DELAY
     seats: list = field(default_factory=lambda: [None] * MAX_SEATS)
     button: int = -1
     street: str = "idle"        # idle, preflop, flop, turn, river, showdown
@@ -191,7 +192,7 @@ class Table:
         self.seats[seat] = Seat(user_id=user_id, name=name, stack=buy_in)
         self._note(f"{name} sits down with {buy_in}.")
         if not self.in_hand_now and self.next_hand_at < now:
-            self.next_hand_at = now + 2
+            self.next_hand_at = now + self.hand_delay        # the dealer deals when the timer runs out
         self._changed()
         return seat
 
@@ -443,7 +444,7 @@ class Table:
         for r in self.result:
             self._note(f"{r['name']} wins {r['amount']}" + (f" with {r['hand']}" if r["hand"] else "") + ".")
         self.street, self.to_act = "showdown", None
-        self.next_hand_at = now + NEXT_HAND_DELAY
+        self.next_hand_at = now + self.hand_delay
         for i, s in enumerate(self.seats):                          # free seats of leavers and busted players
             if s is None:
                 continue
@@ -482,6 +483,10 @@ class Table:
                 self.street, changed = "idle", True
             if self.start_hand(now, rng):
                 changed = True
+            elif len(self._players()) < 2:
+                self.next_hand_at = 0.0                     # the timer starts again when 2 players are ready
+        if not self.in_hand_now and not self.next_hand_at and len(self._players()) >= 2:
+            self.next_hand_at, changed = now + self.hand_delay, True     # e.g. someone came back
         if changed:
             self._changed()
         return changed
@@ -524,7 +529,9 @@ class Table:
                 "max_buy": self.max_buy, "street": self.street, "board": [card_label(c) for c in self.board],
                 "pot": pot, "seats": seats, "you": me, "legal": legal, "hand": self.hand_no,
                 "turn_left": max(0, round(self.deadline - now, 1)) if self.to_act is not None else 0,
-                "turn_time": self.turn_time, "result": self.result, "log": self.log[-8:], "version": self.version}
+                "turn_time": self.turn_time, "result": self.result,
+                "next_in": (max(0, round(self.next_hand_at - now, 1))
+                            if not self.in_hand_now and self.next_hand_at and len(self._players()) >= 2 else None), "log": self.log[-8:], "version": self.version}
 
     def _note(self, text: str) -> None:
         self.log.append(text)
