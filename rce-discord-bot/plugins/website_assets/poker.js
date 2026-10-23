@@ -119,9 +119,9 @@
     if (st.street === "showdown" && st.result.length) {
       banner.textContent = st.result.map((r) => `${r.name} wins ${fmt(r.amount)}${r.hand ? " – " + r.hand : ""}`).join(" · ");
     } else if (st.legal) banner.textContent = "Your turn";
-    else if (me === null) banner.textContent = "Pick your buy-in below to sit down";
-    else if (st.street === "idle") banner.textContent = "Waiting for players …";
-    else banner.textContent = "";
+    else if (st.next_in === null && st.street !== "showdown" && st.street !== "idle") banner.textContent = "";
+    else if (st.next_in === null) banner.textContent = me === null ? "Pick your buy-in below to sit down" : "Waiting for players …";
+    else countdown();
 
     logEl.replaceChildren(...st.log.slice().reverse().map((line) => h("div", "", line)));
     drawBar(st);
@@ -173,6 +173,15 @@
       if (!inHand || window.confirm("Leave now? Your hand is folded; the rest of your chips go back to your points.")) send("leave");
     });
   }
+
+  // "Next hand in 5 …" – the dealer deals by the server's timer; this only shows it counting down
+  function countdown() {
+    if (!state || state.next_in === null || state.next_in === undefined) return;
+    if (state.street === "showdown" && state.result.length && (performance.now() - received) / 1000 < 3) return;
+    const left = Math.max(0, Math.ceil(state.next_in - (performance.now() - received) / 1000));
+    banner.textContent = left ? `Next hand in ${left} …` : "Dealing …";
+  }
+  setInterval(countdown, 250);
 
   // keep the countdown honest when the tab was in the background
   document.addEventListener("visibilitychange", () => { if (!document.hidden && state) render(state); });

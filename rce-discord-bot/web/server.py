@@ -344,6 +344,7 @@ class WebInterface:
         r.add_post("/api/custom-kits/import", self.import_custom_kits)
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
         r.add_put("/api/custom-kits/{name}/claim", self.custom_kit_claim_settings)
+        r.add_post("/api/linked-players", self.link_player)
         r.add_delete("/api/linked-players/{user_id:\\d+}", self.unlink_player)
         r.add_post("/api/custom-kits/{name}/items", self.add_custom_item)
         r.add_delete("/api/custom-kits/{name}/items/{item_id:\\d+}", self.remove_custom_item)
@@ -1627,6 +1628,34 @@ class WebInterface:
         self._audit(f"Custom kit **{kit['name']}** – claim roles: {len(role_ids)}, "
                     f"cooldown {format_minutes(minutes)}")
         return web.json_response({"ok": True, "cooldown_minutes": minutes})
+
+    async def link_player(self, request: web.Request) -> web.Response:
+        """Admin links a member to a player (also offline). member: Discord user ID, @name or display name."""
+        body = await self._json(request)
+        cog = self.bot.get_cog("CustomKits") if self.bot is not None else None
+        if cog is None:
+            raise ApiError("The bot isn't ready yet.", 503)
+        who = str(body.get("member", "")).strip().lstrip("@")
+        if not who:
+            raise ApiError("Enter the Discord member (ID or name).")
+        user_id = int(who) if who.isdigit() else None
+        if user_id is None:
+            guild = cog.bot.get_guild(self.bot.config.guild_id) if self.bot.config.guild_id else \
+                (self.bot.guilds[0] if self.bot.guilds else None)
+            matches = [m for m in (guild.members if guild else [])
+                       if who.lower() in (m.name.lower(), (m.global_name or "").lower(), m.display_name.lower())]
+            if len(matches) != 1:
+                raise ApiError(f"No Discord member called {who}." if not matches else
+                               f"{len(matches)} members are called {who} – use the Discord user ID.")
+            user_id = matches[0].id
+        try:
+            name, previous = cog.admin_link(user_id, str(body.get("player", "")), force=bool(body.get("force")))
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        moved = f" (moved from Discord user {previous})" if previous else ""
+        self._audit(f"Linked Discord user {user_id} to **{name}**{moved}")
+        return web.json_response({"ok": True, "player": name, "user_id": str(user_id),
+                                  "seen": bool(self.bot.db.player(name))})
 
     async def unlink_player(self, request: web.Request) -> web.Response:
         player = self.bot.db.unlink_player(int(request.match_info["user_id"]))

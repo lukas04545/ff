@@ -1103,6 +1103,7 @@ function linkedPlayersCard(data, reload) {
   const rows = data.linked || [];
   return h("div", { class: "card" }, h("h2", { text: `🔗 Linked players (${rows.length})` }),
     h("p", { class: "muted", text: "Members link themselves with /customkit link (dropdown of online players; optional quick chat check in Settings → Kits). Custom kit claims only go to the linked player." }),
+    adminLinkForm(reload),
     rows.length ? h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, ["In-game player", "Discord", "Linked", ""].map((t) => h("th", { text: t })))),
       h("tbody", {}, rows.map((r) => h("tr", {},
@@ -1112,6 +1113,23 @@ function linkedPlayersCard(data, reload) {
           await act(() => api(`/api/linked-players/${r.user_id}`, { method: "DELETE" }), "Unlinked");
           reload();
         } }))))))) : h("p", { class: "muted", text: "Nobody linked yet." }));
+}
+
+// Admins link a member to a player directly – the player doesn't have to be online
+function adminLinkForm(reload) {
+  const member = h("input", { placeholder: "Discord user ID or name", maxlength: 64 });
+  const player = h("input", { placeholder: "In-game name (online or not)", maxlength: 64 });
+  const force = h("input", { type: "checkbox" });
+  return h("details", { style: "margin:.5rem 0 .75rem" }, h("summary", { text: "➕ Link a member to a player (admin)" }),
+    h("div", { class: "row", style: "margin-top:.5rem;flex-wrap:wrap" }, member, player,
+      h("label", { style: "display:flex;gap:.35rem;align-items:center" }, force, "move it if linked to someone else"),
+      h("button", { class: "primary small", text: "Link", onclick: async () => {
+        const r = await act(() => api("/api/linked-players", { method: "POST", body: { member: member.value, player: player.value, force: force.checked } }), "Linked");
+        if (!r) return;
+        if (!r.seen) toast(`${r.player} hasn't been seen on the server yet – check the spelling.`, true);
+        reload();
+      } })),
+    h("p", { class: "muted", text: "Works while the player is offline. Use the exact in-game name; known names are matched without caring about upper/lower case." }));
 }
 
 // Kit builder output ("kit add "Kit" "item" 1 100 main") -> custom kits

@@ -224,3 +224,51 @@ def test_link_with_dropdown_no_check(cog):
     nobody = FakeInteraction(8, [])
     asyncio.run(cog.link.callback(cog, nobody, None))
     assert "Join the game first" in nobody.messages[-1]
+
+
+def test_admin_links_offline_player(cog):
+    db = cog.bot.db
+    db.add_playtime(["Offline Olli"], 60)                          # seen on the server before, not online now
+    name, prev = cog.admin_link(7, "offline olli")
+    assert name == "Offline Olli" and prev is None and db.linked_player(7) == "Offline Olli"
+    with pytest.raises(ValueError, match="already linked"):
+        cog.admin_link(8, "Offline Olli")                          # someone else's player: needs "move"
+    name, prev = cog.admin_link(8, "Offline Olli", force=True)
+    assert prev == 7 and db.linked_player(8) == "Offline Olli" and db.linked_player(7) is None
+    assert cog.admin_link(8, "Never Seen")[0] == "Never Seen"      # unknown names work too (spelling warning)
+    assert db.linked_player(8) == "Never Seen" and db.player_owner("Offline Olli") is None
+    with pytest.raises(ValueError):
+        cog.admin_link(9, "   ")
+
+
+def test_admin_link_web_endpoint(cog):
+    import asyncio
+    from aiohttp.test_utils import TestClient, TestServer
+    from web.server import WebInterface
+
+    async def main():
+        await cog.bot.add_cog(cog)
+        web = WebInterface(cog.bot, env_path=cog.bot.config.database_path.parent / ".env",
+                           secret_path=cog.bot.config.database_path.parent / "web_secret.key")
+        web.ws.password = web.password = "secret123"
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        H = {"X-Requested-With": "rce-web"}
+        try:
+            assert (await c.post("/api/linked-players", json={"member": "5", "player": "X"}, headers=H)).status == 401
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            r = await c.post("/api/linked-players", json={"member": "123456", "player": "Somebody"}, headers=H)
+            body = await r.json()
+            assert r.status == 200 and body["player"] == "Somebody" and body["seen"] is False
+            assert cog.bot.db.linked_player(123456) == "Somebody"
+            r = await c.post("/api/linked-players", json={"member": "999", "player": "Somebody"}, headers=H)
+            assert r.status == 400 and "already linked" in (await r.json())["error"]
+            r = await c.post("/api/linked-players", json={"member": "999", "player": "Somebody", "force": True},
+                             headers=H)
+            assert r.status == 200 and cog.bot.db.linked_player(999) == "Somebody"
+            r = await c.post("/api/linked-players", json={"member": "nobody-here", "player": "Y"}, headers=H)
+            assert r.status == 400 and "No Discord member" in (await r.json())["error"]
+        finally:
+            await c.close()
+            await cog.bot.rcon.close()
+    asyncio.run(main())
