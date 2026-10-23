@@ -1090,6 +1090,24 @@ class Storage:
             "SELECT player FROM team_members WHERE team_id = ? ORDER BY player", (row["team_id"],))]
         return row, members
 
+    def replace_teams(self, teams: dict[int, dict]) -> None:
+        """All teams from a server team list (relationshipmanager.teaminfoall) – replaces what we had."""
+        with self._db:
+            self._db.execute("DELETE FROM team_members")
+            self._db.execute("DELETE FROM teams")
+            for team_id, t in teams.items():
+                self._db.execute("INSERT INTO teams (team_id, leader) VALUES (?, ?)", (team_id, t["leader"]))
+                self._db.executemany("INSERT OR REPLACE INTO team_members (player, team_id) VALUES (?, ?)",
+                                     [(m, team_id) for m in t["members"]])
+
+    def set_team(self, team_id: int, leader: str | None, members: list[str]) -> None:
+        """One team from a server team list – its members leave any team we had them in."""
+        with self._db:
+            self._db.execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
+            self._db.execute("INSERT OR REPLACE INTO teams (team_id, leader) VALUES (?, ?)", (team_id, leader))
+            self._db.executemany("INSERT OR REPLACE INTO team_members (player, team_id) VALUES (?, ?)",
+                                 [(m, team_id) for m in members])
+
     def team_by_id(self, team_id: int) -> tuple[sqlite3.Row, list[str]] | None:
         """(team row with its leader, member names) or None if the team is gone."""
         row = self._db.execute("SELECT * FROM teams WHERE team_id = ?", (team_id,)).fetchone()

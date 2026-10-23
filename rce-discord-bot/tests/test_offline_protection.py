@@ -179,3 +179,58 @@ def test_team_logs_switched_on_once(zp):
     asyncio.run(zp.p.clock())
     asyncio.run(zp.p.clock())
     assert zp.said.count("relationshipmanager.logteamactions 1") == 1
+
+
+# Output of relationshipmanager.teaminfoall as the server prints it (from a real console)
+TEAMINFOALL = """Team 15 member list:
+x120hz-LOGAN [DISCONNECTED] (LEADER)
+Dom1234_2018 [DISCONNECTED]
+Team 3 member list:
+Beamedbe Ak [DISCONNECTED] (LEADER)
+Hades_2Faze [DISCONNECTED]
+Team 4 member list:
+oreo_pheonix562 [DISCONNECTED] (LEADER)
+Team 5 member list:
+mikeyblaine [DISCONNECTED]
+EminBezgin2013 [DISCONNECTED] (LEADER)
+Team 6 member list:
+RyanSpeijdel [883255] (LEADER)
+secret_Liam123 [DISCONNECTED]
+"""
+
+
+def test_parse_team_list():
+    from rce.teams import parse_team_list
+    teams = parse_team_list(TEAMINFOALL)
+    assert set(teams) == {15, 3, 4, 5, 6}
+    assert teams[3] == {"leader": "Beamedbe Ak", "members": ["Beamedbe Ak", "Hades_2Faze"], "online": []}
+    assert teams[5]["leader"] == "EminBezgin2013" and teams[5]["members"][0] == "mikeyblaine"
+    assert teams[6]["online"] == ["RyanSpeijdel"]
+    assert parse_team_list("some error") == {} and parse_team_list("") == {}
+
+
+def test_teams_read_from_the_server_and_found_when_placing(zp, monkeypatch):
+    replies = {"relationshipmanager.teaminfoall": TEAMINFOALL,
+               'relationshipmanager.findplayerteam "Newbie"': "Team 44 member list:\nNewbie [12345] (LEADER)\n"
+                                                             "Pal [DISCONNECTED]\n"}
+
+    async def command(cmd, **kw):
+        zp.said.append(cmd)
+        if cmd.startswith("TEST_POS"):
+            return "(1, 2, 3)"
+        return replies.get(cmd, "")
+    monkeypatch.setattr(zp.bot.rcon, "command", command)
+    configure(zp)
+    asyncio.run(zp.p.clock())                                              # first run: all teams read
+    row, members = zp.db.team_of("Hades_2Faze")
+    assert row["team_id"] == 3 and row["leader"] == "Beamedbe Ak" and members == ["Beamedbe Ak", "Hades_2Faze"]
+    assert zp.db.team_of("Lead") is None                                   # replaced by the server's list
+    asyncio.run(zp.p.clock())
+    assert zp.said.count("relationshipmanager.teaminfoall") == 1           # not again until the interval
+    zp.bot.online_players = {"Newbie": {}}
+    chat(zp.p, "Newbie", ASK)                                              # team unknown -> asked the server
+    chat(zp.p, "Newbie", YES)
+    assert 'relationshipmanager.findplayerteam "Newbie"' in zp.said and zp.p.zone(44) is not None
+    replies["relationshipmanager.teaminfoall"] = "Unknown command"           # unreadable: keep what we know
+    asyncio.run(zp.p.sync_teams())
+    assert zp.db.team_of("Hades_2Faze") is not None

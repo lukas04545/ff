@@ -14,6 +14,8 @@ Zone commands – only what the Rust Console Edition community server guide "Cus
   zones.deletecustomzone "Name"
   server.printpos "ID"                          (prints the current position of the given target)
   relationshipmanager.logteamactions 1          (team log lines on – teams and leaders come from them)
+  relationshipmanager.teaminfoall               (all teams with members and leader – read at start and regularly)
+  relationshipmanager.findplayerteam "ID"       (a player's team – when he places and the bot doesn't know it)
 Green = building damage allowed, a green ring; red = building damage off (offline raid protection), a red ring.
 All commands are settings (defaults below) – an empty one is never sent.
 """
@@ -26,6 +28,7 @@ from discord.ext import tasks
 
 from plugin_api import Plugin, Setting
 from rce.rcon_client import RconError
+from rce.teams import parse_team_list
 from utils import sanitize_player_name
 
 ASK = "d11_quick_chat_questions_slot_1"         # "Can I build here?"
@@ -88,6 +91,9 @@ class OfflineProtection(Plugin):
         Setting("team_logs", "Make sure the server logs team actions", "bool", True,
                 help="Runs relationshipmanager.logteamactions 1 when the plugin starts – teams and leaders are "
                      "read from these log lines (create, join, leave, new leader). It's on by default on servers."),
+        Setting("team_sync_minutes", "Re-read all teams every … minutes", "int", 10, min=0, max=1440,
+                help="Runs relationshipmanager.teaminfoall (members and leader of every team) at start and then "
+                     "every … minutes, so teams formed before the bot ran are known too. 0 = only the team logs."),
         Setting("tell_leader", "Tell the leader in-game what happened", "bool", True),
         Setting("channel", "Discord channel for status changes (optional)", "channel", None),
     )
@@ -100,6 +106,33 @@ class OfflineProtection(Plugin):
 
     async def on_load(self) -> None:
         self._team_logs_done = False
+        self._last_sync = 0.0
+
+    async def sync_teams(self) -> int:
+        """Reads every team from the server (relationshipmanager.teaminfoall). Returns how many were read."""
+        try:
+            reply = await self.bot.rcon.command("relationshipmanager.teaminfoall")
+        except RconError as exc:
+            self.log.debug("teaminfoall: %s", exc)
+            return 0
+        teams = parse_team_list(reply or "")
+        if teams:                                        # nothing readable: keep what we have
+            self.bot.db.replace_teams(teams)
+        self._last_sync = time.monotonic()
+        return len(teams)
+
+    async def _look_up_team(self, player: str):
+        """The player's team straight from the server (relationshipmanager.findplayerteam) – stored and returned."""
+        try:
+            reply = await self.bot.rcon.command(f'relationshipmanager.findplayerteam "{sanitize_player_name(player)}"')
+        except RconError as exc:
+            self.log.debug("findplayerteam: %s", exc)
+            return None
+        for team_id, t in parse_team_list(reply or "").items():
+            if any(m.lower() == player.lower() for m in t["members"]):
+                self.bot.db.set_team(team_id, t["leader"], t["members"])
+                return self.bot.db.team_of(player)
+        return None
 
     async def _ensure_team_logs(self) -> None:
         if self.setting("team_logs") and not getattr(self, "_team_logs_done", False):
@@ -194,9 +227,11 @@ class OfflineProtection(Plugin):
 
     async def place(self, player: str) -> str:
         """The player asked to place his team's zone at his position. Returns what happened (also told in-game)."""
-        team = self.bot.db.team_of(player)
+        team = self.bot.db.team_of(player) or await self._look_up_team(player)
         if team is None:
             msg = "you need to be in a team to place a protection zone."
+        elif not team[0]["leader"]:
+            msg = "your team's leader isn't known yet – try again in a few minutes."
         elif (team[0]["leader"] or "").lower() != player.lower():
             msg = "only your team leader can place the protection zone."
         else:
@@ -300,6 +335,9 @@ class OfflineProtection(Plugin):
     @tasks.loop(seconds=20)
     async def clock(self) -> None:
         await self._ensure_team_logs()                       # once, as soon as RCON is up
+        every = self.setting("team_sync_minutes")
+        if every and (not getattr(self, "_last_sync", 0) or time.monotonic() - self._last_sync >= every * 60):
+            await self.sync_teams()
         for team_id in list(self.zones()):
             try:
                 await self._update(team_id)
