@@ -132,7 +132,8 @@ def page(site, bp, shop, base: str, uid: int, *, ok: str = "", error: str = "") 
         columns.append(f'<div class="{cls}" id="t{t}"><div class="num">{t}</div>'
                        f'{_reward_box(bp, base, t, "free", free, fstate)}'
                        f'{_reward_box(bp, base, t, "paid", paid, pstate)}</div>')
-    track = (f'<div class="card"><div class="rowlabel">Free ▸ top row · Premium ▸ bottom row</div>'
+    jump = f' · <a href="#t{min(top, level + 1)}">Jump to tier {min(top, level + 1)} →</a>' if level >= 4 else ""
+    track = (f'<div class="card"><div class="rowlabel">Free ▸ top row · Premium ▸ bottom row{jump}</div>'
              f'<div class="track">{"".join(columns)}</div>'
              f'<p class="muted">XP: {int(bp.setting("xp_per_minute"))} per minute online, '
              f'{int(bp.setting("xp_per_kill"))} per PvP kill, the daily bonus. Item rewards are given in-game – be '
