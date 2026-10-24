@@ -5,9 +5,9 @@ Points belong to a Discord account and are earned with the player linked to it (
   * PvP kills       POINTS_PER_KILL (the same killer/victim pair at most once every 10 minutes)
   * /daily          DAILY_POINTS + DAILY_STREAK_BONUS per day in a row (max. 7)
   * playtime reward every PLAYTIME_REWARD_HOURS online: PLAYTIME_REWARD_KIT and/or PLAYTIME_REWARD_POINTS
-They are spent in /shop (items: web interface → Shop): custom kit, in-game kit, items, a Discord role
-(optionally for N days) or a 💣 nuke – a points drop in the channel where it was bought (nukes are also sold for
-real money in the web store, cogs/webshop.py): every Discord member (not the
+They are spent in /shop (items: web interface → Shop): custom kit, in-game kit, items or a Discord role
+(optionally for N days). Nukes – sold for real money in the web store (cogs/webshop.py) – are dropped here: a points
+drop on Discord: every Discord member (not the
 buyer) can claim the set points once with the Claim button, for the first N members (0 = everyone) within NUKE_HOURS.
 If delivery fails, the points are refunded.
 """
@@ -33,8 +33,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("rce.economy")
 
-SHOP_KINDS = {"custom_kit": "Custom kit", "kit": "In-game kit", "item": "Item", "role": "Discord role",
-              "nuke": "💣 Nuke (points for everyone)"}
+SHOP_KINDS = {"custom_kit": "Custom kit", "kit": "In-game kit", "item": "Item", "role": "Discord role"}
 NUKE_HOURS = 24                  # a nuke's points can be claimed this long
 DAILY_COOLDOWN = 20 * 3600       # a bit less than a day, so the time of day can drift
 STREAK_WINDOW = 48 * 3600        # /daily within this time keeps the streak
@@ -237,12 +236,6 @@ class Economy(commands.Cog):
                 raise ValueError(f"{target} is not a valid item shortname.")
             if amount < 1:
                 raise ValueError("The amount must be at least 1.")
-        if kind == "nuke":
-            if not target.isdigit() or not 1 <= int(target) <= 1_000_000:
-                raise ValueError("Enter the points every member gets (1 – 1 000 000).")
-            if amount < 0:
-                raise ValueError("The number of members can't be negative (0 = everyone).")
-            return str(int(target))
         if kind == "role":
             guild = self.guild()
             role = guild.get_role(int(target)) if guild and target.isdigit() else None
@@ -263,15 +256,11 @@ class Economy(commands.Cog):
             return f"In-game kit {target}"
         if kind == "item":
             return f"{amount} × {target}"
-        if kind == "nuke":
-            who = f"the first {amount} members" if amount else "every member"
-            return f"💣 Nuke: {target} {self.bot.config.points_name} for {who} who claim (within {NUKE_HOURS} h)"
         role = guild.get_role(int(target)) if guild and target.isdigit() else None
         name = role.name if role else "role"
         return f"Discord role {name}" + (f" for {amount} days" if amount else " (permanent)")
 
-    async def buy(self, member: discord.Member, item_name: str, channel=None) -> BuyOutcome:
-        """`channel`: where a nuke is dropped (the channel /shop buy was used in)."""
+    async def buy(self, member: discord.Member, item_name: str) -> BuyOutcome:
         if not self.enabled:
             return BuyOutcome(False, "Points & shop are switched off.")
         row = self.bot.db.shop_item_by_name(item_name)
@@ -289,10 +278,6 @@ class Economy(commands.Cog):
                 timed = self.bot.get_cog("TimedRoles")
                 if role in member.roles and (not row["amount"] or (timed and timed.permanent(member, role))):
                     return BuyOutcome(False, f"You already have **{safe_md(role.name)}**.")
-            elif row["kind"] == "nuke":
-                channel = channel if hasattr(channel, "send") else getattr(member.guild, "system_channel", None)
-                if channel is None:
-                    return BuyOutcome(False, "Buy the nuke in a server channel – that's where it drops.")
             else:
                 online = self._online_name(player)
                 if online is None:
@@ -305,10 +290,7 @@ class Economy(commands.Cog):
                 return BuyOutcome(False, f"Not enough {self.bot.config.points_name}: **{row['name']}** costs "
                                          f"{self.fmt(price)}, you have {self.fmt(have)}.")
             try:
-                if row["kind"] == "nuke":
-                    result = await self._drop_nuke(row, member, channel)
-                else:
-                    result = await self._deliver(row, member, online, role)
+                result = await self._deliver(row, member, online, role)
             except Exception as exc:   # anything went wrong -> money back
                 refund = self.bot.db.add_points(member.id, price, f"refund: {row['name']}")
                 log.warning("Shop delivery of %s for %s failed: %s", row["name"], member, exc)
@@ -363,12 +345,8 @@ class Economy(commands.Cog):
         embed.set_footer(text=f"Claimed: {claimed}" + (f" / {drop['max_claims']}" if drop["max_claims"] else ""))
         return embed
 
-    async def _drop_nuke(self, row, member: discord.Member, channel) -> str:
-        await self.drop_nuke(member.id, row["name"], int(row["target"]), int(row["amount"]), channel)
-        return f"your nuke dropped in {getattr(channel, 'mention', 'the channel')}"
-
     async def drop_nuke(self, buyer_id: int, item: str, points: int, max_claims: int, channel) -> int:
-        """Posts a nuke (shop or web store) in `channel`. Returns its message id; raises if it can't be posted."""
+        """Posts a nuke (bought in the web store) in `channel`. Returns its message id; raises if it can't be posted."""
         db = self.bot.db
         drop_id = db.create_nuke(buyer_id, item, points, max_claims, int(time.time()) + NUKE_HOURS * 3600)
         drop = db.nuke(drop_id)
@@ -437,7 +415,7 @@ class Economy(commands.Cog):
         if await self._disabled(interaction):
             return
         await interaction.response.defer(ephemeral=True)
-        outcome = await self.buy(interaction.user, item, interaction.channel)
+        outcome = await self.buy(interaction.user, item)
         await interaction.followup.send(outcome.message, ephemeral=True)
 
     # ------------------------------------------------------------ Points commands

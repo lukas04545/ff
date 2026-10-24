@@ -1123,9 +1123,10 @@ Orders. Wrong keys: 5 tries per 15 minutes per visitor. Empty = off (default).
 Players can buy a **nuke** for real money on the website (store → **💣 Nukes**, PayPal and/or gift card). Once
 it's paid, the bot drops it on Discord: a *NUKE* message with a **Claim** button in the nuke channel (no
 @everyone ping). Every Discord member except the buyer can press it once and gets the set points, for 24 hours
-or until the set number of members have claimed. Set it in **Settings → Store**: `STORE_NUKE_PRICE` (0 = not
-for sale), `STORE_NUKE_POINTS` (points every member gets), `STORE_NUKE_CLAIMS` (0 = everyone) and
-`STORE_NUKE_CHANNEL_ID` (empty = the Discord server's system channel). The buyer enters their linked in-game
+or until the set number of members have claimed; the button keeps working after a bot restart. Set it on the
+control panel's **💳 Store** tab (card **💣 Nukes**): the price (0 = not for sale), the points every member gets,
+how many members can claim (0 = everyone) and the channel (empty = the Discord server's system channel) –
+saved in `.env` as `STORE_NUKE_PRICE`, `STORE_NUKE_POINTS`, `STORE_NUKE_CLAIMS`, `STORE_NUKE_CHANNEL_ID`. The buyer enters their linked in-game
 name like for kits. If the drop can't be posted (e.g. no channel), the order shows as failed and staff click
 Retry (Store → Orders). Needs points & shop on.
 
@@ -1274,10 +1275,7 @@ go to their own verified account):
 The name of the points is up to you (`POINTS_NAME`, e.g. *coins* or *scrap*). Members spend them with
 `/shop buy`. Shop items are set up in the web interface (**🪙 Shop**): a **custom kit**, an **in-game
 kit**, an **item** (shortname + amount) or a **Discord role** – permanent or for N days (uses the timed
-roles below) or a **💣 Nuke**: you set the points every member gets and how many members can claim (0 =
-everyone). When someone buys a nuke with `/shop buy`, the bot posts a *NUKE* message with a **Claim** button
-in that channel (no @everyone ping). Every Discord member except the buyer can claim the points once, within
-24 hours or until the set number of members have claimed; the button keeps working after a bot restart.
+roles below). (Nukes are sold for real money in the web store, see *💣 Nukes in the web store*.)
 Kits and items need the linked player to be online. If a delivery fails (e.g. RCON down),
 the points are refunded automatically. Every purchase is in the admin log. The Shop page also shows all
 balances, with **± Points** to correct one; in Discord admins use `/points give/take`.
