@@ -27,7 +27,70 @@ CSP = ("default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'un
 BOARDS = {"kills": "Kills", "kd": "K/D", "playtime": "Playtime", "teams": "Teams"}
 CACHE_SECONDS = 20
 SCRIPTS = ("casino.js", "poker.js")             # scripts served from website_assets/
-HEADER_LOGO = 96                     # px of the small logo in the header (2× its 42 px for sharp phone screens)
+HEADER_LOGO = 96
+
+# ------------------------------------------------------------ Seasonal theme: Halloween
+# Pure CSS (no images to load): night sky with a moon, a few bats flying past, cobwebs on the cards, a spider on
+# its thread under the menu, pumpkins. Bats only move transform (cheap) and stop with "reduce motion".
+_BAT = quote('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 28"><path fill="#140a1c" d="M32 9c1.6-3 3.2-4 '
+             '4.4-4.4-.4 1.4-.2 2.6.4 3.4 2.4-2.6 6.8-3.6 10.6-2.6-1.6 1-2.4 2.6-2.2 4.2 3.6-1.6 9.4-1.4 14.8 2.4-4.6 '
+             '0-8.6 2.2-10.8 6-1.8-2-4.6-2.8-7-2.2.4 1.8 0 3.6-1.4 5.2-1.8-2.4-5.4-3.8-8.8-3.4-3.4-.4-7 1-8.8 3.4-1.4'
+             '-1.6-1.8-3.4-1.4-5.2-2.4-.6-5.2.2-7 2.2C10.6 16.8 6.6 14.6 2 14.6c5.4-3.8 11.2-4 14.8-2.4.2-1.6-.6-3.2'
+             '-2.2-4.2 3.8-1 8.2 0 10.6 2.6.6-.8.8-2 .4-3.4 1.2.4 2.8 1.4 4.4 4.4z"/></svg>')
+_WEB = quote('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" fill="none" stroke="#d8cfe6" '
+             'stroke-width=".8"><path d="M0 0L60 60M0 0L60 22M0 0L22 60M0 0L60 40M0 0L40 60"/><path d="M14 0c0 6 4 '
+             '10 0 14C8 10 4 14 0 14M28 0c0 10 6 18 0 28C18 22 10 28 0 28M44 0c0 14 8 26 0 42C28 34 14 42 0 42"/>'
+             '</svg>')
+HALLOWEEN_CSS = """
+body.halloween{--red:#ff7518;--orange:#ffb347;--gold:#ffc65c;--line:rgba(255,117,24,.28);--card:rgba(20,10,26,.9);
+--card2:rgba(38,18,46,.9);--grad:linear-gradient(90deg,#ff7518,#ffb347)}
+body.halloween::before{background:radial-gradient(circle at 84% 24%,rgba(255,236,200,.95) 0 38px,rgba(255,200,120,.35) 40px,
+transparent 120px),radial-gradient(ellipse 90% 55% at 50% -8%,rgba(122,48,160,.42),transparent 70%),
+radial-gradient(ellipse 80% 40% at 50% 108%,rgba(255,117,24,.22),transparent 70%),linear-gradient(180deg,#140821 0%,#08050c 60%)}
+.spooky{position:fixed;inset:0;pointer-events:none;z-index:2;overflow:hidden}
+.bat{position:absolute;left:-80px;width:56px;height:25px;background:url("data:image/svg+xml,BAT") center/contain no-repeat;
+animation:fly 22s linear infinite;will-change:transform;filter:drop-shadow(0 0 5px rgba(255,140,60,.7))}
+.bat i{display:block;width:100%;height:100%;background:inherit;animation:flap .35s ease-in-out infinite alternate}
+.bat{background:none}.b1{top:18%;animation-duration:24s}.b2{top:42%;animation-duration:31s;animation-delay:-9s}
+.b3{top:28%;animation-duration:19s;animation-delay:-14s}
+.bat i{background:url("data:image/svg+xml,BAT") center/contain no-repeat}
+@keyframes fly{0%{transform:translate3d(0,0,0)}25%{transform:translate3d(30vw,-20px,0)}50%{transform:translate3d(60vw,
+15px,0)}75%{transform:translate3d(90vw,-10px,0)}100%{transform:translate3d(115vw,5px,0)}}
+@keyframes flap{to{transform:scaleY(.45)}}
+body.halloween main,body.halloween footer{position:relative;z-index:1}
+body.halloween header{position:sticky}
+.spider{position:absolute;right:9%;top:100%;width:1px;height:46px;background:rgba(220,210,235,.55);pointer-events:none;
+transform-origin:top;animation:dangle 4s ease-in-out infinite alternate}
+.spider::after{content:"🕷️";position:absolute;left:-11px;bottom:-18px;font-size:22px;filter:drop-shadow(0 2px 2px #000)}
+@keyframes dangle{from{transform:scaleY(.75)}to{transform:scaleY(1.15)}}
+body.halloween .card::after{content:"";position:absolute;left:0;top:0;width:54px;height:54px;opacity:.28;
+pointer-events:none;background:url("data:image/svg+xml,WEB") 0 0/contain no-repeat}
+body.halloween h1{text-shadow:0 2px 0 #000,0 0 26px rgba(255,117,24,.55)}
+body.halloween .hero .logo{filter:drop-shadow(0 0 30px rgba(255,117,24,.55)) drop-shadow(0 0 60px rgba(122,48,160,.4))}
+.hw-banner{text-align:center;font-family:var(--head);text-transform:uppercase;letter-spacing:.08em;font-size:1.15rem;
+color:#ffd3a1;background:linear-gradient(90deg,rgba(122,48,160,.35),rgba(255,117,24,.25),rgba(122,48,160,.35));
+border-color:rgba(255,117,24,.45)}.hw-banner .pk{display:inline-block;animation:bob 2.4s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-4px) rotate(-6deg)}}
+.pumpkins{font-size:1.4rem;letter-spacing:.4em;margin-bottom:6px}
+@media (prefers-reduced-motion:reduce){.bat,.bat i,.spider,.hw-banner .pk{animation:none}.bat{display:none}}
+@media (max-width:640px){.bat{width:40px;height:18px}.b2{display:none}.spider{right:16px;height:30px}
+body.halloween::before{background:radial-gradient(circle at 84% 17%,rgba(255,236,200,.95) 0 24px,rgba(255,200,120,.3) 26px,
+transparent 80px),radial-gradient(ellipse 120% 50% at 50% -8%,rgba(122,48,160,.42),transparent 70%),
+linear-gradient(180deg,#140821 0%,#08050c 60%)}}
+""".replace("BAT", _BAT).replace("WEB", _WEB)
+
+# Phone menu: a ☰ button opens the full menu (no script needed – a checkbox and a label)
+MENU_CSS = """
+.burger{display:none;cursor:pointer;margin-left:auto;padding:4px 12px;border:1px solid var(--line);font-size:1.35rem;
+line-height:1.2;color:#fff;user-select:none}
+@media (max-width:640px){.burger{display:block}
+.bar nav{display:none;width:100%;margin:0;padding:6px 0 4px;flex-direction:column;gap:0;overflow:visible}
+.bar nav a{padding:10px 6px;font-size:1.05rem;border-top:1px solid rgba(255,255,255,.06)}
+.bar nav a.active::after{left:6px;right:auto;width:40px;bottom:4px}
+#mnav:checked~nav{display:flex}#mnav:checked~.burger{border-color:var(--orange);color:var(--orange)}
+.brand{min-width:0;flex:1}.brand .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{flex-wrap:wrap}}
+"""                     # px of the small logo in the header (2× its 42 px for sharp phone screens)
 
 ASSETS = Path(__file__).resolve().parent / "website_assets"     # default logo (replace it on the Plugins page)
 NOISE = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E"
@@ -65,7 +128,7 @@ h1{font-size:2.3rem;margin:.2rem 0 1rem;color:#fff;text-shadow:0 2px 0 #000,0 0 
 h1::after{content:"";display:block;width:90px;height:4px;margin-top:6px;background:var(--grad);
 clip-path:polygon(0 0,100% 0,94% 100%,0 100%)}
 .hero{text-align:center;padding:10px 0 26px}
-.hero .logo{width:min(360px,74vw);aspect-ratio:1;filter:drop-shadow(0 0 28px rgba(247,90,30,.45)) drop-shadow(0 6px 18px #000)}
+.hero .logo{width:min(360px,74vw);height:auto;aspect-ratio:1;filter:drop-shadow(0 0 28px rgba(247,90,30,.45)) drop-shadow(0 6px 18px #000)}
 .hero h1{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .kicker{display:flex;align-items:center;justify-content:center;gap:14px;color:#e9dfd8;font-size:1.15rem;
 letter-spacing:.32em;margin:10px 0 2px}.kicker::before,.kicker::after{content:"";height:3px;width:min(70px,12vw);
@@ -143,6 +206,12 @@ class PlayerWebsite(Plugin):
         Setting("shop", "Show the points shop", "bool", True),
         Setting("rules", "Show the rules", "bool", True),
         Setting("accent", "Main colour", "text", "#e5341c", help="Hex colour, e.g. #e5341c (blends into orange)."),
+        Setting("season_theme", "Seasonal theme", "choice", "auto", choices=("auto", "halloween", "off"),
+                help="auto = Halloween look (bats, moon, cobwebs, pumpkins) during October; halloween = always; "
+                     "off = never."),
+        Setting("halloween_message", "Halloween banner on the home page", "text",
+                "Happy Halloween! Spooky loot and frightful raids all month long.",
+                help="Shown at the top of the home page while the Halloween look is on. Empty = no banner."),
     )
 
     def __init__(self, *args, **kwargs) -> None:
@@ -205,6 +274,15 @@ class PlayerWebsite(Plugin):
         casino = self.plugin("casino")
         return casino if casino is not None and casino.points_enabled and self.accounts() is not None else None
 
+    def seasonal(self) -> str:
+        """The seasonal look that's on right now: "halloween" or ""."""
+        mode = self.setting("season_theme")
+        if mode == "halloween":
+            return "halloween"
+        if mode == "auto" and datetime.fromtimestamp(self.now(), self.tz).month == 10:
+            return "halloween"
+        return ""
+
     def find_player(self, name: str):
         name = " ".join(str(name or "").split())[:64]
         return self.bot.db.player(name) if name else None
@@ -238,17 +316,27 @@ class PlayerWebsite(Plugin):
         site = self.site_title()
         motto = f'<div class="motto">{esc(self.setting("motto"))}</div>' if self.setting("motto").strip() else ""
         updated = datetime.fromtimestamp(self.now(), self.tz).strftime("%H:%M")
+        season = self.seasonal()
+        extra_css = MENU_CSS + (HALLOWEEN_CSS if season == "halloween" else "")
+        decor = spider = pumpkins = ""
+        if season == "halloween":
+            decor = ('<div class="spooky" aria-hidden="true"><span class="bat b1"><i></i></span>'
+                     '<span class="bat b2"><i></i></span><span class="bat b3"><i></i></span></div>')
+            spider = '<span class="spider" aria-hidden="true"></span>'
+            pumpkins = '<div class="pumpkins" aria-hidden="true">🎃🦇🎃</div>'
         return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
                 f'<meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<title>{esc(title + " – " if title else "")}{esc(site)}</title>'
                 f'<meta name="description" content="{esc(self.setting("tagline"))}">'
                 f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon?v={version}">'
-                f'<style>{self._style[1]}</style></head><body>'
+                f'<style>{self._style[1]}{extra_css}</style></head><body class="{season}">{decor}'
                 f'<header><div class="bar"><a class="brand" href="{base}/"><img src="{base}/logo?s={HEADER_LOGO}'
                 f'&amp;v={version}" alt="" width="42" height="42" decoding="async">'
                 f'<span class="name">{esc(site)}</span><span class="dot{" on" if live["online"] else ""}" '
-                f'title="{"Online" if live["online"] else "Offline"}"></span></a><nav>{nav}</nav></div></header>'
-                f'<main>{body}</main><footer>{motto}Updated {esc(updated)} · '
+                f'title="{"Online" if live["online"] else "Offline"}"></span></a>'
+                f'<input type="checkbox" id="mnav" hidden><label for="mnav" class="burger" aria-label="Menu">☰'
+                f'</label><nav>{nav}</nav></div>{spider}</header>'
+                f'<main>{body}</main><footer>{pumpkins}{motto}Updated {esc(updated)} · '
                 f'{esc(self.bot.config.rust_server_platform)}</footer></body></html>')
 
     def item_tiles(self, items) -> str:
@@ -278,7 +366,12 @@ class PlayerWebsite(Plugin):
         else:
             wipe, wipe_sub = self.bot.config.rust_server_wipe or "Announced on Discord", ""
         tagline, motto = self.setting("tagline").strip(), self.setting("motto").strip()
-        body = (f'<section class="hero"><img class="logo" src="{base}/logo?v={self.picture_version()}" '
+        banner = ""
+        message = str(self.setting("halloween_message") or "").strip()
+        if self.seasonal() == "halloween" and message:
+            banner = (f'<div class="card hw-banner"><span class="pk">🎃</span> {esc(message)} '
+                      '<span class="pk">🦇</span></div>')
+        body = (banner + f'<section class="hero"><img class="logo" src="{base}/logo?v={self.picture_version()}" '
                 f'alt="{esc(self.site_title())}" width="360" height="360" fetchpriority="high">'
                 f'<h1>{esc(self.site_title())}</h1>'
                 + (f'<div class="kicker">{esc(tagline)}</div>' if tagline else "")
