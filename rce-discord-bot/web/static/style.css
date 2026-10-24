@@ -159,6 +159,18 @@ main h1[data-eyebrow]::before { content: attr(data-eyebrow); display: block; fon
 .palette-item small { margin-left: auto; color: var(--muted); font-size: .75rem; }
 .palette-item.on, .palette-item:hover { background: var(--accent-soft); }
 .palette-hint { padding: .5rem 1rem; font-size: .75rem; border-top: 1px solid var(--border); }
+.ico { display: inline-grid; place-items: center; flex: none; }
+.ico svg { width: 16px; height: 16px; display: block; }
+nav a .ico { width: 1.75rem; height: 1.75rem; border-radius: 8px; border: 1px solid var(--border); }
+.nav-label .gi .ico svg { width: 15px; height: 15px; }
+.top-title { display: grid; line-height: 1.15; min-width: 0; margin-right: .5rem; }
+.top-title .eyebrow { font-size: .66rem; }
+.top-h1 { font-size: 1.6rem; font-weight: 750; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+main > h1.in-topbar { display: none; }
+main { counter-reset: section; }
+main > .card > h2.card-head::before, main > .card > .card-head > h2::before {
+  counter-increment: section; content: counter(section, decimal-leading-zero); font-size: .66rem; font-weight: 750;
+  letter-spacing: .08em; padding: .15rem .4rem; border-radius: 6px; border: 1px solid var(--border); color: var(--muted); }
 .flash { animation: flash 1.6s ease-out; border-radius: 8px; }
 @keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent-ring); } 100% { box-shadow: 0 0 0 0 transparent; } }
 
@@ -403,6 +415,9 @@ textarea.kb-output { font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, mon
   .nav-group { border: 0; padding: 0; background: none; }
   .nav-group.closed a { display: flex; }
   .topbar { position: static; padding: .7rem 1rem; }
+  .top-title { width: 100%; margin: 0; }
+  .top-h1 { font-size: 1.35rem; }
+  nav a .ico { width: auto; height: auto; border: 0; }
   .search-box { max-width: none; }
   .top-chips { margin-left: 0; }
   .sidebar {
