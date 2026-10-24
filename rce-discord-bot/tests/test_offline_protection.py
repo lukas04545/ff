@@ -288,16 +288,22 @@ def test_own_tab_in_the_control_panel(zp):
             assert (await c.get("/api/protection")).status == 401
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
             r = await (await c.get("/api/protection")).json()
-            assert r["plugin"]["tab"] == "protection" and r["plugin"]["running"]
+            assert r["plugin"]["running"]
             assert [z["name"] for z in r["zones"]] == ["team_5"] and r["zones"][0]["members"] == ["Lead", "Mate"]
+            assert r["plugin"]["core"] is True
             plugins = (await (await c.get("/api/plugins")).json())["plugins"]
-            assert next(p for p in plugins if p["id"] == "offline_protection")["tab"] == "protection"
+            assert "offline_protection" not in {p["id"] for p in plugins}             # not on the Plugins page
+            assert (await (await c.get("/api/plugins/menu")).json())["menu"] == []   # nor in the plugin menu
+            r = await c.post("/api/plugins/upload", json={"filename": "offline_protection.py", "code": "x = 1"},
+                             headers=H)
+            assert r.status == 400 and "main feature" in (await r.json())["error"]  # can't be replaced
+            r = await c.post("/api/plugins/offline_protection/toggle", json={"enabled": True}, headers=H)
+            assert r.status == 200 and (await r.json())["plugin"]["running"]          # its own on/off still works
             assert (await c.delete("/api/protection/zones/9", headers=H)).status == 404
             assert (await c.delete("/api/protection/zones/5", headers=H)).status == 200
             assert zp.p.zone(5) is None and "TEST_REMOVE team_5" in zp.said
-            menu = (await (await c.get("/api/plugins/menu")).json())["menu"]
-            assert [m["id"] for m in menu] == ["offline_protection"]                     # in the menu by default
-            assert next(p for p in plugins if p["id"] == "offline_protection")["in_menu"]
+            index = await (await c.get("/admin")).text()
+            assert 'href="#protection" data-view="protection" data-owner' in index     # fixed: Server group
         finally:
             await c.close()
             await zp.bot.rcon.close()

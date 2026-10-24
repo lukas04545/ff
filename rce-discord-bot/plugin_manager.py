@@ -43,6 +43,10 @@ MAX_UPLOAD = 300_000          # bytes of source code
 MAX_IMAGE = 700_000           # bytes of an uploaded picture ("image" settings)
 IMAGE_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 KNOWN_INTENTS = ("members", "message_content")
+# Main features of the bot that use the plugin engine (settings, storage, listeners) but aren't plugins for the owner:
+# their own fixed place in the control panel, not on the Plugins page or in the plugin menu, can't be replaced by an
+# uploaded file. Their on/off state, settings and data stay where they are (data/plugins.json, the plugin storage).
+CORE_FEATURES = frozenset({"offline_protection"})
 
 
 class PluginError(Exception):
@@ -180,7 +184,7 @@ class PluginManager:
         out = []
         for entry in saved:                                  # older files: a plain list of plugin ids
             pid, group = (entry, "plugins") if isinstance(entry, str) else (entry.get("id"), entry.get("group"))
-            if pid in self.infos:
+            if pid in self.infos and pid not in CORE_FEATURES:            # main features have a fixed place
                 out.append({"id": pid, "group": group if group in self.MENU_GROUPS else "plugins"})
         return out
 
@@ -197,7 +201,7 @@ class PluginManager:
                 entry = {"id": entry, "group": "plugins"}
             if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
                 raise PluginError("Invalid menu.")
-            if entry["id"] not in self.infos:
+            if entry["id"] not in self.infos or entry["id"] in CORE_FEATURES:
                 raise PluginError(f"Unknown plugin: {entry['id']}")
             group = entry.get("group") or "plugins"
             if group not in self.MENU_GROUPS:
@@ -232,6 +236,9 @@ class PluginManager:
                     continue
                 if not PLUGIN_ID.match(pid):
                     log.warning("Plugin file %s ignored: names may only use a-z, 0-9 and _.", path.name)
+                    continue
+                if pid in CORE_FEATURES and not builtin:
+                    log.warning("%s ignored: %s is a main feature of the bot and can't be replaced.", path, pid)
                     continue
                 if pid in candidates and not builtin:
                     overrides.add(pid)
@@ -500,6 +507,8 @@ class PluginManager:
         pid = Path(str(filename or "")).name.removesuffix(".py").strip().lower()
         if not PLUGIN_ID.match(pid):
             raise PluginError("File name: use a-z, 0-9 and _ only (2–40 characters), e.g. my_plugin.py.")
+        if pid in CORE_FEATURES:
+            raise PluginError(f"{pid} is a main feature of the bot – pick another file name.")
         existing = self.infos.get(pid)
         data = (code or "").encode("utf-8")
         if not data.strip():
@@ -587,7 +596,7 @@ class PluginManager:
                "running": plugin is not None,
                "error": info.error or self.load_errors.get(pid), "file": info.path.name,
                "name": cls.NAME if cls else pid, "description": cls.DESCRIPTION if cls else "",
-               "version": cls.VERSION if cls else "", "icon": cls.ICON if cls else "🧩", "tab": cls.TAB if cls else None,
+               "version": cls.VERSION if cls else "", "icon": cls.ICON if cls else "🧩", "tab": cls.TAB if cls else None, "core": pid in CORE_FEATURES,
                "in_menu": pid in self.menu(),
                "author": cls.AUTHOR if cls else "", "intents": list(cls.INTENTS) if cls else [],
                "missing_intents": self.missing_intents(pid), "public": bool(cls and hasattr(cls, "web_public")),
@@ -603,7 +612,9 @@ class PluginManager:
         return out
 
     def describe_all(self) -> list[dict]:
-        return [self.describe(pid) for pid in sorted(self.infos, key=lambda p: (not self.infos[p].builtin, p))]
+        """Everything for the Plugins page – main features (CORE_FEATURES) have their own page instead."""
+        return [self.describe(pid) for pid in sorted(self.infos, key=lambda p: (not self.infos[p].builtin, p))
+                if pid not in CORE_FEATURES]
 
     def profile_fields(self, member) -> list[tuple[str, str]]:
         out = []

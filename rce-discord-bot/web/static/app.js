@@ -362,12 +362,12 @@ function route() {
   stopTimers();
   every(5000, refreshConnection);
   let view = (location.hash || "#overview").slice(1);
-  if (view === "protection") { location.replace("#p/offline_protection"); return; }   // old address of that tab
+  if (view === "p/offline_protection") { location.replace("#protection"); return; }   // a main feature now
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   updateNavCounts();
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore"].includes(view) || view.startsWith("p/"))) {
+  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore", "protection"].includes(view) || view.startsWith("p/"))) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
@@ -2652,13 +2652,28 @@ async function pluginTab(main, pid) {
           await setMenu(menuEntries().map((e) => (e.id === pid ? { ...e, group } : e)), `${p.name} moved to ${MENU_GROUPS.find(([k]) => k === group)[1]}`);
         })) : null;
       const parts = [h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:.5rem;gap:.6rem" }, picker, pinButton(p))];
-      if (pid === "offline_protection") parts.push(protectionZones(await api("/api/protection"), reload));
       parts.push(pluginCard(p, opts, r.kits, reload, { tab: true }));
       box.replaceChildren(...parts);
     } catch (e) { box.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
   };
   reload();
 }
+
+// Offline protection zones – a main feature (plugins/offline_protection.py, plugin_manager.CORE_FEATURES)
+views.protection = async (main) => {
+  main.append(h("h1", { text: "Offline protection" }),
+    h("p", { class: "muted", text: "Team leaders place their base's zone in-game with the quick chats \"Can I build here?\" + \"Yes\". The zone turns red (no building damage) while the whole team is offline and green the moment someone is back. Zones are deleted after the set time with nobody of the team online." }));
+  const box = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  main.append(box);
+  const opts = await api("/api/settings/discord-options").catch(() => ({ available: false }));
+  const reload = async () => {
+    try {
+      const r = await api("/api/protection");
+      box.replaceChildren(protectionZones(r, reload), pluginCard({ ...r.plugin, name: "Offline protection" }, opts, r.kits, reload, { tab: true }));
+    } catch (e) { box.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
+  };
+  reload();
+};
 
 function protectionZones(r, reload) {
   const card = h("div", { class: "card" }, h("h2", { text: `🗺️ Zones (${r.zones.length})` }));

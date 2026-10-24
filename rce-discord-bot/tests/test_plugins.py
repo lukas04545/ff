@@ -92,7 +92,8 @@ def test_builtins_load_toggle_and_settings(pb):
         assert m.settings_of("early_bird") == {"players": 3, "announce": False}      # default (100) isn't stored
         assert m.running("early_bird").setting("players") == 3
         all_info = m.describe_all()
-        assert {p["id"] for p in all_info} == ALL and all(p["settings"] is not None for p in all_info)
+        assert {p["id"] for p in all_info} == ALL - {"offline_protection"}           # a main feature, own page
+        assert all(p["settings"] is not None for p in all_info)
         await m.unload_all()
         assert not m.instances
     asyncio.run(main())
@@ -241,7 +242,7 @@ def test_web_api_and_player_website(pb):
             assert (await c.get("/leaderboard")).status == 404
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
             r = await (await c.get("/api/plugins")).json()
-            assert {p["id"] for p in r["plugins"]} == ALL
+            assert {p["id"] for p in r["plugins"]} == ALL - {"offline_protection"}
             r = await c.post("/api/plugins/website/toggle", json={"enabled": True}, headers=H)
             assert (await r.json())["plugin"]["running"] is True
             r = await c.put("/api/plugins/website/settings", json={"values": {
@@ -448,25 +449,27 @@ def test_owner_picks_the_plugins_in_the_menu(pb):  # noqa: F811
         from web.server import WebInterface
         m = pb.m
         await m.load_all()
-        assert m.menu() == ["offline_protection"]
+        assert m.menu() == []                                     # nothing pinned by default
         web = WebInterface(pb.bot, env_path=pb.tmp / ".env", secret_path=pb.tmp / "web_secret.key")
         c = TestClient(TestServer(web.app))
         await c.start_server()
         try:
             assert (await c.get("/api/plugins/menu")).status == 401
             await c.post("/api/login", json={"password": "secret123"}, headers=H)
-            r = await c.put("/api/plugins/menu", json={"plugins": ["casino", "offline_protection", "casino"]},
+            r = await c.put("/api/plugins/menu", json={"plugins": ["offline_protection"]}, headers=H)
+            assert r.status == 400                                   # a main feature: fixed place, not pinnable
+            r = await c.put("/api/plugins/menu", json={"plugins": ["casino", "achievements", "casino"]},
                             headers=H)
-            assert [x["id"] for x in (await r.json())["menu"]] == ["casino", "offline_protection"]   # no doubles
+            assert [x["id"] for x in (await r.json())["menu"]] == ["casino", "achievements"]   # no doubles
             assert (await r.json())["menu"][0]["icon"] == "🎰"
             plugins = (await (await c.get("/api/plugins")).json())["plugins"]
-            assert {p["id"] for p in plugins if p["in_menu"]} == {"casino", "offline_protection"}
+            assert {p["id"] for p in plugins if p["in_menu"]} == {"casino", "achievements"}
             assert [x["group"] for x in (await r.json())["menu"]] == ["plugins", "plugins"]       # ids only: Plugins
             r = await c.put("/api/plugins/menu", json={"plugins": [{"id": "casino", "group": "community"},
-                                                                    {"id": "offline_protection", "group": "server"}]},
+                                                                    {"id": "achievements", "group": "server"}]},
                             headers=H)
             assert [(x["id"], x["group"]) for x in (await r.json())["menu"]] == [
-                ("casino", "community"), ("offline_protection", "server")]
+                ("casino", "community"), ("achievements", "server")]
             r = await c.put("/api/plugins/menu", json={"plugins": [{"id": "casino", "group": "kitchen"}]}, headers=H)
             assert r.status == 400 and "category" in (await r.json())["error"]
             m.state["menu"] = ["casino"]                                           # an older plugins.json
@@ -477,7 +480,7 @@ def test_owner_picks_the_plugins_in_the_menu(pb):  # noqa: F811
             assert (await (await c.get("/api/plugins/menu")).json())["menu"] == []
             assert json.loads(m.state_path.read_text())["menu"] == []                        # kept after a restart
             index = await (await c.get("/admin")).text()
-            assert 'id="nav-plugins"' in index and 'href="#protection"' not in index
+            assert 'id="nav-plugins"' in index and 'href="#protection" data-view="protection"' in index
             assert all(f'data-key="{k}"' in index for k in m.MENU_GROUPS)                  # categories to pick
         finally:
             await c.close()
