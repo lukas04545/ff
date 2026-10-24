@@ -461,6 +461,16 @@ def test_owner_picks_the_plugins_in_the_menu(pb):  # noqa: F811
             assert (await r.json())["menu"][0]["icon"] == "🎰"
             plugins = (await (await c.get("/api/plugins")).json())["plugins"]
             assert {p["id"] for p in plugins if p["in_menu"]} == {"casino", "offline_protection"}
+            assert [x["group"] for x in (await r.json())["menu"]] == ["plugins", "plugins"]       # ids only: Plugins
+            r = await c.put("/api/plugins/menu", json={"plugins": [{"id": "casino", "group": "community"},
+                                                                    {"id": "offline_protection", "group": "server"}]},
+                            headers=H)
+            assert [(x["id"], x["group"]) for x in (await r.json())["menu"]] == [
+                ("casino", "community"), ("offline_protection", "server")]
+            r = await c.put("/api/plugins/menu", json={"plugins": [{"id": "casino", "group": "kitchen"}]}, headers=H)
+            assert r.status == 400 and "category" in (await r.json())["error"]
+            m.state["menu"] = ["casino"]                                           # an older plugins.json
+            assert m.menu_entries() == [{"id": "casino", "group": "plugins"}]
             r = await c.put("/api/plugins/menu", json={"plugins": ["nope"]}, headers=H)
             assert r.status == 400 and "Unknown plugin" in (await r.json())["error"]
             await c.put("/api/plugins/menu", json={"plugins": []}, headers=H)                # empty is fine
@@ -468,6 +478,42 @@ def test_owner_picks_the_plugins_in_the_menu(pb):  # noqa: F811
             assert json.loads(m.state_path.read_text())["menu"] == []                        # kept after a restart
             index = await (await c.get("/admin")).text()
             assert 'id="nav-plugins"' in index and 'href="#protection"' not in index
+            assert all(f'data-key="{k}"' in index for k in m.MENU_GROUPS)                  # categories to pick
+        finally:
+            await c.close()
+            await pb.bot.rcon.close()
+    asyncio.run(main())
+
+
+def test_panel_logo_is_the_bots_discord_picture(pb, monkeypatch):  # noqa: F811
+    from types import SimpleNamespace as NS
+    reads = []
+
+    class Asset:
+        url = "https://cdn.discordapp.com/avatars/1/abc.png?size=128"
+
+        def replace(self, size=None, format=None):
+            assert size == 128 and format == "png"
+            return self
+
+        async def read(self):
+            reads.append(1)
+            return b"\x89PNG fake"
+
+    async def main():
+        from web.server import WebInterface
+        web = WebInterface(pb.bot, env_path=pb.tmp / ".env", secret_path=pb.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            assert (await c.get("/img/bot-avatar.png")).status == 404            # not logged in to Discord yet
+            monkeypatch.setattr(type(pb.bot), "user", property(lambda self: NS(display_avatar=Asset())))
+            r = await c.get("/img/bot-avatar.png")                                # public: the login screen too
+            assert r.status == 200 and r.content_type == "image/png" and await r.read() == b"\x89PNG fake"
+            r2 = await c.get("/img/bot-avatar.png", headers={"If-None-Match": r.headers["ETag"]})
+            assert r2.status == 304 and reads == [1]                              # fetched from Discord once
+            js = await (await c.get("/static/app.js")).text()
+            assert "/img/bot-avatar.png" in js
         finally:
             await c.close()
             await pb.bot.rcon.close()

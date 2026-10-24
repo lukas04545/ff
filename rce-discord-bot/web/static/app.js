@@ -165,6 +165,18 @@ document.querySelectorAll("#nav a").forEach((a, i) => {
   emoji?.replaceWith(svgIcon(a.dataset.view === "users" ? "users2" : a.dataset.view));
   a.style.setProperty("--c", LINK_COLORS[i % LINK_COLORS.length]);
 });
+// The logo (sidebar + login) is the Discord bot's own profile picture – the built-in icon until it has loaded
+function botLogo() {
+  const img = new Image();
+  img.alt = "";
+  img.onload = () => document.querySelectorAll(".logo").forEach((el) => {
+    el.replaceChildren(img.cloneNode());
+    el.classList.add("avatar");
+  });
+  img.src = "/img/bot-avatar.png";
+}
+let botLogoTried = false;          // once more when Discord is ready (the bot may log in after the page opened)
+botLogo();
 const NAV_CLOSED_KEY = "rce-nav-closed";
 let navClosed = {};
 try { navClosed = JSON.parse(localStorage.getItem(NAV_CLOSED_KEY) || "{}") || {}; } catch { /* storage blocked */ }
@@ -187,27 +199,36 @@ document.querySelectorAll("#nav .nav-group").forEach((group) => {
 });
 // Plugins the owner put in the menu: links in the "Plugins" group, each opens #p/<plugin id>
 let menuPlugins = [], menuReady = Promise.resolve();
+// Each one sits in a category of the menu the owner picked (Server, Kits, Community, Plugins or Admin).
+const MENU_GROUPS = [["server", "Server"], ["kits", "Kits"], ["community", "Community"], ["plugins", "Plugins"], ["admin", "Admin"]];
 async function loadMenu() {
-  const group = $("#nav-plugins");
-  if (!isOwner() || setupMode) { group.classList.add("hidden"); return; }
+  const own = $("#nav-plugins");
+  document.querySelectorAll("#nav a.pinned").forEach((a) => a.remove());
+  if (!isOwner() || setupMode) { menuPlugins = []; own.classList.add("hidden"); updateNavCounts(); return; }
   try { menuPlugins = (await api("/api/plugins/menu")).menu; } catch { menuPlugins = []; }
-  group.querySelectorAll("a").forEach((a) => a.remove());
   menuPlugins.forEach((p, i) => {
-    const a = h("a", { href: `#p/${p.id}`, "data-view": `p/${p.id}`, "data-owner": "" },
+    const a = h("a", { href: `#p/${p.id}`, "data-view": `p/${p.id}`, "data-owner": "", class: "pinned" },
       h("span", { class: "ico emoji", text: p.icon || "🧩" }), h("span", { text: p.name }));
     a.dataset.emoji = p.icon || "🧩";
     a.style.setProperty("--c", LINK_COLORS[(i + 9) % LINK_COLORS.length]);
     if (!p.enabled) a.title = "Switched off";
-    group.append(a);
+    (document.querySelector(`#nav .nav-group[data-key="${p.group}"]`) || own).append(a);
   });
-  group.classList.toggle("hidden", !menuPlugins.length);
+  own.classList.toggle("hidden", !own.querySelector("a"));
   const view = (location.hash || "").slice(1);
-  group.querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
+  document.querySelectorAll("#nav a.pinned").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   updateNavCounts();
 }
-async function setMenu(ids, okText) {
-  await act(() => api("/api/plugins/menu", { method: "PUT", body: { plugins: ids } }), okText);
+const menuEntries = () => menuPlugins.map((m) => ({ id: m.id, group: m.group || "plugins" }));
+async function setMenu(entries, okText) {
+  await act(() => api("/api/plugins/menu", { method: "PUT", body: { plugins: entries } }), okText);
   await loadMenu();
+}
+function groupPicker(entry, onChange) {
+  const sel = h("select", { title: "Category in the menu", class: "small" }, MENU_GROUPS.map(([k, label]) => h("option", { value: k, text: label })));
+  sel.value = entry.group || "plugins";
+  sel.addEventListener("change", () => onChange(sel.value));
+  return sel;
 }
 
 function updateNavCounts() {
@@ -425,6 +446,7 @@ async function refreshConnection() {
     r.className = "pill " + (status.rcon_connected ? "ok" : "bad");
     d.textContent = status.discord_ready ? "Discord online" : "Discord connecting …";
     d.className = "pill " + (status.discord_ready ? "ok" : "warn");
+    if (status.discord_ready && !document.querySelector(".logo.avatar") && !botLogoTried) { botLogoTried = true; botLogo(); }
     if (status.restart_required) { d.textContent = "Restart required ⚙️"; d.className = "pill warn"; }
     updateServerCard();
   } catch { /* login dialog takes over */ }
@@ -2563,17 +2585,20 @@ function pluginCreateLink() {
 // "In the menu": the plugins with their own tab – open, move up/down, remove
 function menuCard(plugins, reload) {
   const byId = Object.fromEntries(plugins.map((p) => [p.id, p]));
-  const ids = menuPlugins.map((m) => m.id);
-  const move = async (i, d) => { const next = [...ids]; [next[i], next[i + d]] = [next[i + d], next[i]]; await setMenu(next, "Menu order saved"); reload(); };
-  const chips = ids.map((id, i) => h("span", { class: "menu-pin" },
+  const entries = menuEntries(), ids = entries.map((e) => e.id);
+  const move = async (i, d) => { const next = [...entries]; [next[i], next[i + d]] = [next[i + d], next[i]]; await setMenu(next, "Menu order saved"); reload(); };
+  const chips = entries.map((entry, i) => entry.id).map((id, i) => h("span", { class: "menu-pin" },
     h("a", { href: `#p/${id}`, text: `${byId[id]?.icon || "🧩"} ${byId[id]?.name || id}` }),
+    groupPicker(entries[i], async (group) => {
+      await setMenu(entries.map((e) => (e.id === id ? { ...e, group } : e)), `${byId[id]?.name || id} moved to ${MENU_GROUPS.find(([k]) => k === group)[1]}`); reload();
+    }),
     i > 0 ? h("button", { class: "small ghost", text: "↑", title: "Move up", onclick: () => move(i, -1) }) : null,
     i < ids.length - 1 ? h("button", { class: "small ghost", text: "↓", title: "Move down", onclick: () => move(i, 1) }) : null,
     h("button", { class: "small ghost", text: "✕", title: "Remove from the menu", onclick: async () => {
-      await setMenu(ids.filter((x) => x !== id), `${byId[id]?.name || id} removed from the menu`); reload();
+      await setMenu(entries.filter((e) => e.id !== id), `${byId[id]?.name || id} removed from the menu`); reload();
     } })));
   return h("div", { class: "card" }, h("h2", { text: "📌 In the menu" }),
-    h("p", { class: "muted", text: "These plugins have their own tab in the menu (group Plugins) instead of a card here. Add any plugin with its 📌 Add to menu button." }),
+    h("p", { class: "muted", text: "These plugins have their own tab in the menu instead of a card here – pick the category each one sits in (Server, Kits, Community, Plugins or Admin); ↑ ↓ sets the order. Add any plugin with its 📌 Add to menu button." }),
     chips.length ? h("div", { class: "menu-pins" }, chips) : h("p", { class: "muted", text: "No plugins in the menu yet." }));
 }
 
@@ -2602,8 +2627,9 @@ function pinButton(p) {
   const pinned = menuPlugins.some((m) => m.id === p.id);
   return h("button", { class: "small ghost", text: pinned ? "📌 Remove from menu" : "📌 Add to menu",
     title: pinned ? "Back to the Plugins page" : "Give it its own tab in the menu", onclick: async () => {
-      const ids = menuPlugins.map((m) => m.id);
-      await setMenu(pinned ? ids.filter((id) => id !== p.id) : [...ids, p.id], pinned ? `${p.name} removed from the menu` : `${p.name} is in the menu`);
+      const entries = menuEntries();
+      await setMenu(pinned ? entries.filter((e) => e.id !== p.id) : [...entries, { id: p.id, group: "plugins" }],
+        pinned ? `${p.name} removed from the menu` : `${p.name} is in the menu (category Plugins – change it on its tab)`);
       if (pinned && location.hash === `#p/${p.id}`) location.hash = "#plugins"; else route();
     } });
 }
@@ -2620,7 +2646,12 @@ async function pluginTab(main, pid) {
       const p = r.plugins.find((x) => x.id === pid);
       if (!p) { box.replaceChildren(h("div", { class: "banner bad", text: "This plugin doesn't exist (any more)." }), pinButton({ id: pid, name: pid })); return; }
       title.textContent = p.name;
-      const parts = [h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:.5rem" }, pinButton(p))];
+      const entry = menuEntries().find((e) => e.id === pid);
+      const picker = entry ? h("label", { class: "row tight muted", style: "gap:.4rem;margin:0" }, "Menu category",
+        groupPicker(entry, async (group) => {
+          await setMenu(menuEntries().map((e) => (e.id === pid ? { ...e, group } : e)), `${p.name} moved to ${MENU_GROUPS.find(([k]) => k === group)[1]}`);
+        })) : null;
+      const parts = [h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:.5rem;gap:.6rem" }, picker, pinButton(p))];
       if (pid === "offline_protection") parts.push(protectionZones(await api("/api/protection"), reload));
       parts.push(pluginCard(p, opts, r.kits, reload, { tab: true }));
       box.replaceChildren(...parts);

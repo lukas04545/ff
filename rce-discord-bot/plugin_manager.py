@@ -169,23 +169,45 @@ class PluginManager:
 
     # ------------------------------------------------------------ Control panel menu
 
-    def menu(self) -> list[str]:
-        """Plugins with their own tab in the control panel menu, in menu order. Until the owner changes it: the
-        built-ins that ask for a tab (Plugin.TAB)."""
+    MENU_GROUPS = ("server", "kits", "community", "plugins", "admin")    # the sidebar categories
+
+    def menu_entries(self) -> list[dict]:
+        """Plugins with their own tab in the control panel menu, in order, each with its sidebar category:
+        [{"id", "group"}]. Until the owner changes it: the built-ins that ask for a tab (Plugin.TAB), under Plugins."""
         saved = self.state.get("menu")
         if not isinstance(saved, list):
             saved = sorted(pid for pid, info in self.infos.items() if info.cls is not None and info.cls.TAB)
-        return [pid for pid in saved if pid in self.infos]
+        out = []
+        for entry in saved:                                  # older files: a plain list of plugin ids
+            pid, group = (entry, "plugins") if isinstance(entry, str) else (entry.get("id"), entry.get("group"))
+            if pid in self.infos:
+                out.append({"id": pid, "group": group if group in self.MENU_GROUPS else "plugins"})
+        return out
 
-    def set_menu(self, pids) -> list[str]:
-        if not isinstance(pids, list) or not all(isinstance(p, str) for p in pids):
+    def menu(self) -> list[str]:
+        return [e["id"] for e in self.menu_entries()]
+
+    def set_menu(self, entries) -> list[dict]:
+        """entries: plugin ids (category Plugins) or {"id", "group"} – in menu order."""
+        if not isinstance(entries, list):
             raise PluginError("Invalid menu.")
-        unknown = [p for p in pids if p not in self.infos]
-        if unknown:
-            raise PluginError(f"Unknown plugin: {unknown[0]}")
-        self.state["menu"] = list(dict.fromkeys(pids))           # no doubles, order kept
+        clean, seen = [], set()
+        for entry in entries:
+            if isinstance(entry, str):
+                entry = {"id": entry, "group": "plugins"}
+            if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+                raise PluginError("Invalid menu.")
+            if entry["id"] not in self.infos:
+                raise PluginError(f"Unknown plugin: {entry['id']}")
+            group = entry.get("group") or "plugins"
+            if group not in self.MENU_GROUPS:
+                raise PluginError(f"Unknown menu category: {group}")
+            if entry["id"] not in seen:                          # no doubles, order kept
+                seen.add(entry["id"])
+                clean.append({"id": entry["id"], "group": group})
+        self.state["menu"] = clean
         self._save()
-        return self.menu()
+        return self.menu_entries()
 
     def settings_of(self, pid: str) -> dict[str, Any]:
         values = self.state["settings"].get(pid)

@@ -1162,10 +1162,15 @@ Features that aren't part of the core come as **plugins**: one Python file each,
 the web interface (**🧩 Plugins**, owner only). Switching, settings and reloading take effect immediately – no
 restart. A broken plugin never stops the bot: it shows the error on its card and stays off.
 
-**📌 Your plugins in the menu:** any plugin can get its own tab in the control panel's sidebar (group
-**Plugins**) – click **📌 Add to menu** on its card. The Plugins page lists the pinned ones at the top (*In the
-menu*: open, move ↑ ↓, ✕ remove) and the tab itself has **📌 Remove from menu**. The choice and order are saved in
-`data/plugins.json`. Offline protection zones start in the menu (its tab also lists the zones).
+**📌 Your plugins in the menu:** any plugin can get its own tab in the control panel's sidebar – click **📌 Add
+to menu** on its card – in the category you choose: **Server, Kits, Community, Plugins or Admin** (the *Menu
+category* box on its tab, or the box next to it on the Plugins page). The Plugins page lists the pinned ones at the
+top (*In the menu*: open, category, move ↑ ↓, ✕ remove) and the tab itself has **📌 Remove from menu**. Choice,
+categories and order are saved in `data/plugins.json`. Offline protection zones start in the menu (its tab also
+lists the zones).
+
+The panel's logo (top left and on the login screen) is the **Discord bot's own profile picture** – change it in the
+Discord Developer Portal and the panel follows (it's served by the bot at `/img/bot-avatar.png`).
 
 - **Built-in plugins** are in `plugins/` and come with updates.
 - **Your own plugins** go to `data/plugins/` (upload a `.py` file on the Plugins page, or copy it there and click
