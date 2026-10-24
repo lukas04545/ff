@@ -534,7 +534,7 @@ def plinko_page(site, casino, base, uid, *, bet=None, balls=1, risk="medium", ro
               f'<label class="field"><span>Rows</span><select name="rows">{row_opts}</select></label>'
               f'<button class="pay" type="submit">🔻 Drop</button></form>'
               f'<p class="muted">Each ball is one bet and falls left or right at every peg – where it lands, it pays '
-              f'that multiplier. Drop again while balls are still falling. Return to player 87.5 %.</p>'
+              f'that multiplier. Drop again while balls are still falling. Return to player 97.5 %.</p>'
               f'<div class="presult">{result}</div></div>'
               f'<div class="board"><canvas width="600" height="520" aria-label="Plinko board"></canvas>'
               f'<div class="pslots">{slots}</div><div class="phist"></div></div></div>')
