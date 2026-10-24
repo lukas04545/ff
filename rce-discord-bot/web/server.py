@@ -309,6 +309,7 @@ class WebInterface:
         r.add_post("/api/item-images/scan", self.item_images_scan)
         r.add_get("/api/item-images/scan", self.item_images_scan_state)
         r.add_get("/img/items/{name}", self.item_image)            # public: item pictures (cached by the bot)
+        r.add_get("/img/bot-avatar.png", self.bot_avatar)          # public: the Discord bot's picture (panel logo)
         r.add_get("/auth", self.auth_link)
         r.add_post("/api/login", self.login)
         r.add_post("/api/logout", self.logout)
@@ -785,6 +786,26 @@ class WebInterface:
 
     # ------------------------------------------------------------ Item pictures
 
+    async def bot_avatar(self, request: web.Request) -> web.Response:
+        """The Discord bot's profile picture (128 px PNG) – the control panel's logo. Fetched once per picture and
+        kept in memory, so browsers never load it from Discord. 404 while the bot isn't logged in to Discord."""
+        user = getattr(self.bot, "user", None) if self.bot is not None else None
+        if user is None:
+            raise web.HTTPNotFound()
+        asset = user.display_avatar.replace(size=128, format="png")
+        cached = getattr(self, "_avatar", None)
+        if cached is None or cached[0] != asset.url:
+            try:
+                data = await asset.read()
+            except (discord.DiscordException, aiohttp.ClientError, OSError) as exc:
+                log.debug("Bot avatar: %s", exc)
+                raise web.HTTPNotFound() from None
+            self._avatar = cached = (asset.url, data, hashlib.sha1(data).hexdigest()[:16])
+        if request.headers.get("If-None-Match") == f'"{cached[2]}"':
+            return web.Response(status=304)
+        return web.Response(body=cached[1], content_type="image/png",
+                            headers={"Cache-Control": "public, max-age=3600", "ETag": f'"{cached[2]}"'})
+
     async def item_image(self, request: web.Request) -> web.Response:
         self._public_limit(request, images=True)
         template = self.bot.config.item_image_url if self.bot is not None else ""
@@ -867,9 +888,10 @@ class WebInterface:
     def _menu_items(self) -> list[dict]:
         manager = self._plugins()
         out = []
-        for pid in manager.menu():
-            info = manager.describe(pid)
-            out.append({"id": pid, "name": info["name"], "icon": info["icon"], "enabled": info["enabled"]})
+        for entry in manager.menu_entries():
+            info = manager.describe(entry["id"])
+            out.append({"id": entry["id"], "group": entry["group"], "name": info["name"], "icon": info["icon"],
+                        "enabled": info["enabled"]})
         return out
 
     async def plugins_menu(self, request: web.Request) -> web.Response:
