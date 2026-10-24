@@ -1,9 +1,9 @@
 """Casino: players gamble their points on the player website (/casino) – slots, coin flip, dice, roulette,
-blackjack, and Texas Hold'em poker tables where players play against each other. Play money only: points are
+blackjack, Plinko, and Texas Hold'em poker tables where players play against each other. Play money only: points are
 earned in-game and can't be bought or cashed out.
 
 Slots, coin flip and dice return 95 % of the bets on average, roulette is a real European wheel (97.3 %) and
-blackjack is played with real casino rules (≈ 99.5 %). The games themselves are in support/casino_games.py, the
+blackjack is played with real casino rules (≈ 99.5 %). Plinko returns 87.5 % on every risk and row count. The games themselves are in support/casino_games.py, the
 pages in web/casino_pages.py. Players log in with the website's player login (/account).
 """
 from __future__ import annotations
@@ -26,6 +26,7 @@ GAMES = {           # id -> (name, icon, line shown under it)
     "dice": ("Dice", "🎲", "Return to player 95 %"),
     "roulette": ("Roulette", "🎡", "Return to player 97.3 %"),
     "blackjack": ("Blackjack", "🃏", "Return to player ≈ 99.5 %"),
+    "plinko": ("Plinko", "🔻", "Return to player 87.5 %"),
     "poker": ("Poker", "♠️", "Texas Hold'em against other players"),
 }
 DEFAULT_TABLES = "Low stakes | 5 | 10 | 200 | 2000\nHigh stakes | 50 | 100 | 2000 | 20000"
@@ -37,7 +38,7 @@ class Casino(Plugin):
     NAME = "Casino"
     ICON = "🎰"
     DESCRIPTION = ("Players gamble their points on the player website: slots, coin flip and dice (95 % RTP), "
-                   "European roulette (97.3 %) and blackjack with real rules (≈ 99.5 %). Play money only – points "
+                   "European roulette (97.3 %), blackjack with real rules (≈ 99.5 %), Plinko (87.5 %) and poker tables. Play money only – points "
                    "can't be bought or cashed out. Needs the Player website and player login.")
     SETTINGS = (
         Setting("min_bet", "Smallest bet", "int", 10, min=1, max=1_000_000),
@@ -46,6 +47,8 @@ class Casino(Plugin):
         Setting("daily_loss_limit", "Daily loss limit per player", "int", 0, min=0, max=1_000_000_000,
                 help="Points a player may lose in total per day (UTC). 0 = no limit. (Poker buy-ins don't count.)"),
         *(Setting(gid, f"{icon} {name}", "bool", True) for gid, (name, icon, _) in GAMES.items()),
+        Setting("plinko_max_balls", "Plinko: most balls per drop", "int", 20, min=1, max=100,
+                help="Players can drop several balls at once; each ball is one bet."),
         Setting("poker_tables", "Poker tables", "textarea", DEFAULT_TABLES,
                 help="One table per line: name | small blind | big blind | smallest buy-in | biggest buy-in. "
                      "Up to 6 players per table. Changing a table stands its players up (chips go back)."),
@@ -339,6 +342,23 @@ class Casino(Plugin):
         pocket, payout = games.spin_roulette(bet, kind, number)
         self._pay("roulette", user_id, payout)
         return pocket, payout
+
+    def play_plinko(self, user_id: int, bet: int, risk: str, rows: int, balls: int = 1) -> list[dict]:
+        """Drops `balls` balls of `bet` points each; the server decides every path."""
+        if risk not in games.PLINKO_RISKS:
+            raise GameError("Pick a risk: low, medium or high.")
+        if rows not in games.PLINKO_ROWS:
+            raise GameError("Pick 8 to 16 rows.")
+        most = self.setting("plinko_max_balls")
+        if not 1 <= balls <= most:
+            raise GameError(f"Drop 1 to {most} balls at once.")
+        self._check("plinko", user_id, bet)                     # the bet range is per ball
+        self._take("plinko", user_id, bet * balls, extra=True)  # the loss limit counts all of them
+        drops = [games.plinko_drop(bet, risk, rows) for _ in range(balls)]
+        payout = sum(d["payout"] for d in drops)
+        self._pay("plinko", user_id, payout, round_over=False)
+        self._stats("plinko", rounds=balls)
+        return drops
 
     # ------------------------------------------------------------ Blackjack (the hand is kept between clicks)
 
