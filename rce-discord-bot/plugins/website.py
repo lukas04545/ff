@@ -26,7 +26,7 @@ CSP = ("default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'un
        "form-action 'self' https://www.paypal.com https://www.sandbox.paypal.com; frame-ancestors 'none'")
 BOARDS = {"kills": "Kills", "kd": "K/D", "playtime": "Playtime", "teams": "Teams"}
 CACHE_SECONDS = 20
-SCRIPTS = ("casino.js", "poker.js")             # scripts served from website_assets/
+SCRIPTS = ("casino.js", "poker.js", "plinko.js")             # scripts served from website_assets/
 HEADER_LOGO = 96
 
 # ------------------------------------------------------------ Seasonal theme: Halloween

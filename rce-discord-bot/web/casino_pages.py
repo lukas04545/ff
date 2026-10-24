@@ -471,6 +471,119 @@ async def poker_handle(site, casino, request, base: str, uid: int, name: str, pa
                              headers={"Cache-Control": "no-store"})
 
 
+# ------------------------------------------------------------ Plinko (plinko.js drops the balls; works without it)
+
+PLINKO_CSS = """
+.plk{display:grid;grid-template-columns:260px 1fr;gap:12px;align-items:start}
+@media (max-width:760px){.plk{grid-template-columns:1fr}.plk .board{order:-1;display:flex;flex-direction:column}
+.plk .phist{position:static;flex-direction:row;width:auto;min-height:26px;order:-1;margin-bottom:6px}
+.plk .phist div{flex:0 0 52px}}
+.plk form{margin:0}.plk select{width:100%}
+.plk .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px;border-radius:8px;background:#0f212e}
+.plk .seg label{margin:0;text-align:center;padding:8px 0;border-radius:6px;cursor:pointer;font-weight:700;
+color:#b1bad3;text-transform:capitalize}.plk .seg input{display:none}
+.plk .seg label:has(input:checked){background:#2f4553;color:#fff}
+.plk .board{background:#0f212e;border-radius:12px;padding:12px 8px 14px;position:relative;overflow:hidden;
+box-shadow:inset 0 0 0 1px #213743}
+.plk canvas{display:block;width:100%;touch-action:manipulation}
+.pslots{display:flex;gap:3px;margin-top:6px}.pslots div{flex:1;min-width:0;text-align:center;border-radius:4px;
+padding:6px 0;font-weight:800;font-size:.72rem;color:#1a0900;box-shadow:0 3px 0 rgba(0,0,0,.35);overflow:hidden}
+.pslots .hit{outline:2px solid #fff}
+.plk.live .pslots{display:none}
+.plk.dropping .seg,.plk.dropping select{opacity:.55;pointer-events:none}
+.phist{position:absolute;right:8px;top:10px;display:flex;flex-direction:column;gap:4px;width:46px}
+.phist div{border-radius:6px;padding:5px 0;text-align:center;font-size:.72rem;font-weight:800;color:#1a0900;
+animation:reveal .3s ease-out both}
+.plist{max-height:220px;overflow:auto;font-size:.9rem}.plist div{display:flex;justify-content:space-between;
+padding:3px 0;border-bottom:1px solid var(--line)}
+.plk .pay{margin-top:4px}.plk .muted{font-size:.8rem}
+"""
+
+
+def slot_colour(k: int, rows: int) -> str:
+    """Red at the edges, orange, yellow in the middle (like the well-known Plinko board)."""
+    x = abs(k - rows / 2) / (rows / 2)                          # 0 middle … 1 edge
+    stops = ((0, (255, 192, 0)), (0.55, (255, 120, 20)), (1, (255, 0, 63)))
+    for (a, ca), (b, cb) in zip(stops, stops[1:]):
+        if x <= b:
+            f = (x - a) / (b - a)
+            return "#" + "".join(f"{round(p + (q - p) * f):02x}" for p, q in zip(ca, cb))
+    return "#ff003f"
+
+
+def plinko_page(site, casino, base, uid, *, bet=None, balls=1, risk="medium", rows=16, drops=None, error="",
+                before=None) -> web.Response:
+    import json
+    risk = risk if risk in g.PLINKO_RISKS else "medium"
+    rows = rows if rows in g.PLINKO_ROWS else 16
+    table = g.PLINKO_TABLES[(risk, rows)]
+    most = casino.setting("plinko_max_balls")
+    hits = {d["slot"] for d in drops or ()}
+    slots = "".join(f'<div style="background:{slot_colour(k, rows)}"{" class=\"hit\"" if k in hits else ""}>'
+                    f'{g.fmt_multiplier(c)}×</div>' for k, c in enumerate(table))
+    risks = "".join(f'<label><input type="radio" name="risk" value="{r}"{" checked" if r == risk else ""}>{r}</label>'
+                    for r in g.PLINKO_RISKS)
+    row_opts = "".join(f'<option value="{n}"{" selected" if n == rows else ""}>{n}</option>' for n in g.PLINKO_ROWS)
+    result = ""
+    if drops:
+        total = sum(d["payout"] for d in drops)
+        lines = "".join(f'<div><span>Ball {i}: {g.fmt_multiplier(d["cents"])}×</span>'
+                        f'<b>{esc(casino.fmt_points(d["payout"]))}</b></div>' for i, d in enumerate(drops, 1))
+        result = _outcome(casino, total, (bet or 0) * len(drops)) + f'<div class="plist">{lines}</div>'
+    tables = {f"{r}-{n}": t for (r, n), t in g.PLINKO_TABLES.items()}
+    colours = {n: [slot_colour(k, n) for k in range(n + 1)] for n in g.PLINKO_ROWS}
+    body = (_balance(casino, uid, base, before=before)
+            + notice(error, "bad")
+            + f'<div class="plk" id="plinko" data-drop="{base}/casino/plinko/drop" data-balance="{casino.balance(uid)}" '
+              f'data-unit=" {esc(casino.bot.config.points_name)}" '
+              f'data-tables="{esc(json.dumps(tables, separators=(",", ":")))}" '
+              f'data-colours="{esc(json.dumps(colours, separators=(",", ":")))}">'
+              f'<div class="card"><form method="post" action="{base}/casino/plinko">{_bet_field(casino, bet)}'
+              f'<label class="field"><span>Balls per drop (1 – {most})</span><input type="number" name="balls" '
+              f'min="1" max="{most}" step="1" value="{balls}" inputmode="numeric" required></label>'
+              f'<label class="field"><span>Risk</span></label><div class="seg">{risks}</div>'
+              f'<label class="field"><span>Rows</span><select name="rows">{row_opts}</select></label>'
+              f'<button class="pay" type="submit">🔻 Drop</button></form>'
+              f'<p class="muted">Each ball is one bet and falls left or right at every peg – where it lands, it pays '
+              f'that multiplier. Drop again while balls are still falling. Return to player 87.5 %.</p>'
+              f'<div class="presult">{result}</div></div>'
+              f'<div class="board"><canvas width="600" height="520" aria-label="Plinko board"></canvas>'
+              f'<div class="pslots">{slots}</div><div class="phist"></div></div></div>')
+    return _page(site, base, "Plinko", body, scripts=("plinko.js",), css=PLINKO_CSS)
+
+
+def _plinko_form(form) -> tuple[int, int, str, int]:
+    return (_int(form.get("bet"), 0) or 0, _int(form.get("balls"), 1) or 1, str(form.get("risk", "medium")),
+            _int(form.get("rows"), 16) or 16)
+
+
+async def plinko_handle(site, casino, request, base: str, uid: int, parts: list[str]) -> web.Response:
+    if request.method != "POST":
+        if parts:
+            raise web.HTTPSeeOther(f"{base}/casino/plinko")
+        return plinko_page(site, casino, base, uid)
+    if not _same_origin(request):
+        raise web.HTTPForbidden(text="Bets can only be placed on this website.")
+    bet, balls, risk, rows = _plinko_form(await request.post())
+    before = casino.balance(uid)
+    if parts == ["drop"]:                         # plinko.js: the server picks every path, the page animates it
+        try:
+            drops = casino.play_plinko(uid, bet, risk, rows, balls)
+        except GameError as exc:
+            return web.json_response({"error": str(exc), "balance": casino.balance(uid)},
+                                     headers={"Cache-Control": "no-store"})
+        return web.json_response({"ok": True, "bet": bet, "balance": casino.balance(uid), "before": before,
+                                  "balls": [{"path": d["path"], "slot": d["slot"], "payout": d["payout"],
+                                             "multiplier": g.fmt_multiplier(d["cents"])} for d in drops]},
+                                 headers={"Cache-Control": "no-store"})
+    try:
+        drops = casino.play_plinko(uid, bet, risk, rows, balls)
+    except GameError as exc:
+        return plinko_page(site, casino, base, uid, bet=bet, balls=balls, risk=risk, rows=rows, error=str(exc))
+    return plinko_page(site, casino, base, uid, bet=bet, balls=balls, risk=risk, rows=rows, drops=drops,
+                       before=before)
+
+
 PAGES = {"slots": slots_page, "coinflip": coinflip_page, "dice": dice_page, "roulette": roulette_page,
          "blackjack": blackjack_page}
 
@@ -494,6 +607,10 @@ async def handle(site, casino, request, base: str, path: str) -> web.Response:
         if "poker" not in casino.enabled_games():
             return _page(site, base, "Casino", notice("This game is closed.", "bad"), status=404)
         return await poker_handle(site, casino, request, base, uid, sess["name"], parts[1:])
+    if parts[:1] == ["plinko"]:
+        if "plinko" not in casino.enabled_games():
+            return _page(site, base, "Casino", notice("This game is closed.", "bad"), status=404)
+        return await plinko_handle(site, casino, request, base, uid, parts[1:])
     if sub not in PAGES:
         if sub:
             raise web.HTTPSeeOther(f"{base}/casino")

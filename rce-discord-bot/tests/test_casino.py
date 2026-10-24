@@ -384,3 +384,95 @@ def test_poker_pages_and_long_poll(casino_env):
             await c.close()
             await casino_env.bot.rcon.close()
     asyncio.run(main())
+
+
+# ------------------------------------------------------------ Plinko
+
+def test_plinko_rtp_is_exactly_87_5_percent_on_every_board():
+    from math import comb
+    assert set(g.PLINKO_TABLES) == {(r, n) for r in g.PLINKO_RISKS for n in g.PLINKO_ROWS}
+    for (risk, rows), table in g.PLINKO_TABLES.items():
+        assert len(table) == rows + 1 and table == table[::-1] and min(table) > 0
+        assert all(table[k] >= table[k + 1] for k in range(rows // 2)), (risk, rows)   # biggest at the edges
+        rtp = Fraction(sum(comb(rows, k) * c for k, c in enumerate(table)), 100 * 2 ** rows)
+        assert rtp == g.PLINKO_RTP == Fraction(7, 8), (risk, rows)
+    for rows in g.PLINKO_ROWS:                                       # more risk = bigger edges
+        assert g.PLINKO_TABLES[("low", rows)][0] < g.PLINKO_TABLES[("medium", rows)][0] \
+            < g.PLINKO_TABLES[("high", rows)][0]
+    assert g.fmt_multiplier(144600) == "1446" and g.fmt_multiplier(30) == "0.3" and g.fmt_multiplier(105) == "1.05"
+
+
+def test_plinko_ball_follows_its_path():
+    class Path(random.Random):
+        def __init__(self, bits):
+            super().__init__(0)
+            self.bits = list(bits)
+
+        def randrange(self, n):
+            return self.bits.pop(0) if self.bits else 0
+    d = g.plinko_drop(100, "high", 8, Path([1] * 8))                 # always right: the right edge
+    assert d["slot"] == 8 and d["path"] == [1] * 8 and d["payout"] == 3500
+    d = g.plinko_drop(100, "low", 8, Path([0, 1] * 4))
+    assert d["slot"] == 4 and d["payout"] == 47
+    with pytest.raises(ValueError):
+        g.plinko_drop(100, "extreme", 8)
+
+
+def test_plinko_many_balls_through_the_plugin(casino_env):
+    casino = casino_env.m.running("casino")
+    drops = casino.play_plinko(7, 10, "medium", 12, 5)
+    assert len(drops) == 5 and all(len(d["path"]) == 12 and d["slot"] == sum(d["path"]) for d in drops)
+    assert casino.balance(7) == 1000 - 50 + sum(d["payout"] for d in drops)
+    assert casino.data.get("stats:plinko")["rounds"] == 5
+    assert casino.data.get("stats:plinko")["wagered"] == 50
+    with pytest.raises(g.GameError, match="1 to 20 balls"):
+        casino.play_plinko(7, 10, "medium", 12, 21)
+    with pytest.raises(g.GameError, match="between"):
+        casino.play_plinko(7, 5, "medium", 12, 3)                    # the bet range is per ball
+    with pytest.raises(g.GameError, match="Not enough"):
+        casino.play_plinko(7, 1000, "low", 8, 20)
+    with pytest.raises(g.GameError, match="rows"):
+        casino.play_plinko(7, 10, "low", 7, 1)
+    with pytest.raises(g.GameError, match="risk"):
+        casino.play_plinko(7, 10, "huge", 8, 1)
+    asyncio.run(casino_env.m.save_settings("casino", {"daily_loss_limit": 100}))
+    with pytest.raises(g.GameError, match="loss limit"):
+        casino.play_plinko(7, 10, "low", 8, 11)                      # 110 at once is over the limit
+
+
+def test_plinko_pages(casino_env):
+    async def main():
+        import json
+        from web.server import WebInterface
+        web = WebInterface(casino_env.bot, env_path=casino_env.tmp / ".env",
+                           secret_path=casino_env.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            c.session.cookie_jar.update_cookies({"rce_player": "tok"})
+            assert "87.5 %" in await (await c.get("/casino")).text()
+            page = await (await c.get("/casino/plinko")).text()
+            assert "<canvas" in page and 'name="balls"' in page and page.count('name="risk"') == 3
+            assert "114×" in page                                     # medium, 16 rows by default
+            src = re.search(r'<script src="(/plinko\.js\?v=\w+)" defer>', page)[1]
+            assert "requestAnimationFrame" in await (await c.get(src)).text()
+            r = await c.post("/casino/plinko/drop", data={"bet": "10", "balls": "4", "risk": "high", "rows": "8",
+                                                          "seed": "1", "slot": "0"})
+            data = await r.json()
+            assert data["ok"] and len(data["balls"]) == 4 and data["bet"] == 10
+            assert data["balance"] == 1000 - 40 + sum(b["payout"] for b in data["balls"])
+            assert all(b["slot"] == sum(b["path"]) and len(b["path"]) == 8 for b in data["balls"])
+            r = await c.post("/casino/plinko/drop", data={"bet": "10", "balls": "99", "risk": "low", "rows": "8"})
+            assert "balls at once" in (await r.json())["error"]
+            r = await c.post("/casino/plinko", data={"bet": "10", "balls": "2", "risk": "low", "rows": "9"})
+            text = await r.text()
+            assert "Ball 2:" in text and 'value="9" selected' in text                # works without the script
+            r = await c.post("/casino/plinko/drop", data={"bet": "10"}, headers={"Origin": "https://evil.example"})
+            assert r.status == 403
+            json.loads(re.search(r'data-tables="([^"]+)"', page)[1].replace("&quot;", '"'))
+            await casino_env.m.save_settings("casino", {"plinko": False})
+            assert (await c.get("/casino/plinko")).status == 404
+        finally:
+            await c.close()
+            await casino_env.bot.rcon.close()
+    asyncio.run(main())

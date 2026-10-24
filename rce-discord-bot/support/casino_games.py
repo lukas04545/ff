@@ -9,6 +9,7 @@ Pure game logic, no database: every function gets the bet and a random source an
     Roulette   97.3 %    (European wheel, one zero – the real thing: 36/37)
     Blackjack  ≈ 99.5 %  (real rules: 6 decks, dealer stands on soft 17 and peeks, blackjack pays 3:2, double on
                           any two cards and after a split, one split, split aces get one card)
+    Plinko     87.5 %    (every risk and row count – paytables below)
 
 Points are whole numbers, so a payout like 28.5 is rounded fairly: 28, plus 1 more with a 50 % chance – on average
 exactly the paytable, the RTP isn't shaved by rounding.
@@ -18,6 +19,7 @@ from __future__ import annotations
 import random
 import secrets
 from dataclasses import dataclass
+from fractions import Fraction
 
 RNG = secrets.SystemRandom()          # unpredictable – players can't work out the next result
 
@@ -288,3 +290,59 @@ def _settle(state: dict) -> None:
 
 def bj_wagered(state: dict) -> int:
     return sum(h["bet"] for h in state["hands"])
+
+
+# ------------------------------------------------------------ Plinko
+
+# Like the well-known crypto-casino Plinko: a triangle of pegs (8–16 rows), the ball goes left or right at every
+# row (50/50), so it lands in slot k with probability C(rows, k) / 2^rows. Multipliers are symmetric: low in the
+# middle, high at the edges; "risk" makes the edges bigger and the middle smaller. Every table returns exactly
+# PLINKO_RTP: the multipliers are in cents and  Σ C(rows, k) · cents_k  =  RTP · 100 · 2^rows  (tests check it).
+PLINKO_RTP = Fraction(7, 8)              # 0.875
+PLINKO_ROWS = range(8, 17)
+PLINKO_RISKS = ("low", "medium", "high")
+PLINKO_TABLES = {    # (risk, rows) -> multiplier × 100 for slots 0..rows
+    ("low", 8): (523, 240, 120, 67, 47, 67, 120, 240, 523),
+    ("low", 9): (602, 286, 149, 84, 54, 54, 84, 149, 286, 602),
+    ("low", 10): (702, 352, 184, 105, 65, 48, 65, 105, 184, 352, 702),
+    ("low", 11): (797, 410, 221, 128, 79, 54, 54, 79, 128, 221, 410, 797),
+    ("low", 12): (918, 489, 268, 154, 96, 64, 49, 64, 96, 154, 268, 489, 918),
+    ("low", 13): (1030, 578, 320, 187, 115, 75, 54, 54, 75, 115, 187, 320, 578, 1030),
+    ("low", 14): (1190, 662, 380, 223, 137, 90, 63, 49, 63, 90, 137, 223, 380, 662, 1190),
+    ("low", 15): (1390, 777, 448, 264, 165, 105, 73, 54, 54, 73, 105, 165, 264, 448, 777, 1390),
+    ("low", 16): (1590, 900, 523, 314, 195, 125, 85, 62, 50, 62, 85, 125, 195, 314, 523, 900, 1590),
+    ("medium", 8): (1230, 317, 112, 53, 38, 53, 112, 317, 1230),
+    ("medium", 9): (1670, 446, 154, 70, 42, 42, 70, 154, 446, 1670),
+    ("medium", 10): (2200, 618, 214, 92, 51, 40, 51, 92, 214, 618, 2200),
+    ("medium", 11): (2920, 844, 293, 123, 64, 43, 43, 64, 123, 293, 844, 2920),
+    ("medium", 12): (3820, 1140, 398, 165, 82, 50, 41, 50, 82, 165, 398, 1140, 3820),
+    ("medium", 13): (5060, 1540, 537, 219, 107, 61, 43, 43, 61, 107, 219, 537, 1540, 5060),
+    ("medium", 14): (6630, 2060, 727, 295, 137, 75, 50, 41, 50, 75, 137, 295, 727, 2060, 6630),
+    ("medium", 15): (8680, 2740, 971, 391, 176, 95, 59, 44, 44, 59, 95, 176, 391, 971, 2740, 8680),
+    ("medium", 16): (11400, 3660, 1310, 520, 231, 120, 70, 49, 44, 49, 70, 120, 231, 520, 1310, 3660, 11400),
+    ("high", 8): (3500, 364, 77, 32, 24, 32, 77, 364, 3500),
+    ("high", 9): (5630, 614, 121, 43, 26, 26, 43, 121, 614, 5630),
+    ("high", 10): (9080, 1010, 192, 61, 31, 25, 31, 61, 192, 1010, 9080),
+    ("high", 11): (14800, 1700, 306, 88, 40, 25, 25, 40, 88, 306, 1700, 14800),
+    ("high", 12): (23500, 2690, 477, 129, 52, 32, 27, 32, 52, 129, 477, 2690, 23500),
+    ("high", 13): (36000, 4350, 761, 196, 73, 39, 28, 28, 39, 73, 196, 761, 4350, 36000),
+    ("high", 14): (58100, 7010, 1210, 297, 100, 49, 32, 28, 32, 49, 100, 297, 1210, 7010, 58100),
+    ("high", 15): (91600, 11200, 1920, 445, 145, 65, 38, 29, 29, 38, 65, 145, 445, 1920, 11200, 91600),
+    ("high", 16): (144600, 18000, 3030, 685, 211, 89, 46, 32, 28, 32, 46, 89, 211, 685, 3030, 18000, 144600),
+}
+
+
+def plinko_drop(bet: int, risk: str, rows: int, rng: random.Random = RNG) -> dict:
+    """One ball: {"path": [0/1 per row, 1 = right], "slot", "cents" (multiplier ×100), "payout"}."""
+    table = PLINKO_TABLES.get((risk, rows))
+    if table is None:
+        raise ValueError("Pick a risk and 8–16 rows.")
+    path = [rng.randrange(2) for _ in range(rows)]
+    slot = sum(path)
+    return {"path": path, "slot": slot, "cents": table[slot], "payout": fair(bet * table[slot], 100, rng)}
+
+
+def fmt_multiplier(cents: int) -> str:
+    """1000.00 -> "1000", 0.3 -> "0.3", 1.25 -> "1.25"."""
+    whole, part = divmod(cents, 100)
+    return str(whole) if not part else f"{whole}.{part:02d}".rstrip("0")
