@@ -230,7 +230,9 @@ async function loadSettingsIndex() {
   try {
     const d = await api("/api/settings");
     const groups = Object.fromEntries((d.groups || []).map((g) => [g.id, g.label]));
-    settingsIndex = d.fields.map((f) => ({ label: f.label, where: `Settings · ${groups[f.group] || f.group}`, hash: "#settings", find: f.label, icon: "⚙️" }));
+    settingsIndex = d.fields.map((f) => groups[f.group]                  // fields outside the groups live on their own tab
+      ? { label: f.label, where: `Settings · ${groups[f.group]}`, hash: "#settings", find: f.label, icon: "⚙️" }
+      : { label: f.label, where: "Store · 💣 Nukes", hash: "#webstore", find: f.label, icon: "💣" });
   } catch { settingsIndex = []; }
   return settingsIndex;
 }
@@ -1626,12 +1628,11 @@ views.shop = async (main) => {
     if (k === "custom_kit") target = opts(d.custom_kits.map((n) => [n, n]));
     else if (k === "kit") target = opts((kits.ingame || []).map((n) => [n, n]));
     else if (k === "role") target = opts(d.roles.map((r) => [r.id, r.name]));
-    else if (k === "nuke") target = h("input", { type: "number", min: 1, value: 100, style: "max-width:150px", title: `${pts} every member gets`, placeholder: `${pts} per member` });
     else target = h("input", { placeholder: "Item shortname, e.g. rifle.ak", list: "dl-shop-items" });
     targetBox.replaceChildren(target);
-    amount.style.display = amountLabel.style.display = ["item", "role", "nuke"].includes(k) ? "" : "none";
-    amountLabel.textContent = k === "role" ? "days (0 = permanent)" : k === "nuke" ? "members who can claim (0 = everyone)" : "pieces";
-    amount.value = k === "role" ? 7 : k === "nuke" ? 20 : 1;
+    amount.style.display = amountLabel.style.display = ["item", "role"].includes(k) ? "" : "none";
+    amountLabel.textContent = k === "role" ? "days (0 = permanent)" : "pieces";
+    if (k === "role") amount.value = 7; else amount.value = 1;
   };
   kindSel.addEventListener("change", renderTarget);
   renderTarget();
@@ -2646,6 +2647,50 @@ function itemPicturesCard() {
     h("div", { class: "row" }, btn), out);
 }
 
+// 💣 Nukes for real money – settings STORE_NUKE_* (saved like Settings, shown only here)
+function nukeCard(cur) {
+  const card = h("div", { class: "card", id: "nukes" }, h("h2", { text: "💣 Nukes" }),
+    h("p", { class: "muted", text: "Players buy a nuke on the website (Store → 💣 Nukes). Once paid, it drops on Discord with a Claim button: every member except the buyer gets the points below once, for 24 hours or until the set number of members have claimed. Needs points & shop on." }),
+    h("p", { class: "muted", text: "Loading …" }));
+  (async () => {
+    let s, opts;
+    try {
+      [s, opts] = await Promise.all([api("/api/settings"), api("/api/settings/discord-options").catch(() => ({ available: false }))]);
+    } catch (e) { card.lastChild.replaceWith(h("div", { class: "banner bad", text: e.message })); return; }
+    const val = (k) => (s.fields.find((f) => f.key === k) || {}).value || "";
+    const price = h("input", { type: "number", min: "0", step: "0.01", value: val("STORE_NUKE_PRICE") || "0" });
+    const points = h("input", { type: "number", min: "1", step: "1", value: val("STORE_NUKE_POINTS") || "100" });
+    const claims = h("input", { type: "number", min: "0", step: "1", value: val("STORE_NUKE_CLAIMS") || "0" });
+    const chans = opts.available ? opts.text_channels || [] : [];
+    const channel = chans.length
+      ? h("select", {}, h("option", { value: "", text: "– the server's system channel –" }), chans.map((c) => h("option", { value: c.id, text: "#" + c.name })))
+      : h("input", { inputmode: "numeric", placeholder: "Channel ID (empty = system channel)" });
+    channel.value = val("STORE_NUKE_CHANNEL_ID");
+    const field = (label, el, help) => h("div", { class: "field" }, h("label", { text: label }), h("div", { class: "control" }, el, help ? h("div", { class: "help", text: help }) : null));
+    const forSale = () => Number(price.value) > 0;
+    const pill = h("span", { class: "pill keep" });
+    const showPill = () => { pill.className = "pill keep " + (forSale() ? "ok" : ""); pill.textContent = forSale() ? `for sale – ${money(Number(price.value), cur)}` : "not for sale"; };
+    price.addEventListener("input", showPill); showPill();
+    const save = h("button", { class: "primary", text: "Save nukes" });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        await api("/api/settings", { method: "PUT", body: { values: { STORE_NUKE_PRICE: price.value.replace(",", "."), STORE_NUKE_POINTS: points.value, STORE_NUKE_CLAIMS: claims.value, STORE_NUKE_CHANNEL_ID: channel.value } } });
+        toast("Nukes saved – active right away");
+      } catch (e) { toast(e.data?.errors ? Object.values(e.data.errors).join(" ") : e.message, true); }
+      finally { save.disabled = false; }
+    });
+    card.lastChild.replaceWith(h("div", {},
+      h("div", { class: "row", style: "margin-bottom:.4rem" }, pill),
+      field(`Price (${cur})`, price, "What a nuke costs on the website. 0 = not for sale (the Nukes tab is hidden)."),
+      field("Points every member gets", points, "The value of the nuke – each member who claims gets this many points."),
+      field("Members who can claim", claims, "The first … members to press Claim. 0 = everyone on the Discord."),
+      field("Channel", channel, "Where bought nukes drop on Discord."),
+      h("div", { class: "row", style: "margin-top:.6rem" }, save)));
+  })();
+  return card;
+}
+
 views.webstore = async (main) => {
   main.append(h("h1", { text: "Store" }),
     h("p", { class: "muted", text: "Players buy kits on the player website (Store) with PayPal or gift cards. The kit is given to the Discord account their in-game name is linked to (/customkit link) – they claim it with /customkit claim." }));
@@ -2773,7 +2818,7 @@ views.webstore = async (main) => {
     const orders = h("div", { class: "card" }, h("h2", { text: "🧾 Orders" }),
       d.orders.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Date", "Product", "Player", "Paid", "Status", "PayPal", ""].map((t) => h("th", { text: t })))), h("tbody", {}, orderRows))) : h("p", { class: "muted", text: "No orders yet." }));
 
-    holder.replaceChildren(status, kits, gifts, orders);
+    holder.replaceChildren(status, kits, nukeCard(cur), gifts, orders);
     if (editId) { kSave.textContent = "Save kit"; kCancel.classList.remove("hidden"); }
   };
   load();

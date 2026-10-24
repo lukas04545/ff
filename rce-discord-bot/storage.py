@@ -459,6 +459,8 @@ class Storage:
                     FROM giveaway_redemptions_old;
                 DROP TABLE giveaway_redemptions_old;
             """)
+        # Nukes were points-shop items for a short while; they're only sold in the web store now
+        self._db.execute("DELETE FROM shop_items WHERE kind = 'nuke'")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(kit_claims)")}
         if "user_id" not in columns:
             # Discord user who claimed the kit (self-service claims)

@@ -631,7 +631,11 @@ def test_nuke_for_real_money_drops_on_discord(shop, monkeypatch):
     from cogs.webshop import CheckoutError
     from plugin_api import Plugin
     from plugin_manager import PluginManager
+    import settings_schema
     bot, db, s = shop.env.bot, shop.db, shop.s
+    nuke_fields = [f for f in settings_schema.FIELDS if f.key.startswith("STORE_NUKE_")]
+    assert len(nuke_fields) == 4 and {f.group for f in nuke_fields} == {"nukes"}       # on the Store tab only,
+    assert "nukes" not in dict(settings_schema.GROUPS)                                # not the Settings page
 
     async def no_loop(self):
         return None

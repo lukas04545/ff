@@ -259,13 +259,13 @@ FIELDS: list[Field] = [
           help="Players can buy team slots on their own custom kit on My account: each slot lets one more player "
                "(e.g. a teammate) claim the kit, for 30 days per month bought. 0 = team slots off."),
     Field("STORE_SLOT_MAX", "Most team slots per kit", "store", "int", placeholder="5"),
-    Field("STORE_NUKE_PRICE", "💣 Nuke price", "store", placeholder="0",
-          help="Players can buy a nuke on the website (store → Nukes): it drops in the nuke channel on Discord and "
-               "every member (not the buyer) can claim the points below once, for 24 hours. 0 = not for sale."),
-    Field("STORE_NUKE_POINTS", "💣 Nuke: points every member gets", "store", "int", placeholder="100"),
-    Field("STORE_NUKE_CLAIMS", "💣 Nuke: members who can claim", "store", "int", placeholder="0",
+    # 💣 Nukes – not on the Settings page: edited on the Store tab (group not in GROUPS)
+    Field("STORE_NUKE_PRICE", "💣 Nuke price", "nukes", placeholder="0",
+          help="0 = not for sale."),
+    Field("STORE_NUKE_POINTS", "💣 Nuke: points every member gets", "nukes", "int", placeholder="100"),
+    Field("STORE_NUKE_CLAIMS", "💣 Nuke: members who can claim", "nukes", "int", placeholder="0",
           help="The first … members to press Claim. 0 = everyone on the Discord."),
-    Field("STORE_NUKE_CHANNEL_ID", "💣 Nuke channel", "store", "id", pick="text_channel",
+    Field("STORE_NUKE_CHANNEL_ID", "💣 Nuke channel", "nukes", "id", pick="text_channel",
           help="Where bought nukes drop. Empty = the Discord server's system channel."),
     Field("STORE_CHANNEL_ID", "Store purchase log channel", "store", "id", pick="text_channel",
           help="Every web store purchase and problem is posted here. Empty = admin log."),

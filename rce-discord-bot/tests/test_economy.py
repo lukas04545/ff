@@ -181,37 +181,47 @@ def test_web_shop(eco, tmp_path):
     asyncio.run(scenario())
 
 
+
+class NukeMessage:
+    def __init__(self, embed, view):
+        self.id, self.embed, self.view = 900, embed, view
+
+    async def edit(self, embed=None, view=None):
+        self.embed, self.view = embed, view
+
+
+class NukeChannel:
+    id, mention = 42, "#general"
+
+    def __init__(self):
+        self.posted = []
+
+    async def send(self, embed=None, view=None, allowed_mentions=None):
+        assert allowed_mentions is not None and not allowed_mentions.everyone      # never pings everyone
+        self.posted.append(NukeMessage(embed, view))
+        return self.posted[-1]
+
+
+def test_nukes_are_not_in_the_points_shop(eco, tmp_path):
+    from cogs.economy import SHOP_KINDS
+    from storage import Storage
+    assert "nuke" not in SHOP_KINDS
+    with pytest.raises(ValueError, match="Unknown item type"):
+        eco.cog.validate_item("nuke", "250", 2, 1000)
+    eco.db.add_shop_item("Old nuke", "nuke", "250", 2, 1000, None)          # added while it was a shop item
+    eco.db.close()
+    db = Storage(eco.bot.config.database_path)                              # next start: removed
+    assert db.shop_item_by_name("Old nuke") is None
+    eco.bot.db = eco.db = db
+
+
 def test_nuke_drop_everyone_can_claim_once(eco):
-    db = eco.db
     from cogs.economy import NUKE_HOURS
-    assert eco.cog.validate_item("nuke", "250", 2, 1000) == "250"
-    with pytest.raises(ValueError, match="points every member"):
-        eco.cog.validate_item("nuke", "lots", 2, 1000)
-    db.add_shop_item("Nuke", "nuke", "250", 2, 1000, None)
-    assert "first 2 members" in eco.cog.describe_item(db.shop_item_by_name("Nuke"))
-
-    posted = []
-
-    class Message:
-        def __init__(self, embed, view):
-            self.id, self.embed, self.view = 900, embed, view
-
-        async def edit(self, embed=None, view=None):
-            self.embed, self.view = embed, view
-
-    class Channel:
-        id, mention = 42, "#general"
-
-        async def send(self, embed=None, view=None, allowed_mentions=None):
-            assert allowed_mentions is not None and not allowed_mentions.everyone      # never pings everyone
-            posted.append(Message(embed, view))
-            return posted[-1]
-    db.add_points(7, 1500, "test")
-    eco.bot.online_players = {}                                          # a nuke doesn't need the buyer online
-    r = asyncio.run(eco.cog.buy(eco.member, "Nuke", Channel()))
-    assert r.ok and "dropped in #general" in r.message and db.wallet(7)["points"] == 500
-    msg = posted[0]
-    assert "250" in msg.embed.description and msg.embed.footer.text == "Claimed: 0 / 2"
+    db, channel = eco.db, NukeChannel()
+    message_id = asyncio.run(eco.cog.drop_nuke(7, "💣 Nuke", 250, 2, channel))
+    msg = channel.posted[0]
+    assert message_id == 900 and "<@7>" in msg.embed.description and "250" in msg.embed.description
+    assert msg.embed.footer.text == "Claimed: 0 / 2"
     drop = db.nuke_by_message(900)
     assert drop["expires_at"] - drop["created_at"] == NUKE_HOURS * 3600
 
@@ -231,22 +241,20 @@ def test_nuke_drop_everyone_can_claim_once(eco):
     assert "You got" in press(9)
     assert "All claimed" in msg.embed.description and msg.view.claim.disabled
     assert "Too late" in press(10) and db.wallet(10)["points"] == 0
-    assert db.point_history(8)[0]["reason"] == "nuke: Nuke"
+    assert db.point_history(8)[0]["reason"] == "nuke: 💣 Nuke"
 
 
-def test_nuke_expires_and_refunds_when_it_cant_drop(eco):
+def test_nuke_that_cant_be_posted_is_forgotten_and_expires(eco):
     db = eco.db
-    db.add_shop_item("Big nuke", "nuke", "10", 0, 100, None)            # 0 = every member
-    db.add_points(7, 100, "test")
 
     class Broken:
         id, mention = 1, "#x"
 
         async def send(self, **kw):
             raise RuntimeError("missing permissions")
-    r = asyncio.run(eco.cog.buy(eco.member, "Big nuke", Broken()))
-    assert not r.ok and "refunded" in r.message and db.wallet(7)["points"] == 100
+    with pytest.raises(RuntimeError):
+        asyncio.run(eco.cog.drop_nuke(7, "Big nuke", 10, 0, Broken()))
     assert db._db.execute("SELECT COUNT(*) FROM nuke_drops").fetchone()[0] == 0
     drop = db.create_nuke(7, "Big nuke", 10, 0, int(time.time()) + 60)
-    assert all(db.claim_nuke(drop, uid) == "ok" for uid in range(100, 130))   # no limit
+    assert all(db.claim_nuke(drop, uid) == "ok" for uid in range(100, 130))   # 0 = no limit
     assert db.claim_nuke(drop, 200, now=int(time.time()) + 61) == "expired"
