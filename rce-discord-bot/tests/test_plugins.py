@@ -436,3 +436,39 @@ def test_website_halloween_theme_and_phone_menu(pb, monkeypatch):
         monkeypatch.setattr(type(site), "now", staticmethod(lambda: int(october)))
         assert site.seasonal() == ""
     asyncio.run(main())
+
+
+def test_owner_picks_the_plugins_in_the_menu(pb):  # noqa: F811
+    """Control panel sidebar: which plugins get their own tab (default: the ones with TAB) – saved, ordered."""
+    import json
+
+    from tests.test_web import H
+
+    async def main():
+        from web.server import WebInterface
+        m = pb.m
+        await m.load_all()
+        assert m.menu() == ["offline_protection"]
+        web = WebInterface(pb.bot, env_path=pb.tmp / ".env", secret_path=pb.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            assert (await c.get("/api/plugins/menu")).status == 401
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            r = await c.put("/api/plugins/menu", json={"plugins": ["casino", "offline_protection", "casino"]},
+                            headers=H)
+            assert [x["id"] for x in (await r.json())["menu"]] == ["casino", "offline_protection"]   # no doubles
+            assert (await r.json())["menu"][0]["icon"] == "🎰"
+            plugins = (await (await c.get("/api/plugins")).json())["plugins"]
+            assert {p["id"] for p in plugins if p["in_menu"]} == {"casino", "offline_protection"}
+            r = await c.put("/api/plugins/menu", json={"plugins": ["nope"]}, headers=H)
+            assert r.status == 400 and "Unknown plugin" in (await r.json())["error"]
+            await c.put("/api/plugins/menu", json={"plugins": []}, headers=H)                # empty is fine
+            assert (await (await c.get("/api/plugins/menu")).json())["menu"] == []
+            assert json.loads(m.state_path.read_text())["menu"] == []                        # kept after a restart
+            index = await (await c.get("/admin")).text()
+            assert 'id="nav-plugins"' in index and 'href="#protection"' not in index
+        finally:
+            await c.close()
+            await pb.bot.rcon.close()
+    asyncio.run(main())

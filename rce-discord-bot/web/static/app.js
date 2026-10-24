@@ -123,7 +123,7 @@ $("#motion").addEventListener("click", () => {
 // ------------------------------------------------------------------ Sidebar groups, server card, top bar, search
 
 // Menu groups: a header with icon, name, how many pages and a collapse arrow (remembered per browser)
-const GROUP_EYEBROWS = { Server: "Live server operations", Kits: "Kits & store", Community: "Community tools", Admin: "Server configuration" };
+const GROUP_EYEBROWS = { Server: "Live server operations", Kits: "Kits & store", Community: "Community tools", Plugins: "Your plugins", Admin: "Server configuration" };
 
 // Line icons for the menu (own simple drawings, 24×24, drawn with the text colour)
 const ICONS = {
@@ -149,7 +149,7 @@ const ICONS = {
   users2: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 6"/>',
   settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
 };
-const GROUP_ICON_NAMES = { Server: "home", Kits: "box", Community: "users", Admin: "shield" };
+const GROUP_ICON_NAMES = { Server: "home", Kits: "box", Community: "users", Plugins: "plugins", Admin: "shield" };
 function svgIcon(name) {
   const span = document.createElement("span");
   span.className = "ico";
@@ -185,6 +185,31 @@ document.querySelectorAll("#nav .nav-group").forEach((group) => {
   group.dataset.name = name;
   if (navClosed[name]) { group.classList.add("closed"); btn.setAttribute("aria-expanded", "false"); }
 });
+// Plugins the owner put in the menu: links in the "Plugins" group, each opens #p/<plugin id>
+let menuPlugins = [], menuReady = Promise.resolve();
+async function loadMenu() {
+  const group = $("#nav-plugins");
+  if (!isOwner() || setupMode) { group.classList.add("hidden"); return; }
+  try { menuPlugins = (await api("/api/plugins/menu")).menu; } catch { menuPlugins = []; }
+  group.querySelectorAll("a").forEach((a) => a.remove());
+  menuPlugins.forEach((p, i) => {
+    const a = h("a", { href: `#p/${p.id}`, "data-view": `p/${p.id}`, "data-owner": "" },
+      h("span", { class: "ico emoji", text: p.icon || "🧩" }), h("span", { text: p.name }));
+    a.dataset.emoji = p.icon || "🧩";
+    a.style.setProperty("--c", LINK_COLORS[(i + 9) % LINK_COLORS.length]);
+    if (!p.enabled) a.title = "Switched off";
+    group.append(a);
+  });
+  group.classList.toggle("hidden", !menuPlugins.length);
+  const view = (location.hash || "").slice(1);
+  group.querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
+  updateNavCounts();
+}
+async function setMenu(ids, okText) {
+  await act(() => api("/api/plugins/menu", { method: "PUT", body: { plugins: ids } }), okText);
+  await loadMenu();
+}
+
 function updateNavCounts() {
   document.querySelectorAll("#nav .nav-group").forEach((group) => {
     group.querySelector(".count").textContent = group.querySelectorAll("a:not(.hidden)").length;
@@ -315,15 +340,17 @@ let status = null;
 function route() {
   stopTimers();
   every(5000, refreshConnection);
-  const view = (location.hash || "#overview").slice(1);
+  let view = (location.hash || "#overview").slice(1);
+  if (view === "protection") { location.replace("#p/offline_protection"); return; }   // old address of that tab
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   updateNavCounts();
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && ["settings", "users", "plugins", "makeplugin", "webstore", "protection"].includes(view)) {
+  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore"].includes(view) || view.startsWith("p/"))) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
+  if (view.startsWith("p/")) { pluginTab(main, view.slice(2)); return; }
   (views[view] || views.overview)(main);
 }
 window.addEventListener("hashchange", route);
@@ -415,6 +442,7 @@ async function start() {
   $("#whoami").replaceChildren(h("strong", { text: me.user }), h("small", { text: me.role === "owner" ? "Owner" : "Admin" }));
   $("#avatar").textContent = (me.user || "?").slice(0, 1);
   $("#account").classList.toggle("hidden", me.user === "owner");
+  menuReady = loadMenu();
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   if (setupMode && location.hash !== "#settings") location.hash = "#settings";
@@ -2532,6 +2560,23 @@ function pluginCreateLink() {
     h("div", { class: "row" }, h("button", { class: "primary", text: "✨ Create a plugin", onclick: goTo("#makeplugin") })));
 }
 
+// "In the menu": the plugins with their own tab – open, move up/down, remove
+function menuCard(plugins, reload) {
+  const byId = Object.fromEntries(plugins.map((p) => [p.id, p]));
+  const ids = menuPlugins.map((m) => m.id);
+  const move = async (i, d) => { const next = [...ids]; [next[i], next[i + d]] = [next[i + d], next[i]]; await setMenu(next, "Menu order saved"); reload(); };
+  const chips = ids.map((id, i) => h("span", { class: "menu-pin" },
+    h("a", { href: `#p/${id}`, text: `${byId[id]?.icon || "🧩"} ${byId[id]?.name || id}` }),
+    i > 0 ? h("button", { class: "small ghost", text: "↑", title: "Move up", onclick: () => move(i, -1) }) : null,
+    i < ids.length - 1 ? h("button", { class: "small ghost", text: "↓", title: "Move down", onclick: () => move(i, 1) }) : null,
+    h("button", { class: "small ghost", text: "✕", title: "Remove from the menu", onclick: async () => {
+      await setMenu(ids.filter((x) => x !== id), `${byId[id]?.name || id} removed from the menu`); reload();
+    } })));
+  return h("div", { class: "card" }, h("h2", { text: "📌 In the menu" }),
+    h("p", { class: "muted", text: "These plugins have their own tab in the menu (group Plugins) instead of a card here. Add any plugin with its 📌 Add to menu button." }),
+    chips.length ? h("div", { class: "menu-pins" }, chips) : h("p", { class: "muted", text: "No plugins in the menu yet." }));
+}
+
 views.plugins = async (main) => {
   main.append(h("h1", { text: "Plugins" }),
     h("p", { class: "muted", text: "Extra features as plugins – switch them on/off and change their settings here. Everything takes effect right away, no restart needed." }));
@@ -2541,27 +2586,48 @@ views.plugins = async (main) => {
   const reload = async () => {
     try {
       const r = await api("/api/plugins");
-      list.replaceChildren(...r.plugins.filter((p) => !p.tab).map((p) => pluginCard(p, opts, r.kits, reload)), pluginCreateLink());
+      await loadMenu();
+      list.replaceChildren(menuCard(r.plugins, reload), ...r.plugins.filter((p) => !p.in_menu).map((p) => {
+        const card = pluginCard(p, opts, r.kits, reload);
+        card.querySelector(".row").append(pinButton(p));
+        return card;
+      }), pluginCreateLink());
     } catch (e) { list.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
   };
   reload();
 };
 
-// Offline protection zones (plugins/offline_protection.py) – a feature with its own tab
-views.protection = async (main) => {
-  main.append(h("h1", { text: "Offline protection" }),
-    h("p", { class: "muted", text: "Team leaders place their base's zone in-game with the quick chats \"Can I build here?\" + \"Yes\". The zone turns red (no building damage) while the whole team is offline and green the moment someone is back. Zones are deleted after the set time with nobody of the team online." }));
+// A plugin with its own tab in the menu (#p/<id>): its card (on/off, settings) – plus extras some plugins have
+function pinButton(p) {
+  const pinned = menuPlugins.some((m) => m.id === p.id);
+  return h("button", { class: "small ghost", text: pinned ? "📌 Remove from menu" : "📌 Add to menu",
+    title: pinned ? "Back to the Plugins page" : "Give it its own tab in the menu", onclick: async () => {
+      const ids = menuPlugins.map((m) => m.id);
+      await setMenu(pinned ? ids.filter((id) => id !== p.id) : [...ids, p.id], pinned ? `${p.name} removed from the menu` : `${p.name} is in the menu`);
+      if (pinned && location.hash === `#p/${p.id}`) location.hash = "#plugins"; else route();
+    } });
+}
+
+async function pluginTab(main, pid) {
+  const title = h("h1", { text: "Plugin" });
   const box = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
-  main.append(box);
+  main.append(title, box);
   const opts = await api("/api/settings/discord-options").catch(() => ({ available: false }));
+  await menuReady;
   const reload = async () => {
     try {
-      const r = await api("/api/protection");
-      box.replaceChildren(protectionZones(r, reload), pluginCard(r.plugin, opts, r.kits, reload, { tab: true }));
+      const r = await api("/api/plugins");
+      const p = r.plugins.find((x) => x.id === pid);
+      if (!p) { box.replaceChildren(h("div", { class: "banner bad", text: "This plugin doesn't exist (any more)." }), pinButton({ id: pid, name: pid })); return; }
+      title.textContent = p.name;
+      const parts = [h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:.5rem" }, pinButton(p))];
+      if (pid === "offline_protection") parts.push(protectionZones(await api("/api/protection"), reload));
+      parts.push(pluginCard(p, opts, r.kits, reload, { tab: true }));
+      box.replaceChildren(...parts);
     } catch (e) { box.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
   };
   reload();
-};
+}
 
 function protectionZones(r, reload) {
   const card = h("div", { class: "card" }, h("h2", { text: `🗺️ Zones (${r.zones.length})` }));

@@ -167,6 +167,26 @@ class PluginManager:
         """Built-in plugins (and your own copy replacing one) may be on without the owner switching them on."""
         return bool(info and info.cls and info.cls.DEFAULT_ENABLED and (info.builtin or info.overrides))
 
+    # ------------------------------------------------------------ Control panel menu
+
+    def menu(self) -> list[str]:
+        """Plugins with their own tab in the control panel menu, in menu order. Until the owner changes it: the
+        built-ins that ask for a tab (Plugin.TAB)."""
+        saved = self.state.get("menu")
+        if not isinstance(saved, list):
+            saved = sorted(pid for pid, info in self.infos.items() if info.cls is not None and info.cls.TAB)
+        return [pid for pid in saved if pid in self.infos]
+
+    def set_menu(self, pids) -> list[str]:
+        if not isinstance(pids, list) or not all(isinstance(p, str) for p in pids):
+            raise PluginError("Invalid menu.")
+        unknown = [p for p in pids if p not in self.infos]
+        if unknown:
+            raise PluginError(f"Unknown plugin: {unknown[0]}")
+        self.state["menu"] = list(dict.fromkeys(pids))           # no doubles, order kept
+        self._save()
+        return self.menu()
+
     def settings_of(self, pid: str) -> dict[str, Any]:
         values = self.state["settings"].get(pid)
         return dict(values) if isinstance(values, dict) else {}
@@ -546,6 +566,7 @@ class PluginManager:
                "error": info.error or self.load_errors.get(pid), "file": info.path.name,
                "name": cls.NAME if cls else pid, "description": cls.DESCRIPTION if cls else "",
                "version": cls.VERSION if cls else "", "icon": cls.ICON if cls else "🧩", "tab": cls.TAB if cls else None,
+               "in_menu": pid in self.menu(),
                "author": cls.AUTHOR if cls else "", "intents": list(cls.INTENTS) if cls else [],
                "missing_intents": self.missing_intents(pid), "public": bool(cls and hasattr(cls, "web_public")),
                "public_path": (cls.PUBLIC_PATH or f"/p/{pid}") if cls and hasattr(cls, "web_public") else None,

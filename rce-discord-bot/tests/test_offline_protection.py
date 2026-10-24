@@ -295,8 +295,9 @@ def test_own_tab_in_the_control_panel(zp):
             assert (await c.delete("/api/protection/zones/9", headers=H)).status == 404
             assert (await c.delete("/api/protection/zones/5", headers=H)).status == 200
             assert zp.p.zone(5) is None and "TEST_REMOVE team_5" in zp.said
-            index = await (await c.get("/admin")).text()
-            assert 'data-view="protection" data-owner' in index
+            menu = (await (await c.get("/api/plugins/menu")).json())["menu"]
+            assert [m["id"] for m in menu] == ["offline_protection"]                     # in the menu by default
+            assert next(p for p in plugins if p["id"] == "offline_protection")["in_menu"]
         finally:
             await c.close()
             await zp.bot.rcon.close()

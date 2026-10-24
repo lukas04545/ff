@@ -7,7 +7,7 @@
 html:root:not([data-theme="light"]) {
   color-scheme: dark;
   /* group colours (menu panels), accents */
-  --tone-pink: #f472b6; --tone-violet: #a78bfa; --tone-teal: #2dd4bf; --tone-amber: #fbbf24;
+  --tone-pink: #f472b6; --tone-violet: #a78bfa; --tone-teal: #2dd4bf; --tone-amber: #fbbf24; --tone-green: #4ade80;
   --lime: #a3e635; --teal: #2dd4bf; --lavender: #c4b5fd; --sky: #93c5fd;
   --grad-main: linear-gradient(100deg, #f9a8d4, #c4b5fd 35%, #99f6e4 70%, #fde68a);
   --grad-edge: linear-gradient(180deg, var(--lime), var(--teal));
@@ -93,6 +93,7 @@ html:root:not([data-theme="light"]) .nav-group[data-tone="pink"] { --tone: var(-
 html:root:not([data-theme="light"]) .nav-group[data-tone="violet"] { --tone: var(--tone-violet); }
 html:root:not([data-theme="light"]) .nav-group[data-tone="teal"] { --tone: var(--tone-teal); }
 html:root:not([data-theme="light"]) .nav-group[data-tone="amber"] { --tone: var(--tone-amber); }
+html:root:not([data-theme="light"]) .nav-group[data-tone="green"] { --tone: var(--tone-green); }
 html:root:not([data-theme="light"]) .nav-label { color: var(--tone); }
 html:root:not([data-theme="light"]) .nav-label .gi { border-color: color-mix(in srgb, var(--tone) 40%, transparent);
   background: color-mix(in srgb, var(--tone) 10%, transparent); }

@@ -403,6 +403,8 @@ class WebInterface:
         r.add_post("/api/webshop/giftcards/{code}/toggle", self.webshop_giftcard_toggle)
         r.add_post("/api/webshop/orders/{order_id:\\d+}/retry", self.webshop_retry)
         r.add_get("/api/plugins", self.plugins_list)
+        r.add_get("/api/plugins/menu", self.plugins_menu)
+        r.add_put("/api/plugins/menu", self.plugins_menu_save)
         r.add_post("/api/plugins/upload", self.plugin_upload)
         r.add_post("/api/plugins/generate", self.plugin_generate)
         r.add_post("/api/plugins/{pid}/toggle", self.plugin_toggle)
@@ -859,6 +861,29 @@ class WebInterface:
                                   "kits": [k["name"] for k in self.bot.db.custom_kits()],
                                   "intents": {"members": self.bot.intents.members,
                                               "message_content": self.bot.intents.message_content}})
+
+    # Plugins in the control panel menu (sidebar), chosen by the owner
+
+    def _menu_items(self) -> list[dict]:
+        manager = self._plugins()
+        out = []
+        for pid in manager.menu():
+            info = manager.describe(pid)
+            out.append({"id": pid, "name": info["name"], "icon": info["icon"], "enabled": info["enabled"]})
+        return out
+
+    async def plugins_menu(self, request: web.Request) -> web.Response:
+        return web.json_response({"menu": self._menu_items()})
+
+    async def plugins_menu_save(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        manager = self._plugins()
+        try:
+            manager.set_menu(data.get("plugins"))
+        except Exception as exc:
+            raise ApiError(str(exc)) from None
+        self._audit("control panel menu: " + (", ".join(manager.menu()) or "no plugins"))
+        return web.json_response({"menu": self._menu_items()})
 
     # Offline protection zones have their own tab (plugins/offline_protection.py)
 
