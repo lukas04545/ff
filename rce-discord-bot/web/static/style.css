@@ -166,7 +166,7 @@ nav a .ico { width: 1.75rem; height: 1.75rem; border-radius: 8px; border: 1px so
 .top-title { display: grid; line-height: 1.15; min-width: 0; margin-right: .5rem; }
 .top-title .eyebrow { font-size: .66rem; }
 .top-h1 { font-size: 1.6rem; font-weight: 750; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-main > h1.in-topbar { display: none; }
+main h1.in-topbar { display: none; }
 main { counter-reset: section; }
 main > .card > h2.card-head::before, main > .card > .card-head > h2::before {
   counter-increment: section; content: counter(section, decimal-leading-zero); font-size: .66rem; font-weight: 750;
@@ -414,8 +414,13 @@ textarea.kb-output { font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, mon
   .server-card .eyebrow, .server-chip, .nav-head { display: none; }
   .nav-group { border: 0; padding: 0; background: none; }
   .nav-group.closed a { display: flex; }
-  .topbar { position: static; padding: .7rem 1rem; }
+  .topbar { position: static; padding: .7rem 1rem; gap: .55rem; }
   .top-title { width: 100%; margin: 0; }
+  .search-box { flex: 1 1 100%; min-width: 0; }
+  .search-box kbd { display: none; }
+  .search-box .search-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-chips { width: 100%; }
+  .chip { padding: .3rem .7rem; font-size: .82rem; }
   .top-h1 { font-size: 1.35rem; }
   nav a .ico { width: auto; height: auto; border: 0; }
   .search-box { max-width: none; }

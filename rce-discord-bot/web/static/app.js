@@ -210,7 +210,7 @@ function updateServerCard() {
 
 // The page title sits in the top bar (with a small label: the menu group), the page's own <h1> is hidden
 function eyebrow() {
-  const h1 = $("#main").querySelector(":scope > h1");
+  const h1 = $("#main").querySelector("h1");                 // the page's title (also inside a header row)
   const link = document.querySelector("#nav a.active");
   const group = link?.closest(".nav-group")?.dataset.name;
   const label = group ? (GROUP_EYEBROWS[group] || group) : "";

@@ -98,7 +98,7 @@ def _slot_rows(base: str, kit: str, slots: list[dict]) -> str:
 def account_page(site, shop, accounts, base: str, user_id: int, name: str, *, error: str = "",
                  ok: str = "") -> web.Response:
     kits = accounts.my_kits(user_id)
-    slot_price = shop.bot.config.store_slot_price
+    slot_price = shop.bot.config.store_slot_price if shop is not None else 0     # (no store set up: no buying)
     cards = []
     for kit in kits:
         tiles = site.item_tiles([(i["short"], i["amount"]) for i in kit["items"]])
@@ -114,15 +114,17 @@ def account_page(site, shop, accounts, base: str, user_id: int, name: str, *, er
                    f'<p class="days">{esc(shop.fmt(slot_price))} per slot per month.</p>'
                    f'<button class="pay" type="submit">Checkout</button></form></details>')
         add = (f'<a class="ghost" href="{base}/account/additems?kit={quote(kit["name"])}" '
-               'style="display:inline-block;margin-top:8px">Add items</a>') if shop.builder_problem() is None else ""
+               'style="display:inline-block;margin-top:8px">Add items</a>') \
+            if shop is not None and shop.builder_problem() is None else ""
         cards.append(f'<div class="card"><div class="kit-head"><h2>{esc(kit["name"])}</h2>{add}</div>{tiles}'
                      f'<h3 style="margin:14px 0 4px">Team slots</h3>{slots_html}{buy}</div>')
     head = (notice(error, "bad") + notice(ok, "ok")
             + f'<div class="card"><div class="kit-head"><div>Logged in as <b>{esc(name)}</b></div>'
             f'<form method="post" action="{base}/account/logout"><button class="ghost" type="submit">Log out'
             '</button></form></div></div>')
+    store_hint = (' Buy one in the <a href="' + base + '/store">store</a> or build your own.') if shop is not None else ""
     body = head + ("".join(cards) if cards else '<div class="card"><p class="muted">You don\'t own any custom kits '
-                   'yet. Buy one in the <a href="' + base + '/store">store</a> or build your own.</p></div>')
+                   'yet.' + store_hint + '</p></div>')
     return _resp(site, base, "account", "My account", body)
 
 
