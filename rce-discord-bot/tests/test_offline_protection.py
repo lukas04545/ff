@@ -308,3 +308,60 @@ def test_own_tab_in_the_control_panel(zp):
             await c.close()
             await zp.bot.rcon.close()
     asyncio.run(main())
+
+
+def test_ticket_ai_places_the_zone_for_a_player_who_struggles(zp):
+    """Support AI tools: only the ticket owner's own team, only the leader, only while online (his position)."""
+    import json
+    from types import SimpleNamespace as NS
+
+    from cogs.custom_kits import CustomKits
+    from cogs.tickets import PROTECTION_TOOLS, Tickets
+    configure(zp)
+    db = zp.db
+    db.link_player(7, "Lead")
+    db.link_player(8, "Mate")
+    members = {7: NS(id=7, roles=[]), 8: NS(id=8, roles=[])}
+    posted = []
+
+    async def send(content=None, **kw):
+        posted.append(content)
+    channel = NS(id=100, guild=NS(id=1, get_member=members.get), send=send)
+
+    async def add():
+        await zp.bot.add_cog(CustomKits(zp.bot))
+        t = Tickets(zp.bot)
+        await zp.bot.add_cog(t)
+        return t
+    tickets = asyncio.run(add())
+    assert all(t in tickets._ai_tools() for t in PROTECTION_TOOLS)
+
+    def call(name, user_id):
+        tid = db.create_ticket(user_id, "I can't place my offline protection zone", None)
+        call = {"id": "1", "function": {"name": name, "arguments": "{}"}}
+        return asyncio.run(tickets._run_tool(call, db.ticket(tid), channel))
+
+    status = call("get_my_protection_zone", 7)
+    assert status["is_leader"] and status["online"] and status["zone"] is None and status["members"] == ["Lead", "Mate"]
+    assert "Can I build" in status["how_to_place_in_game"]
+    r = call("place_protection_zone", 8)                                     # a member, not the leader
+    assert not r["ok"] and r["result"] == "not_leader" and zp.p.zone(5) is None
+    zp.bot.online_players = {"Mate": {}}
+    r = call("place_protection_zone", 7)                                     # leader offline: can't read position
+    assert not r["ok"] and r["result"] == "offline"
+    zp.bot.online_players = {"Lead": {}, "Mate": {}}
+    zp.said.clear()
+    r = call("place_protection_zone", 7)
+    assert r["ok"] and r["result"] == "placed" and zp.p.zone(5)["x"] == 123.5
+    assert 'TEST_POS "Lead"' in zp.said and any(c.startswith("TEST_CREATE team_5") for c in zp.said)
+    assert "placed at their current position" in posted[-1]                   # visible in the ticket
+    assert call("place_protection_zone", 7)["result"] == "moved"
+    assert call("get_my_protection_zone", 8)["zone"]["name"] == "team_5"
+    tickets_text = json.dumps(PROTECTION_TOOLS)
+    assert "CURRENT in-game position" in tickets_text
+    from support.prompt import build_system_prompt
+    prompt = build_system_prompt(server_name="S", topic="zone", ingame_name=None, status="", knowledge="",
+                                 kit_tools=True, protection_tools=True)
+    assert "place_protection_zone" in prompt and "standing in the middle of their base" in prompt
+    assert "place_protection_zone" not in build_system_prompt(server_name="S", topic="x", ingame_name=None,
+                                                              status="", knowledge="", kit_tools=True)

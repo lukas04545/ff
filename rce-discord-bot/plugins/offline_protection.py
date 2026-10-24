@@ -269,24 +269,29 @@ class OfflineProtection(Plugin):
 
     async def place(self, player: str) -> str:
         """The player asked to place his team's zone at his position. Returns what happened (also told in-game)."""
-        team = self.bot.db.team_of(player) or await self._look_up_team(player)
-        if team is None:
-            msg = "you need to be in a team to place a protection zone."
-        elif not team[0]["leader"]:
-            msg = "your team's leader isn't known yet – try again in a few minutes."
-        elif (team[0]["leader"] or "").lower() != player.lower():
-            msg = "only your team leader can place the protection zone."
-        else:
-            msg = await self._place_for_leader(player, int(team[0]["team_id"]), team[1])
+        _, msg = await self._place(player, via="quick chat")
         await self._tell(player, msg)
         return msg
 
-    async def _place_for_leader(self, leader: str, team_id: int, members: list[str]) -> str:
+    async def _place(self, player: str, *, via: str) -> tuple[str, str]:
+        """Places the zone of `player`'s team at his position – only if he leads the team. -> (code, message);
+        codes: placed, moved, no_team, leader_unknown, not_leader, not_set_up, no_position, failed."""
+        team = self.bot.db.team_of(player) or await self._look_up_team(player)
+        if team is None:
+            return "no_team", "you need to be in a team to place a protection zone."
+        if not team[0]["leader"]:
+            return "leader_unknown", "your team's leader isn't known yet – try again in a few minutes."
+        if (team[0]["leader"] or "").lower() != player.lower():
+            return "not_leader", "only your team leader can place the protection zone."
+        return await self._place_for_leader(player, int(team[0]["team_id"]), team[1], via=via)
+
+    async def _place_for_leader(self, leader: str, team_id: int, members: list[str], *,
+                                via: str = "quick chat") -> tuple[str, str]:
         if not all(str(self.setting(k) or "").strip() for k in ("position_command", "create_command")):
-            return "protection zones aren't set up yet – tell an admin."
+            return "not_set_up", "protection zones aren't set up yet – tell an admin."
         position = await self._position(leader)
         if position is None:
-            return "couldn't read your position – try again in a moment."
+            return "no_position", "couldn't read your position – try again in a moment."
         old = self.zone(team_id)
         if old is not None:
             await self._run("remove_command", self._vars(old))
@@ -294,12 +299,55 @@ class OfflineProtection(Plugin):
         zone = {"team": team_id, "name": f"{self.setting('zone_prefix')}{team_id}", "leader": leader,
                 "x": x, "y": y, "z": z, "state": "", "offline_since": None, "placed": int(time.time())}
         if not await self._run("create_command", self._vars(zone)):
-            return "the zone couldn't be created – tell an admin."
+            return "failed", "the zone couldn't be created – tell an admin."
         self._save(team_id, zone)
-        self.audit(f"{leader} placed the offline protection zone of team {team_id} at {x:.0f} {y:.0f} {z:.0f}")
+        self.audit(f"{leader} placed the offline protection zone of team {team_id} at {x:.0f} {y:.0f} {z:.0f} "
+                   f"({via})")
         await self._update(team_id)
-        moved = " (moved)" if old is not None else ""
-        return f"your team's protection zone is placed here{moved}."
+        if old is not None:
+            return "moved", "your team's protection zone is placed here (moved)."
+        return "placed", "your team's protection zone is placed here."
+
+    # ------------------------------------------------------------ For the ticket AI (players who struggle)
+
+    def _online_name(self, player: str) -> str | None:
+        return next((n for n in self.bot.online_players if n.lower() == (player or "").lower()), None)
+
+    async def zone_status(self, player: str) -> dict:
+        """The player's team and its zone – what the support AI needs to help."""
+        team = self.bot.db.team_of(player) or await self._look_up_team(player)
+        out = {"player": player, "online": self._online_name(player) is not None,
+               "how_to_place_in_game": 'The team leader stands at the base and sends the quick chats "Can I build '
+                                       f'here?" and then "Yes" within {self.setting("confirm_seconds")} seconds.',
+               "offline_minutes_before_red": self.setting("offline_minutes"),
+               "deleted_after_hours_offline": self.setting("expire_hours") or None}
+        if team is None:
+            return {**out, "team": None, "note": "Not in a team – only teams get a protection zone."}
+        leader = team[0]["leader"] or None
+        zone = self.zone(int(team[0]["team_id"]))
+        out.update(team=int(team[0]["team_id"]), leader=leader, members=list(team[1]),
+                   is_leader=bool(leader) and leader.lower() == player.lower())
+        if zone is None:
+            out["zone"] = None
+        else:
+            expires = self.expires_at(zone)
+            out["zone"] = {"name": zone["name"], "status": zone["state"] or "green",
+                           "position": [round(zone["x"]), round(zone["y"]), round(zone["z"])],
+                           "placed_discord": f"<t:{zone['placed']}:R>" if zone.get("placed") else None,
+                           "deleted_discord": f"<t:{int(expires)}:R>" if expires else None}
+        return out
+
+    async def place_for_support(self, player: str, via: str) -> dict:
+        """The support AI places the zone for a player who can't manage the quick chats: same rules as in-game
+        (only the team leader, at his current position, so he must be online at his base)."""
+        online = self._online_name(player)
+        if online is None:
+            return {"ok": False, "result": "offline",
+                    "message": f"{player} isn't online – join the server and stand at your base first."}
+        code, msg = await self._place(online, via=via)
+        if code in ("placed", "moved"):
+            await self._tell(online, msg)
+        return {"ok": code in ("placed", "moved"), "result": code, "message": msg}
 
     async def _position(self, player: str) -> tuple[float, float, float] | None:
         name = sanitize_player_name(player)
