@@ -622,3 +622,83 @@ def test_store_kit_categories(shop, monkeypatch):
             await c.close()
             await bot.rcon.close()
     asyncio.run(main())
+
+
+def test_nuke_for_real_money_drops_on_discord(shop, monkeypatch):
+    """A nuke bought in the web store (here with a gift card) drops in the nuke channel; everyone but the buyer
+    claims the set points once."""
+    from cogs.economy import Economy
+    from cogs.webshop import CheckoutError
+    from plugin_api import Plugin
+    from plugin_manager import PluginManager
+    bot, db, s = shop.env.bot, shop.db, shop.s
+
+    async def no_loop(self):
+        return None
+    monkeypatch.setattr(Economy, "cog_load", no_loop)
+    run(bot.add_cog(Economy(bot)))
+    with pytest.raises(CheckoutError, match="aren't for sale"):
+        run(s.checkout("nuke", base_url="https://x", player="Gamer7"))
+    bot.config = replace(bot.config, store_nuke_price=4.99, store_nuke_points=50, store_nuke_claims=2,
+                         store_nuke_channel_id=42, web_password="secret123")
+    posted = []
+
+    class Message:
+        def __init__(self, embed, view):
+            self.id, self.embed, self.view = 555, embed, view
+
+        async def edit(self, embed=None, view=None):
+            self.embed, self.view = embed, view
+
+    class Channel:
+        id, name, mention = 42, "nukes", "#nukes"
+
+        async def send(self, embed=None, view=None, allowed_mentions=None):
+            assert not allowed_mentions.everyone
+            posted.append(Message(embed, view))
+            return posted[-1]
+    monkeypatch.setattr(bot, "get_channel", lambda cid: Channel() if cid == 42 else None)
+    with pytest.raises(CheckoutError, match="isn't linked"):
+        run(s.checkout("nuke", base_url="https://x", player="Nobody"))
+    r = run(s.checkout("nuke", base_url="https://x", player="Gamer7"))              # PayPal first
+    order = db.store_order_by("token", r["token"])
+    assert "redirect" in r and order["total"] == 4.99 and order["title"] == "💣 Nuke – 50 points for the first 2 members"
+    code = s.create_gift_cards(10, 1, "owner")[0]
+    r = run(s.checkout("nuke", base_url="https://x", player="Gamer7", gift_code=code))
+    order = db.store_order_by("token", r["token"])
+    assert order["status"] == "delivered" and order["result"] == "Nuke dropped in #nukes"
+    assert len(posted) == 1 and "<@7>" in posted[0].embed.description and "50" in posted[0].embed.description
+    assert any("nuke dropped" in (d or "") for d in shop.dms)
+    eco = bot.get_cog("Economy")
+    drop = db.nuke_by_message(555)
+    assert db.claim_nuke(drop["id"], 7) == "own" and db.claim_nuke(drop["id"], 8) == "ok"
+    assert db.wallet(8)["points"] == 50 and eco is not None
+
+    # the website: a Nukes tab and page; a failed drop is paid but "failed" (staff retry it)
+    monkeypatch.setattr(Plugin, "_loops", lambda self: [])
+
+    async def main():
+        from web.server import WebInterface
+        bot.plugins = PluginManager(bot)
+        await bot.plugins.load_all()
+        await bot.plugins.set_enabled("website", True)
+        tmp = bot.config.database_path.parent
+        web = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            page = await (await c.get("/store/nukes")).text()
+            assert 'href="/store/nukes"' in page and "4.99" in page and 'value="nuke"' in page
+            assert "the first <b>2</b> members" in page
+            r = await c.post("/store/checkout", data={"kind": "nuke", "player": "Nobody"})
+            assert r.status == 400 and "Nuke" in await r.text()
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    run(main())
+    monkeypatch.setattr(bot, "get_channel", lambda cid: None)
+    bot.config = replace(bot.config, guild_id=None)
+    monkeypatch.setattr(eco, "guild", lambda: None)
+    r = run(s.checkout("nuke", base_url="https://x", player="Gamer7", gift_code=code))
+    order = db.store_order_by("token", r["token"])
+    assert order["status"] == "failed" and "no channel for nukes" in order["result"]

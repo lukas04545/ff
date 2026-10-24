@@ -136,6 +136,8 @@ def store_tabs(base: str, active: str, shop, admin: bool = False) -> str:
     tabs = [("store", "Kits")]
     if shop.builder_problem() is None:
         tabs.append(("store/build", "Build your own"))
+    if shop.bot.config.store_nuke_price > 0 and shop.bot.config.economy_enabled:
+        tabs.append(("store/nukes", "💣 Nukes"))
     tabs.append(("store/giftcards", "Gift cards"))
     if len(tabs) == 1:
         return ""
@@ -299,6 +301,26 @@ def giftcards_page(site, shop, base: str, query, ip: str, error: str = "", admin
     return wrap(site, shop, base, "store/giftcards", "Gift cards", body, admin)
 
 
+def nukes_page(site, shop, base: str, error: str = "", form: dict | None = None, admin: bool = False) -> str:
+    cfg = shop.bot.config
+    if cfg.store_nuke_price <= 0 or not cfg.economy_enabled:
+        return wrap(site, shop, base, "store/nukes", "Nukes", '<p class="muted">Nukes aren\'t for sale right now.</p>',
+                    admin)
+    who = f"the first <b>{cfg.store_nuke_claims}</b> members" if cfg.store_nuke_claims else "<b>everyone</b>"
+    pts = esc(f"{cfg.store_nuke_points:,} {cfg.points_name}".replace(",", " "))
+    body = notice(error, "bad")
+    body += (f'<div class="card"><h2>💣 Nuke</h2><div class="price">{esc(shop.fmt(cfg.store_nuke_price))}</div>'
+             f'<p>Drop a nuke on our Discord: a message with a <b>Claim</b> button appears and {who} on the '
+             f'Discord to press it get <b>{pts}</b> each – for 24 hours. Your name is on it; you can\'t claim your '
+             f'own nuke.</p>')
+    if shop.paypal or admin:
+        body += (f'<form method="post" action="{base}/store/checkout"><input type="hidden" name="kind" value="nuke">'
+                 f'{buyer_fields(values=form, admin=admin)}{pay_button(admin)}</form>')
+    else:
+        body += '<p class="muted">Online payment isn\'t set up yet.</p>'
+    return wrap(site, shop, base, "store/nukes", "Nukes", body + "</div>", admin)
+
+
 def order_page(site, shop, base: str, order) -> str:
     if order is None:
         return wrap(site, shop, base, "", "Order", '<p class="muted">Order not found.</p>')
@@ -317,7 +339,9 @@ def order_page(site, shop, base: str, order) -> str:
              f'<span class="muted">({esc(" + ".join(pay))})</span></p>'
              + (f'<p>For: <b>{esc(order["player"])}</b></p>' if order["player"] else ""))
     if order["status"] == "delivered":
-        if order["kind"] == "giftcard":
+        if order["kind"] == "nuke":
+            body += '<p>💣 Your nuke dropped on our Discord – everyone can claim it now.</p>'
+        elif order["kind"] == "giftcard":
             code = (order["result"] or "").removeprefix("Gift card ").strip()
             body += (f'<p>Your gift card code:</p><p class="code">{esc(code)}</p><p class="muted">Save it now – '
                      f'whoever has the code can use it. Check its balance any time under Gift cards.</p>')
@@ -379,6 +403,8 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
                 return 400, build_page(site, shop, base, values, str(exc), admin)
             if kind == "giftcard":
                 return 400, giftcards_page(site, shop, base, {}, ip, str(exc), admin)
+            if kind == "nuke":
+                return 400, nukes_page(site, shop, base, str(exc), values, admin)
             return 400, kits_page(site, shop, base, str(exc), values, admin)
         raise web.HTTPSeeOther(result.get("redirect") or f"{base}/store/order/{result['token']}")
     admin = admin_on and query.get("admin") == "1"
@@ -388,6 +414,8 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
         return 200, build_page(site, shop, base, query, admin=admin)
     if sub == "giftcards":
         return 200, giftcards_page(site, shop, base, query, ip, admin=admin)
+    if sub == "nukes":
+        return 200, nukes_page(site, shop, base, admin=admin)
     if sub in ("return", "cancel"):
         token = str(query.get("o", ""))[:64]
         order = await (shop.complete(token) if sub == "return" else shop.cancel(token))
