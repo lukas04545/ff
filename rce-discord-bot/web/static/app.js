@@ -143,6 +143,7 @@ const ICONS = {
   knowledge: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7"/>',
   stats: '<path d="M4 20V11M10 20V4M16 20v-7M2 20h20"/>',
   community: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M18 3l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/>',
+  protection: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v5l3 2"/>',
   plugins: '<path d="M10 3h4v3a2 2 0 1 0 4 0V3h3v7h-3a2 2 0 1 0 0 4h3v7h-7v-3a2 2 0 1 0-4 0v3H3v-7h3a2 2 0 1 0 0-4H3V3z"/>',
   makeplugin: '<path d="M4 20L15 9"/><path d="M15 3v3M18 6h3M19 10v2M17 4l2 2"/>',
   users2: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 6"/>',
@@ -317,7 +318,7 @@ function route() {
   updateNavCounts();
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && ["settings", "users", "plugins", "makeplugin", "webstore"].includes(view)) {
+  if (!isOwner() && ["settings", "users", "plugins", "makeplugin", "webstore", "protection"].includes(view)) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
@@ -2365,7 +2366,7 @@ function pluginControl(f, opts, kits, inputs, p, reload) {
   return el;
 }
 
-function pluginCard(p, opts, kits, reload) {
+function pluginCard(p, opts, kits, reload, { tab = false } = {}) {
   const inputs = {}, rows = {};
   const pill = p.error ? h("span", { class: "pill bad keep", text: "error" })
     : !p.enabled ? h("span", { class: "pill keep", text: "off" })
@@ -2442,7 +2443,7 @@ function pluginCard(p, opts, kits, reload) {
       if (!confirm(q)) return;
       await act(() => api(`/api/plugins/${p.id}`, { method: "DELETE" }), p.overrides ? "Back to the built-in" : "Plugin deleted"); reload();
     } }));
-  card.append(foot);
+  if (!tab) card.append(foot);                       // a feature with its own tab: no file / reload line
   return card;
 }
 
@@ -2538,11 +2539,49 @@ views.plugins = async (main) => {
   const reload = async () => {
     try {
       const r = await api("/api/plugins");
-      list.replaceChildren(...r.plugins.map((p) => pluginCard(p, opts, r.kits, reload)), pluginCreateLink());
+      list.replaceChildren(...r.plugins.filter((p) => !p.tab).map((p) => pluginCard(p, opts, r.kits, reload)), pluginCreateLink());
     } catch (e) { list.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
   };
   reload();
 };
+
+// Offline protection zones (plugins/offline_protection.py) – a feature with its own tab
+views.protection = async (main) => {
+  main.append(h("h1", { text: "Offline protection" }),
+    h("p", { class: "muted", text: "Team leaders place their base's zone in-game with the quick chats \"Can I build here?\" + \"Yes\". The zone turns red (no building damage) while the whole team is offline and green the moment someone is back. Zones are deleted after the set time with nobody of the team online." }));
+  const box = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  main.append(box);
+  const opts = await api("/api/settings/discord-options").catch(() => ({ available: false }));
+  const reload = async () => {
+    try {
+      const r = await api("/api/protection");
+      box.replaceChildren(protectionZones(r, reload), pluginCard(r.plugin, opts, r.kits, reload, { tab: true }));
+    } catch (e) { box.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
+  };
+  reload();
+};
+
+function protectionZones(r, reload) {
+  const card = h("div", { class: "card" }, h("h2", { text: `🗺️ Zones (${r.zones.length})` }));
+  if (!r.plugin.running) { card.append(h("p", { class: "muted", text: "Switch offline protection on to see and manage the zones." })); return card; }
+  if (!r.zones.length) { card.append(h("p", { class: "muted", text: "No zones yet – a team leader places one in-game." })); return card; }
+  const now = r.now, fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "–";
+  card.append(h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, ["Zone", "Leader", "Team", "Status", "Offline since", "Deleted at", "Position", ""].map((t) => h("th", { text: t })))),
+    h("tbody", {}, r.zones.map((z) => h("tr", {},
+      h("td", {}, h("code", { text: z.name })),
+      h("td", { text: z.leader }),
+      h("td", { class: "muted", text: z.members.length ? z.members.join(", ") : "–" }),
+      h("td", {}, h("span", { class: `pill keep ${z.state === "red" ? "bad" : "ok"}`, text: z.state === "red" ? "🔴 red – offline" : "🟢 green" })),
+      h("td", { class: "muted", text: z.offline_since ? `${fmt(z.offline_since)} (${fmtDuration(now - z.offline_since)} ago)` : "someone is online" }),
+      h("td", { text: z.expires_at ? `${fmt(z.expires_at)} (in ${fmtDuration(Math.max(0, z.expires_at - now))})` : z.offline_since ? "never" : "–" }),
+      h("td", { class: "muted", text: `${Math.round(z.x)} ${Math.round(z.y)} ${Math.round(z.z)}` }),
+      h("td", {}, h("button", { class: "small danger", text: "Delete", onclick: async () => {
+        if (!confirm(`Delete the zone ${z.name} of ${z.leader}'s team on the server? The leader can place a new one.`)) return;
+        await act(() => api(`/api/protection/zones/${z.team}`, { method: "DELETE" }), "Zone deleted"); reload();
+      } }))))))));
+  return card;
+}
 
 views.makeplugin = async (main) => {
   main.append(h("h1", { text: "Create a plugin" }),

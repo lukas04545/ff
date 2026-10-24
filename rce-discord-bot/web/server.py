@@ -77,7 +77,7 @@ CSRF_HEADER = "X-Requested-With"
 # First path segments that are never a page of the player website (it lives at the site root)
 ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
-                       "/api/plugins", "/api/webshop", "/api/item-images")
+                       "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -409,6 +409,8 @@ class WebInterface:
         r.add_put("/api/plugins/{pid}/settings", self.plugin_settings)
         r.add_post("/api/plugins/{pid}/reload", self.plugin_reload)
         r.add_delete("/api/plugins/{pid}", self.plugin_delete)
+        r.add_get("/api/protection", self.protection_get)
+        r.add_delete("/api/protection/zones/{team}", self.protection_delete_zone)
         r.add_get("/api/plugins/{pid}/file/{key}", self.plugin_file_get)
         r.add_post("/api/plugins/{pid}/file/{key}", self.plugin_file_upload)
         r.add_delete("/api/plugins/{pid}/file/{key}", self.plugin_file_delete)
@@ -857,6 +859,30 @@ class WebInterface:
                                   "kits": [k["name"] for k in self.bot.db.custom_kits()],
                                   "intents": {"members": self.bot.intents.members,
                                               "message_content": self.bot.intents.message_content}})
+
+    # Offline protection zones have their own tab (plugins/offline_protection.py)
+
+    async def protection_get(self, request: web.Request) -> web.Response:
+        manager = self._plugins()
+        if "offline_protection" not in manager.infos:
+            raise ApiError("Offline protection isn't installed.", 404)
+        plugin = manager.running("offline_protection")
+        return web.json_response({"plugin": manager.describe("offline_protection"),
+                                  "zones": plugin.zone_list() if plugin is not None else [],
+                                  "kits": [k["name"] for k in self.bot.db.custom_kits()], "now": time.time()})
+
+    async def protection_delete_zone(self, request: web.Request) -> web.Response:
+        plugin = self._plugins().running("offline_protection")
+        if plugin is None:
+            raise ApiError("Switch offline protection on first.")
+        try:
+            team_id = int(request.match_info["team"])
+        except ValueError:
+            raise ApiError("Unknown team.") from None
+        if not await plugin.remove_zone(team_id, "deleted in the control panel"):
+            raise ApiError("This team has no zone.", 404)
+        self._audit(f"offline protection zone of team {team_id} deleted")
+        return web.json_response({"ok": True})
 
     async def plugin_toggle(self, request: web.Request) -> web.Response:
         data = await self._json(request)

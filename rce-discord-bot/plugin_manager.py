@@ -545,7 +545,7 @@ class PluginManager:
                "running": plugin is not None,
                "error": info.error or self.load_errors.get(pid), "file": info.path.name,
                "name": cls.NAME if cls else pid, "description": cls.DESCRIPTION if cls else "",
-               "version": cls.VERSION if cls else "", "icon": cls.ICON if cls else "🧩",
+               "version": cls.VERSION if cls else "", "icon": cls.ICON if cls else "🧩", "tab": cls.TAB if cls else None,
                "author": cls.AUTHOR if cls else "", "intents": list(cls.INTENTS) if cls else [],
                "missing_intents": self.missing_intents(pid), "public": bool(cls and hasattr(cls, "web_public")),
                "public_path": (cls.PUBLIC_PATH or f"/p/{pid}") if cls and hasattr(cls, "web_public") else None,
