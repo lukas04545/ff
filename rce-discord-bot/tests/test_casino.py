@@ -540,3 +540,92 @@ def test_plinko_on_discord(casino_env, monkeypatch):
     o4 = interaction()
     asyncio.run(casino.discord_plinko(o4.it, 10, 1, "low", 8))
     assert "switched off" in o4.ephemeral[0]
+
+
+def _fake_interaction(user_id=7):
+    from types import SimpleNamespace as NS
+    out = NS(ephemeral=[], sent=[], edits=[], responded=[], deferred=False)
+
+    async def send_message(text=None, ephemeral=False, embed=None, file=None, view=None):
+        (out.ephemeral if ephemeral else out.responded).append(text if ephemeral else (embed, file, view))
+
+    async def edit_message(embed=None, attachments=None, view=None):
+        out.edits.append((embed, attachments, view))
+
+    async def defer(thinking=False):
+        out.deferred = True
+
+    class Msg:
+        async def edit(self, embed=None, view=None):
+            out.edits.append((embed, None, view))
+
+    async def followup_send(embed=None, file=None, wait=False):
+        out.sent.append((embed, file))
+        return Msg()
+    out.it = NS(user=NS(id=user_id, display_name="Gamer7"),
+                response=NS(send_message=send_message, defer=defer, edit_message=edit_message),
+                followup=NS(send=followup_send))
+    return out
+
+
+def test_quick_games_on_discord(casino_env, monkeypatch):
+    """/slots, /coinflip, /dice, /roulette: the bet is settled, an animated GIF, then the result + Play again."""
+    import io
+
+    from PIL import Image
+
+    import plugins.casino as cm
+    casino = casino_env.m.running("casino")
+
+    async def no_sleep(seconds):
+        return None
+    monkeypatch.setattr(cm.asyncio, "sleep", no_sleep)
+    for game, choice, word in (("slots", (), "bet 10 points"), ("coinflip", ("tails",), "on **Tails**"),
+                               ("dice", (30,), "30 % chance (pays 3.17×)"), ("roulette", ("red", None), "on **Red**")):
+        before, paid_before = casino.balance(7), (casino.data.get(f"stats:{game}") or {}).get("paid", 0)
+        o = _fake_interaction()
+        asyncio.run(casino.discord_quick(o.it, game, 10, *choice))
+        embed, file = o.sent[0]
+        assert o.deferred and file.filename == "game.gif" and word in embed.description, game
+        gif = Image.open(io.BytesIO(file.fp.read()))
+        assert gif.format == "GIF" and gif.n_frames > 30 and "loop" not in gif.info, game     # plays once
+        final, _, view = o.edits[0]
+        paid = casino.data.get(f"stats:{game}")["paid"] - paid_before
+        assert casino.balance(7) == before - 10 + paid, game
+        assert "Balance:" in final.footer.text and isinstance(view, cm.PlayAgain) and view.game == game
+        assert ("won" in final.description) == (paid > 10), game
+    o = _fake_interaction()
+    asyncio.run(casino.discord_quick(o.it, "roulette", 10, "number", None))
+    assert "Pick a number" in o.ephemeral[0] and not o.sent
+    o = _fake_interaction()
+    asyncio.run(casino.discord_quick(o.it, "slots", 5))
+    assert "between" in o.ephemeral[0]
+    asyncio.run(casino_env.m.save_settings("casino", {"discord_games": False}))
+    o = _fake_interaction()
+    asyncio.run(casino.discord_quick(o.it, "dice", 10, 50))
+    assert "switched off" in o.ephemeral[0]
+
+
+def test_blackjack_on_discord_with_buttons(casino_env, monkeypatch):
+    casino = casino_env.m.running("casino")
+    order = [card("10"), card("6"), card("10"), card("7"), card("5")]           # 16 vs 17, then a 5 → 21
+    monkeypatch.setattr(g, "new_shoe", lambda rng=None: list(reversed(order)))
+    o = _fake_interaction()
+    asyncio.run(casino.blackjack_command.callback(casino, o.it, 100))
+    embed, file, view = o.responded[0]
+    labels = [b.label for b in view.children]
+    assert labels == ["Hit", "Stand", "Double"] and file.filename == "table.png"
+    assert "Your move: Hit, Stand, Double" in embed.description and casino.balance(7) == 900
+    o2 = _fake_interaction()
+    asyncio.run(casino.blackjack_command.callback(casino, o2.it, 50))            # unfinished: shows the same hand
+    assert "unfinished" in o2.responded[0][0].description and casino.balance(7) == 900
+    stranger = _fake_interaction(8)
+    assert asyncio.run(view.interaction_check(stranger.it)) is False
+    o3 = _fake_interaction()
+    asyncio.run(view.children[2].callback(o3.it))                               # Double: 16 + 5 = 21 vs 17
+    embed, files, view2 = o3.edits[0]
+    assert "**Win**" in embed.description and "won" in embed.description and files[0].filename == "table.png"
+    assert casino.balance(7) == 900 - 100 + 400 and [b.label for b in view2.children] == ["Deal again"]
+    o4 = _fake_interaction()
+    asyncio.run(view.children[0].callback(o4.it))                               # old button: refused
+    assert "no hand running" in o4.ephemeral[0]
