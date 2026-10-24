@@ -236,26 +236,26 @@ def test_admin_accounts(bot):
     run(bot, scenario)
 
 
-def test_neon_theme_files(bot):
-    """The neon look (neon.css + animated background bg.js) is served and loaded by the page; light mode is left alone."""
+def test_dark_theme_files(bot):
+    """The dark "command centre" look (neon.css) is loaded after the base theme; light mode is left alone; the
+    menu groups, server card, top bar search and the Ctrl K search are on the page."""
     async def scenario(c):
         page = await (await c.get("/admin")).text()
-        assert "/static/neon.css" in page and "/static/bg.js" in page
-        assert page.index("/static/style.css") < page.index("/static/neon.css")      # neon overrides the base theme
+        assert "/static/neon.css" in page and "/static/bg.js" not in page            # no canvas background any more
+        assert page.index("/static/style.css") < page.index("/static/neon.css")      # it overrides the base theme
+        for part in ('server-card', 'id="srv-chip"', 'data-tone="pink"', 'data-tone="amber"',
+                     'id="search-open"', "Ctrl K", 'id="palette"', 'id="chip-players"'):
+            assert part in page, part
         css = await c.get("/static/neon.css")
         text = await css.text()
-        assert css.status == 200 and "--neon: #ff7a1a" in text and "@keyframes border-spin" in text
-        # every rule is scoped to "not light", so the light theme keeps its look
-        assert ':not([data-theme="light"])' in text and ':root[data-theme="light"] #bg { display: none; }' in text
-        assert "prefers-reduced-motion: reduce" in text                              # calm mode switches animations off
-        assert "--line-a: #00f0ff" in text and "mask-composite: exclude" in text      # animated cyan outlines
-        js = await c.get("/static/bg.js")
-        src = await js.text()
-        assert js.status == 200 and 'canvas.id = "bg"' in src
-        assert "visibilitychange" in src and "prefers-reduced-motion" in src and "requestAnimationFrame" in src
-        assert "buildLayers" in src and "sprites[" in src                             # cached layers, ember sprites
+        assert css.status == 200 and "--grad-main" in text and ".nav-group[data-tone=\"teal\"]" in text
+        assert ':not([data-theme="light"])' in text                                  # scoped: light theme untouched
+        assert "prefers-reduced-motion: reduce" in text and 'html[data-motion="off"]' in text
+        assert "backdrop-filter" not in text                                         # nothing expensive to draw
+        assert (await c.get("/static/bg.js")).status == 404
         app = await (await c.get("/static/app.js")).text()
-        assert 'THEME_NAMES = { dark: "neon", light: "light" }' in app                # theme button: neon <-> light
+        assert 'THEME_NAMES = { dark: "dark", light: "light" }' in app
+        assert "openPalette" in app and 'e.key.toLowerCase() === "k"' in app          # Ctrl K search
     run(bot, scenario)
 
 

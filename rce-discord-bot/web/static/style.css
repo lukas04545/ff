@@ -113,6 +113,55 @@ nav a.active::before { content: ""; position: absolute; left: -.8rem; top: .45re
 main { padding: 2rem 2.25rem 3rem; max-width: 1280px; width: 100%; animation: fade-in .22s ease-out; }
 @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
+/* ------------------------------------------------------------ Server card, group panels, top bar, search */
+.content { min-width: 0; display: flex; flex-direction: column; }
+.content > main { flex: 1; }
+.server-card { border: 1px solid var(--border); border-radius: var(--radius); padding: .7rem .75rem; background: var(--panel); }
+.brand-text .eyebrow, .eyebrow { font-size: .62rem; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.server-chip { display: flex; align-items: center; gap: .55rem; margin: .55rem 0 .2rem; padding: .5rem .7rem; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--panel-2); font-size: .88rem; }
+.server-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+.server-chip.ok .dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.server-chip.bad .dot { background: var(--bad); }
+.server-chip #srv-chip-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.server-chip .badge { font-size: .72rem; font-weight: 700; padding: .05rem .45rem; border-radius: 6px; background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
+.nav-head { display: flex; justify-content: space-between; font-size: .64rem; font-weight: 750; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted); padding: .8rem .2rem .45rem; }
+.nav-group { border: 1px solid var(--border); border-radius: var(--radius); padding: .35rem .35rem .45rem; background: var(--panel); }
+.nav-label { display: flex; align-items: center; gap: .5rem; width: 100%; padding: .4rem .45rem .5rem; cursor: pointer; user-select: none;
+  background: none; border: 0; font: inherit; font-size: .7rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); text-align: left; }
+.nav-label .gi { width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border-radius: 7px; border: 1px solid var(--border); font-size: .8rem; flex: none; letter-spacing: 0; }
+.nav-label .count { margin-left: auto; font-weight: 600; color: var(--faint); letter-spacing: 0; }
+.nav-label .chev { transition: transform .2s; font-style: normal; color: var(--faint); }
+.nav-group.closed .chev { transform: rotate(180deg); }
+.nav-group.closed a { display: none; }
+.nav-group.closed .nav-label { padding-bottom: .4rem; }
+nav a { border: 1px solid transparent; }
+.topbar { position: sticky; top: 0; z-index: 15; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+  padding: .9rem 2.25rem; background: color-mix(in srgb, var(--bg) 88%, transparent); border-bottom: 1px solid var(--border); }
+.search-box { display: flex; align-items: center; gap: .6rem; flex: 1; max-width: 460px; min-width: 200px; padding: .55rem .8rem;
+  border: 1px solid var(--border-strong); border-radius: 12px; background: var(--input); color: var(--muted); cursor: text; font: inherit; text-align: left; }
+.search-box .search-icon { font-size: 1.05rem; }
+.search-box .search-text { flex: 1; }
+.search-box kbd { font: 600 .7rem/1 ui-monospace, Consolas, monospace; padding: .25rem .4rem; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
+.top-chips { margin-left: auto; display: flex; gap: .5rem; flex-wrap: wrap; }
+.chip { padding: .4rem .85rem; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: .88rem; white-space: nowrap; }
+.chip b { color: var(--text); font-weight: 650; }
+main h1[data-eyebrow]::before { content: attr(data-eyebrow); display: block; font-size: .68rem; font-weight: 750; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: .35rem; -webkit-text-fill-color: currentColor; }
+.palette { position: fixed; inset: 0; z-index: 90; background: rgba(5, 6, 12, .55); display: grid; justify-items: center; align-items: start; padding-top: 12vh; }
+.palette.hidden { display: none; }
+.palette-box { width: min(620px, calc(100% - 2rem)); background: var(--panel); border: 1px solid var(--border-strong); border-radius: 16px; box-shadow: var(--shadow-lg); overflow: hidden; }
+.palette-box input { width: 100%; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 1rem 1.1rem; font-size: 1rem; background: transparent; }
+.palette-box input:focus { box-shadow: none; outline: none; }
+.palette-list { max-height: 52vh; overflow: auto; padding: .35rem; }
+.palette-item { display: flex; align-items: center; gap: .7rem; width: 100%; padding: .6rem .7rem; border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.palette-item small { margin-left: auto; color: var(--muted); font-size: .75rem; }
+.palette-item.on, .palette-item:hover { background: var(--accent-soft); }
+.palette-hint { padding: .5rem 1rem; font-size: .75rem; border-top: 1px solid var(--border); }
+.flash { animation: flash 1.6s ease-out; border-radius: 8px; }
+@keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent-ring); } 100% { box-shadow: 0 0 0 0 transparent; } }
+
 /* ------------------------------------------------------------ Building blocks */
 .card {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
@@ -349,6 +398,13 @@ textarea.kb-output { font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, mon
 }
 @media (max-width: 760px) {
   .app { grid-template-columns: minmax(0, 1fr); }
+  .server-card { border: 0; padding: 0; background: none; }
+  .server-card .eyebrow, .server-chip, .nav-head { display: none; }
+  .nav-group { border: 0; padding: 0; background: none; }
+  .nav-group.closed a { display: flex; }
+  .topbar { position: static; padding: .7rem 1rem; }
+  .search-box { max-width: none; }
+  .top-chips { margin-left: 0; }
   .sidebar {
     position: sticky; top: 0; z-index: 20; height: auto; overflow: visible; padding: .6rem 1rem .5rem; gap: .45rem;
     border-right: 0; border-bottom: 1px solid var(--border);

@@ -1,218 +1,173 @@
-/* RCE Bot Panel – NEON theme. Loaded after style.css; it is the default look (light mode stays available).
-   Everything here is scoped to "not light", so the ☀️ theme is untouched. The animated background is drawn by bg.js.
-   Kept cheap on purpose: no glass blur on top of the moving background (it was recomputed every frame), outlines
-   only animate on hover, and html[data-motion="off"] stops every animation – that's the default; the ✨ button
-   switches the moving background and the effects on. */
-
-@property --angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+/* RCE Bot Panel – dark "command centre" theme (the default look; the ☀️ light theme stays available).
+   Midnight navy/violet, rounded glass panels, coloured group borders in the menu, lavender headings, stat cards
+   with a lime-to-teal edge, a pastel gradient for the main buttons and soft green specks in the background.
+   Everything is scoped to "not light". Cheap to draw: no blur, no canvas, the only motion is optional
+   (html[data-motion="off"] – the default – keeps it all still). Colours to change: the variables below. */
 
 html:root:not([data-theme="light"]) {
   color-scheme: dark;
-  --neon: #ff7a1a; --neon-2: #ffb347; --neon-hot: #ff3d00;
-  /* outlines: electric cyan with a violet / orange light running around them – change these two to recolour */
-  --line-a: #00f0ff; --line-b: #b14bff;
-  --ease-out: cubic-bezier(.16, 1, .3, 1); --ease-io: cubic-bezier(.65, 0, .35, 1);
-  --bg: #07050a; --sidebar: rgba(12, 8, 7, .93); --panel: rgba(18, 11, 9, .9); --panel-2: rgba(48, 27, 14, .72);
-  --input: rgba(8, 5, 4, .74);
-  --text: #fbefe4; --muted: #c4ae9c; --faint: #8f7b6a;
-  --border: rgba(0, 240, 255, .2); --border-strong: rgba(0, 240, 255, .42);
-  --accent: #ff7a1a; --accent-hover: #ff9440; --accent-text: #160800;
-  --accent-soft: rgba(255, 122, 26, .15); --accent-ring: rgba(255, 122, 26, .5);
-  --ok: #35ff95; --ok-soft: rgba(53, 255, 149, .12); --warn: #ffd23a; --warn-soft: rgba(255, 210, 58, .13);
-  --bad: #ff4766; --bad-soft: rgba(255, 71, 102, .14); --info: #4cc9ff;
-  --code-bg: rgba(4, 3, 3, .9); --code-text: #ffdcbc;
-  --shadow-sm: 0 0 0 1px rgba(255, 122, 26, .05), 0 2px 12px rgba(0, 0, 0, .45);
-  --shadow: 0 0 0 1px rgba(255, 122, 26, .06), 0 8px 30px -10px rgba(0, 0, 0, .75);
-  --shadow-lg: 0 0 40px -8px rgba(255, 122, 26, .35), 0 24px 60px -12px rgba(0, 0, 0, .85);
+  /* group colours (menu panels), accents */
+  --tone-pink: #f472b6; --tone-violet: #a78bfa; --tone-teal: #2dd4bf; --tone-amber: #fbbf24;
+  --lime: #a3e635; --teal: #2dd4bf; --lavender: #c4b5fd; --sky: #93c5fd;
+  --grad-main: linear-gradient(100deg, #f9a8d4, #c4b5fd 35%, #99f6e4 70%, #fde68a);
+  --grad-edge: linear-gradient(180deg, var(--lime), var(--teal));
+  --bg: #0a0d1a; --sidebar: #0c1020; --panel: rgba(17, 22, 40, .88); --panel-2: rgba(28, 34, 58, .72);
+  --input: rgba(9, 12, 24, .8);
+  --text: #e6e8f5; --muted: #9aa3c7; --faint: #6b7396;
+  --border: rgba(148, 163, 255, .14); --border-strong: rgba(148, 163, 255, .28);
+  --accent: #a78bfa; --accent-hover: #c4b5fd; --accent-text: #120d26;
+  --accent-soft: rgba(167, 139, 250, .14); --accent-ring: rgba(167, 139, 250, .38);
+  --ok: #4ade80; --ok-soft: rgba(74, 222, 128, .13); --warn: #fbbf24; --warn-soft: rgba(251, 191, 36, .13);
+  --bad: #fb7185; --bad-soft: rgba(251, 113, 133, .14); --info: #93c5fd;
+  --code-bg: rgba(6, 8, 18, .92); --code-text: #d7defa;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 10px 30px -14px rgba(0, 0, 0, .7);
+  --shadow-lg: 0 24px 60px -12px rgba(0, 0, 0, .8);
+  --radius: 18px; --radius-sm: 11px;
 }
 
-/* ------------------------------------------------------------ Base */
+/* ------------------------------------------------------------ Background: navy glow + soft green specks */
 html:root:not([data-theme="light"]) body {
   background:
-    radial-gradient(60rem 40rem at 12% -8%, rgba(255, 90, 0, .16), transparent 60%),
-    radial-gradient(50rem 36rem at 105% 105%, rgba(255, 170, 40, .10), transparent 60%),
+    radial-gradient(70rem 40rem at 70% -10%, rgba(99, 102, 241, .16), transparent 60%),
+    radial-gradient(50rem 35rem at 0% 100%, rgba(45, 212, 191, .08), transparent 60%),
     var(--bg);
 }
-html:root:not([data-theme="light"]) ::selection { background: rgba(255, 122, 26, .55); color: #fff; }
-html:root:not([data-theme="light"]) a { color: var(--neon-2); }
-html:root:not([data-theme="light"]) a:hover { text-shadow: 0 0 10px rgba(255, 160, 60, .7); }
-html:root:not([data-theme="light"]) * { scrollbar-color: var(--neon) transparent; }
-html:root:not([data-theme="light"]) ::-webkit-scrollbar-thumb { background: linear-gradient(var(--neon), var(--neon-hot)); background-clip: padding-box; }
-
-/* animated background canvas (bg.js) */
-#bg { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; display: block; }
-:root[data-theme="light"] #bg { display: none; }
-
-/* a neon line sweeping along the top edge */
 html:root:not([data-theme="light"]) body::before {
-  content: ""; position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 60; pointer-events: none;
-  background: linear-gradient(90deg, transparent, var(--line-a), var(--line-b), var(--neon), transparent);
-  background-size: 200% 100%; animation: neon-sweep 6s linear infinite; box-shadow: 0 0 14px var(--neon), 0 0 30px rgba(255, 90, 0, .5);
+  content: ""; position: fixed; inset: -10% 0 0 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(163, 230, 53, .55) 0 2px, transparent 3px),
+    radial-gradient(circle at 34% 72%, rgba(163, 230, 53, .35) 0 3px, transparent 5px),
+    radial-gradient(circle at 58% 30%, rgba(163, 230, 53, .4) 0 2px, transparent 3px),
+    radial-gradient(circle at 81% 64%, rgba(163, 230, 53, .5) 0 4px, transparent 7px),
+    radial-gradient(circle at 92% 12%, rgba(163, 230, 53, .3) 0 2px, transparent 3px),
+    radial-gradient(circle at 47% 90%, rgba(163, 230, 53, .3) 0 5px, transparent 9px),
+    radial-gradient(circle at 70% 48%, rgba(163, 230, 53, .25) 0 2px, transparent 4px),
+    radial-gradient(circle at 24% 44%, rgba(163, 230, 53, .25) 0 6px, transparent 11px);
+  filter: blur(.4px); opacity: .7; animation: specks 40s linear infinite alternate;
 }
-@keyframes neon-sweep { to { background-position: -200% 0; } }
-
-/* no glass blur over the moving background (phones: sticky top bar, save bar) */
-html:root:not([data-theme="light"]) .sidebar,
-html:root:not([data-theme="light"]) .savebar { backdrop-filter: none; -webkit-backdrop-filter: none; }
-html:root:not([data-theme="light"]) .savebar { background: var(--panel); }
+@keyframes specks { to { transform: translate3d(0, -6%, 0); } }
+html:root:not([data-theme="light"]) ::selection { background: rgba(167, 139, 250, .45); color: #fff; }
+html:root:not([data-theme="light"]) a { color: var(--sky); }
 
 /* ------------------------------------------------------------ Headings */
 html:root:not([data-theme="light"]) h1 {
-  text-transform: uppercase; letter-spacing: .06em; font-weight: 800;
-  background: linear-gradient(90deg, #fff3e6, var(--neon-2), var(--neon), var(--neon-2), #fff3e6);
-  background-size: 300% 100%; -webkit-background-clip: text; background-clip: text;
-  color: transparent; -webkit-text-fill-color: transparent;
-  background-position: 30% 0;
+  font-size: 1.85rem; font-weight: 750; letter-spacing: -.02em;
+  background: linear-gradient(90deg, #e9d5ff, var(--lavender) 45%, #a5b4fc);
+  -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;
 }
-html:root:not([data-theme="light"]) h2 { text-shadow: 0 0 12px rgba(255, 122, 26, .35); }
+html:root:not([data-theme="light"]) main h1[data-eyebrow]::before { color: var(--teal); }
+html:root:not([data-theme="light"]) h2 { color: #eef0ff; }
 
 /* ------------------------------------------------------------ Sidebar */
-html:root:not([data-theme="light"]) .sidebar {
-  background: var(--sidebar); border-right: 1px solid rgba(0, 240, 255, .28);
-  box-shadow: 0 0 40px -10px rgba(255, 122, 26, .35);
+html:root:not([data-theme="light"]) .sidebar { background: rgba(10, 13, 28, .92); border-right: 1px solid var(--border); }
+html:root:not([data-theme="light"]) .server-card {
+  border: 1.5px solid transparent;
+  background: linear-gradient(rgba(16, 21, 40, .96), rgba(16, 21, 40, .96)) padding-box,
+              linear-gradient(120deg, var(--tone-violet), var(--tone-teal)) border-box;
+  box-shadow: 0 0 22px -10px rgba(45, 212, 191, .6);
 }
+html:root:not([data-theme="light"]) .server-card .eyebrow { color: var(--teal); }
 html:root:not([data-theme="light"]) .logo {
-  background: linear-gradient(140deg, var(--neon-2), var(--neon) 50%, var(--neon-hot));
-  box-shadow: 0 0 18px rgba(255, 122, 26, .8), inset 0 1px 0 rgba(255, 255, 255, .4); animation: logo-pulse 3s ease-in-out infinite;
+  background: radial-gradient(circle at 30% 25%, #d9f99d, var(--lime) 45%, #3f6212);
+  color: #0d1a05; box-shadow: 0 0 16px -4px rgba(163, 230, 53, .7);
 }
-@keyframes logo-pulse { 50% { box-shadow: 0 0 30px rgba(255, 122, 26, 1), 0 0 60px rgba(255, 90, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .4); } }
-html:root:not([data-theme="light"]) .brand-text strong { text-shadow: 0 0 14px rgba(255, 122, 26, .7); letter-spacing: .04em; text-transform: uppercase; }
-html:root:not([data-theme="light"]) .nav-label { color: var(--neon); opacity: .8; text-shadow: 0 0 8px rgba(255, 122, 26, .6); }
-html:root:not([data-theme="light"]) nav a { transition: background .35s var(--ease-out), color .35s var(--ease-out), transform .35s var(--ease-out), box-shadow .35s var(--ease-out); }
-html:root:not([data-theme="light"]) nav a:hover { background: rgba(255, 122, 26, .10); color: var(--text); transform: translateX(3px); }
+html:root:not([data-theme="light"]) .server-chip { background: rgba(14, 18, 34, .9); }
+html:root:not([data-theme="light"]) .server-chip .dot { background: var(--sky); }
+html:root:not([data-theme="light"]) .server-chip.ok .dot { background: var(--lime); box-shadow: 0 0 8px var(--lime); }
+html:root:not([data-theme="light"]) .nav-head { color: var(--teal); }
+
+/* menu groups: panels with a coloured border, coloured labels and links */
+html:root:not([data-theme="light"]) .nav-group { --tone: var(--tone-violet);
+  border: 1.5px solid color-mix(in srgb, var(--tone) 55%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tone) 7%, transparent), rgba(12, 16, 32, .9) 60%);
+  box-shadow: 0 0 18px -12px var(--tone);
+}
+html:root:not([data-theme="light"]) .nav-group[data-tone="pink"] { --tone: var(--tone-pink); }
+html:root:not([data-theme="light"]) .nav-group[data-tone="violet"] { --tone: var(--tone-violet); }
+html:root:not([data-theme="light"]) .nav-group[data-tone="teal"] { --tone: var(--tone-teal); }
+html:root:not([data-theme="light"]) .nav-group[data-tone="amber"] { --tone: var(--tone-amber); }
+html:root:not([data-theme="light"]) .nav-label { color: var(--tone); }
+html:root:not([data-theme="light"]) .nav-label .gi { border-color: color-mix(in srgb, var(--tone) 40%, transparent);
+  background: color-mix(in srgb, var(--tone) 10%, transparent); }
+html:root:not([data-theme="light"]) nav a {
+  color: color-mix(in srgb, var(--tone) 70%, #fff); border-left: 2px solid color-mix(in srgb, var(--tone) 35%, transparent);
+  border-radius: 9px; margin: 1px 0; background: rgba(10, 13, 26, .45);
+}
+html:root:not([data-theme="light"]) nav a:hover { background: color-mix(in srgb, var(--tone) 12%, transparent); color: #fff; }
 html:root:not([data-theme="light"]) nav a.active {
-  color: var(--neon-2); background: linear-gradient(90deg, rgba(255, 122, 26, .26), rgba(255, 122, 26, .04));
-  box-shadow: inset 0 0 0 1px rgba(255, 122, 26, .4), 0 0 18px -3px rgba(255, 122, 26, .55); text-shadow: 0 0 10px rgba(255, 170, 70, .8);
+  color: #fff; background: rgba(45, 212, 191, .14); border: 1px solid #5eead4; box-shadow: 0 0 14px -4px rgba(45, 212, 191, .55);
 }
-html:root:not([data-theme="light"]) nav a.active::before {
-  background: linear-gradient(var(--line-a), var(--neon), var(--line-b)); background-size: 100% 300%;
-  box-shadow: 0 0 12px var(--line-a), 0 0 24px var(--neon); animation: bar-flow 3s var(--ease-io) infinite alternate;
-}
-@keyframes bar-flow { to { background-position: 0 100%; } }
-html:root:not([data-theme="light"]) .avatar { box-shadow: 0 0 14px -2px rgba(255, 122, 26, .7); }
+html:root:not([data-theme="light"]) nav a.active::before { display: none; }
 
-/* ------------------------------------------------------------ Cards, stats, banners: neon outlines */
-html:root:not([data-theme="light"]) .card,
-html:root:not([data-theme="light"]) .stat,
-html:root:not([data-theme="light"]) .banner { position: relative; border-color: rgba(0, 240, 255, .14); isolation: isolate; }
-/* the outline: a thin gradient ring (mask); the light only runs around the card under the mouse */
-html:root:not([data-theme="light"]) .card::before,
-html:root:not([data-theme="light"]) .stat::before,
-html:root:not([data-theme="light"]) .banner::before {
-  content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none; z-index: 1;
-  background: conic-gradient(from var(--angle),
-    rgba(0, 240, 255, .35) 0deg, var(--line-a) 40deg, var(--line-b) 80deg, var(--neon) 110deg,
-    rgba(0, 240, 255, .35) 150deg, rgba(0, 240, 255, .35) 210deg, var(--line-a) 250deg, var(--line-b) 290deg,
-    rgba(0, 240, 255, .35) 330deg);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
-  --angle: 200deg; opacity: .75; transition: opacity .4s var(--ease-out);
+/* ------------------------------------------------------------ Top bar: search + chips */
+html:root:not([data-theme="light"]) .topbar { background: rgba(10, 13, 26, .9); border-bottom-color: var(--border); }
+html:root:not([data-theme="light"]) .search-box {
+  border: 1.5px solid transparent; border-radius: 14px; color: var(--muted);
+  background: linear-gradient(rgba(10, 13, 26, .96), rgba(10, 13, 26, .96)) padding-box,
+              linear-gradient(100deg, var(--tone-pink), var(--tone-violet), var(--tone-teal)) border-box;
 }
-html:root:not([data-theme="light"]) .card { transition: box-shadow .5s var(--ease-out), transform .5s var(--ease-out); }
-html:root:not([data-theme="light"]) .card:hover::before,
-html:root:not([data-theme="light"]) .stat:hover::before { opacity: 1; animation: border-spin 3s linear infinite; }
-html:root:not([data-theme="light"]) .card:hover {
-  box-shadow: 0 0 0 1px rgba(0, 240, 255, .12), 0 0 34px -8px rgba(0, 240, 255, .35), 0 0 60px -20px rgba(177, 75, 255, .4), var(--shadow);
+html:root:not([data-theme="light"]) .search-box:hover { color: var(--text); }
+html:root:not([data-theme="light"]) .search-box .search-icon { color: var(--teal); }
+html:root:not([data-theme="light"]) .chip { background: rgba(20, 25, 46, .9); border-color: var(--border-strong); color: #cdd3f0; }
+
+/* ------------------------------------------------------------ Cards, stats, banners */
+html:root:not([data-theme="light"]) .card { background: var(--panel); border-color: var(--border); box-shadow: var(--shadow); }
+html:root:not([data-theme="light"]) .stat {
+  background: linear-gradient(160deg, rgba(22, 28, 50, .95), rgba(13, 17, 32, .95)); border: 1px solid var(--border-strong);
+  border-radius: 16px; overflow: hidden;
 }
-html:root:not([data-theme="light"]) .stat { transition: transform .45s var(--ease-out), box-shadow .45s var(--ease-out); }
-html:root:not([data-theme="light"]) .stat:hover { transform: translateY(-4px) scale(1.015); box-shadow: 0 10px 30px -10px rgba(0, 240, 255, .45); }
-html:root:not([data-theme="light"]) .stat::after { height: 3px; box-shadow: 0 0 12px var(--tone, transparent); z-index: 2; }
-html:root:not([data-theme="light"]) .stat .value { text-shadow: 0 0 16px rgba(255, 122, 26, .35); }
-html:root:not([data-theme="light"]) .stat.ok .value { text-shadow: 0 0 14px var(--ok); }
-html:root:not([data-theme="light"]) .stat.bad .value { text-shadow: 0 0 14px var(--bad); }
-html:root:not([data-theme="light"]) .toast { border-color: var(--line-a); box-shadow: 0 0 22px -4px rgba(0, 240, 255, .55), var(--shadow-lg); }
-html:root:not([data-theme="light"]) .toast.bad { border-color: var(--bad); box-shadow: 0 0 22px -4px var(--bad), var(--shadow-lg); }
+html:root:not([data-theme="light"]) .stat::after { inset: 14% auto 14% 0; width: 3px; height: auto; border-radius: 0 3px 3px 0;
+  background: var(--grad-edge); }
+html:root:not([data-theme="light"]) .stat::before { content: ""; position: absolute; right: -28px; top: -28px; width: 110px; height: 110px;
+  border-radius: 50%; border: 1px solid rgba(148, 163, 255, .1); background: radial-gradient(circle, rgba(148, 163, 255, .05), transparent 70%); }
+html:root:not([data-theme="light"]) .stat .label { color: var(--teal); letter-spacing: .14em; font-size: .68rem; }
+html:root:not([data-theme="light"]) .stat .value { font-size: 1.7rem; font-weight: 800; color: #f1f3ff; }
+html:root:not([data-theme="light"]) .stat.ok .value { color: var(--lime); }
+html:root:not([data-theme="light"]) .stat.bad .value { color: var(--bad); }
+html:root:not([data-theme="light"]) .banner { background: rgba(20, 40, 50, .55); border: 1px solid rgba(94, 234, 212, .35); border-radius: 14px; }
+html:root:not([data-theme="light"]) .banner.ok { border-left-width: 1px; background: rgba(20, 50, 44, .55); border-color: rgba(74, 222, 128, .4); }
+html:root:not([data-theme="light"]) .banner.warn { border-left-width: 1px; background: rgba(60, 46, 14, .5); border-color: rgba(251, 191, 36, .4); }
+html:root:not([data-theme="light"]) .banner.bad { border-left-width: 1px; background: rgba(60, 18, 30, .5); border-color: rgba(251, 113, 133, .45); }
+html:root:not([data-theme="light"]) .toast { background: rgba(17, 22, 40, .97); border-color: var(--border-strong); }
 
-/* entrance: content rises in, one after another */
-@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-html:root:not([data-theme="light"]) main { animation: none; }
-html:root:not([data-theme="light"]) main > * { animation: rise .7s var(--ease-out) both; }
-html:root:not([data-theme="light"]) main > :nth-child(2) { animation-delay: .04s; }
-html:root:not([data-theme="light"]) main > :nth-child(3) { animation-delay: .08s; }
-html:root:not([data-theme="light"]) main > :nth-child(4) { animation-delay: .12s; }
-html:root:not([data-theme="light"]) main > :nth-child(5) { animation-delay: .16s; }
-html:root:not([data-theme="light"]) main > :nth-child(6) { animation-delay: .2s; }
-html:root:not([data-theme="light"]) main > :nth-child(n+7) { animation-delay: .24s; }
-/* (stat cards are rebuilt every few seconds – they don't get their own entrance animation) */
-
-/* ------------------------------------------------------------ Pills */
-html:root:not([data-theme="light"]) .pill.ok { box-shadow: 0 0 14px -3px var(--ok); text-shadow: 0 0 8px var(--ok); }
-html:root:not([data-theme="light"]) .pill.bad { box-shadow: 0 0 14px -3px var(--bad); text-shadow: 0 0 8px var(--bad); }
-html:root:not([data-theme="light"]) .pill.warn { box-shadow: 0 0 14px -3px var(--warn); text-shadow: 0 0 8px var(--warn); }
-html:root:not([data-theme="light"]) .pill.ok::before { box-shadow: 0 0 8px var(--ok), 0 0 0 3px var(--ok-soft); animation: breathe 2.4s var(--ease-io) infinite; }
-@keyframes breathe { 50% { box-shadow: 0 0 14px var(--ok), 0 0 0 5px rgba(53, 255, 149, .05); } }
-
-/* ------------------------------------------------------------ Forms & buttons */
-html:root:not([data-theme="light"]) input,
-html:root:not([data-theme="light"]) select,
-html:root:not([data-theme="light"]) textarea { border-color: rgba(0, 240, 255, .28); transition: border-color .3s var(--ease-out), box-shadow .3s var(--ease-out); }
-html:root:not([data-theme="light"]) input:hover,
-html:root:not([data-theme="light"]) select:hover,
-html:root:not([data-theme="light"]) textarea:hover { border-color: rgba(0, 240, 255, .6); }
-html:root:not([data-theme="light"]) input:focus,
-html:root:not([data-theme="light"]) select:focus,
-html:root:not([data-theme="light"]) textarea:focus {
-  border-color: var(--line-a); box-shadow: 0 0 0 1px var(--line-a), 0 0 22px -2px rgba(0, 240, 255, .55), 0 0 40px -12px var(--line-b);
-}
-html:root:not([data-theme="light"]) button { border-color: rgba(0, 240, 255, .3); transition: background .3s var(--ease-out), border-color .3s var(--ease-out), box-shadow .3s var(--ease-out), transform .2s var(--ease-out), color .3s; }
-html:root:not([data-theme="light"]) button:hover { border-color: var(--line-a); background: rgba(0, 240, 255, .08); box-shadow: 0 0 16px -3px rgba(0, 240, 255, .6); }
-html:root:not([data-theme="light"]) button:focus-visible,
-html:root:not([data-theme="light"]) a:focus-visible,
-html:root:not([data-theme="light"]) summary:focus-visible { box-shadow: 0 0 0 2px var(--neon), 0 0 18px rgba(255, 122, 26, .7); }
+/* ------------------------------------------------------------ Buttons & inputs */
+html:root:not([data-theme="light"]) button { background: rgba(20, 25, 46, .9); border-color: var(--border-strong); border-radius: 12px; }
+html:root:not([data-theme="light"]) button:hover { background: rgba(32, 39, 68, .95); border-color: rgba(148, 163, 255, .45); }
 html:root:not([data-theme="light"]) button.primary {
-  background: linear-gradient(110deg, var(--neon-hot), var(--neon) 38%, var(--neon-2) 62%, var(--neon)); background-size: 230% 100%;
-  color: var(--accent-text); border-color: var(--neon-2); font-weight: 750;
-  box-shadow: 0 0 16px rgba(255, 122, 26, .6), inset 0 1px 0 rgba(255, 255, 255, .4);
-  transition: background-position .8s var(--ease-out), box-shadow .4s var(--ease-out), transform .25s var(--ease-out);
-  position: relative; overflow: hidden;
+  background: var(--grad-main); color: #17122b; border: 0; font-weight: 650; box-shadow: 0 6px 18px -8px rgba(196, 181, 253, .7);
 }
-html:root:not([data-theme="light"]) button.primary::after {
-  content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%; pointer-events: none;
-  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .55), transparent); transform: skewX(-20deg);
-  transition: left .8s var(--ease-out);
-}
-html:root:not([data-theme="light"]) button.primary:hover::after { left: 130%; }
-html:root:not([data-theme="light"]) button.primary:hover {
-  background-position: 100% 0; border-color: #ffd9a8; transform: translateY(-1px);
-  box-shadow: 0 0 28px rgba(255, 122, 26, .9), 0 0 56px rgba(255, 90, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .5);
-}
-html:root:not([data-theme="light"]) button.primary:active { transform: translateY(1px); }
+html:root:not([data-theme="light"]) button.primary:hover { filter: brightness(1.06) saturate(1.1); }
 html:root:not([data-theme="light"]) button.danger { color: var(--bad); }
-html:root:not([data-theme="light"]) button.danger:hover { border-color: var(--bad); background: var(--bad-soft); box-shadow: 0 0 14px -2px var(--bad); }
 html:root:not([data-theme="light"]) button.ghost { background: transparent; }
-html:root:not([data-theme="light"]) input[type=checkbox], html:root:not([data-theme="light"]) input[type=radio] { accent-color: var(--neon); filter: drop-shadow(0 0 4px rgba(255, 122, 26, .7)); }
-html:root:not([data-theme="light"]) summary::before { border-color: var(--neon); }
+html:root:not([data-theme="light"]) input, html:root:not([data-theme="light"]) select, html:root:not([data-theme="light"]) textarea {
+  background: var(--input); border-color: var(--border-strong); border-radius: 11px; }
+html:root:not([data-theme="light"]) input:focus, html:root:not([data-theme="light"]) select:focus,
+html:root:not([data-theme="light"]) textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+html:root:not([data-theme="light"]) .savebar { background: rgba(14, 18, 34, .97); border: 1px solid var(--border-strong); border-radius: 16px; }
 
-/* ------------------------------------------------------------ Tables & console */
-html:root:not([data-theme="light"]) th { color: var(--neon-2); background: rgba(255, 122, 26, .09); text-shadow: 0 0 8px rgba(255, 122, 26, .45); }
-html:root:not([data-theme="light"]) tbody tr:hover { background: rgba(255, 122, 26, .09); }
-html:root:not([data-theme="light"]) tr.clickable:hover td:first-child { box-shadow: inset 3px 0 0 var(--neon), inset 8px 0 14px -8px var(--neon); }
-html:root:not([data-theme="light"]) .console,
-html:root:not([data-theme="light"]) pre.transcript {
-  border-color: rgba(0, 240, 255, .35);
-  background-image: repeating-linear-gradient(0deg, rgba(255, 122, 26, .035) 0 1px, transparent 1px 3px);
-  box-shadow: inset 0 0 30px rgba(0, 0, 0, .6), 0 0 22px -8px rgba(255, 122, 26, .4);
-}
-html:root:not([data-theme="light"]) .console .resp { color: #6dffb0; text-shadow: 0 0 8px rgba(53, 255, 149, .5); }
-html:root:not([data-theme="light"]) .savebar { border-color: var(--border-strong); box-shadow: 0 0 30px -8px rgba(255, 122, 26, .5), var(--shadow-lg); }
-html:root:not([data-theme="light"]) .kb-item:hover { box-shadow: 0 0 14px -3px rgba(255, 122, 26, .6); }
+/* ------------------------------------------------------------ Tables, console, pills */
+html:root:not([data-theme="light"]) th { color: var(--teal); background: rgba(45, 212, 191, .06); letter-spacing: .08em; }
+html:root:not([data-theme="light"]) tbody tr:hover { background: rgba(148, 163, 255, .06); }
+html:root:not([data-theme="light"]) .console, html:root:not([data-theme="light"]) pre.transcript {
+  background: rgba(6, 8, 18, .92); border-color: rgba(94, 234, 212, .3); border-radius: 14px; }
+html:root:not([data-theme="light"]) .console .resp { color: #86efac; }
+html:root:not([data-theme="light"]) .pill { border-radius: 999px; }
 
-/* ------------------------------------------------------------ Login: glowing, spinning neon border */
+/* ------------------------------------------------------------ Login */
 html:root:not([data-theme="light"]) .login { background: transparent; }
 html:root:not([data-theme="light"]) .login-card {
-  border: 2px solid transparent;
-  background:
-    linear-gradient(#0d0806, #0d0806) padding-box,
-    conic-gradient(from var(--angle), rgba(0, 240, 255, .25) 0 45%, var(--line-a) 60%, var(--line-b) 72%, var(--neon) 84%, rgba(0, 240, 255, .25) 100%) border-box;
-  box-shadow: 0 0 50px -6px rgba(255, 122, 26, .55), 0 30px 80px -10px rgba(0, 0, 0, .9);
-  animation: card-in .9s var(--ease-out) both, border-spin 6s linear infinite;
+  border: 1.5px solid transparent; border-radius: 20px;
+  background: linear-gradient(rgba(14, 18, 34, .97), rgba(14, 18, 34, .97)) padding-box,
+              linear-gradient(120deg, var(--tone-pink), var(--tone-violet), var(--tone-teal)) border-box;
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .9);
 }
-@keyframes border-spin { to { --angle: 360deg; } }
-@keyframes card-in { from { opacity: 0; transform: translateY(24px) scale(.96); } to { opacity: 1; transform: none; } }
-html:root:not([data-theme="light"]) .login-card input { background: rgba(255, 122, 26, .06); }
-html:root:not([data-theme="light"]) .login-hint { border-top-color: var(--border-strong); }
 
-/* ------------------------------------------------------------ Calm mode (system setting or the ✨ button) */
+/* entrance: pages fade/rise in once (cards that refresh don't replay it) */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+html:root:not([data-theme="light"]) main > * { animation: rise .45s cubic-bezier(.16, 1, .3, 1) both; }
+
+/* ------------------------------------------------------------ Still mode (default) / reduced motion */
 @media (prefers-reduced-motion: reduce) {
   html:root:not([data-theme="light"]) *, html:root:not([data-theme="light"]) *::before, html:root:not([data-theme="light"]) *::after {
     animation: none !important; transition: none !important;
