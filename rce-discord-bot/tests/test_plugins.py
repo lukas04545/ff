@@ -412,3 +412,27 @@ def test_website_logo_upload_and_default(pb):
             await c.close()
             await pb.bot.rcon.close()
     asyncio.run(main())
+
+
+def test_website_halloween_theme_and_phone_menu(pb, monkeypatch):
+    import datetime as dt
+    async def main():
+        await pb.m.load_all()
+        await pb.m.set_enabled("website", True)
+        site = pb.m.running("website")
+        october = dt.datetime(2026, 10, 24, 12, tzinfo=dt.timezone.utc).timestamp()
+        june = dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc).timestamp()
+        monkeypatch.setattr(type(site), "now", staticmethod(lambda: int(october)))
+        assert site.seasonal() == "halloween"
+        page = site.home("")
+        assert 'class="halloween"' in page and 'class="bat b1"' in page and "hw-banner" in page and "🕷" in page
+        assert 'id="mnav"' in page and 'class="burger"' in page                      # ☰ menu on phones
+        monkeypatch.setattr(type(site), "now", staticmethod(lambda: int(june)))
+        page = site.home("")
+        assert site.seasonal() == "" and "hw-banner" not in page and 'class="bat' not in page
+        await pb.m.save_settings("website", {"season_theme": "halloween"})
+        assert site.seasonal() == "halloween"
+        await pb.m.save_settings("website", {"season_theme": "off"})
+        monkeypatch.setattr(type(site), "now", staticmethod(lambda: int(october)))
+        assert site.seasonal() == ""
+    asyncio.run(main())
