@@ -458,6 +458,11 @@ class WebShop(commands.Cog):
                 raise CheckoutError("This pack isn't available.")
             fields.update(title=f"{coins:,} {bp.coin_name}".replace(",", " "), total=price, coins=coins,
                           user_id=user_id, player=db.linked_player(user_id) or "")
+        elif kind == "nuke":                   # 💣 points drop on Discord (cogs/economy.py)
+            cfg = self.bot.config
+            if cfg.store_nuke_price <= 0 or not cfg.economy_enabled:
+                raise CheckoutError("Nukes aren't for sale right now.")
+            fields.update(title=self.nuke_title(), total=round(cfg.store_nuke_price, 2))
         elif kind == "giftcard":
             try:
                 value = round(float(value), 2)
@@ -470,7 +475,7 @@ class WebShop(commands.Cog):
             fields.update(title=f"Gift card {self.fmt(value)}", total=value)
         else:
             raise CheckoutError("Unknown product.")
-        if kind in ("kit", "custom"):
+        if kind in ("kit", "custom", "nuke"):
             fields["player"], fields["user_id"] = self._buyer(player)
         elif kind in ("addon", "slots"):
             fields["user_id"] = user_id
@@ -512,6 +517,29 @@ class WebShop(commands.Cog):
             raise CheckoutError("PayPal is not available right now – please try again in a few minutes.") from exc
         db.update_store_order(order_id, paypal_order=pp_id)
         return {"token": token, "redirect": url}
+
+    def nuke_title(self) -> str:
+        cfg = self.bot.config
+        who = f"the first {cfg.store_nuke_claims} members" if cfg.store_nuke_claims else "everyone"
+        return f"💣 Nuke – {cfg.store_nuke_points:,} {cfg.points_name} for {who}".replace(",", " ")
+
+    async def _drop_nuke(self, order) -> str:
+        cfg = self.bot.config
+        eco = self.bot.get_cog("Economy")
+        if eco is None or not eco.enabled:
+            raise CheckoutError("points & shop are switched off")
+        channel = self.bot.get_channel(cfg.store_nuke_channel_id) if cfg.store_nuke_channel_id else None
+        if channel is None:
+            guild = eco.guild()
+            channel = guild.system_channel if guild is not None else None
+        if channel is None:
+            raise CheckoutError("no channel for nukes – set the nuke channel (Settings → Store)")
+        try:
+            await eco.drop_nuke(int(order["user_id"]), order["title"], cfg.store_nuke_points, cfg.store_nuke_claims,
+                                channel)
+        except Exception as exc:
+            raise CheckoutError(f"the nuke couldn't be posted: {exc}") from exc
+        return f"Nuke dropped in #{getattr(channel, 'name', channel.id)}"
 
     def _battlepass(self):
         manager = getattr(self.bot, "plugins", None)
@@ -598,6 +626,8 @@ class WebShop(commands.Cog):
                 code = self.create_gift_cards(float(order["total"]), 1, f"store order #{order_id}",
                                               order_id=order_id)[0]
                 result = f"Gift card {code}"
+            elif order["kind"] == "nuke":
+                result = await self._drop_nuke(order)
             elif order["kind"] == "coins":
                 bp = self._battlepass()
                 if bp is None:
@@ -663,7 +693,10 @@ class WebShop(commands.Cog):
                         + (f" for <@{order['user_id']}> ({safe_md(order['player'] or '')})" if order["user_id"] else "")
                         + f" – {safe_md(pay.strip())} – delivered", alert=bool(order["admin_key"]))
         if order["user_id"] and order["kind"] != "giftcard":
-            if order["kind"] == "coins":
+            if order["kind"] == "nuke":
+                text = (f"💣 Thanks! Your nuke dropped on our Discord – everyone can claim "
+                        f"{self.bot.config.store_nuke_points} {self.bot.config.points_name} from it for 24 hours.")
+            elif order["kind"] == "coins":
                 text = (f"✅ Thanks! **{safe_md(order['title'])}** were added to your account – spend them on the "
                         "Battle pass page of our website.")
             elif order["kind"] == "slots":

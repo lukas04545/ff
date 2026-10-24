@@ -184,6 +184,10 @@ class Config:
     store_default_item_price: float      # price per item for catalogue items without a price-list rule (0 = not for sale)
     store_slot_price: float              # team slot on a custom kit, price per slot per 30 days (0 = off)
     store_slot_max: int                  # most team slots per kit
+    store_nuke_price: float              # 💣 nuke in the web store (0 = not for sale)
+    store_nuke_points: int               # points every Discord member can claim from a nuke
+    store_nuke_claims: int               # how many members can claim (0 = everyone)
+    store_nuke_channel_id: int | None    # where bought nukes drop (empty = the server's system channel)
     price_list_file: Path                # prices.txt
     points_name: str                      # e.g. "points", "coins", "scrap"
     points_per_hour: int                  # for linked players while online
@@ -398,6 +402,10 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         store_default_item_price=_money("STORE_DEFAULT_ITEM_PRICE"),
         store_slot_price=_money("STORE_SLOT_PRICE"),
         store_slot_max=max(1, min(_int("STORE_SLOT_MAX", 5), 25)),
+        store_nuke_price=_money("STORE_NUKE_PRICE"),
+        store_nuke_points=max(1, min(_int("STORE_NUKE_POINTS", 100), 1_000_000)),
+        store_nuke_claims=max(0, min(_int("STORE_NUKE_CLAIMS", 0), 100_000)),
+        store_nuke_channel_id=_int("STORE_NUKE_CHANNEL_ID"),
         price_list_file=Path(_get("PRICE_LIST_FILE", "prices.txt") or "prices.txt"),
         points_name=_get("POINTS_NAME", "points") or "points",
         points_per_hour=max(0, _int("POINTS_PER_HOUR", 10)),

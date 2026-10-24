@@ -1118,6 +1118,17 @@ Orders. Wrong keys: 5 tries per 15 minutes per visitor. Empty = off (default).
    shows a "Test mode" note). For real payments switch to `live` with your **live** Client ID/Secret.
 3. Optional: `STORE_CURRENCY` (default: the price list's currency), `STORE_GIFTCARD_VALUES`, `STORE_CHANNEL_ID`.
 
+### 💣 Nukes in the web store
+
+Players can buy a **nuke** for real money on the website (store → **💣 Nukes**, PayPal and/or gift card). Once
+it's paid, the bot drops it on Discord: a *NUKE* message with a **Claim** button in the nuke channel (no
+@everyone ping). Every Discord member except the buyer can press it once and gets the set points, for 24 hours
+or until the set number of members have claimed. Set it in **Settings → Store**: `STORE_NUKE_PRICE` (0 = not
+for sale), `STORE_NUKE_POINTS` (points every member gets), `STORE_NUKE_CLAIMS` (0 = everyone) and
+`STORE_NUKE_CHANNEL_ID` (empty = the Discord server's system channel). The buyer enters their linked in-game
+name like for kits. If the drop can't be posted (e.g. no channel), the order shows as failed and staff click
+Retry (Store → Orders). Needs points & shop on.
+
 ### Player accounts & team slots (My account)
 
 Players can log in on the website to manage their **own** custom kits (the ones they bought): **your web link +

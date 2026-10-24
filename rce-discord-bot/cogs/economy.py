@@ -6,7 +6,8 @@ Points belong to a Discord account and are earned with the player linked to it (
   * /daily          DAILY_POINTS + DAILY_STREAK_BONUS per day in a row (max. 7)
   * playtime reward every PLAYTIME_REWARD_HOURS online: PLAYTIME_REWARD_KIT and/or PLAYTIME_REWARD_POINTS
 They are spent in /shop (items: web interface → Shop): custom kit, in-game kit, items, a Discord role
-(optionally for N days) or a 💣 nuke – a points drop in the channel where it was bought: every Discord member (not the
+(optionally for N days) or a 💣 nuke – a points drop in the channel where it was bought (nukes are also sold for
+real money in the web store, cogs/webshop.py): every Discord member (not the
 buyer) can claim the set points once with the Claim button, for the first N members (0 = everyone) within NUKE_HOURS.
 If delivery fails, the points are refunded.
 """
@@ -363,9 +364,13 @@ class Economy(commands.Cog):
         return embed
 
     async def _drop_nuke(self, row, member: discord.Member, channel) -> str:
+        await self.drop_nuke(member.id, row["name"], int(row["target"]), int(row["amount"]), channel)
+        return f"your nuke dropped in {getattr(channel, 'mention', 'the channel')}"
+
+    async def drop_nuke(self, buyer_id: int, item: str, points: int, max_claims: int, channel) -> int:
+        """Posts a nuke (shop or web store) in `channel`. Returns its message id; raises if it can't be posted."""
         db = self.bot.db
-        drop_id = db.create_nuke(member.id, row["name"], int(row["target"]), int(row["amount"]),
-                                 int(time.time()) + NUKE_HOURS * 3600)
+        drop_id = db.create_nuke(buyer_id, item, points, max_claims, int(time.time()) + NUKE_HOURS * 3600)
         drop = db.nuke(drop_id)
         try:                      # no @everyone – the drop is announced only by the message itself
             msg = await channel.send(embed=self._nuke_embed(drop, 0), view=NukeView(self),
@@ -374,7 +379,7 @@ class Economy(commands.Cog):
             db.delete_nuke(drop_id)
             raise
         db.set_nuke_message(drop_id, channel.id, msg.id)
-        return f"your nuke dropped in {getattr(channel, 'mention', 'the channel')}"
+        return msg.id
 
     async def claim_nuke(self, interaction: discord.Interaction) -> None:
         db = self.bot.db
