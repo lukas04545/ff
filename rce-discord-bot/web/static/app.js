@@ -1626,11 +1626,12 @@ views.shop = async (main) => {
     if (k === "custom_kit") target = opts(d.custom_kits.map((n) => [n, n]));
     else if (k === "kit") target = opts((kits.ingame || []).map((n) => [n, n]));
     else if (k === "role") target = opts(d.roles.map((r) => [r.id, r.name]));
+    else if (k === "nuke") target = h("input", { type: "number", min: 1, value: 100, style: "max-width:150px", title: `${pts} every member gets`, placeholder: `${pts} per member` });
     else target = h("input", { placeholder: "Item shortname, e.g. rifle.ak", list: "dl-shop-items" });
     targetBox.replaceChildren(target);
-    amount.style.display = amountLabel.style.display = ["item", "role"].includes(k) ? "" : "none";
-    amountLabel.textContent = k === "role" ? "days (0 = permanent)" : "pieces";
-    if (k === "role") amount.value = 7; else amount.value = 1;
+    amount.style.display = amountLabel.style.display = ["item", "role", "nuke"].includes(k) ? "" : "none";
+    amountLabel.textContent = k === "role" ? "days (0 = permanent)" : k === "nuke" ? "members who can claim (0 = everyone)" : "pieces";
+    amount.value = k === "role" ? 7 : k === "nuke" ? 20 : 1;
   };
   kindSel.addEventListener("change", renderTarget);
   renderTarget();

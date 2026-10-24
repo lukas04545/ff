@@ -346,6 +346,24 @@ class Storage:
                 created_at INTEGER NOT NULL,
                 paid_at INTEGER
             );
+            -- Nukes bought in the shop: a points drop every Discord member can claim once (cogs/economy.py)
+            CREATE TABLE IF NOT EXISTS nuke_drops (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                buyer_id INTEGER NOT NULL,
+                item TEXT NOT NULL,
+                points INTEGER NOT NULL,                -- per member who claims
+                max_claims INTEGER NOT NULL,            -- 0 = everyone
+                channel_id INTEGER,
+                message_id INTEGER,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS nuke_claims (
+                drop_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                PRIMARY KEY (drop_id, user_id)
+            );
             -- Premium currency (battle pass, coin packs in the web store) – separate from points
             CREATE TABLE IF NOT EXISTS premium_wallets (
                 user_id INTEGER PRIMARY KEY,
@@ -906,6 +924,59 @@ class Storage:
         self._db.execute("INSERT INTO point_log (user_id, delta, reason) VALUES (?, ?, ?)", (user_id, -cost, reason[:200]))
         self._db.commit()
         return int(self.wallet(user_id)["points"])
+
+    # ------------------------------------------------------------ Nukes (points drops)
+
+    def create_nuke(self, buyer_id: int, item: str, points: int, max_claims: int, expires_at: int) -> int:
+        with self._db:
+            cur = self._db.execute("INSERT INTO nuke_drops (buyer_id, item, points, max_claims, created_at, expires_at) "
+                                   "VALUES (?, ?, ?, ?, ?, ?)",
+                                   (buyer_id, item, points, max_claims, int(time.time()), expires_at))
+        return int(cur.lastrowid)
+
+    def set_nuke_message(self, drop_id: int, channel_id: int, message_id: int) -> None:
+        with self._db:
+            self._db.execute("UPDATE nuke_drops SET channel_id = ?, message_id = ? WHERE id = ?",
+                             (channel_id, message_id, drop_id))
+
+    def delete_nuke(self, drop_id: int) -> None:
+        with self._db:
+            self._db.execute("DELETE FROM nuke_claims WHERE drop_id = ?", (drop_id,))
+            self._db.execute("DELETE FROM nuke_drops WHERE id = ?", (drop_id,))
+
+    def nuke(self, drop_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM nuke_drops WHERE id = ?", (drop_id,)).fetchone()
+
+    def nuke_by_message(self, message_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM nuke_drops WHERE message_id = ?", (message_id,)).fetchone()
+
+    def nuke_claims(self, drop_id: int) -> int:
+        return int(self._db.execute("SELECT COUNT(*) FROM nuke_claims WHERE drop_id = ?", (drop_id,)).fetchone()[0])
+
+    def claim_nuke(self, drop_id: int, user_id: int, now: int | None = None) -> str:
+        """One member claims a drop (atomic: the claim and the points go in together). Returns "ok", "missing",
+        "own" (the buyer), "expired", "empty" (everyone who could has claimed) or "claimed" (already did)."""
+        now = int(time.time()) if now is None else now
+        with self._db:
+            drop = self._db.execute("SELECT * FROM nuke_drops WHERE id = ?", (drop_id,)).fetchone()
+            if drop is None:
+                return "missing"
+            if drop["buyer_id"] == user_id:
+                return "own"
+            if self._db.execute("SELECT 1 FROM nuke_claims WHERE drop_id = ? AND user_id = ?",
+                                (drop_id, user_id)).fetchone():
+                return "claimed"
+            if now >= drop["expires_at"]:
+                return "expired"
+            if drop["max_claims"] and self.nuke_claims(drop_id) >= drop["max_claims"]:
+                return "empty"
+            self._db.execute("INSERT INTO nuke_claims (drop_id, user_id, ts) VALUES (?, ?, ?)", (drop_id, user_id, now))
+            self._db.execute("INSERT OR IGNORE INTO wallets (user_id) VALUES (?)", (user_id,))
+            self._db.execute("UPDATE wallets SET points = points + ?, earned_total = earned_total + ? WHERE user_id = ?",
+                             (drop["points"], drop["points"], user_id))
+            self._db.execute("INSERT INTO point_log (user_id, delta, reason) VALUES (?, ?, ?)",
+                             (user_id, drop["points"], f"nuke: {drop['item']}"[:200]))
+        return "ok"
 
     # ------------------------------------------------------------ Premium currency
 

@@ -1263,7 +1263,11 @@ go to their own verified account):
 The name of the points is up to you (`POINTS_NAME`, e.g. *coins* or *scrap*). Members spend them with
 `/shop buy`. Shop items are set up in the web interface (**🪙 Shop**): a **custom kit**, an **in-game
 kit**, an **item** (shortname + amount) or a **Discord role** – permanent or for N days (uses the timed
-roles below). Kits and items need the linked player to be online. If a delivery fails (e.g. RCON down),
+roles below) or a **💣 Nuke**: you set the points every member gets and how many members can claim (0 =
+everyone). When someone buys a nuke with `/shop buy`, the bot posts a *NUKE* message with a **Claim** button
+in that channel (no @everyone ping). Every Discord member except the buyer can claim the points once, within
+24 hours or until the set number of members have claimed; the button keeps working after a bot restart.
+Kits and items need the linked player to be online. If a delivery fails (e.g. RCON down),
 the points are refunded automatically. Every purchase is in the admin log. The Shop page also shows all
 balances, with **± Points** to correct one; in Discord admins use `/points give/take`.
 `/profile` shows everything about a member at a glance (also useful for staff in tickets), and the
