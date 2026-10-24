@@ -388,14 +388,14 @@ def test_poker_pages_and_long_poll(casino_env):
 
 # ------------------------------------------------------------ Plinko
 
-def test_plinko_rtp_is_exactly_87_5_percent_on_every_board():
+def test_plinko_rtp_is_exactly_97_5_percent_on_every_board():
     from math import comb
     assert set(g.PLINKO_TABLES) == {(r, n) for r in g.PLINKO_RISKS for n in g.PLINKO_ROWS}
     for (risk, rows), table in g.PLINKO_TABLES.items():
         assert len(table) == rows + 1 and table == table[::-1] and min(table) > 0
         assert all(table[k] >= table[k + 1] for k in range(rows // 2)), (risk, rows)   # biggest at the edges
         rtp = Fraction(sum(comb(rows, k) * c for k, c in enumerate(table)), 100 * 2 ** rows)
-        assert rtp == g.PLINKO_RTP == Fraction(7, 8), (risk, rows)
+        assert rtp == g.PLINKO_RTP == Fraction(39, 40), (risk, rows)
     for rows in g.PLINKO_ROWS:                                       # more risk = bigger edges
         assert g.PLINKO_TABLES[("low", rows)][0] < g.PLINKO_TABLES[("medium", rows)][0] \
             < g.PLINKO_TABLES[("high", rows)][0]
@@ -411,9 +411,9 @@ def test_plinko_ball_follows_its_path():
         def randrange(self, n):
             return self.bits.pop(0) if self.bits else 0
     d = g.plinko_drop(100, "high", 8, Path([1] * 8))                 # always right: the right edge
-    assert d["slot"] == 8 and d["path"] == [1] * 8 and d["payout"] == 3500
+    assert d["slot"] == 8 and d["path"] == [1] * 8 and d["payout"] == 3890
     d = g.plinko_drop(100, "low", 8, Path([0, 1] * 4))
-    assert d["slot"] == 4 and d["payout"] == 47
+    assert d["slot"] == 4 and d["payout"] == 52
     with pytest.raises(ValueError):
         g.plinko_drop(100, "extreme", 8)
 
@@ -450,10 +450,10 @@ def test_plinko_pages(casino_env):
         await c.start_server()
         try:
             c.session.cookie_jar.update_cookies({"rce_player": "tok"})
-            assert "87.5 %" in await (await c.get("/casino")).text()
+            assert "97.5 %" in await (await c.get("/casino")).text()
             page = await (await c.get("/casino/plinko")).text()
             assert "<canvas" in page and 'name="balls"' in page and page.count('name="risk"') == 3
-            assert "114×" in page                                     # medium, 16 rows by default
+            assert "127×" in page                                     # medium, 16 rows by default
             src = re.search(r'<script src="(/plinko\.js\?v=\w+)" defer>', page)[1]
             assert "requestAnimationFrame" in await (await c.get(src)).text()
             r = await c.post("/casino/plinko/drop", data={"bet": "10", "balls": "4", "risk": "high", "rows": "8",

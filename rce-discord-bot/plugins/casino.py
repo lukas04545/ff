@@ -7,7 +7,7 @@ support/plinko_image.py): /slots, /coinflip, /dice, /roulette, /plinko – the r
 ended – and /blackjack with Hit/Stand/Double/Split buttons. Same games, odds and points as the website.
 
 Slots, coin flip and dice return 95 % of the bets on average, roulette is a real European wheel (97.3 %) and
-blackjack is played with real casino rules (≈ 99.5 %). Plinko returns 87.5 % on every risk and row count. The games themselves are in support/casino_games.py, the
+blackjack is played with real casino rules (≈ 99.5 %). Plinko returns 97.5 % on every risk and row count. The games themselves are in support/casino_games.py, the
 pages in web/casino_pages.py. Players log in with the website's player login (/account).
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ GAMES = {           # id -> (name, icon, line shown under it)
     "dice": ("Dice", "🎲", "Return to player 95 %"),
     "roulette": ("Roulette", "🎡", "Return to player 97.3 %"),
     "blackjack": ("Blackjack", "🃏", "Return to player ≈ 99.5 %"),
-    "plinko": ("Plinko", "🔻", "Return to player 87.5 %"),
+    "plinko": ("Plinko", "🔻", "Return to player 97.5 %"),
     "poker": ("Poker", "♠️", "Texas Hold'em against other players"),
 }
 DEFAULT_TABLES = "Low stakes | 5 | 10 | 200 | 2000\nHigh stakes | 50 | 100 | 2000 | 20000"
@@ -109,7 +109,7 @@ class Casino(Plugin):
     NAME = "Casino"
     ICON = "🎰"
     DESCRIPTION = ("Players gamble their points on the player website: slots, coin flip and dice (95 % RTP), "
-                   "European roulette (97.3 %), blackjack with real rules (≈ 99.5 %), Plinko (87.5 %) and poker tables. Play money only – points "
+                   "European roulette (97.3 %), blackjack with real rules (≈ 99.5 %), Plinko (97.5 %) and poker tables. Play money only – points "
                    "can't be bought or cashed out. Needs the Player website and player login.")
     SETTINGS = (
         Setting("min_bet", "Smallest bet", "int", 10, min=1, max=1_000_000),
@@ -438,7 +438,7 @@ class Casino(Plugin):
 
     # ------------------------------------------------------------ Plinko on Discord
 
-    @app_commands.command(name="plinko", description="Drop Plinko balls with your points (87.5 % return to player).")
+    @app_commands.command(name="plinko", description="Drop Plinko balls with your points (97.5 % return to player).")
     @app_commands.guild_only()
     @app_commands.describe(bet="Points per ball", balls="How many balls at once (each one is a bet)",
                            risk="Higher risk: bigger edges, smaller middle", rows="Rows of pegs (8–16)")
@@ -461,7 +461,7 @@ class Casino(Plugin):
                     "Bet back" if net == 0 else f"Back: **{self.fmt_points(total)}** ({self.fmt_points(-net)} lost)")
             embed.description = f"{head}\n\n{hits}{more}\n\n{line}"
             embed.colour = discord.Colour.green() if net > 0 else discord.Colour.red() if net < 0 else embed.colour
-            embed.set_footer(text=f"Balance: {self.fmt_points(self.balance(user.id))} · return to player 87.5 %")
+            embed.set_footer(text=f"Balance: {self.fmt_points(self.balance(user.id))} · return to player 97.5 %")
         embed.set_image(url="attachment://plinko.gif")
         return embed
 
