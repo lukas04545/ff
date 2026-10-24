@@ -2,8 +2,9 @@
 blackjack, Plinko, and Texas Hold'em poker tables where players play against each other. Play money only: points are
 earned in-game and can't be bought or cashed out.
 
-Plinko can also be played on Discord: /plinko drops the balls in an embed (an animated picture of the board, the result
-when they have landed) – same paytables, same points.
+Every game but poker can also be played on Discord, in an embed with an animated picture (support/casino_images.py,
+support/plinko_image.py): /slots, /coinflip, /dice, /roulette, /plinko – the result shows once the animation has
+ended – and /blackjack with Hit/Stand/Double/Split buttons. Same games, odds and points as the website.
 
 Slots, coin flip and dice return 95 % of the bets on average, roulette is a real European wheel (97.3 %) and
 blackjack is played with real casino rules (≈ 99.5 %). Plinko returns 87.5 % on every risk and row count. The games themselves are in support/casino_games.py, the
@@ -41,24 +42,67 @@ POLL_SECONDS = 20                   # a table page waits this long for a change 
 
 
 RISK_CHOICES = [app_commands.Choice(name=r.title(), value=r) for r in games.PLINKO_RISKS]
+ROULETTE_CHOICES = [app_commands.Choice(name=f"{label} (pays {pay}×)", value=kind)
+                    for kind, (label, pay) in games.ROULETTE_BETS.items()]
+COIN_CHOICES = [app_commands.Choice(name="Heads", value="heads"), app_commands.Choice(name="Tails", value="tails")]
+AGAIN = {"plinko": ("Drop again", "🔻"), "slots": ("Spin again", "🎰"), "coinflip": ("Flip again", "🪙"),
+         "dice": ("Roll again", "🎲"), "roulette": ("Spin again", "🎡")}
 
 
-class PlinkoAgain(discord.ui.View):
-    """"Drop again" under a /plinko result – same bet, balls, risk and rows; only for the player who dropped."""
+class PlayAgain(discord.ui.View):
+    """"Play again" under a Discord game result – same bet and choices; only for the player who played."""
 
-    def __init__(self, casino: "Casino", user_id: int, bet: int, balls: int, risk: str, rows: int) -> None:
+    def __init__(self, casino: "Casino", user_id: int, game: str, *args) -> None:
         super().__init__(timeout=300)
-        self.casino, self.user_id, self.args = casino, user_id, (bet, balls, risk, rows)
+        self.casino, self.user_id, self.game, self.args = casino, user_id, game, args
+        self.again.label, self.again.emoji = AGAIN[game]
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("Use /plinko to drop your own balls.", ephemeral=True)
+            await interaction.response.send_message(f"Use /{self.game} to play your own round.", ephemeral=True)
             return False
         return True
 
-    @discord.ui.button(label="Drop again", emoji="🔻", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Play again", style=discord.ButtonStyle.success)
     async def again(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await self.casino.discord_plinko(interaction, *self.args)
+        if self.game == "plinko":
+            await self.casino.discord_plinko(interaction, *self.args)
+        else:
+            await self.casino.discord_quick(interaction, self.game, *self.args)
+
+
+PlinkoAgain = PlayAgain
+
+
+class BlackjackView(discord.ui.View):
+    """Hit / Stand / Double / Split under a /blackjack table (Deal again when the hand is over)."""
+
+    def __init__(self, casino: "Casino", user_id: int, state: dict, bet: int) -> None:
+        super().__init__(timeout=900)
+        self.casino, self.user_id, self.step, self.bet = casino, user_id, state["step"], bet
+        allowed = games.bj_actions(state)
+        for action, label, style in (("hit", "Hit", discord.ButtonStyle.primary),
+                                     ("stand", "Stand", discord.ButtonStyle.secondary),
+                                     ("double", "Double", discord.ButtonStyle.success),
+                                     ("split", "Split", discord.ButtonStyle.success)):
+            if action in allowed:
+                self.add_item(self._button(label, style, action))
+        if state["finished"]:
+            self.add_item(self._button("Deal again", discord.ButtonStyle.success, "deal", emoji="🃏"))
+
+    def _button(self, label: str, style, action: str, emoji: str | None = None) -> discord.ui.Button:
+        button = discord.ui.Button(label=label, style=style, emoji=emoji)
+
+        async def press(interaction: discord.Interaction) -> None:
+            await self.casino.blackjack_press(interaction, action, self.step, self.bet)
+        button.callback = press
+        return button
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Use /blackjack to play your own hand.", ephemeral=True)
+            return False
+        return True
 
 
 class Casino(Plugin):
@@ -74,6 +118,9 @@ class Casino(Plugin):
         Setting("daily_loss_limit", "Daily loss limit per player", "int", 0, min=0, max=1_000_000_000,
                 help="Points a player may lose in total per day (UTC). 0 = no limit. (Poker buy-ins don't count.)"),
         *(Setting(gid, f"{icon} {name}", "bool", True) for gid, (name, icon, _) in GAMES.items()),
+        Setting("discord_games", "Casino games on Discord", "bool", True,
+                help="/slots, /coinflip, /dice, /roulette and /blackjack on Discord – embeds with an animated picture "
+                     "(blackjack with buttons). Same games, odds, bets and limits as the website."),
         Setting("plinko_discord", "🔻 Plinko on Discord (/plinko)", "bool", True,
                 help="Players can also drop Plinko balls on Discord with /plinko – an animated board in an embed."),
         Setting("plinko_max_balls", "Plinko: most balls per drop", "int", 20, min=1, max=100,
@@ -446,9 +493,179 @@ class Casino(Plugin):
         await asyncio.sleep(seconds + 0.3)
         try:
             await msg.edit(embed=self._plinko_embed(user, bet, balls, risk, rows, drops),
-                           view=PlinkoAgain(self, user.id, bet, balls, risk, rows))
+                           view=PlayAgain(self, user.id, "plinko", bet, balls, risk, rows))
         except discord.HTTPException as exc:
             self.log.debug("Plinko result: %s", exc)
+
+    # ------------------------------------------------------------ The other games on Discord
+
+    def _outcome_line(self, payout: int, staked: int) -> tuple[str, discord.Colour]:
+        net = payout - staked
+        if net > 0:
+            return f"🎉 You won **{self.fmt_points(payout)}** (+{self.fmt_points(net)})", discord.Colour.green()
+        if net == 0:
+            return "Bet back", discord.Colour(0x2F4553)
+        if payout:
+            return f"**{self.fmt_points(payout)}** back ({self.fmt_points(-net)} lost)", discord.Colour.red()
+        return f"No luck – {self.fmt_points(staked)} lost", discord.Colour.red()
+
+    def _game_embed(self, game: str, user, head: str, body: str | None, payout: int = 0, staked: int = 0,
+                    image: str = "game.gif") -> discord.Embed:
+        name, icon, _ = GAMES[game]
+        who = f"**{discord.utils.escape_markdown(user.display_name)}** · {head}"
+        embed = discord.Embed(title=f"{icon} {name}", colour=discord.Colour(0x2F4553), description=who)
+        if body is None:
+            embed.description += "\n\n" + {"slots": "Spinning …", "coinflip": "Flipping …", "dice": "Rolling …",
+                                            "roulette": "No more bets – the wheel is spinning …"}.get(game, "…")
+        else:
+            line, colour = self._outcome_line(payout, staked)
+            embed.description += f"\n\n{body}\n\n{line}"
+            embed.colour = colour
+            embed.set_footer(text=f"Balance: {self.fmt_points(self.balance(user.id))}")
+        if image:
+            embed.set_image(url=f"attachment://{image}")
+        return embed
+
+    @app_commands.command(name="slots", description="Spin the slot machine with your points (95 % return to player).")
+    @app_commands.guild_only()
+    @app_commands.describe(bet="Points to bet")
+    async def slots_command(self, interaction: discord.Interaction, bet: app_commands.Range[int, 1, 100_000_000]):
+        await self.discord_quick(interaction, "slots", bet)
+
+    @app_commands.command(name="coinflip", description="Flip a coin – the right side pays 1.9× (95 % RTP).")
+    @app_commands.guild_only()
+    @app_commands.describe(bet="Points to bet", side="Heads or tails")
+    @app_commands.choices(side=COIN_CHOICES)
+    async def coinflip_command(self, interaction: discord.Interaction, bet: app_commands.Range[int, 1, 100_000_000],
+                               side: str = "heads"):
+        await self.discord_quick(interaction, "coinflip", bet, side)
+
+    @app_commands.command(name="dice", description="Roll 1–100: at or under your win chance wins (95 % RTP).")
+    @app_commands.guild_only()
+    @app_commands.describe(bet="Points to bet", chance=f"Win chance in % ({games.DICE_MIN}–{games.DICE_MAX}) – "
+                                                       "pays 95 ÷ chance × your bet")
+    async def dice_command(self, interaction: discord.Interaction, bet: app_commands.Range[int, 1, 100_000_000],
+                           chance: app_commands.Range[int, games.DICE_MIN, games.DICE_MAX] = 50):
+        await self.discord_quick(interaction, "dice", bet, chance)
+
+    @app_commands.command(name="roulette", description="European roulette with your points (97.3 % RTP).")
+    @app_commands.guild_only()
+    @app_commands.describe(bet="Points to bet", on="What you bet on", number="Your number (only for a single number)")
+    @app_commands.choices(on=ROULETTE_CHOICES)
+    async def roulette_command(self, interaction: discord.Interaction, bet: app_commands.Range[int, 1, 100_000_000],
+                               on: str, number: app_commands.Range[int, 0, 36] | None = None):
+        await self.discord_quick(interaction, "roulette", bet, on, number)
+
+    async def discord_quick(self, interaction: discord.Interaction, game: str, bet: int, *choice) -> None:
+        """Slots, coin flip, dice, roulette on Discord: bet settled first, then the animation, then the result."""
+        from support import casino_images as pics
+        if not self.setting("discord_games"):
+            await interaction.response.send_message("Casino games on Discord are switched off.", ephemeral=True)
+            return
+        uid, user = interaction.user.id, interaction.user
+        try:
+            if game == "slots":
+                spin = self.play_slots(uid, bet)
+                payout = spin.payout
+                render = (pics.slots_gif, spin.reels, payout > 0)
+                head = f"bet {self.fmt_points(bet)}"
+                body = f"# {' '.join(spin.reels)}"
+            elif game == "coinflip":
+                pick = choice[0]
+                side, payout = self.play_coinflip(uid, bet, pick)
+                render = (pics.coin_gif, side, payout > 0)
+                head = f"{self.fmt_points(bet)} on **{pick.title()}**"
+                body = f"It's **{side.title()}**!"
+            elif game == "dice":
+                target = choice[0]
+                roll, payout = self.play_dice(uid, bet, target)
+                render = (pics.dice_gif, roll, target, payout > 0)
+                pays = games.fmt_multiplier(round(9500 / target))
+                head = f"{self.fmt_points(bet)} · {target} % chance (pays {pays}×)"
+                body = f"Rolled **{roll}** – {target} or under wins."
+            elif game == "roulette":
+                kind, number = choice
+                pocket, payout = self.play_roulette(uid, bet, kind, number)
+                render = (pics.roulette_gif, pocket, payout > 0)
+                label = games.ROULETTE_BETS.get(kind, (kind, 0))[0] + (f" {number}" if kind == "number" else "")
+                head = f"{self.fmt_points(bet)} on **{label}**"
+                colour = games.roulette_colour(pocket)
+                body = f"**{pocket} {colour.title()}** {'🟢' if colour == 'green' else '🔴' if colour == 'red' else '⚫'}"
+            else:
+                raise GameError("Unknown game.")
+        except GameError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        try:
+            data, seconds = await asyncio.to_thread(*render)
+            msg = await interaction.followup.send(embed=self._game_embed(game, user, head, None),
+                                                  file=discord.File(io.BytesIO(data), "game.gif"), wait=True)
+        except Exception as exc:          # the bet is settled already – at least show the result as text
+            self.log.warning("%s picture: %s", game, exc)
+            await interaction.followup.send(embed=self._game_embed(game, user, head, body, payout, bet, image=""))
+            return
+        await asyncio.sleep(seconds + 0.3)
+        try:
+            await msg.edit(embed=self._game_embed(game, user, head, body, payout, bet),
+                           view=PlayAgain(self, uid, game, bet, *choice))
+        except discord.HTTPException as exc:
+            self.log.debug("%s result: %s", game, exc)
+
+    # ------------------------------------------------------------ Blackjack on Discord (buttons)
+
+    @app_commands.command(name="blackjack", description="Blackjack with real casino rules (≈ 99.5 % RTP).")
+    @app_commands.guild_only()
+    @app_commands.describe(bet="Points to bet (a hand you didn't finish is shown again instead)")
+    async def blackjack_command(self, interaction: discord.Interaction,
+                                bet: app_commands.Range[int, 1, 100_000_000]) -> None:
+        if not self.setting("discord_games"):
+            await interaction.response.send_message("Casino games on Discord are switched off.", ephemeral=True)
+            return
+        state = self.bj_state(interaction.user.id)
+        note = ""
+        if state is not None and not state["finished"]:
+            note = "Your unfinished hand:"                  # one hand at a time (also on the website)
+            bet = state["hands"][0]["bet"]
+        else:
+            try:
+                state = self.bj_start(interaction.user.id, bet)
+            except GameError as exc:
+                await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+                return
+        embed, file = await self._blackjack_message(interaction.user, state, note)
+        await interaction.response.send_message(embed=embed, file=file,
+                                                view=BlackjackView(self, interaction.user.id, state, bet))
+
+    async def _blackjack_message(self, user, state: dict, note: str = "") -> tuple[discord.Embed, discord.File]:
+        from support.casino_images import blackjack_png
+        data = await asyncio.to_thread(blackjack_png, state, user.display_name[:20])
+        staked = games.bj_wagered(state)
+        head = f"bet {self.fmt_points(staked)}" + (f" · {note}" if note else "")
+        if state["finished"]:
+            words = {"win": "Win", "blackjack": "Blackjack!", "push": "Push", "lose": "Lose", "bust": "Bust"}
+            body = " · ".join(f"{'Hand ' + str(i + 1) + ': ' if len(state['hands']) > 1 else ''}"
+                              f"**{words.get(h.get('result'), '?')}**" for i, h in enumerate(state["hands"]))
+            embed = self._game_embed("blackjack", user, head, body, state.get("payout", 0), staked,
+                                     image="table.png")
+        else:
+            moves = ", ".join(a.title() for a in games.bj_actions(state))
+            embed = self._game_embed("blackjack", user, head, None, image="table.png")
+            embed.description = embed.description.rsplit("\n\n", 1)[0] + f"\n\nYour move: {moves}"
+        return embed, discord.File(io.BytesIO(data), "table.png")
+
+    async def blackjack_press(self, interaction: discord.Interaction, action: str, step: int, bet: int) -> None:
+        try:
+            if action == "deal":
+                state = self.bj_start(interaction.user.id, bet)
+            else:
+                state = self.bj_action(interaction.user.id, action, step)
+        except GameError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+        embed, file = await self._blackjack_message(interaction.user, state)
+        await interaction.response.edit_message(embed=embed, attachments=[file],
+                                                view=BlackjackView(self, interaction.user.id, state, bet))
 
     # ------------------------------------------------------------ Blackjack (the hand is kept between clicks)
 
