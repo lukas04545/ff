@@ -137,7 +137,7 @@ def test_red_after_offline_time_green_on_first_join(zp):
     asyncio.run(zp.p.on_rce_player_join("Mate"))                           # any member back: green at once
     assert zp.p.zone(5)["state"] == "green" and zp.said[-1] == "TEST_GREEN team_5"
     assert zp.p.zone(5)["offline_since"] is None
-    assert zp.p.status() == {"Zones": 1, "Red (team offline)": 0, "Green": 1}
+    assert zp.p.status() == {"Zones": 1, "Red (team offline)": 0, "Green": 1, "Expired": 0}
 
 
 def test_offline_timer_is_adjustable(zp):
@@ -234,3 +234,70 @@ def test_teams_read_from_the_server_and_found_when_placing(zp, monkeypatch):
     replies["relationshipmanager.teaminfoall"] = "Unknown command"           # unreadable: keep what we know
     asyncio.run(zp.p.sync_teams())
     assert zp.db.team_of("Hades_2Faze") is not None
+
+
+def test_zone_expires_when_nobody_of_the_team_comes_online(zp):
+    configure(zp, expire_hours=48)
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    assert zp.p.zone_list()[0]["expires_at"] is None                      # the team is online
+    zp.bot.online_players = {}
+    asyncio.run(zp.p.on_rce_player_leave("Mate"))
+    start = zp.p.zone(5)["offline_since"]
+    assert zp.p.zone_list()[0]["expires_at"] == start + 48 * 3600
+    asyncio.run(zp.p._update(5, now=start + 47 * 3600))
+    assert zp.p.zone(5)["state"] == "red" and "TEST_REMOVE team_5" not in zp.said
+    asyncio.run(zp.p._update(5, now=start + 48 * 3600))
+    assert zp.p.zone(5) is None and zp.said.count("TEST_REMOVE team_5") == 1
+    assert zp.p.status()["Expired"] == 1 and zp.p.zone_list() == []
+
+
+def test_coming_back_resets_the_expiry_and_0_means_never(zp):
+    configure(zp, expire_hours=10)
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    zp.bot.online_players = {}
+    asyncio.run(zp.p.on_rce_player_leave("Mate"))
+    start = zp.p.zone(5)["offline_since"]
+    asyncio.run(zp.p._update(5, now=start + 9 * 3600))
+    zp.bot.online_players = {"Mate": {}}
+    asyncio.run(zp.p.on_rce_player_join("Mate"))                           # back in time: timer starts over
+    zp.bot.online_players = {}
+    asyncio.run(zp.p.on_rce_player_leave("Mate"))
+    again = zp.p.zone(5)["offline_since"]
+    asyncio.run(zp.p._update(5, now=again + 9 * 3600))
+    assert zp.p.zone(5) is not None
+    configure(zp, expire_hours=0)
+    asyncio.run(zp.p._update(5, now=again + 1000 * 3600))
+    assert zp.p.zone(5) is not None and zp.p.zone_list()[0]["expires_at"] is None
+
+
+def test_own_tab_in_the_control_panel(zp):
+    from aiohttp.test_utils import TestClient, TestServer
+    configure(zp)
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    H = {"X-Requested-With": "rce-web"}
+
+    async def main():
+        from web.server import WebInterface
+        web = WebInterface(zp.bot, env_path=zp.tmp / ".env", secret_path=zp.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            assert (await c.get("/api/protection")).status == 401
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            r = await (await c.get("/api/protection")).json()
+            assert r["plugin"]["tab"] == "protection" and r["plugin"]["running"]
+            assert [z["name"] for z in r["zones"]] == ["team_5"] and r["zones"][0]["members"] == ["Lead", "Mate"]
+            plugins = (await (await c.get("/api/plugins")).json())["plugins"]
+            assert next(p for p in plugins if p["id"] == "offline_protection")["tab"] == "protection"
+            assert (await c.delete("/api/protection/zones/9", headers=H)).status == 404
+            assert (await c.delete("/api/protection/zones/5", headers=H)).status == 200
+            assert zp.p.zone(5) is None and "TEST_REMOVE team_5" in zp.said
+            index = await (await c.get("/admin")).text()
+            assert 'data-view="protection" data-owner' in index
+        finally:
+            await c.close()
+            await zp.bot.rcon.close()
+    asyncio.run(main())

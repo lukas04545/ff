@@ -7,6 +7,12 @@ Only the leader of a team can place (or move) its zone; members and players with
 Status: red when every member has been offline for longer than "Offline time before red" (minutes); green as soon as
 one member comes online (checked on every join, no waiting for the timer).
 
+Expiry: a zone whose team nobody has been online for "Delete the zone after … hours" is deleted from the server (the
+remove command) – abandoned bases don't stay protected forever. The leader can place a new one when the team is back.
+
+The feature has its own tab in the control panel (🛡️ Offline protection): on/off, settings, every zone with its
+status and when it expires, and a button to delete a zone.
+
 Zone commands – only what the Rust Console Edition community server guide "Custom zones" documents:
   zones.createcustomzone "Name" (x,y,z) rotation Sphere|Box size pvp npc_damage radiation building_damage building
   zones.editcustomzone "Name" Setting Value     (allowbuildingdamage 0/1, showarea 0/1, color (R,G,B),
@@ -59,12 +65,17 @@ COMMAND_HELP = ("Placeholders: {zone} (zone name), {team} (team ID), {leader} (l
 class OfflineProtection(Plugin):
     NAME = "Offline protection zones"
     ICON = "🛡️"
+    TAB = "protection"                  # own control panel tab instead of a card on the Plugins page
     DESCRIPTION = ("One protection zone per team, placed by the team leader with the quick chats \"Can I build "
                    "here?\" + \"Yes\". Red while the whole team is offline longer than the set time, green the "
-                   "moment a member is back. Runs the zone commands you enter (from the Custom zones guide).")
+                   "moment a member is back, deleted after the set time with nobody of the team online. Runs the "
+                   "zone commands you enter (from the Custom zones guide).")
     SETTINGS = (
         Setting("offline_minutes", "Offline time before red (minutes)", "int", 30, min=1, max=10080,
                 help="How long every member of a team must be offline before the zone turns red."),
+        Setting("expire_hours", "Delete the zone after … hours with nobody of the team online", "int", 72,
+                min=0, max=8760,
+                help="Counted from the moment the last member went offline. 0 = zones never expire."),
         Setting("confirm_seconds", "Seconds to answer \"Yes\"", "int", 20, min=5, max=120,
                 help="Time between \"Can I build here?\" and \"Yes\" for the leader to place the zone."),
         Setting("radius", "Zone radius in metres ({radius})", "int", 30, min=1, max=100000,
@@ -163,7 +174,36 @@ class OfflineProtection(Plugin):
     def status(self) -> dict:
         zones = self.zones()
         return {"Zones": len(zones), "Red (team offline)": sum(1 for z in zones.values() if z["state"] == "red"),
-                "Green": sum(1 for z in zones.values() if z["state"] == "green")}
+                "Green": sum(1 for z in zones.values() if z["state"] == "green"),
+                "Expired": self.data.get("expired", 0)}
+
+    def expires_at(self, zone: dict) -> float | None:
+        """When the zone is deleted if nobody of the team comes online (None: someone is online / never)."""
+        hours = self.setting("expire_hours")
+        if not hours or zone.get("offline_since") is None:
+            return None
+        return zone["offline_since"] + hours * 3600
+
+    def zone_list(self) -> list[dict]:
+        """Every zone for the control panel tab."""
+        out = []
+        for team_id, zone in sorted(self.zones().items()):
+            team = self.bot.db.team_by_id(team_id)
+            out.append({"team": team_id, "name": zone["name"], "leader": zone["leader"],
+                        "members": list(team[1]) if team else [], "state": zone["state"] or "green",
+                        "x": zone["x"], "y": zone["y"], "z": zone["z"], "placed": zone.get("placed"),
+                        "offline_since": zone.get("offline_since"), "expires_at": self.expires_at(zone)})
+        return out
+
+    async def remove_zone(self, team_id: int, why: str) -> bool:
+        """Deletes the zone on the server and forgets it. False if the team has no zone."""
+        zone = self.zone(team_id)
+        if zone is None:
+            return False
+        await self._run("remove_command", self._vars(zone))
+        self.data.delete(f"zone:{team_id}")
+        self.audit(f"Offline protection zone of team {team_id} removed ({why})")
+        return True
 
     # ------------------------------------------------------------ Zones (kept in self.data)
 
@@ -296,9 +336,7 @@ class OfflineProtection(Plugin):
         now = time.time() if now is None else now
         team = self.bot.db.team_by_id(team_id)
         if team is None or not team[1]:                     # the team is gone: its zone goes too
-            await self._run("remove_command", self._vars(zone))
-            self.data.delete(f"zone:{team_id}")
-            self.audit(f"Offline protection zone of team {team_id} removed (the team doesn't exist any more)")
+            await self.remove_zone(team_id, "the team doesn't exist any more")
             return
         zone["leader"] = team[0]["leader"] or zone["leader"]
         if self._online(team[1], joined, left):
@@ -311,6 +349,13 @@ class OfflineProtection(Plugin):
         else:
             if zone["offline_since"] is None:
                 zone["offline_since"] = now                  # from now on (the bot can only count what it saw)
+            expires = self.expires_at(zone)
+            if expires is not None and now >= expires:       # abandoned: nobody of the team came back in time
+                await self.remove_zone(team_id, f"nobody of the team online for {self.setting('expire_hours')} h")
+                self.data.set("expired", self.data.get("expired", 0) + 1)
+                await self._announce(f"⌛ Zone `{zone['name']}` of team **{self.md(zone['leader'])}** expired – "
+                                     f"nobody of the team was online for {self.setting('expire_hours')} hours.")
+                return
             if zone["state"] != "red" and now - zone["offline_since"] >= self.setting("offline_minutes") * 60:
                 zone["state"] = "red"
                 await self._run("red_command", self._vars(zone))
