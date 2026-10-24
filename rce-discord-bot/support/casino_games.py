@@ -342,6 +342,17 @@ def plinko_drop(bet: int, risk: str, rows: int, rng: random.Random = RNG) -> dic
     return {"path": path, "slot": slot, "cents": table[slot], "payout": fair(bet * table[slot], 100, rng)}
 
 
+def plinko_colour(k: int, rows: int) -> str:
+    """Slot colour: red at the edges, orange, yellow in the middle (like the well-known Plinko board)."""
+    x = abs(k - rows / 2) / (rows / 2)                          # 0 middle … 1 edge
+    stops = ((0, (255, 192, 0)), (0.55, (255, 120, 20)), (1, (255, 0, 63)))
+    for (a, ca), (b, cb) in zip(stops, stops[1:]):
+        if x <= b:
+            f = (x - a) / (b - a)
+            return "#" + "".join(f"{round(p + (q - p) * f):02x}" for p, q in zip(ca, cb))
+    return "#ff003f"
+
+
 def fmt_multiplier(cents: int) -> str:
     """1000.00 -> "1000", 0.3 -> "0.3", 1.25 -> "1.25"."""
     whole, part = divmod(cents, 100)

@@ -476,3 +476,67 @@ def test_plinko_pages(casino_env):
             await c.close()
             await casino_env.bot.rcon.close()
     asyncio.run(main())
+
+
+def test_plinko_on_discord(casino_env, monkeypatch):
+    """/plinko: bets taken, an animated board (GIF) in an embed, the result added once the balls landed."""
+    import io
+    from types import SimpleNamespace as NS
+
+    from PIL import Image
+
+    import plugins.casino as cm
+    casino = casino_env.m.running("casino")
+    slept = []
+
+    async def no_sleep(seconds):
+        slept.append(seconds)
+    monkeypatch.setattr(cm.asyncio, "sleep", no_sleep)
+
+    def interaction():
+        out = NS(ephemeral=[], sent=[], edits=[], deferred=False)
+
+        async def send_message(text, ephemeral=False):
+            out.ephemeral.append(text)
+
+        async def defer(thinking=False):
+            out.deferred = True
+
+        class Msg:
+            async def edit(self, embed=None, view=None):
+                out.edits.append((embed, view))
+
+        async def followup_send(embed=None, file=None, wait=False):
+            out.sent.append((embed, file))
+            return Msg()
+        out.it = NS(user=NS(id=7, display_name="Gamer7"), response=NS(send_message=send_message, defer=defer),
+                    followup=NS(send=followup_send))
+        return out
+
+    o = interaction()
+    asyncio.run(casino.discord_plinko(o.it, 10, 3, "high", 12))
+    embed, file = o.sent[0]
+    assert o.deferred and file.filename == "plinko.gif" and embed.image.url == "attachment://plinko.gif"
+    assert "Dropping" in embed.description and "3 × 10 points" in embed.description
+    gif = Image.open(io.BytesIO(file.fp.read()))
+    assert gif.format == "GIF" and gif.n_frames > 20 and "loop" not in gif.info          # plays once
+    final, view = o.edits[0]
+    assert slept and "Dropping" not in final.description and final.description.count("×**") == 3
+    assert "Balance:" in final.footer.text and isinstance(view, cm.PlinkoAgain)
+    paid = casino.data.get("stats:plinko")
+    assert casino.balance(7) == 1000 - 30 + paid["paid"] and paid["rounds"] == 3
+
+    other = interaction()                                     # someone else can't press my "Drop again"
+    other.it.user = NS(id=8, display_name="X")
+    assert asyncio.run(view.interaction_check(other.it)) is False and "your own" in other.ephemeral[0]
+    o2 = interaction()
+    asyncio.run(view.again.callback(o2.it))
+    assert len(o2.sent) == 1 and casino.data.get("stats:plinko")["rounds"] == 6
+
+    o3 = interaction()
+    asyncio.run(casino.discord_plinko(o3.it, 10, 50, "low", 8))                # over the most balls
+    assert "balls at once" in o3.ephemeral[0] and not o3.sent
+    asyncio.run(casino_env.m.save_settings("casino", {"plinko_discord": False}))
+    o4 = interaction()
+    asyncio.run(casino.discord_plinko(o4.it, 10, 1, "low", 8))
+    assert "switched off" in o4.ephemeral[0]
