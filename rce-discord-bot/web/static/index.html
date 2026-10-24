@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="theme-color" content="#07050a">
+  <meta name="theme-color" content="#0b0e1a">
   <title>RCE Bot Panel</title>
   <script>
     // Apply the saved theme before the first paint (no flash)
@@ -46,25 +46,29 @@
 
   <div id="app" class="app hidden">
     <aside class="sidebar">
-      <div class="brand">
+      <div class="brand server-card">
         <span class="logo"><svg><use href="#logo"/></svg></span>
-        <div class="brand-text"><strong>RCE Bot</strong><small>Control panel</small></div>
+        <div class="brand-text"><span class="eyebrow">RCE Bot · Control</span><strong id="srv-name">RCE Bot</strong><small>Rust Console Edition</small></div>
       </div>
+      <div class="server-chip" id="srv-chip" title="Server status">
+        <span class="dot" id="srv-dot"></span><span id="srv-chip-name">Connecting …</span><span class="badge" id="srv-chip-players" title="Players online">–</span>
+      </div>
+      <div class="nav-head"><span>Navigation</span><span>Control</span></div>
       <nav id="nav">
-        <div class="nav-group">
+        <div class="nav-group" data-tone="pink">
           <div class="nav-label">Server</div>
           <a href="#overview" data-view="overview"><i>📊</i><span>Overview</span></a>
           <a href="#console" data-view="console"><i>⌨️</i><span>Console</span></a>
           <a href="#botlog" data-view="botlog"><i>🧾</i><span>Bot log</span></a>
         </div>
-        <div class="nav-group">
+        <div class="nav-group" data-tone="violet">
           <div class="nav-label">Kits</div>
           <a href="#kits" data-view="kits"><i>🎒</i><span>Kits</span></a>
           <a href="#kitbuilder" data-view="kitbuilder"><i>🧰</i><span>Kit builder</span></a>
           <a href="#shop" data-view="shop"><i>🪙</i><span>Shop</span></a>
           <a href="#webstore" data-view="webstore" data-owner><i>💳</i><span>Store</span></a>
         </div>
-        <div class="nav-group">
+        <div class="nav-group" data-tone="teal">
           <div class="nav-label">Community</div>
           <a href="#tickets" data-view="tickets"><i>🎫</i><span>Tickets</span></a>
           <a href="#reports" data-view="reports"><i>🚩</i><span>Reports</span></a>
@@ -72,7 +76,7 @@
           <a href="#stats" data-view="stats"><i>🏆</i><span>Stats</span></a>
           <a href="#community" data-view="community"><i>🎉</i><span>Community</span></a>
         </div>
-        <div class="nav-group">
+        <div class="nav-group" data-tone="amber">
           <div class="nav-label">Admin</div>
           <a href="#plugins" data-view="plugins" data-owner><i>🧩</i><span>Plugins</span></a>
           <a href="#makeplugin" data-view="makeplugin" data-owner><i>✨</i><span>Create plugin</span></a>
@@ -89,7 +93,7 @@
           <span id="avatar" class="avatar">?</span>
           <div id="whoami" class="whoami"></div>
           <button id="motion" class="icon-btn" type="button" title="Animations: off">⏸️</button>
-          <button id="theme" class="icon-btn" type="button" title="Theme: neon">🌙</button>
+          <button id="theme" class="icon-btn" type="button" title="Theme: dark">🌙</button>
         </div>
         <div class="row tight">
           <button id="account" class="ghost small hidden" title="My password">🔑 <span>My password</span></button>
@@ -97,11 +101,29 @@
         </div>
       </div>
     </aside>
-    <main id="main"></main>
+    <div class="content">
+      <header class="topbar">
+        <button id="search-open" class="search-box" type="button" title="Search (Ctrl K)">
+          <span class="search-icon">⌕</span><span class="search-text">Find a setting or function …</span><kbd>Ctrl K</kbd>
+        </button>
+        <div class="top-chips">
+          <span class="chip" id="chip-address" hidden></span>
+          <span class="chip" id="chip-players">– players</span>
+        </div>
+      </header>
+      <main id="main"></main>
+    </div>
+  </div>
+
+  <div id="palette" class="palette hidden" role="dialog" aria-label="Search">
+    <div class="palette-box">
+      <input id="palette-input" type="search" placeholder="Search pages and settings …" autocomplete="off" spellcheck="false">
+      <div id="palette-list" class="palette-list"></div>
+      <div class="palette-hint muted">↑ ↓ to pick · Enter to open · Esc to close</div>
+    </div>
   </div>
 
   <div id="toasts" class="toasts"></div>
-  <script src="/static/bg.js?v=2"></script>
   <script src="/static/app.js?v=31"></script>
 </body>
 </html>

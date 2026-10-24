@@ -233,7 +233,7 @@ rce-discord-bot/
 │   ├── store_pages.py     # Web store pages of the player website (/store)
 │   ├── account_pages.py   # Player account pages (/account): manage own kits, team slots
 │   ├── casino_pages.py    # Casino pages of the player website (/casino)
-│   └── static/            # Frontend (HTML/CSS/JS, no external files): style.css, neon.css (neon theme), bg.js (animated background)
+│   └── static/            # Frontend (HTML/CSS/JS, no external files): style.css, neon.css (dark command-centre theme)
 ├── logbuffer.py           # Recent log lines for the web interface
 ├── settings_schema.py     # All settings for the form (label, type, help, validation)
 ├── envfile.py             # Read/write .env (comments are preserved)
@@ -485,15 +485,14 @@ text only. However, the web interface has **no HTTPS** – **never expose it to 
 port forwarding on your router**. For access on the go, use a VPN such as Tailscale or WireGuard
 into your home network instead.
 
-**Neon look:** the web interface comes in a neon-orange theme by default – panels with **cyan/violet neon outlines**
-(a light runs around the card under the mouse), a glowing active menu entry and an animated background (a neon grid
-gliding towards a breathing striped sun, embers and stars, the odd shooting star, a gentle parallax with the mouse).
-The outline colours are two variables at the top of `web/static/neon.css` (`--line-a`, `--line-b`).
-The 🌙/☀️ button at the bottom of the menu switches between *neon* and *light*. Animations are **off by default** –
-the neon background is drawn once as a still picture, so the panel stays fast on any PC; the ⏸️/✨ button switches the
-moving background and effects on (both remembered per browser). Even then it's kept light: 30 frames a second, cached
-layers, no glass blur on top of it, paused while the tab is hidden, and back to the still picture when your system
-has "reduce motion" switched on or the computer can't keep up.
+**Look:** the web interface comes in a dark "command centre" theme by default – midnight navy/violet, rounded panels,
+lavender page titles with a small label above them, stat cards with a lime-to-teal edge and a pastel gradient on the
+main buttons. The menu is grouped into coloured panels (Server, Kits, Community, Admin) that show how many pages they
+hold and can be collapsed; above the menu a server card shows the server name and a status chip with the players
+online. The top bar has **search (Ctrl K)** – type a page or a setting and press Enter: settings open on the Settings
+page and are highlighted – plus chips with the map and players. The colours are variables at the top of
+`web/static/neon.css`. The 🌙/☀️ button switches between *dark* and *light*; the ⏸️/✨ button lets the soft green
+specks in the background drift slowly (off by default – the page is drawn once, no canvas, no blur, so it stays fast).
 
 **Item pictures:** the kit builder, the kit lists and the player website show pictures of the items. The bot
 downloads each picture once from `ITEM_IMAGE_URL` (default: RustLabs, `{shortname}` is replaced) and keeps it in

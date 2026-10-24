@@ -89,7 +89,7 @@ $("#account").addEventListener("click", () => { location.hash = "#account"; });
 
 // Theme: neon (default) <-> light
 const THEMES = { dark: "🌙", light: "☀️" };
-const THEME_NAMES = { dark: "neon", light: "light" };
+const THEME_NAMES = { dark: "dark", light: "light" };
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
   const shown = theme === "light" ? "light" : "dark";
@@ -120,6 +120,139 @@ $("#motion").addEventListener("click", () => {
   applyMotion(motion);
 });
 
+// ------------------------------------------------------------------ Sidebar groups, server card, top bar, search
+
+// Menu groups: a header with icon, name, how many pages and a collapse arrow (remembered per browser)
+const GROUP_ICONS = { Server: "🖥️", Kits: "🎒", Community: "👥", Admin: "🛡️" };
+const GROUP_EYEBROWS = { Server: "Live server", Kits: "Kits & store", Community: "Community", Admin: "Administration" };
+const NAV_CLOSED_KEY = "rce-nav-closed";
+let navClosed = {};
+try { navClosed = JSON.parse(localStorage.getItem(NAV_CLOSED_KEY) || "{}") || {}; } catch { /* storage blocked */ }
+document.querySelectorAll("#nav .nav-group").forEach((group) => {
+  const old = group.querySelector(".nav-label");
+  const name = old.textContent.trim();
+  const count = h("b", { class: "count" });
+  const btn = h("button", { type: "button", class: "nav-label", "aria-expanded": "true" },
+    h("span", { class: "gi", text: GROUP_ICONS[name] || "•" }), h("span", { text: name }), count, h("em", { class: "chev", text: "⌃" }));
+  btn.addEventListener("click", () => {
+    const closed = !group.classList.contains("closed");
+    group.classList.toggle("closed", closed);
+    btn.setAttribute("aria-expanded", String(!closed));
+    if (closed) navClosed[name] = 1; else delete navClosed[name];
+    try { localStorage.setItem(NAV_CLOSED_KEY, JSON.stringify(navClosed)); } catch { /* ignore */ }
+  });
+  old.replaceWith(btn);
+  group.dataset.name = name;
+  if (navClosed[name]) { group.classList.add("closed"); btn.setAttribute("aria-expanded", "false"); }
+});
+function updateNavCounts() {
+  document.querySelectorAll("#nav .nav-group").forEach((group) => {
+    group.querySelector(".count").textContent = group.querySelectorAll("a:not(.hidden)").length;
+    if (group.querySelector("a.active")) group.classList.remove("closed");     // the open page is never hidden
+  });
+}
+
+// Server card (sidebar) and the chips in the top bar – from /api/status
+function updateServerCard() {
+  if (!status) return;
+  const s = status.server || {};
+  const name = s.name || (status.setup_mode ? "Setup" : "Rust server");
+  $("#srv-name").textContent = name;
+  $("#srv-chip-name").textContent = status.rcon_connected ? name : (status.setup_mode ? "Setup mode" : "Server offline");
+  $("#srv-chip").className = "server-chip " + (status.rcon_connected ? "ok" : "bad");
+  const players = s.players ?? (status.players || []).length;
+  $("#srv-chip-players").textContent = status.rcon_connected ? `#${players}` : "–";
+  $("#chip-players").replaceChildren(h("b", { text: status.rcon_connected ? String(players) : "–" }),
+    ` player${players === 1 ? "" : "s"}` + (s.max_players ? ` / ${s.max_players}` : ""));
+  const addr = $("#chip-address");
+  addr.hidden = !status.rcon_connected || !s.map;
+  if (s.map) addr.textContent = `🗺️ ${s.map}`;
+}
+
+// Page titles get a small label above them (the menu group), like "LIVE SERVER / Overview"
+function eyebrow() {
+  const h1 = $("#main").querySelector(":scope > h1");
+  if (!h1 || h1.dataset.eyebrow) return;
+  const link = document.querySelector("#nav a.active");
+  const group = link?.closest(".nav-group")?.dataset.name;
+  if (group) h1.dataset.eyebrow = GROUP_EYEBROWS[group] || group;
+}
+new MutationObserver(eyebrow).observe($("#main"), { childList: true });
+
+// Search (Ctrl K): every page of the menu and every setting – opens it and highlights the setting
+const palette = $("#palette"), paletteInput = $("#palette-input"), paletteList = $("#palette-list");
+let paletteItems = [], paletteIndex = 0, settingsIndex = null;
+async function loadSettingsIndex() {
+  if (settingsIndex || !isOwner()) return settingsIndex || [];
+  try {
+    const d = await api("/api/settings");
+    const groups = Object.fromEntries((d.groups || []).map((g) => [g.id, g.label]));
+    settingsIndex = d.fields.map((f) => ({ label: f.label, where: `Settings · ${groups[f.group] || f.group}`, hash: "#settings", find: f.label, icon: "⚙️" }));
+  } catch { settingsIndex = []; }
+  return settingsIndex;
+}
+function pages() {
+  return [...document.querySelectorAll("#nav a:not(.hidden)")].map((a) => ({
+    label: a.querySelector("span").textContent, where: a.closest(".nav-group")?.dataset.name || "", hash: a.getAttribute("href"),
+    icon: a.querySelector("i")?.textContent || "•" }));
+}
+function renderPalette() {
+  const q = paletteInput.value.trim().toLowerCase();
+  const all = [...pages(), ...(settingsIndex || [])];
+  paletteItems = (q ? all.filter((it) => (it.label + " " + it.where).toLowerCase().includes(q)) : pages()).slice(0, 40);
+  paletteIndex = Math.min(paletteIndex, Math.max(0, paletteItems.length - 1));
+  paletteList.replaceChildren(...(paletteItems.length ? paletteItems.map((it, i) => {
+    const b = h("button", { type: "button", class: "palette-item" + (i === paletteIndex ? " on" : "") },
+      h("span", { text: it.icon }), h("span", { text: it.label }), h("small", { text: it.where }));
+    b.addEventListener("click", () => openItem(it));
+    return b;
+  }) : [h("p", { class: "muted", style: "padding:.6rem .8rem;margin:0", text: "Nothing found." })]));
+}
+async function openPalette() {
+  palette.classList.remove("hidden");
+  paletteInput.value = ""; paletteIndex = 0;
+  renderPalette();
+  paletteInput.focus();
+  await loadSettingsIndex();
+  renderPalette();
+}
+function closePalette() { palette.classList.add("hidden"); }
+function openItem(it) {
+  closePalette();
+  if (location.hash !== it.hash) location.hash = it.hash;
+  if (!it.find) return;
+  const started = Date.now();
+  const look = () => {
+    const label = [...$("#main").querySelectorAll(".field > label")].find((l) => l.textContent.trim().replace(/\s*\*$/, "") === it.find);
+    if (!label) { if (Date.now() - started < 4000) setTimeout(look, 150); return; }
+    const row = label.closest(".field");
+    row.classList.remove("hidden");
+    const card = row.closest(".card.collapsed");
+    if (card) setCollapsed(card, false);
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash");
+    row.querySelector("input, select, textarea")?.focus({ preventScroll: true });
+  };
+  setTimeout(look, 50);
+}
+$("#search-open").addEventListener("click", openPalette);
+palette.addEventListener("click", (e) => { if (e.target === palette) closePalette(); });
+paletteInput.addEventListener("input", () => { paletteIndex = 0; renderPalette(); });
+paletteInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    paletteIndex = (paletteIndex + (e.key === "ArrowDown" ? 1 : -1) + paletteItems.length) % Math.max(1, paletteItems.length);
+    renderPalette();
+  } else if (e.key === "Enter" && paletteItems[paletteIndex]) { e.preventDefault(); openItem(paletteItems[paletteIndex]); }
+  else if (e.key === "Escape") closePalette();
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && !$("#app").classList.contains("hidden")) {
+    e.preventDefault();
+    if (palette.classList.contains("hidden")) openPalette(); else closePalette();
+  }
+});
+
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" }).catch(() => {});
   showLogin();
@@ -139,6 +272,7 @@ function route() {
   every(5000, refreshConnection);
   const view = (location.hash || "#overview").slice(1);
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
+  updateNavCounts();
   const main = $("#main");
   main.replaceChildren();
   if (!isOwner() && ["settings", "users", "plugins", "makeplugin", "webstore"].includes(view)) {
@@ -220,6 +354,7 @@ async function refreshConnection() {
     d.textContent = status.discord_ready ? "Discord online" : "Discord connecting …";
     d.className = "pill " + (status.discord_ready ? "ok" : "warn");
     if (status.restart_required) { d.textContent = "Restart required ⚙️"; d.className = "pill warn"; }
+    updateServerCard();
   } catch { /* login dialog takes over */ }
 }
 
