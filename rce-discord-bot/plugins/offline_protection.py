@@ -10,8 +10,9 @@ one member comes online (checked on every join, no waiting for the timer).
 Expiry: a zone whose team nobody has been online for "Delete the zone after … hours" is deleted from the server (the
 remove command) – abandoned bases don't stay protected forever. The leader can place a new one when the team is back.
 
-The feature has its own tab in the control panel (🛡️ Offline protection): on/off, settings, every zone with its
-status and when it expires, and a button to delete a zone.
+A main feature of the bot (not a plugin for the owner – plugin_manager.CORE_FEATURES): it only uses the plugin engine
+for its settings, storage and events. Its page in the control panel is Server → 🛡️ Offline protection: on/off,
+settings, every zone with its status and when it expires, and a button to delete a zone.
 
 Zone commands – only what the Rust Console Edition community server guide "Custom zones" documents:
   zones.createcustomzone "Name" (x,y,z) rotation Sphere|Box size pvp npc_damage radiation building_damage building
@@ -65,7 +66,8 @@ COMMAND_HELP = ("Placeholders: {zone} (zone name), {team} (team ID), {leader} (l
 class OfflineProtection(Plugin):
     NAME = "Offline protection zones"
     ICON = "🛡️"
-    TAB = "protection"                  # own control panel tab instead of a card on the Plugins page
+    # A main feature of the bot (plugin_manager.CORE_FEATURES): its own page in the control panel (Server →
+    # Offline protection), not on the Plugins page.
     DESCRIPTION = ("One protection zone per team, placed by the team leader with the quick chats \"Can I build "
                    "here?\" + \"Yes\". Red while the whole team is offline longer than the set time, green the "
                    "moment a member is back, deleted after the set time with nobody of the team online. Runs the "
