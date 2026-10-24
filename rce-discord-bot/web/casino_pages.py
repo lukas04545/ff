@@ -500,17 +500,6 @@ padding:3px 0;border-bottom:1px solid var(--line)}
 """
 
 
-def slot_colour(k: int, rows: int) -> str:
-    """Red at the edges, orange, yellow in the middle (like the well-known Plinko board)."""
-    x = abs(k - rows / 2) / (rows / 2)                          # 0 middle … 1 edge
-    stops = ((0, (255, 192, 0)), (0.55, (255, 120, 20)), (1, (255, 0, 63)))
-    for (a, ca), (b, cb) in zip(stops, stops[1:]):
-        if x <= b:
-            f = (x - a) / (b - a)
-            return "#" + "".join(f"{round(p + (q - p) * f):02x}" for p, q in zip(ca, cb))
-    return "#ff003f"
-
-
 def plinko_page(site, casino, base, uid, *, bet=None, balls=1, risk="medium", rows=16, drops=None, error="",
                 before=None) -> web.Response:
     import json
@@ -519,7 +508,7 @@ def plinko_page(site, casino, base, uid, *, bet=None, balls=1, risk="medium", ro
     table = g.PLINKO_TABLES[(risk, rows)]
     most = casino.setting("plinko_max_balls")
     hits = {d["slot"] for d in drops or ()}
-    slots = "".join(f'<div style="background:{slot_colour(k, rows)}"{" class=\"hit\"" if k in hits else ""}>'
+    slots = "".join(f'<div style="background:{g.plinko_colour(k, rows)}"{" class=\"hit\"" if k in hits else ""}>'
                     f'{g.fmt_multiplier(c)}×</div>' for k, c in enumerate(table))
     risks = "".join(f'<label><input type="radio" name="risk" value="{r}"{" checked" if r == risk else ""}>{r}</label>'
                     for r in g.PLINKO_RISKS)
@@ -531,7 +520,7 @@ def plinko_page(site, casino, base, uid, *, bet=None, balls=1, risk="medium", ro
                         f'<b>{esc(casino.fmt_points(d["payout"]))}</b></div>' for i, d in enumerate(drops, 1))
         result = _outcome(casino, total, (bet or 0) * len(drops)) + f'<div class="plist">{lines}</div>'
     tables = {f"{r}-{n}": t for (r, n), t in g.PLINKO_TABLES.items()}
-    colours = {n: [slot_colour(k, n) for k in range(n + 1)] for n in g.PLINKO_ROWS}
+    colours = {n: [g.plinko_colour(k, n) for k in range(n + 1)] for n in g.PLINKO_ROWS}
     body = (_balance(casino, uid, base, before=before)
             + notice(error, "bad")
             + f'<div class="plk" id="plinko" data-drop="{base}/casino/plinko/drop" data-balance="{casino.balance(uid)}" '

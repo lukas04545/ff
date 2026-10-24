@@ -2,6 +2,9 @@
 blackjack, Plinko, and Texas Hold'em poker tables where players play against each other. Play money only: points are
 earned in-game and can't be bought or cashed out.
 
+Plinko can also be played on Discord: /plinko drops the balls in an embed (an animated picture of the board, the result
+when they have landed) – same paytables, same points.
+
 Slots, coin flip and dice return 95 % of the bets on average, roulette is a real European wheel (97.3 %) and
 blackjack is played with real casino rules (≈ 99.5 %). Plinko returns 87.5 % on every risk and row count. The games themselves are in support/casino_games.py, the
 pages in web/casino_pages.py. Players log in with the website's player login (/account).
@@ -9,9 +12,12 @@ pages in web/casino_pages.py. Players log in with the website's player login (/a
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import time
 
+import discord
+from discord import app_commands
 from discord.ext import tasks
 
 from plugin_api import Plugin, Setting
@@ -34,6 +40,27 @@ TABLE_LINE = re.compile(r"^\s*([^|]{1,40}?)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d
 POLL_SECONDS = 20                   # a table page waits this long for a change before asking again
 
 
+RISK_CHOICES = [app_commands.Choice(name=r.title(), value=r) for r in games.PLINKO_RISKS]
+
+
+class PlinkoAgain(discord.ui.View):
+    """"Drop again" under a /plinko result – same bet, balls, risk and rows; only for the player who dropped."""
+
+    def __init__(self, casino: "Casino", user_id: int, bet: int, balls: int, risk: str, rows: int) -> None:
+        super().__init__(timeout=300)
+        self.casino, self.user_id, self.args = casino, user_id, (bet, balls, risk, rows)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Use /plinko to drop your own balls.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Drop again", emoji="🔻", style=discord.ButtonStyle.success)
+    async def again(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.casino.discord_plinko(interaction, *self.args)
+
+
 class Casino(Plugin):
     NAME = "Casino"
     ICON = "🎰"
@@ -47,6 +74,8 @@ class Casino(Plugin):
         Setting("daily_loss_limit", "Daily loss limit per player", "int", 0, min=0, max=1_000_000_000,
                 help="Points a player may lose in total per day (UTC). 0 = no limit. (Poker buy-ins don't count.)"),
         *(Setting(gid, f"{icon} {name}", "bool", True) for gid, (name, icon, _) in GAMES.items()),
+        Setting("plinko_discord", "🔻 Plinko on Discord (/plinko)", "bool", True,
+                help="Players can also drop Plinko balls on Discord with /plinko – an animated board in an embed."),
         Setting("plinko_max_balls", "Plinko: most balls per drop", "int", 20, min=1, max=100,
                 help="Players can drop several balls at once; each ball is one bet."),
         Setting("poker_tables", "Poker tables", "textarea", DEFAULT_TABLES,
@@ -359,6 +388,67 @@ class Casino(Plugin):
         self._pay("plinko", user_id, payout, round_over=False)
         self._stats("plinko", rounds=balls)
         return drops
+
+    # ------------------------------------------------------------ Plinko on Discord
+
+    @app_commands.command(name="plinko", description="Drop Plinko balls with your points (87.5 % return to player).")
+    @app_commands.guild_only()
+    @app_commands.describe(bet="Points per ball", balls="How many balls at once (each one is a bet)",
+                           risk="Higher risk: bigger edges, smaller middle", rows="Rows of pegs (8–16)")
+    @app_commands.choices(risk=RISK_CHOICES)
+    async def plinko_command(self, interaction: discord.Interaction, bet: app_commands.Range[int, 1, 100_000_000],
+                             balls: app_commands.Range[int, 1, 100] = 1, risk: str = "medium",
+                             rows: app_commands.Range[int, 8, 16] = 16) -> None:
+        await self.discord_plinko(interaction, bet, balls, risk, rows)
+
+    def _plinko_embed(self, user, bet: int, balls: int, risk: str, rows: int, drops: list[dict] | None):
+        head = (f"**{discord.utils.escape_markdown(user.display_name)}** · {balls} × {self.fmt_points(bet)} · "
+                f"{risk.title()} risk · {rows} rows")
+        embed = discord.Embed(title="🔻 Plinko", colour=discord.Colour(0x2F4553), description=head + "\n\nDropping …")
+        if drops is not None:
+            total, staked = sum(d["payout"] for d in drops), bet * len(drops)
+            hits = " · ".join(f"**{games.fmt_multiplier(d['cents'])}×**" for d in drops[:30])
+            more = f" … (+{len(drops) - 30})" if len(drops) > 30 else ""
+            net = total - staked
+            line = (f"🎉 You won **{self.fmt_points(total)}** (+{self.fmt_points(net)})" if net > 0 else
+                    "Bet back" if net == 0 else f"Back: **{self.fmt_points(total)}** ({self.fmt_points(-net)} lost)")
+            embed.description = f"{head}\n\n{hits}{more}\n\n{line}"
+            embed.colour = discord.Colour.green() if net > 0 else discord.Colour.red() if net < 0 else embed.colour
+            embed.set_footer(text=f"Balance: {self.fmt_points(self.balance(user.id))} · return to player 87.5 %")
+        embed.set_image(url="attachment://plinko.gif")
+        return embed
+
+    async def discord_plinko(self, interaction: discord.Interaction, bet: int, balls: int, risk: str,
+                             rows: int) -> None:
+        """/plinko and "Drop again": takes the bets, then shows the drop as an animated board in an embed and adds
+        the result once the balls have landed (the result is already decided and paid before)."""
+        from support.plinko_image import plinko_gif
+        if not self.setting("plinko_discord"):
+            await interaction.response.send_message("Plinko on Discord is switched off.", ephemeral=True)
+            return
+        try:
+            drops = self.play_plinko(interaction.user.id, bet, risk, rows, balls)
+        except GameError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        user = interaction.user
+        try:
+            data, seconds = await asyncio.to_thread(plinko_gif, risk, rows, [d["path"] for d in drops])
+            msg = await interaction.followup.send(embed=self._plinko_embed(user, bet, balls, risk, rows, None),
+                                                  file=discord.File(io.BytesIO(data), "plinko.gif"), wait=True)
+        except Exception as exc:          # the bets are settled already – at least show the result as text
+            self.log.warning("Plinko picture: %s", exc)
+            embed = self._plinko_embed(user, bet, balls, risk, rows, drops)
+            embed.set_image(url=None)
+            await interaction.followup.send(embed=embed)
+            return
+        await asyncio.sleep(seconds + 0.3)
+        try:
+            await msg.edit(embed=self._plinko_embed(user, bet, balls, risk, rows, drops),
+                           view=PlinkoAgain(self, user.id, bet, balls, risk, rows))
+        except discord.HTTPException as exc:
+            self.log.debug("Plinko result: %s", exc)
 
     # ------------------------------------------------------------ Blackjack (the hand is kept between clicks)
 
