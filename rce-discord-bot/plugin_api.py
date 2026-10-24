@@ -125,7 +125,7 @@ class Plugin(commands.Cog):
     SETTINGS: tuple[Setting, ...] = ()
     INTENTS: tuple[str, ...] = ()        # privileged intents it needs: "members", "message_content"
     DEFAULT_ENABLED = False              # built-in plugins: on without the owner switching it on
-    TAB: str | None = None               # built-in plugins with their own control panel tab (not on the Plugins page)
+    TAB: str | None = None               # in the control panel menu by default (the owner can change the menu)
     PUBLIC_PATH: str | None = None       # address of its public page if not /p/<plugin id> (e.g. "/" for the site root)
 
     listener = commands.Cog.listener     # @Plugin.listener() reads nicer in plugin files
