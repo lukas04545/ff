@@ -123,8 +123,47 @@ $("#motion").addEventListener("click", () => {
 // ------------------------------------------------------------------ Sidebar groups, server card, top bar, search
 
 // Menu groups: a header with icon, name, how many pages and a collapse arrow (remembered per browser)
-const GROUP_ICONS = { Server: "🖥️", Kits: "🎒", Community: "👥", Admin: "🛡️" };
-const GROUP_EYEBROWS = { Server: "Live server", Kits: "Kits & store", Community: "Community", Admin: "Administration" };
+const GROUP_EYEBROWS = { Server: "Live server operations", Kits: "Kits & store", Community: "Community tools", Admin: "Server configuration" };
+
+// Line icons for the menu (own simple drawings, 24×24, drawn with the text colour)
+const ICONS = {
+  home: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
+  box: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+  users: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 6"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  overview: '<path d="M12 14l4-4"/><path d="M3.5 18a9 9 0 1 1 17 0"/><circle cx="12" cy="14" r="1"/>',
+  console: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
+  botlog: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h7"/>',
+  kits: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+  kitbuilder: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>',
+  shop: '<circle cx="9" cy="9" r="5"/><path d="M14.6 6.6a5 5 0 1 1-6.1 8"/>',
+  webstore: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
+  tickets: '<path d="M3 7h18v3a2 2 0 0 0 0 4v3H3v-3a2 2 0 0 0 0-4z"/><path d="M13 7v10" stroke-dasharray="2 2"/>',
+  reports: '<path d="M5 21V4h11l-2 4 2 4H5"/>',
+  knowledge: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7"/>',
+  stats: '<path d="M4 20V11M10 20V4M16 20v-7M2 20h20"/>',
+  community: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M18 3l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/>',
+  plugins: '<path d="M10 3h4v3a2 2 0 1 0 4 0V3h3v7h-3a2 2 0 1 0 0 4h3v7h-7v-3a2 2 0 1 0-4 0v3H3v-7h3a2 2 0 1 0 0-4H3V3z"/>',
+  makeplugin: '<path d="M4 20L15 9"/><path d="M15 3v3M18 6h3M19 10v2M17 4l2 2"/>',
+  users2: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 6"/>',
+  settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+};
+const GROUP_ICON_NAMES = { Server: "home", Kits: "box", Community: "users", Admin: "shield" };
+function svgIcon(name) {
+  const span = document.createElement("span");
+  span.className = "ico";
+  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ICONS.box}</svg>`;
+  return span;
+}
+// every menu entry gets its own colour (text, icon box, edge)
+const LINK_COLORS = ["#f472b6", "#c4b5fd", "#93c5fd", "#5eead4", "#86efac", "#bef264", "#fde047", "#fdba74", "#fda4af",
+  "#f0abfc", "#a5b4fc", "#7dd3fc", "#6ee7b7", "#d9f99d", "#fcd34d", "#fb923c", "#f9a8d4"];
+document.querySelectorAll("#nav a").forEach((a, i) => {
+  const emoji = a.querySelector("i");
+  a.dataset.emoji = emoji?.textContent || "•";
+  emoji?.replaceWith(svgIcon(a.dataset.view === "users" ? "users2" : a.dataset.view));
+  a.style.setProperty("--c", LINK_COLORS[i % LINK_COLORS.length]);
+});
 const NAV_CLOSED_KEY = "rce-nav-closed";
 let navClosed = {};
 try { navClosed = JSON.parse(localStorage.getItem(NAV_CLOSED_KEY) || "{}") || {}; } catch { /* storage blocked */ }
@@ -133,7 +172,7 @@ document.querySelectorAll("#nav .nav-group").forEach((group) => {
   const name = old.textContent.trim();
   const count = h("b", { class: "count" });
   const btn = h("button", { type: "button", class: "nav-label", "aria-expanded": "true" },
-    h("span", { class: "gi", text: GROUP_ICONS[name] || "•" }), h("span", { text: name }), count, h("em", { class: "chev", text: "⌃" }));
+    h("span", { class: "gi" }, svgIcon(GROUP_ICON_NAMES[name] || "box")), h("span", { text: name }), count, h("em", { class: "chev", text: "⌃" }));
   btn.addEventListener("click", () => {
     const closed = !group.classList.contains("closed");
     group.classList.toggle("closed", closed);
@@ -169,15 +208,18 @@ function updateServerCard() {
   if (s.map) addr.textContent = `🗺️ ${s.map}`;
 }
 
-// Page titles get a small label above them (the menu group), like "LIVE SERVER / Overview"
+// The page title sits in the top bar (with a small label: the menu group), the page's own <h1> is hidden
 function eyebrow() {
   const h1 = $("#main").querySelector(":scope > h1");
-  if (!h1 || h1.dataset.eyebrow) return;
   const link = document.querySelector("#nav a.active");
   const group = link?.closest(".nav-group")?.dataset.name;
-  if (group) h1.dataset.eyebrow = GROUP_EYEBROWS[group] || group;
+  const label = group ? (GROUP_EYEBROWS[group] || group) : "";
+  const title = h1 ? h1.textContent.trim() : "";
+  if ($("#top-h1").textContent !== title) $("#top-h1").textContent = title;
+  if ($("#top-eyebrow").textContent !== label) $("#top-eyebrow").textContent = label;
+  if (h1 && !h1.classList.contains("in-topbar")) { h1.classList.add("in-topbar"); h1.dataset.eyebrow = label; }
 }
-new MutationObserver(eyebrow).observe($("#main"), { childList: true });
+new MutationObserver(eyebrow).observe($("#main"), { childList: true, subtree: true, characterData: true });
 
 // Search (Ctrl K): every page of the menu and every setting – opens it and highlights the setting
 const palette = $("#palette"), paletteInput = $("#palette-input"), paletteList = $("#palette-list");
@@ -193,8 +235,8 @@ async function loadSettingsIndex() {
 }
 function pages() {
   return [...document.querySelectorAll("#nav a:not(.hidden)")].map((a) => ({
-    label: a.querySelector("span").textContent, where: a.closest(".nav-group")?.dataset.name || "", hash: a.getAttribute("href"),
-    icon: a.querySelector("i")?.textContent || "•" }));
+    label: a.querySelector(":scope > span:not(.ico)").textContent, where: a.closest(".nav-group")?.dataset.name || "",
+    hash: a.getAttribute("href"), icon: a.dataset.emoji || "•" }));
 }
 function renderPalette() {
   const q = paletteInput.value.trim().toLowerCase();
