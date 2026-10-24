@@ -157,13 +157,25 @@ PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
     the request – staff approving it IS the team doing it. Call staff only if they also need something else."""
 
 
+PROTECTION_ACTIONS = """- Offline protection zones (one per team: red = no raiding while the whole team is offline) – ONLY the
+  ticket owner's own team:
+  * get_my_protection_zone: their team, leader, whether they lead it and are online, and their zone.
+  * place_protection_zone: places (or moves) the zone at the owner's CURRENT in-game position, like the quick chats
+    "Can I build here?" + "Yes" – use it when they struggle with that. Only the team leader can place it: if they
+    aren't the leader, tell them to ask the leader (or the leader opens a ticket). Before placing, make sure they
+    are online and ask them to confirm they are standing in the middle of their base right now – the zone goes
+    exactly where they stand. offline = tell them to join and stand at the base first; no_team = they need a team;
+    not_set_up / failed = call staff (escalate). Never place a zone for anyone else."""
+
+
 def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None,
                         status: str, knowledge: str, kit_tools: bool = False, giveaway_tools: bool = False,
-                        purchase_tools: bool = False, keep_open: bool = False) -> str:
+                        purchase_tools: bool = False, protection_tools: bool = False, keep_open: bool = False) -> str:
     actions = NO_ACTIONS
     if kit_tools:
         actions = KIT_ACTIONS + ("\n" + GIVEAWAY_ACTIONS if giveaway_tools else "") + \
-            ("\n" + PURCHASE_ACTIONS if purchase_tools else "")
+            ("\n" + PURCHASE_ACTIONS if purchase_tools else "") + \
+            ("\n" + PROTECTION_ACTIONS if protection_tools else "")
     return SYSTEM_TEMPLATE.format(
         actions=actions,
         server_name=server_name or "Rust Console Server",

@@ -194,6 +194,22 @@ GIVEAWAY_TOOLS = [
             "required": ["message_id"]}}},
 ]
 
+# Offline protection zones (plugins/offline_protection.py, a main feature) – for players who can't manage the quick chats
+PROTECTION_TOOLS = [
+    {"type": "function", "function": {
+        "name": "get_my_protection_zone",
+        "description": "The ticket owner's team and its offline protection zone: team members, leader, whether the "
+                       "owner is the leader and online, the zone (status red/green, position, when it gets "
+                       "deleted) and how to place it in-game.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "place_protection_zone",
+        "description": "Places (or moves) the ticket owner's team protection zone at the owner's CURRENT in-game "
+                       "position – exactly like the in-game quick chats. Only the team leader, only while online. "
+                       "Call it only after the player confirmed they are standing at their base right now.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+]
+
 
 def _int_or_none(value) -> int | None:
     try:
@@ -594,7 +610,8 @@ class Tickets(commands.Cog):
                                      ingame_name=ticket["ingame_name"], status=self._status_text(),
                                      knowledge=self._knowledge(), kit_tools=bool(tools),
                                      giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools),
-                purchase_tools=any(t in PURCHASE_TOOLS for t in tools), keep_open=bool(ticket["keep_open"]))
+                purchase_tools=any(t in PURCHASE_TOOLS for t in tools),
+                protection_tools=any(t in PROTECTION_TOOLS for t in tools), keep_open=bool(ticket["keep_open"]))
         messages = build_messages(system, await self._history(channel, ticket))
         try:
             async with channel.typing():
@@ -717,7 +734,11 @@ class Tickets(commands.Cog):
             return []
         # Giveaway tools always: wins of the bot's own /giveaway are in the database
         purchase = PURCHASE_TOOLS if self.bot.get_cog("KitRequests") is not None else []
-        return KIT_TOOLS + GIVEAWAY_TOOLS + purchase
+        return KIT_TOOLS + GIVEAWAY_TOOLS + purchase + (PROTECTION_TOOLS if self._protection() else [])
+
+    def _protection(self):
+        manager = getattr(self.bot, "plugins", None)
+        return manager.running("offline_protection") if manager is not None else None
 
     async def _ticket_member(self, channel: discord.TextChannel, ticket) -> discord.Member | None:
         member = channel.guild.get_member(ticket["user_id"])
@@ -789,6 +810,8 @@ class Tickets(commands.Cog):
             return {"ok": outcome.ok, "result": outcome.code, "kit": outcome.kit, "player": outcome.player,
                     "can_claim_again_discord": f"<t:{outcome.ready_at}:R>" if outcome.ready_at else None,
                     "message": outcome.message.replace("**", "")}
+        if name in ("get_my_protection_zone", "place_protection_zone"):
+            return await self._tool_protection(name, channel, ticket, member)
         if name == "get_my_giveaway_wins":
             return await self._tool_giveaway_wins(channel.guild, member)
         if name == "redeem_giveaway_win":
@@ -942,6 +965,23 @@ class Tickets(commands.Cog):
         if win.lifetime:
             return None
         return prize_duration_minutes(win.prize) or (self.bot.config.giveaway_prize_days * 1440 or None)
+
+    async def _tool_protection(self, name: str, channel: discord.TextChannel, ticket, member) -> dict:
+        """Offline protection for the ticket owner's own team – the player comes from their linked account."""
+        protection = self._protection()
+        if protection is None:
+            return {"error": "Offline protection is switched off on this server."}
+        player = self.bot.db.linked_player(member.id)
+        if player is None:
+            return {"error": "not_linked", "note": "The player must link first: /customkit link while online in-game."}
+        if name == "get_my_protection_zone":
+            return await protection.zone_status(player)
+        result = await protection.place_for_support(player, via=f"ticket #{ticket['id']} (AI)")
+        if result["ok"]:  # visible confirmation in the ticket, independent of the AI's wording
+            await channel.send(f"🛡️ Offline protection zone for **{discord.utils.escape_markdown(player)}**'s team "
+                               f"{'moved to' if result['result'] == 'moved' else 'placed at'} their current position.",
+                               allowed_mentions=discord.AllowedMentions.none())
+        return result
 
     async def _tool_giveaway_wins(self, guild: discord.Guild, member) -> dict:
         try:
@@ -1314,7 +1354,8 @@ class Tickets(commands.Cog):
         system = build_system_prompt(server_name=self._server_name(), topic=question, ingame_name=None,
                                      status=self._status_text(), knowledge=self._knowledge(), kit_tools=bool(tools),
                                      giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools),
-                                     purchase_tools=any(t in PURCHASE_TOOLS for t in tools))
+                                     purchase_tools=any(t in PURCHASE_TOOLS for t in tools),
+                                     protection_tools=any(t in PROTECTION_TOOLS for t in tools))
         messages = build_messages(system, [("user", f"{interaction.user.display_name} (ticket description): "
                                                     f"{question}")])
         used: list[str] = []
@@ -1421,6 +1462,13 @@ class Tickets(commands.Cog):
         if name == "get_my_kits" and (custom := self.bot.get_cog("CustomKits")) and isinstance(member, discord.Member):
             used.append("get_my_kits (your own kits)")
             return custom.kit_overview(member)
+        if name == "get_my_protection_zone" and (protection := self._protection()):
+            player = self.bot.db.linked_player(member.id)
+            used.append("get_my_protection_zone (your own team)")
+            return await protection.zone_status(player) if player else {"error": "not_linked"}
+        if name == "place_protection_zone":
+            used.append("place_protection_zone – would place your team's zone where you stand in-game")
+            return {"ok": True, "result": "placed", **note}
         if name == "get_my_giveaway_wins" and guild is not None:
             used.append("get_my_giveaway_wins (your own wins)")
             return await self._tool_giveaway_wins(guild, member)
