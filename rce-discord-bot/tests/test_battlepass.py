@@ -173,3 +173,21 @@ def test_battlepass_page(bp_env):
             await bp_env.bot.rcon.close()
     asyncio.run(main())
 
+
+
+def test_account_page_without_a_store(bp_env):
+    """A logged-in player opens My account on a server whose web store isn't set up (it used to crash)."""
+    async def main():
+        from web.server import WebInterface
+        web = WebInterface(bp_env.bot, env_path=bp_env.tmp / ".env", secret_path=bp_env.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            c.session.cookie_jar.update_cookies({"rce_player": "tok"})
+            r = await c.get("/account")
+            text = await r.text()
+            assert r.status == 200 and "Logged in as <b>Gamer7</b>" in text and "/store" not in text.split("</nav>")[1]
+        finally:
+            await c.close()
+            await bp_env.bot.rcon.close()
+    asyncio.run(main())

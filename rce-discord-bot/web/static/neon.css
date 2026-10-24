@@ -196,3 +196,17 @@ html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="
 /* stat cards: four to a row on a wide screen (like the reference look), long values a bit smaller */
 html:root:not([data-theme="light"]) main .grid:has(> .stat) { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
 html:root:not([data-theme="light"]) .stat .value:not(:empty) { overflow-wrap: anywhere; }
+
+/* phones: the menu is one scrolling row – no group panels around it, a compact server card */
+@media (max-width: 760px) {
+  html:root:not([data-theme="light"]) .nav-group { border: 0; background: none; box-shadow: none; padding: 0; }
+  html:root:not([data-theme="light"]) nav a { border-radius: 999px; margin: 0; padding: .32rem .7rem .32rem .4rem; gap: .4rem; }
+  html:root:not([data-theme="light"]) nav a .ico { width: 1.5rem; height: 1.5rem; border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); border-radius: 50%; }
+  html:root:not([data-theme="light"]) nav a .ico svg { width: 13px; height: 13px; }
+  html:root:not([data-theme="light"]) .server-card { border: 0; background: none; box-shadow: none; padding: 0; }
+  html:root:not([data-theme="light"]) .server-card .brand-text strong { font-size: .95rem; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; max-width: 42vw; }
+  html:root:not([data-theme="light"]) .topbar { background: transparent; padding-top: .8rem; }
+  html:root:not([data-theme="light"]) .stat .value { font-size: 1.4rem; }
+  html:root:not([data-theme="light"]) .search-box { padding: .5rem .75rem; }
+}

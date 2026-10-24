@@ -91,9 +91,9 @@ tbody tr:hover,table tr:hover td{background:rgba(229,84,40,.06)}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}.tabs a{text-decoration:none;padding:6px 16px;
 background:var(--card2);border:1px solid var(--line);font-size:1rem;clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)}
 .tabs a.active{background:var(--grad);color:#fff;border-color:transparent}
-form.search{display:flex;gap:8px}form.search input{flex:1;padding:11px 13px;border:1px solid var(--line);
+form.search{display:flex;gap:8px}form.search input{flex:1;min-width:0;padding:11px 13px;border:1px solid var(--line);
 background:rgba(0,0,0,.45);color:var(--text);font:inherit;outline:none}form.search input:focus{border-color:var(--orange)}
-form.search button{padding:10px 20px;border:0;background:var(--grad);color:#fff;font-family:var(--head);font-size:1.05rem;
+form.search button{flex:none;padding:10px 20px;border:0;background:var(--grad);color:#fff;font-family:var(--head);font-size:1.05rem;
 letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
 .items{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.it{position:relative;width:60px;height:60px;
 background:radial-gradient(circle at 50% 40%,rgba(255,255,255,.07),rgba(0,0,0,.35));border:1px solid rgba(255,255,255,.08);
