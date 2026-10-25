@@ -353,6 +353,12 @@ class Storage:
                 role_id INTEGER NOT NULL,
                 cooldown_minutes INTEGER NOT NULL DEFAULT 1440
             );
+            -- Discord roles the bot created for kits (so they can be removed again)
+            CREATE TABLE IF NOT EXISTS kit_created_roles (
+                role_id INTEGER PRIMARY KEY,
+                kit TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
             -- Kits the bot gives automatically to members with the kit's role (when online and the cooldown allows)
             CREATE TABLE IF NOT EXISTS kit_auto_give (
                 kind TEXT NOT NULL,                     -- custom / ingame
@@ -760,6 +766,22 @@ class Storage:
         with self._db:
             cur = self._db.execute("UPDATE ingame_kit_roles SET cooldown_minutes = ? WHERE kit = ?", (minutes, kit))
         return cur.rowcount > 0
+
+    def record_created_role(self, role_id: int, kit: str) -> None:
+        with self._db:
+            self._db.execute("INSERT OR REPLACE INTO kit_created_roles (role_id, kit, created_at) VALUES (?, ?, ?)",
+                             (role_id, kit, int(time.time())))
+
+    def created_role_ids(self) -> set[int]:
+        return {int(r["role_id"]) for r in self._db.execute("SELECT role_id FROM kit_created_roles")}
+
+    def forget_created_role(self, role_id: int) -> None:
+        with self._db:
+            self._db.execute("DELETE FROM kit_created_roles WHERE role_id = ?", (role_id,))
+
+    def delete_ingame_kit_role(self, kit: str) -> None:
+        with self._db:
+            self._db.execute("DELETE FROM ingame_kit_roles WHERE kit = ?", (kit,))
 
     def auto_give_kits(self) -> set[tuple[str, str]]:
         """(kind, kit in lower case) of the kits given automatically to their role's members."""

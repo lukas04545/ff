@@ -89,10 +89,14 @@ FIELDS: list[Field] = [
     Field("AUTOKIT_DELAY", "Autokit delay after respawn (seconds)", "kits", "int", placeholder="3"),
     Field("KIT_CLAIM_ANNOUNCE", "Confirm quick chat kits in-game", "kits", "bool"),
     Field("KIT_ROLES", "Every kit has its own Discord role", "kits", "bool",
-          help="On (default): every kit – the bot's custom kits and the server's in-game kits – gets a Discord role "
-               "(an existing role with the kit's name, else a new one; checked every 10 minutes). Having the role = "
+          help="On (default): every kit – the bot's custom kits and the server's in-game kits – is connected to your "
+               "existing Discord role for it (names compared loosely, typos too; checked every 10 minutes – the AI "
+               "matches the rest: Kits → Kit roles). Having the role = "
                "may claim the kit with /customkit claim (cooldown per kit: /customkit cooldown), and buying a kit "
                "gives its role. The bot needs \"Manage Roles\"."),
+    Field("KIT_ROLES_CREATE", "Create a new role for kits without a matching role", "kits", "bool",
+          help="Off (default): kits without a matching role stay without one (match them in Kits → Kit roles). On: "
+               "the bot creates a role named like the kit for them."),
     Field("LINK_VERIFY_QUICKCHAT", "Linking: also verify with quick chat in-game", "kits", "bool",
           help="Off (default): members pick their online player from a dropdown in Discord and are linked right "
                "away – nothing proves the player is theirs. On: after picking, they must send two quick chat "
