@@ -21,8 +21,10 @@ from utils import format_duration, strip_rich_text
 
 INVITE = re.compile(r"^https://(discord\.gg|discord\.com/invite)/[\w-]{2,40}$")
 # Scripts only from the website itself (no inline or third-party scripts – injected code can't run)
+# Streams page (plugins/streamers.py): the platforms' own players in iframes and their stream thumbnails
 CSP = ("default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; "
-       "img-src 'self' data:; base-uri 'none'; "
+       "img-src 'self' data: https://static-cdn.jtvnw.net https://i.ytimg.com https://*.kick.com; "
+       "frame-src https://player.twitch.tv https://player.kick.com https://www.youtube-nocookie.com; base-uri 'none'; "
        "form-action 'self' https://www.paypal.com https://www.sandbox.paypal.com; frame-ancestors 'none'")
 BOARDS = {"kills": "Kills", "kd": "K/D", "playtime": "Playtime", "teams": "Teams"}
 CACHE_SECONDS = 20
@@ -274,6 +276,11 @@ class PlayerWebsite(Plugin):
         casino = self.plugin("casino")
         return casino if casino is not None and casino.points_enabled and self.accounts() is not None else None
 
+    def streams(self):
+        """The Streamers plugin if it's on and its page is shown, else None."""
+        plugin = self.plugin("streamers")
+        return plugin if plugin is not None and plugin.setting("website") else None
+
     def seasonal(self) -> str:
         """The seasonal look that's on right now: "halloween" or ""."""
         mode = self.setting("season_theme")
@@ -299,6 +306,8 @@ class PlayerWebsite(Plugin):
             links.append(("battlepass", "Battle pass"))
         if self.casino() is not None:
             links.append(("casino", "Casino"))
+        if self.streams() is not None:
+            links.append(("streams", "Streams"))
         if self.accounts() is not None:
             links.append(("account", "My account"))
         if self.setting("shop") and self.points_enabled:
@@ -649,6 +658,17 @@ class PlayerWebsite(Plugin):
                                     headers={**headers, "Cache-Control": "no-store"})
             from web.battlepass_pages import handle as bp_handle
             resp = await bp_handle(self, bp, request, base)
+            for key, value in headers.items():
+                resp.headers.setdefault(key, value)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        if path == "streams":
+            streams = self.streams()
+            if streams is None:
+                return web.Response(status=404, text=self.not_found(base), content_type="text/html",
+                                    headers={**headers, "Cache-Control": "no-store"})
+            from web.streams_pages import render as streams_render
+            resp = streams_render(self, streams, request, base)
             for key, value in headers.items():
                 resp.headers.setdefault(key, value)
             resp.headers["Cache-Control"] = "no-store"
