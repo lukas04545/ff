@@ -1236,6 +1236,87 @@ views.kitbuilder = async (main) => {
   render();
 };
 
+// 🎭 Kit roles: every kit next to its Discord role and the members who have it (cogs/custom_kits.py)
+function kitRolesCard() {
+  const card = h("div", { class: "card" }, h("h2", { text: "🎭 Kit roles" }),
+    h("p", { class: "muted", text: "Every kit and its Discord role – members with the role may claim the kit (/customkit claim). Compare who has which role with their linked player, whether they're online and when they can claim again. Auto-give: the bot gives the kit by itself to members with the role when they're online and the cooldown is over (on join and every 5 minutes)." }));
+  const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  card.append(body);
+  const open = new Set();
+  const when = (ts) => ts ? `in ${fmtDuration(ts - Date.now() / 1000)}` : "now";
+  const render = (d) => {
+    const parts = [];
+    if (!d.enabled) parts.push(h("div", { class: "banner warn" }, "\"Every kit has its own Discord role\" is off (Settings → Kits) – only custom kits with claim roles are shown, in-game kits get no roles."));
+    if (!d.members_intent) parts.push(h("div", { class: "banner warn" }, "The bot can't see who has a role: turn on the \"Server Members Intent\" in the Discord Developer Portal (your app → Bot → Privileged Gateway Intents) and restart the bot. Auto-give works without it."));
+    const sync = h("button", { class: "small", text: "🔄 Check kit roles now", onclick: async () => {
+      sync.disabled = true;
+      try {
+        const r = await api("/api/kit-roles/sync", { method: "POST" });
+        toast(`Linked ${r.done.custom} custom and ${r.done.ingame} in-game kit(s) to a role`);
+        render(r);
+      } catch (e) { toast(e.message, true); } finally { sync.disabled = false; }
+    } });
+    parts.push(h("div", { class: "row", style: "margin-bottom:.6rem" }, sync));
+    if (!d.kits.length) { parts.push(h("p", { class: "muted", text: "No kits with roles yet." })); body.replaceChildren(...parts); return; }
+    const rows = [];
+    for (const k of d.kits) {
+      const key = `${k.kind}:${k.kit}`;
+      const roles = k.roles.length ? k.roles.map((r) => r.name ? "@" + r.name : `missing role ${r.id}`).join(", ") : "– no role –";
+      const ready = k.members.filter((p) => p.player && p.online && !p.ready_at).length;
+      const linked = k.members.filter((p) => p.player).length;
+      const cd = h("input", { value: k.cooldown_minutes ? fmtCooldown(k.cooldown_minutes) : "0", style: "max-width:7rem", title: "Cooldown, e.g. 12h, 1d, 0 = none" });
+      cd.addEventListener("change", async () => {
+        try { render(await api("/api/kit-roles", { method: "PUT", body: { kind: k.kind, kit: k.kit, cooldown: cd.value } })); toast(`Cooldown of ${k.kit} saved`); }
+        catch (e) { toast(e.message, true); }
+      });
+      const auto = h("input", { type: "checkbox" });
+      auto.checked = k.auto_give;
+      auto.addEventListener("change", async () => {
+        if (auto.checked && !k.cooldown_minutes) { toast("Set a cooldown first – otherwise the kit would be given every 5 minutes.", true); auto.checked = false; return; }
+        try { render(await api("/api/kit-roles", { method: "PUT", body: { kind: k.kind, kit: k.kit, auto_give: auto.checked } })); toast(`Auto-give for ${k.kit} ${auto.checked ? "on" : "off"}`); }
+        catch (e) { toast(e.message, true); auto.checked = !auto.checked; }
+      });
+      const give = h("button", { class: "small", text: "🎁 Give now", title: "To every member with the role who is online and off cooldown", onclick: async () => {
+        if (!confirm(`Give ${k.kit} now to everyone with its role who is online and whose cooldown is over?`)) return;
+        give.disabled = true;
+        try {
+          const r = await api("/api/kit-roles/give", { method: "POST", body: { kind: k.kind, kit: k.kit } });
+          toast(`${k.kit} given to ${r.given.length} player(s)` + (r.waiting ? ` – ${r.waiting} still on cooldown` : ""));
+          load();
+        } catch (e) { toast(e.message, true); } finally { give.disabled = false; }
+      } });
+      const toggle = h("button", { class: "small ghost", text: open.has(key) ? "▾ Members" : "▸ Members", onclick: () => { open.has(key) ? open.delete(key) : open.add(key); render(d); } });
+      rows.push(h("tr", {},
+        h("td", {}, h("strong", { text: k.kit }), h("div", { class: "muted", text: k.kind === "custom" ? "bot kit" : "in-game kit" })),
+        h("td", { text: roles }),
+        h("td", {}, d.members_intent ? `${k.member_count} with the role` : "?", h("div", { class: "muted", text: d.members_intent ? `${linked} linked · ${ready} online & ready` : "" })),
+        h("td", {}, cd),
+        h("td", {}, h("label", { class: "switch keep" }, auto, h("span", { text: "Auto" }))),
+        h("td", { class: "row tight" }, give, d.members_intent && k.member_count ? toggle : null)));
+      if (open.has(key)) {
+        rows.push(h("tr", {}, h("td", { colspan: 6 }, h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["Member", "Linked player", "Online", "Can claim"].map((t) => h("th", { text: t })))),
+          h("tbody", {}, k.members.map((p) => h("tr", {},
+            h("td", { text: p.name }),
+            h("td", { class: p.player ? "" : "muted", text: p.player || "not linked (/customkit link)" }),
+            h("td", { text: p.player ? (p.online ? "🟢 online" : "offline") : "–" }),
+            h("td", { text: p.player ? when(p.ready_at) : "–" })))))))));
+      }
+    }
+    parts.push(h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Kit", "Role", "Members", "Cooldown", "Auto-give", ""].map((t) => h("th", { text: t })))),
+      h("tbody", {}, rows))));
+    body.replaceChildren(...parts);
+  };
+  const load = async () => {
+    try { render(await api("/api/kit-roles")); } catch (e) { body.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
+  };
+  load();
+  return card;
+}
+
+const fmtCooldown = (min) => min % 1440 === 0 ? `${min / 1440}d` : min % 60 === 0 ? `${min / 60}h` : `${min}m`;
+
 views.kits = async (main) => {
   main.append(h("h1", { text: "Kits" }));
   const box = h("div");
@@ -1282,6 +1363,9 @@ views.kits = async (main) => {
       } }))) : h("p", { class: "muted", text: "No kits found (or no RCON connection)." }),
       ingameInfo),
     customKitsCard(data, reload, opts)), linkedPlayersCard(data, reload));
+
+  // --- Kit roles: compare roles and kit access, auto-give
+  box.append(kitRolesCard());
 
   // --- Autokits
   box.append(autokitCard(data, m, reload, opts));

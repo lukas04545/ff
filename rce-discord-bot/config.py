@@ -285,6 +285,8 @@ def required_intents(cfg: Config) -> dict[str, list[str]]:
         members.append("Auto role")
     if cfg.prison_role_id:
         members.append("Prison (jail role)")
+    if getattr(cfg, "kit_roles", False):
+        members.append("Kit roles (who has a kit's role)")
     try:   # plugins that are switched on (read from data/plugins.json)
         from plugin_manager import enabled_plugin_intents
         plugin_needs = enabled_plugin_intents(cfg.database_path)
