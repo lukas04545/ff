@@ -346,6 +346,10 @@ class WebInterface:
         r.add_post("/api/custom-kits/import", self.import_custom_kits)
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
         r.add_put("/api/custom-kits/{name}/claim", self.custom_kit_claim_settings)
+        r.add_get("/api/kit-roles", self.kit_roles)
+        r.add_put("/api/kit-roles", self.kit_roles_update)
+        r.add_post("/api/kit-roles/sync", self.kit_roles_sync)
+        r.add_post("/api/kit-roles/give", self.kit_roles_give)
         r.add_post("/api/linked-players", self.link_player)
         r.add_delete("/api/linked-players/{user_id:\\d+}", self.unlink_player)
         r.add_post("/api/custom-kits/{name}/items", self.add_custom_item)
@@ -1711,6 +1715,56 @@ class WebInterface:
         rules = self.bot.db.delete_custom_kit(name)
         self._audit(f"Custom kit **{name}** deleted ({rules} autokit rules)")
         return web.json_response({"ok": True, "rules_deleted": rules})
+
+    # Kit roles: every kit next to its Discord role and who has it; auto-give (cogs/custom_kits.py)
+
+    def _custom_kits_cog(self):
+        cog = self.bot.get_cog("CustomKits") if self.bot is not None else None
+        if cog is None:
+            raise ApiError("Custom kits are not loaded (is the bot running?).", 503)
+        return cog
+
+    def _kit_ref(self, data: dict) -> tuple[str, str]:
+        kind, kit = str(data.get("kind") or ""), kitparse.clean_arg(str(data.get("kit") or ""))
+        known = (self.bot.db.custom_kit(kit) if kind == "custom" else
+                 self.bot.db.ingame_kit_role(kit) if kind == "ingame" else None)
+        if known is None:
+            raise ApiError("Kit not found.", 404)
+        return kind, known["name"] if kind == "custom" else known["kit"]
+
+    async def kit_roles(self, request: web.Request) -> web.Response:
+        return web.json_response(self._custom_kits_cog().kit_role_table())
+
+    async def kit_roles_update(self, request: web.Request) -> web.Response:
+        from cogs.custom_kits import MAX_COOLDOWN_MINUTES
+        data = await self._json(request)
+        kind, kit = self._kit_ref(data)
+        if "cooldown" in data:
+            minutes = parse_duration(str(data.get("cooldown", "")))
+            if minutes is None or minutes > MAX_COOLDOWN_MINUTES:
+                raise ApiError("Invalid cooldown. Examples: 30m, 12h, 1d, 1d 12h, 0 (no cooldown). Max. 365 days.")
+            if kind == "custom":
+                self.bot.db.set_custom_kit_cooldown(kit, minutes)
+            else:
+                self.bot.db.set_ingame_kit_cooldown(kit, minutes)
+            self._audit(f"Kit **{kit}** – cooldown {format_minutes(minutes)}")
+        if "auto_give" in data:
+            self.bot.db.set_auto_give(kind, kit, bool(data["auto_give"]))
+            self._audit(f"Kit **{kit}** – auto-give to its role {'on' if data['auto_give'] else 'off'}")
+        return web.json_response(self._custom_kits_cog().kit_role_table())
+
+    async def kit_roles_sync(self, request: web.Request) -> web.Response:
+        try:
+            done = await self._custom_kits_cog().sync_kit_roles()
+        except discord.HTTPException as exc:
+            raise ApiError(f"Discord refused it ({exc}) – the bot needs \"Manage Roles\".") from None
+        return web.json_response({"done": done, **self._custom_kits_cog().kit_role_table()})
+
+    async def kit_roles_give(self, request: web.Request) -> web.Response:
+        kind, kit = self._kit_ref(await self._json(request))
+        result = await self._custom_kits_cog().auto_give(kits=[(kind, kit)])
+        self._audit(f"Kit **{kit}** given to {len(result['given'])} online member(s) with its role")
+        return web.json_response(result)
 
     async def custom_kit_claim_settings(self, request: web.Request) -> web.Response:
         """Self-service claim: which roles may claim the kit and how often."""

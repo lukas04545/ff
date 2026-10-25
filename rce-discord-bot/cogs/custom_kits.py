@@ -19,6 +19,10 @@ Kit roles (KIT_ROLES, on by default): every kit has its own Discord role – cus
 server's in-game kits (`kit list`) get an existing role with the kit's name, else a new one (checked every 10
 minutes). The role is the access: members who have it claim the kit with /customkit claim (in-game kits are given
 with KIT_GIVE_TEMPLATE, cooldown per kit, default 1 day), whoever loses it can't. Buying a kit gives its role.
+
+Auto-give (per kit, control panel → Kits → Kit roles): the bot gives the kit by itself to every member with its role
+whose linked player is online and whose cooldown is over – when they join and every few minutes. Needs a cooldown
+(> 0), so nobody gets it every few minutes.
 """
 from __future__ import annotations
 
@@ -51,6 +55,8 @@ MAX_ITEMS_PER_KIT = 60
 MAX_IMPORT_BYTES = 200_000
 MAX_COOLDOWN_MINUTES = 365 * 1440
 KIT_ROLE_SYNC_MINUTES = 10                 # how often missing kit roles are looked for
+AUTO_GIVE_MINUTES = 5                      # auto-give: online role members are checked this often (and on join)
+AUTO_GIVE_JOIN_DELAY = 20                  # seconds after a join (the player has to load in first)
 VERIFY_SECONDS = 300                       # time to send the verification quick chats in-game
 VERIFY_SKIP_CATEGORIES = ("_responses_",)  # "Yes", "Hello", ... are sent too often to prove anything
 
@@ -186,6 +192,7 @@ class CustomKits(commands.Cog):
 
     async def cog_unload(self) -> None:
         self.kit_role_loop.cancel()
+        self.auto_give_loop.cancel()
 
     # ------------------------------------------------------------ Kit roles (every kit has a Discord role)
 
@@ -234,6 +241,8 @@ class CustomKits(commands.Cog):
     async def on_ready(self) -> None:
         if not self.kit_role_loop.is_running():          # started once the bot is logged in to Discord
             self.kit_role_loop.start()
+        if not self.auto_give_loop.is_running():
+            self.auto_give_loop.start()
 
     @tasks.loop(minutes=KIT_ROLE_SYNC_MINUTES)
     async def kit_role_loop(self) -> None:
@@ -241,6 +250,110 @@ class CustomKits(commands.Cog):
             await self.sync_kit_roles()
         except discord.HTTPException as exc:          # e.g. no "Manage Roles" – try again next time
             log.warning("Kit roles: %s", exc)
+
+    # ------------------------------------------------------------ Auto-give + the panel's "Kit roles" table
+
+    def _cooldown_of(self, kind: str, kit: str) -> int | None:
+        row = self._resolve(kit) if kind == "custom" else self.bot.db.ingame_kit_role(kit)
+        return None if row is None else int(row["cooldown_minutes"])
+
+    def _ready_at(self, kind: str, kit: str, player: str, cooldown: int) -> int | None:
+        """Unix time the player may claim again (None = now)."""
+        since = (self.bot.db.minutes_since_custom_claim(kit, player) if kind == "custom"
+                 else self.bot.db.minutes_since_ingame_claim(kit, player))
+        if cooldown and since is not None and since < cooldown:
+            return int(time.time() + (cooldown - since) * 60)
+        return None
+
+    async def _member(self, guild: discord.Guild, user_id: int):
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except discord.HTTPException:
+                return None
+        return member
+
+    async def auto_give(self, *, player: str | None = None, kits: list[tuple[str, str]] | None = None) -> dict:
+        """Gives kits to online members who have the kit's role and whose cooldown is over. `kits` = these
+        (kind, kit) right now (the panel's "Give now"), else the auto-give kits; `player` = only this player.
+        -> {"given": [...], "waiting": n} – waiting = has the role but the cooldown still runs."""
+        guild = self._guild()
+        out = {"given": [], "waiting": 0}
+        wanted = kits if kits is not None else sorted(self.bot.db.auto_give_kits())
+        if guild is None or not wanted or not self.bot.rcon.connected:
+            return out
+        owners = {r["player"].lower(): int(r["user_id"]) for r in self.bot.db.linked_players()}
+        online = [n for n in self.bot.online_players if player is None or n.lower() == player.lower()]
+        for name in online:
+            uid = owners.get(name.lower())
+            member = await self._member(guild, uid) if uid else None
+            if member is None:
+                continue
+            for kind, kit in wanted:
+                if kind == "custom":
+                    row = self._resolve(kit)
+                    if row is None or not self.can_claim(member, row):
+                        continue
+                    cooldown, kit = int(row["cooldown_minutes"]), row["name"]
+                else:
+                    row = next((r for r in self.ingame_access(member) if r["kit"].lower() == kit.lower()), None)
+                    if row is None:
+                        continue
+                    cooldown, kit = int(row["cooldown_minutes"]), row["kit"]
+                if kits is None and not cooldown:      # automatic only with a cooldown – not every few minutes
+                    continue
+                if self._ready_at(kind, kit, name, cooldown):
+                    out["waiting"] += 1
+                    continue
+                result = await self.claim_for(member, kit, via="auto-give" if kits is None else "control panel")
+                if result.ok:
+                    out["given"].append({"kit": kit, "player": result.player})
+        return out
+
+    @commands.Cog.listener()
+    async def on_rce_player_join(self, name: str) -> None:
+        if self.bot.db.auto_give_kits():
+            await asyncio.sleep(AUTO_GIVE_JOIN_DELAY)
+            await self.auto_give(player=name)
+
+    @tasks.loop(minutes=AUTO_GIVE_MINUTES)
+    async def auto_give_loop(self) -> None:
+        try:
+            await self.auto_give()
+        except (discord.HTTPException, RconError) as exc:
+            log.warning("Auto-give: %s", exc)
+
+    def kit_role_table(self) -> dict:
+        """Every kit next to its role(s) and the members who have them – for the control panel."""
+        guild = self._guild()
+        db = self.bot.db
+        owners = {int(r["user_id"]): r["player"] for r in db.linked_players()}
+        online = {n.lower() for n in self.bot.online_players}
+        auto = db.auto_give_kits()
+        rows = [("custom", r["name"], db.claim_roles(r), int(r["cooldown_minutes"])) for r in db.custom_kits()]
+        rows += [("ingame", r["kit"], [r["role_id"]], int(r["cooldown_minutes"])) for r in db.ingame_kit_roles()]
+        kits = []
+        for kind, kit, role_ids, cooldown in rows:
+            roles = [guild.get_role(r) for r in role_ids] if guild is not None else []
+            members = {}
+            for role in roles:
+                for m in getattr(role, "members", []) or []:
+                    members[m.id] = m
+            people = []
+            for m in sorted(members.values(), key=lambda m: str(getattr(m, "display_name", m.id)).lower())[:300]:
+                player = owners.get(m.id)
+                ready = self._ready_at(kind, kit, player, cooldown) if player else None
+                people.append({"id": str(m.id), "name": str(getattr(m, "display_name", m.id)), "player": player,
+                               "online": bool(player) and player.lower() in online,
+                               "ready_at": ready})
+            kits.append({"kind": kind, "kit": kit, "cooldown_minutes": cooldown,
+                         "auto_give": (kind, kit.lower()) in auto,
+                         "roles": [{"id": str(rid), "name": r.name if r else None}
+                                   for rid, r in zip(role_ids, roles or [None] * len(role_ids))],
+                         "members": people, "member_count": len(members)})
+        return {"enabled": self.bot.config.kit_roles, "members_intent": bool(self.bot.intents.members),
+                "kits": kits}
 
     def ingame_access(self, member: discord.abc.User) -> list:
         """In-game kits this member may claim (has the kit's role)."""

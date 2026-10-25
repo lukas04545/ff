@@ -75,3 +75,76 @@ def test_buying_an_ingame_kit_gives_its_role(kr):
     assert raider in kr.buyer.roles and db.timed_role(1, 7, raider.id)    # the store kit's 7 days
     out = asyncio.run(kr.custom.claim_for(kr.buyer, "Raider", via="test"))
     assert out.code == "cooldown"                                         # just given: the cooldown runs
+
+
+def test_auto_give_to_members_with_the_role(kr, monkeypatch):
+    import cogs.custom_kits as ck
+    asyncio.run(kr.custom.sync_kit_roles())
+    raider = next(r for r in kr.guild.roles if r.name == "Raider")
+    raider.members = [kr.buyer]
+    db = kr.db
+    kr.buyer.roles.append(raider)
+    db.set_ingame_kit_cooldown("Raider", 0)
+    db.set_auto_give("ingame", "Raider", True)
+    assert asyncio.run(kr.custom.auto_give())["given"] == []                     # no cooldown: never automatic
+    db.set_ingame_kit_cooldown("Raider", 60)
+    out = asyncio.run(kr.custom.auto_give())
+    assert out["given"] == [{"kit": "Raider", "player": "Gamer7"}] and kr.said[-1] == 'kit givetoplayer "Raider" "Gamer7"'
+    assert asyncio.run(kr.custom.auto_give()) == {"given": [], "waiting": 1}   # cooldown runs
+    table = {k["kit"]: k for k in kr.custom.kit_role_table()["kits"] if k["kind"] == "ingame"}
+    row = table["Raider"]
+    assert row["auto_give"] and row["cooldown_minutes"] == 60 and row["member_count"] == 1
+    assert row["members"][0]["player"] == "Gamer7" and row["members"][0]["online"] and row["members"][0]["ready_at"]
+    assert table["Ak Kit"]["member_count"] == 0 and not table["Ak Kit"]["auto_give"]
+    # Joining: given after a short delay (the player has to load in first)
+    db.reset_ingame_claims("Raider")
+    slept = []
+
+    async def no_sleep(s):
+        slept.append(s)
+    monkeypatch.setattr(ck.asyncio, "sleep", no_sleep)
+    asyncio.run(kr.custom.on_rce_player_join("Gamer7"))
+    assert slept == [ck.AUTO_GIVE_JOIN_DELAY] and kr.said.count('kit givetoplayer "Raider" "Gamer7"') == 2
+    kr.buyer.roles.remove(raider)                                                # no role, no kit
+    db.reset_ingame_claims("Raider")
+    assert asyncio.run(kr.custom.auto_give())["given"] == []
+
+
+def test_kit_roles_in_the_control_panel(kr):
+    from dataclasses import replace
+
+    from aiohttp.test_utils import TestClient, TestServer
+    H = {"X-Requested-With": "rce-web"}
+    bot = kr.bot
+    bot.config = replace(bot.config, web_password="secret123")
+    asyncio.run(kr.custom.sync_kit_roles())
+    raider = next(r for r in kr.guild.roles if r.name == "Raider")
+    raider.members = [kr.buyer]
+    kr.buyer.roles.append(raider)
+
+    async def main():
+        from web.server import WebInterface
+        tmp = bot.config.database_path.parent
+        web = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            assert (await c.get("/api/kit-roles")).status == 401
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            d = await (await c.get("/api/kit-roles")).json()
+            kits = {(k["kind"], k["kit"]): k for k in d["kits"]}
+            assert kits[("ingame", "Raider")]["roles"][0]["name"] == "Raider" and d["members_intent"] is True   # requested
+            r = await c.put("/api/kit-roles", json={"kind": "ingame", "kit": "raider", "cooldown": "2h",
+                                                    "auto_give": True}, headers=H)
+            k = next(k for k in (await r.json())["kits"] if k["kit"] == "Raider")
+            assert k["cooldown_minutes"] == 120 and k["auto_give"]
+            r = await c.post("/api/kit-roles/give", json={"kind": "ingame", "kit": "Raider"}, headers=H)
+            assert (await r.json())["given"] == [{"kit": "Raider", "player": "Gamer7"}]
+            r = await c.put("/api/kit-roles", json={"kind": "ingame", "kit": "Nope"}, headers=H)
+            assert r.status == 404
+            r = await c.post("/api/kit-roles/sync", headers=H)
+            assert (await r.json())["done"] == {"custom": 0, "ingame": 0}
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    asyncio.run(main())

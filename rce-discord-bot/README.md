@@ -822,8 +822,18 @@ roles go hand in hand:
   now an in-game kit bought in the web store also gives its role (for the store kit's days, else for good) when the
   kit is given in-game, and its cooldown starts then.
 
-The bot needs the **Manage Roles** permission and its own role above the kit roles. Points-shop items and kits
-staff hand out (`/kit give`, `/customkit give`) stay one-off gifts without a role.
+**In the control panel (Kits → 🎭 Kit roles)** you see every kit next to its role(s) and compare: how many members
+have the role, how many of them linked their player and are online and ready, and per member (▸ Members) their
+linked player, whether they're online and when they can claim again. Change a kit's cooldown right there, **🔄 Check
+kit roles now** links new kits at once, **🎁 Give now** gives the kit to everyone with the role who is online and off
+cooldown, and **Auto-give** (per kit) lets the bot do that by itself – when a member with the role joins and every 5
+minutes – so role holders get their kit without claiming it. Auto-give needs a cooldown (> 0), otherwise the kit
+would be given every 5 minutes.
+
+The bot needs the **Manage Roles** permission and its own role above the kit roles. To list who has a role it needs
+the **Server Members Intent** (Discord Developer Portal → your app → Bot → Privileged Gateway Intents) – the panel
+tells you if it's missing; auto-give works without it. Points-shop items and kits staff hand out (`/kit give`,
+`/customkit give`) stay one-off gifts without a role.
 
 ## Support tickets with AI (DeepSeek)
 

@@ -353,6 +353,12 @@ class Storage:
                 role_id INTEGER NOT NULL,
                 cooldown_minutes INTEGER NOT NULL DEFAULT 1440
             );
+            -- Kits the bot gives automatically to members with the kit's role (when online and the cooldown allows)
+            CREATE TABLE IF NOT EXISTS kit_auto_give (
+                kind TEXT NOT NULL,                     -- custom / ingame
+                kit TEXT NOT NULL COLLATE NOCASE,
+                PRIMARY KEY (kind, kit)
+            );
             -- Nukes bought in the shop: a points drop every Discord member can claim once (cogs/economy.py)
             CREATE TABLE IF NOT EXISTS nuke_drops (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -754,6 +760,17 @@ class Storage:
         with self._db:
             cur = self._db.execute("UPDATE ingame_kit_roles SET cooldown_minutes = ? WHERE kit = ?", (minutes, kit))
         return cur.rowcount > 0
+
+    def auto_give_kits(self) -> set[tuple[str, str]]:
+        """(kind, kit in lower case) of the kits given automatically to their role's members."""
+        return {(r["kind"], r["kit"].lower()) for r in self._db.execute("SELECT * FROM kit_auto_give")}
+
+    def set_auto_give(self, kind: str, kit: str, on: bool) -> None:
+        with self._db:
+            if on:
+                self._db.execute("INSERT OR IGNORE INTO kit_auto_give (kind, kit) VALUES (?, ?)", (kind, kit))
+            else:
+                self._db.execute("DELETE FROM kit_auto_give WHERE kind = ? AND kit = ?", (kind, kit))
 
     def record_ingame_claim(self, kit: str, player: str, user_id: int | None, user: str) -> None:
         with self._db:

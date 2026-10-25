@@ -80,6 +80,7 @@ def test_builtins_load_toggle_and_settings(pb):
         assert set(m.infos) == ALL and all(i.error is None for i in m.infos.values())
         assert set(m.instances) == DEFAULT_ON
         assert pb.bot.tree.get_command("bounty") is not None
+        pb.bot._connection._intents.members = False              # as if the intent were not granted
         info = await m.set_enabled("invites", True)
         assert info["running"] and info["missing_intents"] == ["members"]       # needs the Server Members intent
         assert enabled_plugin_intents(pb.bot.config.database_path) == {"members": ["Plugin Invite rewards"]}
