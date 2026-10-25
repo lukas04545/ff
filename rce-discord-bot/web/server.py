@@ -16,6 +16,7 @@ import asyncio
 import contextvars
 import hashlib
 import hmac
+import json
 import logging
 import os
 import re
@@ -346,6 +347,7 @@ class WebInterface:
         r.add_post("/api/custom-kits/import", self.import_custom_kits)
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
         r.add_put("/api/custom-kits/{name}/claim", self.custom_kit_claim_settings)
+        r.add_get("/api/kit-db", self.kit_db)
         r.add_get("/api/kit-roles", self.kit_roles)
         r.add_put("/api/kit-roles", self.kit_roles_update)
         r.add_post("/api/kit-roles/sync", self.kit_roles_sync)
@@ -1731,9 +1733,75 @@ class WebInterface:
         kind, kit = str(data.get("kind") or ""), kitparse.clean_arg(str(data.get("kit") or ""))
         known = (self.bot.db.custom_kit(kit) if kind == "custom" else
                  self.bot.db.ingame_kit_role(kit) if kind == "ingame" else None)
+        if known is None and kind == "ingame":                # an in-game kit that has no role yet
+            kits_cog = self.bot.get_cog("Kits")
+            live = {k.lower(): k for k in (getattr(kits_cog.kit_names, "items", None) or [] if kits_cog else [])}
+            if kit.lower() in live:
+                return kind, live[kit.lower()]
         if known is None:
             raise ApiError("Kit not found.", 404)
         return kind, known["name"] if kind == "custom" else known["kit"]
+
+    async def kit_db(self, request: web.Request) -> web.Response:
+        """Kit database: every kit (the bot's custom kits and the server's in-game kits) with its contents, role,
+        cooldown, auto-give, store listing, autokits and claim numbers – one list for searching and managing."""
+        db = self.bot.db
+        kits_cog = self.bot.get_cog("Kits")
+        ingame = await kits_cog.kit_names.get(max_wait=5) if kits_cog else []
+        custom_cog = self.bot.get_cog("CustomKits")
+        guild = custom_cog._guild() if custom_cog is not None else None
+        stats = db.kit_claim_stats()
+        auto = db.auto_give_kits()
+        store = {(r["source"], r["kit"].lower()): r for r in db.store_kits()}
+        rules: dict[str, list] = {}
+        for r in db.kit_rules():
+            rules.setdefault(r["kit"].lower(), []).append({"id": r["id"], "trigger": r["trigger"],
+                                                           "enabled": bool(r["enabled"])})
+        ingame_roles = {r["kit"].lower(): r for r in db.ingame_kit_roles()}
+
+        def roles_of(ids):
+            out = []
+            for rid in ids:
+                role = guild.get_role(rid) if guild is not None else None
+                out.append({"id": str(rid), "name": role.name if role else None,
+                            "members": len(getattr(role, "members", []) or []) if role else 0})
+            return out
+
+        def entry(kind, name, items, role_ids, cooldown, description=None):
+            s = store.get((kind, name.lower()))
+            return {"kind": kind, "name": name, "description": description,
+                    "items": items, "item_count": len(items) if items is not None else None,
+                    "roles": roles_of(role_ids), "cooldown_minutes": cooldown,
+                    "auto_give": (kind, name.lower()) in auto,
+                    "store": None if s is None else {"id": s["id"], "name": s["name"], "price": s["price"],
+                                                     "enabled": bool(s["enabled"]) and s["price"] > 0,
+                                                     "days": s["days"]},
+                    "autokits": rules.get(name.lower(), []),
+                    "claims": stats.get(name.lower(), {"total": 0, "players": 0, "last": None})}
+
+        out = []
+        for row in db.custom_kits():
+            items = [{"short": i["shortname"], "amount": i["amount"], "id": i["id"],
+                      "label": itemlist.COMMON_ITEMS.get(i["shortname"], i["shortname"])}
+                     for i in db.custom_kit_items(row["name"])]
+            out.append(entry("custom", row["name"], items, db.claim_roles(row), int(row["cooldown_minutes"]),
+                             row["description"]))
+        names = list(dict.fromkeys([*ingame, *(r["kit"] for r in db.ingame_kit_roles())]))
+        for name in names:
+            s = store.get(("ingame", name.lower()))
+            try:
+                cached = json.loads(s["items"]) if s is not None and s["items"] else None
+            except ValueError:
+                cached = None
+            items = [{"short": i["short"], "amount": i["amount"],
+                      "label": itemlist.COMMON_ITEMS.get(i["short"], i["short"])} for i in cached] if cached else None
+            role = ingame_roles.get(name.lower())
+            out.append(entry("ingame", name, items, [role["role_id"]] if role else [],
+                             int(role["cooldown_minutes"]) if role else None))
+        roles = [{"id": str(r.id), "name": r.name} for r in custom_cog._assignable(guild)] \
+            if custom_cog is not None and guild is not None else []
+        return web.json_response({"kits": out, "roles": roles, "server_online": self.bot.rcon.connected,
+                                  "store": self.bot.get_cog("WebShop") is not None})
 
     async def kit_roles(self, request: web.Request) -> web.Response:
         return web.json_response(self._custom_kits_cog().kit_role_table())
@@ -1748,9 +1816,23 @@ class WebInterface:
                 raise ApiError("Invalid cooldown. Examples: 30m, 12h, 1d, 1d 12h, 0 (no cooldown). Max. 365 days.")
             if kind == "custom":
                 self.bot.db.set_custom_kit_cooldown(kit, minutes)
-            else:
-                self.bot.db.set_ingame_kit_cooldown(kit, minutes)
+            elif not self.bot.db.set_ingame_kit_cooldown(kit, minutes):
+                raise ApiError("Give the kit a role first – the cooldown is for claiming with the role.")
             self._audit(f"Kit **{kit}** – cooldown {format_minutes(minutes)}")
+        if "role_id" in data:                            # the kit's role (kit database)
+            rid = str(data.get("role_id") or "")
+            cog = self._custom_kits_cog()
+            guild = cog._guild()
+            role = guild.get_role(int(rid)) if guild is not None and rid.isdigit() else None
+            if rid and (role is None or role not in cog._assignable(guild)):
+                raise ApiError("That role can't be used (gone, a bot role, or above the bot's own role).")
+            if kind == "custom":
+                self.bot.db.set_custom_kit_roles(kit, [role.id] if role else [])
+            elif role is not None:
+                self.bot.db.set_ingame_kit_role(kit, role.id)
+            else:
+                self.bot.db.delete_ingame_kit_role(kit)
+            self._audit(f"Kit **{kit}** – role: {role.name if role else 'none'}")
         if "auto_give" in data:
             self.bot.db.set_auto_give(kind, kit, bool(data["auto_give"]))
             self._audit(f"Kit **{kit}** – auto-give to its role {'on' if data['auto_give'] else 'off'}")

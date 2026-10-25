@@ -805,6 +805,16 @@ can see the server's confirmation line for each item (`🎁 Name receives 1 × r
 ---
 
 
+### 🗃️ Kit database
+
+**Kits → 🗃️ Kit database** in the control panel lists every kit in one place – the bot's custom kits and the
+server's in-game kits – with its contents, role, claim cooldown, store listing and how often it was claimed.
+**Search** by kit name, item (shortname or name, e.g. *ak*, *facemask*) or role, **filter** (bot kits, in-game kits,
+for sale, auto-give on, without a role, never claimed) and **sort** (name, most/last claimed, most items). Click a kit
+to manage it: add/remove items (bot kits), load an in-game kit's contents from the server, change its role, claim
+cooldown and auto-give, give it to a player or everyone online, see its store listing, autokits and claim stats, or
+delete a bot kit.
+
 ### 🎭 Every kit has its own Discord role
 
 With **Every kit has its own Discord role** on (`KIT_ROLES`, Settings → Kits – on by default) kits and Discord

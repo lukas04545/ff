@@ -135,6 +135,7 @@ const ICONS = {
   console: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
   botlog: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h7"/>',
   kits: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+  kitdb: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
   kitbuilder: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>',
   shop: '<circle cx="9" cy="9" r="5"/><path d="M14.6 6.6a5 5 0 1 1-6.1 8"/>',
   webstore: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
@@ -1362,6 +1363,148 @@ function kitRolesCard() {
 }
 
 const fmtCooldown = (min) => min % 1440 === 0 ? `${min / 1440}d` : min % 60 === 0 ? `${min / 60}h` : `${min}m`;
+
+// 🗃️ Kit database: every kit (bot + in-game) in one searchable list – contents, role, cooldown, store, claims
+views.kitdb = async (main) => {
+  main.append(h("h1", { text: "Kit database" }),
+    h("p", { class: "muted", text: "All kits in one place – the bot's custom kits and the server's in-game kits. Search by kit, item or role, open a kit to see and change everything about it." }));
+  const search = h("input", { type: "search", placeholder: "Search kits, items or roles … (e.g. ak, raid, VIP)", style: "flex:1;min-width:14rem" });
+  const filter = h("select", { style: "max-width:13rem" }, [["all", "All kits"], ["custom", "Bot kits"], ["ingame", "In-game kits"], ["sale", "For sale in the store"],
+    ["auto", "Auto-give on"], ["norole", "Without a role"], ["never", "Never claimed"]].map(([v, t]) => h("option", { value: v, text: t })));
+  const sort = h("select", { style: "max-width:12rem" }, [["name", "Sort: name"], ["claims", "Sort: most claimed"], ["recent", "Sort: last claimed"], ["items", "Sort: most items"]].map(([v, t]) => h("option", { value: v, text: t })));
+  const count = h("span", { class: "muted" });
+  const list = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  main.append(h("div", { class: "card" }, h("div", { class: "row" }, search, filter, sort, count)), list);
+  const meta = await loadMeta().catch(() => ({ items: [] }));
+  const itemsList = h("datalist", { id: "dl-kitdb-items" }, meta.items.map((i) => h("option", { value: i.short, label: i.label })));
+  const playersList = h("datalist", { id: "dl-players" }, (status?.players || []).map((p) => h("option", { value: p.name })));
+  main.append(itemsList, playersList);
+  let data = null;
+  const open = new Set();
+  try { const q = new URLSearchParams(location.search).get("q"); if (q) search.value = q; } catch { /* ignore */ }
+
+  const text = (k) => [k.name, k.description || "", k.kind === "custom" ? "bot kit custom" : "in-game kit",
+    ...(k.items || []).flatMap((i) => [i.short, i.label]), ...k.roles.map((r) => r.name || "")].join(" ").toLowerCase();
+  const fmtWhen = (s) => s ? new Date(s.replace(" ", "T") + "Z").toLocaleString() : "never";
+  const keyOf = (k) => `${k.kind}:${k.name}`;
+
+  const show = () => {
+    if (!data) return;
+    const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const f = filter.value;
+    let kits = data.kits.filter((k) => words.every((w) => text(k).includes(w)));
+    kits = kits.filter((k) => f === "all" || (f === "custom" && k.kind === "custom") || (f === "ingame" && k.kind === "ingame")
+      || (f === "sale" && k.store?.enabled) || (f === "auto" && k.auto_give) || (f === "norole" && !k.roles.some((r) => r.name))
+      || (f === "never" && !k.claims.total));
+    const by = { name: (a, b) => a.name.localeCompare(b.name), claims: (a, b) => b.claims.total - a.claims.total,
+      recent: (a, b) => (b.claims.last || "").localeCompare(a.claims.last || ""), items: (a, b) => (b.item_count ?? -1) - (a.item_count ?? -1) };
+    kits.sort(by[sort.value]);
+    count.textContent = `${kits.length} of ${data.kits.length} kits`;
+    if (!kits.length) { list.replaceChildren(h("div", { class: "card" }, h("p", { class: "muted", text: "No kit matches." }))); return; }
+    const rows = [];
+    for (const k of kits) {
+      const items = k.items ? `${k.item_count} item${k.item_count === 1 ? "" : "s"}: ${k.items.slice(0, 3).map((i) => i.label).join(", ")}${k.item_count > 3 ? " …" : ""}` : "contents not loaded";
+      const roles = k.roles.filter((r) => r.name).map((r) => "@" + r.name).join(", ") || "–";
+      rows.push(h("tr", { style: "cursor:pointer", onclick: () => { open.has(keyOf(k)) ? open.delete(keyOf(k)) : open.add(keyOf(k)); show(); } },
+        h("td", {}, h("strong", { text: (open.has(keyOf(k)) ? "▾ " : "▸ ") + k.name }), h("div", { class: "muted", text: k.kind === "custom" ? "🔒 bot kit" : "🎒 in-game kit" })),
+        h("td", { class: k.items ? "" : "muted", text: items }),
+        h("td", { text: roles }),
+        h("td", { text: k.cooldown_minutes == null ? "–" : k.cooldown_minutes ? fmtCooldown(k.cooldown_minutes) : "none" }),
+        h("td", { text: k.store ? (k.store.enabled ? `💳 ${k.store.price}` : "listed, hidden") : "–" }),
+        h("td", { text: k.claims.total ? `${k.claims.total}× · ${k.claims.players} player${k.claims.players === 1 ? "" : "s"}` : "never" })));
+      if (open.has(keyOf(k))) rows.push(h("tr", {}, h("td", { colspan: 6 }, kitDetail(k))));
+    }
+    list.replaceChildren(h("div", { class: "card" }, h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Kit", "Contents", "Role", "Cooldown", "Store", "Claimed"].map((t) => h("th", { text: t })))),
+      h("tbody", {}, rows)))));
+  };
+
+  const kitDetail = (k) => {
+    const box = h("div", { class: "kitdb-detail" });
+    const enc = encodeURIComponent(k.name);
+    // Contents
+    const itemsBox = h("div", {});
+    const renderItems = (items) => itemsBox.replaceChildren(items && items.length
+      ? h("ul", { class: "kitdb-items" }, items.map((i) => h("li", {},
+          h("span", { text: `${i.label} ` }), h("code", { text: i.short }), h("b", { text: ` ×${i.amount}` }),
+          k.kind === "custom" && i.id ? h("button", { class: "small ghost", text: "✕", title: "Remove", onclick: async (ev) => {
+            ev.stopPropagation();
+            await act(() => api(`/api/custom-kits/${enc}/items/${i.id}`, { method: "DELETE" }), "Item removed"); load();
+          } }) : null)))
+      : h("p", { class: "muted", text: items ? "Empty kit." : "Contents not loaded yet." }));
+    renderItems(k.items);
+    const contents = [h("h3", { text: "Contents" }), itemsBox];
+    if (k.kind === "ingame") {
+      contents.push(h("button", { class: "small", text: "🔍 Load contents from the server", onclick: async () => {
+        try {
+          const r = await api(`/api/kits/ingame/${enc}`);
+          renderItems(r.items.map((i) => ({ short: i.short_name, amount: i.amount, label: (meta.items.find((m) => m.short === i.short_name) || {}).label || i.short_name })));
+        } catch (e) { toast(e.message, true); }
+      } }));
+    } else {
+      const item = h("input", { placeholder: "Item shortname, e.g. rifle.ak", list: "dl-kitdb-items" });
+      const amount = h("input", { type: "number", min: 1, value: 1, style: "max-width:6rem" });
+      contents.push(h("div", { class: "row" }, item, amount, h("button", { class: "small primary", text: "+ Add item", onclick: async () => {
+        if (!item.value.trim()) return;
+        await act(() => api(`/api/custom-kits/${enc}/items`, { method: "POST", body: { item: item.value.trim(), amount: Number(amount.value || 1) } }), "Item added"); load();
+      } })));
+    }
+    // Access: role, cooldown, auto-give
+    const role = h("select", {}, h("option", { value: "", text: "– no role –" }), data.roles.map((r) => h("option", { value: r.id, text: "@" + r.name })));
+    role.value = k.roles.find((r) => r.name)?.id || "";
+    role.addEventListener("change", async () => {
+      await act(() => api("/api/kit-roles", { method: "PUT", body: { kind: k.kind, kit: k.name, role_id: role.value || null } }), "Role saved"); load();
+    });
+    const cd = h("input", { value: k.cooldown_minutes ? fmtCooldown(k.cooldown_minutes) : "0", style: "max-width:7rem" });
+    cd.addEventListener("change", async () => {
+      await act(() => api("/api/kit-roles", { method: "PUT", body: { kind: k.kind, kit: k.name, cooldown: cd.value } }), "Cooldown saved"); load();
+    });
+    const auto = h("input", { type: "checkbox" });
+    auto.checked = k.auto_give;
+    auto.addEventListener("change", async () => {
+      if (auto.checked && !k.cooldown_minutes) { toast("Set a cooldown first.", true); auto.checked = false; return; }
+      await act(() => api("/api/kit-roles", { method: "PUT", body: { kind: k.kind, kit: k.name, auto_give: auto.checked } }), "Saved"); load();
+    });
+    const access = [h("h3", { text: "Access" }),
+      h("div", { class: "row" }, h("label", { class: "muted", text: "Role" }), role,
+        h("label", { class: "muted", text: "Claim cooldown" }), cd,
+        h("label", { class: "switch keep" }, auto, h("span", { text: "Auto-give" }))),
+      h("p", { class: "muted", text: k.roles.filter((r) => r.name).map((r) => `@${r.name}: ${r.members} member${r.members === 1 ? "" : "s"}`).join(" · ") || "No role – nobody can claim it themselves." })];
+    // Give
+    const player = h("input", { placeholder: "Player (in-game name)", list: "dl-players" });
+    const give = (all) => async () => {
+      if (all && !confirm(`Give ${k.name} to ALL online players?`)) return;
+      if (!all && !player.value.trim()) { toast("Player missing", true); return; }
+      await act(() => api("/api/kits/give", { method: "POST", body: { kit: k.name, type: k.kind, player: player.value.trim(), all } }), "Kit sent");
+    };
+    const giveRow = [h("h3", { text: "Give" }), h("div", { class: "row" }, player,
+      h("button", { class: "small primary", text: "🎁 Give", onclick: give(false) }),
+      h("button", { class: "small", text: "Give to all online", onclick: give(true) }))];
+    // Store, autokits, claims
+    const facts = [h("h3", { text: "Store & stats" }), h("ul", { class: "kitdb-facts" },
+      h("li", {}, "Store: ", k.store ? `${k.store.name} – ${k.store.enabled ? `on sale for ${k.store.price}` : "hidden (no price or switched off)"}${k.store.days ? `, role for ${k.store.days} days` : ""} ` : "not in the store ",
+        isOwner() ? h("a", { href: "#webstore", text: "→ Store" }) : null),
+      h("li", { text: `Autokits: ${k.autokits.length ? k.autokits.map((a) => `#${a.id} ${a.trigger}${a.enabled ? "" : " (off)"}`).join(", ") : "none"}` }),
+      h("li", { text: `Claimed/given: ${k.claims.total}× by ${k.claims.players} player(s) · last ${fmtWhen(k.claims.last)}` }),
+      k.description ? h("li", { text: `Description: ${k.description}` }) : null)];
+    const danger = k.kind === "custom" ? h("div", { class: "row", style: "margin-top:.6rem" }, h("button", { class: "small danger", text: "🗑️ Delete kit", onclick: async () => {
+      if (!confirm(`Delete the bot kit ${k.name}? Its items, cooldowns and claim history stay in the log, the kit is gone.`)) return;
+      await act(() => api(`/api/custom-kits/${enc}`, { method: "DELETE" }), "Kit deleted"); open.delete(keyOf(k)); load();
+    } })) : null;
+    box.append(h("div", { class: "kitdb-grid" }, h("div", {}, ...contents), h("div", {}, ...access, ...giveRow, ...facts)), danger);
+    box.addEventListener("click", (ev) => ev.stopPropagation());
+    return box;
+  };
+
+  const load = async () => {
+    try { data = await api("/api/kit-db"); show(); }
+    catch (e) { list.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
+  };
+  search.addEventListener("input", show);
+  filter.addEventListener("change", show);
+  sort.addEventListener("change", show);
+  load();
+};
 
 views.kits = async (main) => {
   main.append(h("h1", { text: "Kits" }));

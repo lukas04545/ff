@@ -528,3 +528,13 @@ nav a .ico.emoji { display: inline-flex; align-items: center; justify-content: c
 /* Logo = the Discord bot's profile picture (round, like on Discord) */
 .logo.avatar, html:root:not([data-theme="light"]) .logo.avatar { background: none; padding: 0; overflow: hidden; border-radius: 50%; }
 .logo.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Kit database */
+.kitdb-detail { padding: .4rem .2rem .6rem; }
+.kitdb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+@media (max-width: 760px) { .kitdb-grid { grid-template-columns: 1fr; } }
+.kitdb-detail h3 { margin: .6rem 0 .35rem; font-size: .95rem; }
+.kitdb-items { margin: 0 0 .5rem; padding-left: 1.1rem; max-height: 18rem; overflow: auto; }
+.kitdb-items li { margin: .15rem 0; }
+.kitdb-items button { margin-left: .4rem; padding: 0 .4rem; }
+.kitdb-facts { margin: 0; padding-left: 1.1rem; }

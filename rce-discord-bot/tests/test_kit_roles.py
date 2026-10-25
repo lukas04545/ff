@@ -22,7 +22,8 @@ def kr(shop, monkeypatch):  # noqa: F811
 
     async def names(**kw):
         return ["Raider", "Ak Kit"]
-    monkeypatch.setattr(bot, "get_cog", lambda name, _orig=bot.get_cog: NS(kit_names=NS(get=names))
+    monkeypatch.setattr(bot, "get_cog", lambda name, _orig=bot.get_cog: NS(kit_names=NS(get=names,
+                                                                                           items=["Raider", "Ak Kit"]))
                         if name == "Kits" else _orig(name))
     bot.online_players = {"Gamer7": {}}
     from dataclasses import replace
@@ -226,3 +227,54 @@ def test_ai_matches_cleanup_moves_members_and_deletes_duplicates(kr, monkeypatch
     r = asyncio.run(kr.custom.undo_created())                                # remove everything the bot made
     assert r["deleted"] == ["Raider"] and kr.db.ingame_kit_role("Raider") is None
     assert kr.db.created_role_ids() == set()
+
+
+def test_kit_database(kr):
+    """One searchable list of every kit with contents, role, cooldown, auto-give, store and claims; the role of a
+    kit can be changed there."""
+    from dataclasses import replace
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from tests.test_kit_requests import FakeRole
+    H = {"X-Requested-With": "rce-web"}
+    bot, db = kr.bot, kr.db
+    bot.config = replace(bot.config, web_password="secret123")
+    asyncio.run(kr.custom.sync_kit_roles())
+    db.add_store_kit("Raider pack", "Raider", 4.5, 0, None, source="ingame")
+    db.record_ingame_claim("Raider", "Gamer7", 7, "test")
+    vip = FakeRole(500, "VIP", 2)
+    kr.guild.roles.append(vip)
+
+    async def main():
+        from web.server import WebInterface
+        tmp = bot.config.database_path.parent
+        web = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            assert (await c.get("/api/kit-db")).status == 401
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            d = await (await c.get("/api/kit-db")).json()
+            kits = {(k["kind"], k["name"]): k for k in d["kits"]}
+            assert set(kits) >= {("custom", "Ak Kit"), ("custom", "Mega raid kit"), ("ingame", "Raider"),
+                                 ("ingame", "Ak Kit")}
+            ak = kits[("custom", "Ak Kit")]
+            assert ak["items"][0]["short"] == "rifle.ak" and ak["items"][0]["label"] and ak["item_count"] == 1
+            raider = kits[("ingame", "Raider")]
+            assert raider["store"]["price"] == 4.5 and raider["claims"]["total"] == 1 and raider["roles"][0]["name"]
+            assert "VIP" in {r["name"] for r in d["roles"]}
+            r = await c.put("/api/kit-roles", json={"kind": "custom", "kit": "Ak Kit", "role_id": "500"}, headers=H)
+            assert r.status == 200 and db.claim_roles(db.custom_kit("Ak Kit")) == [500]
+            r = await c.put("/api/kit-roles", json={"kind": "ingame", "kit": "Raider", "role_id": None}, headers=H)
+            assert r.status == 200 and db.ingame_kit_role("Raider") is None
+            r = await c.put("/api/kit-roles", json={"kind": "ingame", "kit": "Raider", "cooldown": "2h"}, headers=H)
+            assert r.status == 400 and "role first" in (await r.json())["error"]
+            r = await c.put("/api/kit-roles", json={"kind": "ingame", "kit": "Raider", "role_id": "500"}, headers=H)
+            assert db.ingame_kit_role("Raider")["role_id"] == 500                 # role-less in-game kit: works
+            r = await c.put("/api/kit-roles", json={"kind": "custom", "kit": "Ak Kit", "role_id": "999"}, headers=H)
+            assert r.status == 400
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    asyncio.run(main())
