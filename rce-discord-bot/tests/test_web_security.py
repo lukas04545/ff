@@ -188,3 +188,51 @@ def test_the_panel_is_hidden_behind_its_secret_address(bot):  # noqa: F811
             await c.close()
             await bot.rcon.close()
     asyncio.run(main())
+
+
+def test_secret_phrase_in_the_player_search_opens_the_panel(bot):  # noqa: F811
+    """WEB_PANEL_KNOCK typed into the website's player search leads to the panel; any other search stays a search."""
+    from aiohttp import web as aioweb
+    holder = {}
+    OUT = {"CF-Connecting-IP": "203.0.113.9"}
+
+    async def scenario(c):
+        w = holder["web"]
+        w._website_running = lambda: True
+
+        async def website(request, pid):
+            return aioweb.Response(text="website page")
+        w._serve_plugin = website
+        r = await c.get("/player", params={"name": "open sesame 42"}, headers=OUT, allow_redirects=False)
+        assert r.status == 200                                                 # off by default: a normal search
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        r = await c.put("/api/settings", json={"values": {"WEB_PANEL_KNOCK": "short"}}, headers=H)
+        assert r.status == 400                                                 # too easy to guess
+        r = await c.put("/api/settings", json={"values": {"WEB_PANEL_KNOCK": "open sesame 42"}}, headers=H)
+        assert r.status == 200
+        c.session.cookie_jar.clear()
+        for path in ("/player", "/p/website/player"):
+            r = await c.get(path, params={"name": " open sesame 42 "}, headers=OUT, allow_redirects=False)
+            assert r.status == 303 and r.headers["Location"] == w.panel_path, path
+        r = await c.get("/player", params={"name": "open sesame 4"}, headers=OUT, allow_redirects=False)
+        assert r.status == 200 and await r.text() == "website page"            # anything else: just a search
+        r = await c.get("/player", params={"name": "open sesame 42"}, headers=OUT)
+        assert r.status == 200 and "rce_gate" in r.headers.get("Set-Cookie", "")   # followed: the panel opens
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        await c.put("/api/settings", json={"values": {"WEB_PANEL_KNOCK": "off"}}, headers=H)
+        r = await c.get("/player", params={"name": "open sesame 42"}, headers=OUT, allow_redirects=False)
+        assert r.status == 200                                                 # switched off again
+
+    async def main():
+        from web.server import WebInterface
+        tmp = bot.config.database_path.parent
+        w = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        holder["web"] = w
+        c = TestClient(TestServer(w.app))
+        await c.start_server()
+        try:
+            await scenario(c)
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    asyncio.run(main())

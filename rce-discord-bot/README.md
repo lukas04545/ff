@@ -609,6 +609,11 @@ Run the automated tests with `pip install pytest && pytest`.
   change applies right away, and the old link stops working. `/admin` still works on the bot's own PC. Anyone without the
   address gets "not found" for `/admin`, the login, the API and the panel's files, so scanners can't even tell a
   panel exists. Share the address only with your admins.
+- **Secret way in from the player website:** in *Settings → Web interface → Secret phrase to the panel from the
+  website* (`WEB_PANEL_KNOCK`), set a phrase of at least 8 characters. An admin who types it into the **Players**
+  search of the player website lands on the control panel and logs in as usual. Nothing on the website shows that this
+  exists; every other search is a normal player search. Pick something nobody would search for, and type `off` to
+  switch it off. It is off until you set it.
 - **Two-factor login (2FA):** *🔐 My account* → **Set up two-factor login** – then logging in needs your password
   **and** the 6-digit code from an authenticator app (Google/Microsoft Authenticator, Authy, 1Password, Bitwarden …).
   Strongly recommended for everyone, especially with the public link. Each code works once. Lost phone: the owner

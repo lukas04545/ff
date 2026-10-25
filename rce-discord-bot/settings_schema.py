@@ -417,6 +417,12 @@ FIELDS: list[Field] = [
                "(/admin works on this PC only). Without it, the panel, its login and its API don't exist for "
                "visitors. Made randomly at the first start; 8–64 letters, digits, - or _. Changing it: the new "
                "address works right away, tell your admins."),
+    Field("WEB_PANEL_KNOCK", "Secret phrase to the panel from the website", "web", "secret",
+          placeholder="off",
+          help="The secret way in for admins: type this phrase into the Players search of the player website and "
+               "you land on the control panel (you still log in as usual). Nothing on the website shows it exists; "
+               "any other search is a normal player search. At least 8 characters – pick something nobody would "
+               "search for. Not set or \"off\" = off."),
     Field("WEB_OPEN_BROWSER", "Open browser on start", "web", "bool"),
     Field("ITEM_IMAGE_URL", "Item pictures from", "web", advanced=True,
           placeholder="https://rustlabs.com/img/items180/{shortname}.png",
@@ -490,6 +496,8 @@ def validate(key: str, value: str) -> str | None:
                                     or value.strip("/").lower() in ("admin", "api", "static", "store", "casino",
                                                                     "account", "battlepass", "streams")):
         return f'"{f.label}" must be 8–64 letters, digits, - or _ (and not a page of the website).'
+    if key == "WEB_PANEL_KNOCK" and len(value) < 8 and value.lower() != "off":
+        return f'"{f.label}" must be at least 8 characters (or "off").'
     if key == "WEB_PUBLIC_URL" and not value.startswith(("https://", "http://")):
         return f'"{f.label}" must start with https://'
     if "\n" in value and f.kind != "textarea":
