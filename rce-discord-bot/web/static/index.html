@@ -6,13 +6,7 @@
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#0b0e1a">
   <title>RCE Bot Panel</title>
-  <script>
-    // Apply the saved theme before the first paint (no flash)
-    try { const t = localStorage.getItem("rce-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) { /* storage blocked */ }
-    // Animations are off unless switched on with the ✨ button (a still neon background is much lighter)
-    document.documentElement.dataset.motion = "off";
-    try { if (localStorage.getItem("rce-motion") === "on") delete document.documentElement.dataset.motion; } catch (e) { /* storage blocked */ }
-  </script>
+  <script src="/static/boot.js?v=1"></script>
   <link rel="stylesheet" href="/static/style.css?v=28">
   <link rel="stylesheet" href="/static/neon.css?v=2">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛢️</text></svg>">
@@ -36,6 +30,9 @@
       </label>
       <label class="stack">Password
         <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required>
+      </label>
+      <label class="stack hidden" id="login-code-row">Code from your authenticator app
+        <input id="login-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456">
       </label>
       <button type="submit" class="primary block">Log in</button>
       <p id="login-error" class="error"></p>
@@ -102,7 +99,7 @@
           <button id="theme" class="icon-btn" type="button" title="Theme: dark">🌙</button>
         </div>
         <div class="row tight">
-          <button id="account" class="ghost small hidden" title="My password">🔑 <span>My password</span></button>
+          <button id="account" class="ghost small hidden" title="My account: password and two-factor login">🔐 <span>My account</span></button>
           <button id="logout" class="ghost small">Log out</button>
         </div>
       </div>

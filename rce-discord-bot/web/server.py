@@ -43,6 +43,7 @@ from web import tunnel as tunnelmod
 from web.caching import YEAR, conditional, maybe_compress
 from web.item_images import THUMB_SIZES, WAIT_FOR_DOWNLOAD
 from web.ratelimit import RateLimiter
+from web.totp import TwoFactorStore, matching_step, new_secret, otpauth_uri
 from web.users import OWNER, UserError, UserStore, same_secret
 from cogs.economy import SHOP_KINDS
 from permcheck import check_permissions, explain_forbidden
@@ -68,6 +69,19 @@ STATIC_LINK = re.compile(r'(/static/([\w.-]+))\?v=[\w]+')     # index.html: ?v=�
 SESSION_COOKIE = "rce_session"
 PUBLIC_LINK_FILE = "PUBLIC_LINK.txt"  # current public address (Cloudflare tunnel), next to start.bat
 SESSION_TTL = 12 * 3600
+REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, risky actions need no new confirmation
+# Risky actions (run code, change secrets or accounts): need a password confirmation in the last REAUTH_SECONDS
+REAUTH_PATHS = (("POST", "/api/plugins/upload"), ("PUT", "/api/settings"), ("POST", "/api/users"),
+                ("PUT", "/api/users"), ("DELETE", "/api/users"), ("POST", "/api/restart"), ("POST", "/api/update"),
+                ("POST", "/api/backups"), ("DELETE", "/api/plugins"), ("POST", "/api/2fa/disable"),
+                ("POST", "/api/webshop/giftcards"))
+# The control panel: only its own scripts/styles/pictures, never framed by another site
+PANEL_CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+             "connect-src 'self'; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+                    "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-site",
+                    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), "
+                                          "interest-cohort=()"}
 LOGIN_ATTEMPTS_PER_MINUTE = 5          # per IP and per username (every attempt counts)
 LOGIN_FAILURES_PER_15_MIN = 15         # failed attempts -> locked for up to 15 minutes
 PUBLIC_PAGES_PER_MINUTE = 60           # player website per visitor
@@ -84,9 +98,10 @@ POLLING_COMMANDS = ("playerlist", "serverinfo")
 
 
 class ApiError(Exception):
-    def __init__(self, message: str, status: int = 400) -> None:
+    def __init__(self, message: str, status: int = 400, **data) -> None:
         super().__init__(message)
         self.status = status
+        self.data = data          # extra fields for the panel, e.g. need_2fa / reauth
 
 
 def _row(row) -> dict:
@@ -262,6 +277,9 @@ class WebInterface:
         self.login_token = secrets.token_urlsafe(24)
         self._secret = self._load_secret(secret_path)
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
+        self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
+        self._pending_2fa: dict[str, tuple[str, float]] = {}     # username -> (new secret, valid until)
+        self._sudo: dict[str, float] = {}                        # session token -> confirmed until
         self._revoked: set[str] = set()
         self._login_minute = RateLimiter(LOGIN_ATTEMPTS_PER_MINUTE, 60)
         self._login_failures = RateLimiter(LOGIN_FAILURES_PER_15_MIN, 900)
@@ -300,8 +318,9 @@ class WebInterface:
 
     def _build_app(self) -> web.Application:
         app = web.Application(middlewares=[self._compress_middleware, self._error_middleware, self._host_middleware,
-                                           self._auth_middleware],
+                                           self._origin_middleware, self._auth_middleware],
                               client_max_size=1024 ** 2)
+        app.on_response_prepare.append(self._security_headers)
         r = app.router
         r.add_get("/", self._root)                                  # player website (or -> /admin if it's off)
         r.add_get("/admin", self._index)                            # the control panel
@@ -314,6 +333,11 @@ class WebInterface:
         r.add_get("/auth", self.auth_link)
         r.add_post("/api/login", self.login)
         r.add_post("/api/logout", self.logout)
+        r.add_post("/api/reauth", self.reauth)
+        r.add_get("/api/2fa", self.two_factor_state)
+        r.add_post("/api/2fa/setup", self.two_factor_setup)
+        r.add_post("/api/2fa/enable", self.two_factor_enable)
+        r.add_post("/api/2fa/disable", self.two_factor_disable)
         r.add_get("/api/me", self.me)
         r.add_get("/api/status", self.status)
         r.add_get("/api/settings", self.get_settings)
@@ -327,6 +351,7 @@ class WebInterface:
         r.add_post("/api/users", self.create_user)
         r.add_put("/api/users/{username}", self.update_user)
         r.add_delete("/api/users/{username}", self.delete_user)
+        r.add_delete("/api/users/{username}/2fa", self.reset_user_2fa)
         r.add_post("/api/account/password", self.change_own_password)
         if self.setup_mode:
             r.add_post("/api/setup/continue", self.setup_continue)
@@ -554,6 +579,28 @@ class WebInterface:
 
     # ------------------------------------------------------------ Middleware
 
+    @staticmethod
+    def _is_https(request: web.Request) -> bool:
+        """Served over HTTPS – directly, or through the local Cloudflare tunnel (which says so in a header)."""
+        if request.secure:
+            return True
+        return request.remote in ("127.0.0.1", "::1") and \
+            request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() == "https"
+
+    async def _security_headers(self, request: web.Request, resp: web.StreamResponse) -> None:
+        """Every answer (pages, API, errors): browser protections; the panel also gets a strict CSP."""
+        for key, value in SECURITY_HEADERS.items():
+            resp.headers.setdefault(key, value)
+        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        resp.headers["Server"] = "RCE-Bot"                     # no version numbers for scanners
+        path = request.path
+        if path.startswith(("/admin", "/static/", "/api/", "/auth")):
+            resp.headers["Content-Security-Policy"] = PANEL_CSP
+        if path.startswith("/api/"):
+            resp.headers.setdefault("Cache-Control", "no-store")
+        if self._is_https(request):
+            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+
     @web.middleware
     async def _compress_middleware(self, request: web.Request, handler):
         resp = await handler(request)
@@ -565,7 +612,7 @@ class WebInterface:
         try:
             return await handler(request)
         except ApiError as exc:
-            return web.json_response({"error": str(exc)}, status=exc.status)
+            return web.json_response({"error": str(exc), **exc.data}, status=exc.status)
         except RconError as exc:
             return web.json_response({"error": str(exc)}, status=503)
         except web.HTTPException:
@@ -587,6 +634,16 @@ class WebInterface:
         return await handler(request)
 
     @web.middleware
+    async def _origin_middleware(self, request: web.Request, handler):
+        """Forms of the player website (store, account, casino, battle pass …) may only be sent from the site
+        itself: a POST naming another origin is refused (webhooks under /hooks/ excepted)."""
+        if request.method == "POST" and not request.path.startswith(("/api/", "/hooks/")):
+            origin = request.headers.get("Origin")
+            if origin and origin != "null" and (urlparse(origin).netloc or "").lower() != (request.host or "").lower():
+                raise web.HTTPForbidden(text="Forms can only be sent from this website.")
+        return await handler(request)
+
+    @web.middleware
     async def _auth_middleware(self, request: web.Request, handler):
         path = request.path
         if not path.startswith("/api/"):
@@ -601,6 +658,10 @@ class WebInterface:
         request["user"], request["role"] = session
         if request["role"] != "owner" and path.startswith(OWNER_ONLY_PREFIXES):
             raise ApiError("Only owners can do this (ask the server owner).", 403)
+        if any(request.method == m and path.startswith(p) for m, p in REAUTH_PATHS) \
+                and self._sudo.get(request.cookies.get(SESSION_COOKIE, ""), 0) < time.time():
+            raise ApiError("Please confirm your password for this.", 403, reauth=True,
+                           need_2fa=self.two_factor.enabled(session[0]))
         _current_user.set(session[0])
         return await handler(request)
 
@@ -636,11 +697,17 @@ class WebInterface:
             return OWNER, "owner"
         return username, self.users.get(username)["role"]
 
-    def _set_session_cookie(self, resp: web.StreamResponse, username: str = OWNER) -> None:
+    def _set_session_cookie(self, resp: web.StreamResponse, username: str = OWNER,
+                            request: web.Request | None = None) -> None:
         # Random nonce: every login gets its own token (logout revokes exactly that one)
-        token = self._sign(username, int(time.time()) + SESSION_TTL, secrets.token_hex(8))
+        token = self._sign(username, int(time.time()) + SESSION_TTL, secrets.token_hex(16))
         if token:
-            resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL, httponly=True, samesite="Strict")
+            resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL, httponly=True, samesite="Strict",
+                            secure=bool(request is not None and self._is_https(request)), path="/")
+            self._sudo[token] = time.time() + REAUTH_SECONDS      # just logged in: risky actions OK for a while
+            now = time.time()
+            for t in [t for t, until in self._sudo.items() if until < now]:
+                self._sudo.pop(t, None)
 
     # ------------------------------------------------------------ Helpers
 
@@ -1182,27 +1249,93 @@ class WebInterface:
             self._login_failed(*keys)
             log.warning("Failed web login for '%s' from %s", username, ip)
             raise ApiError("Wrong username or password.", 401)
+        if self.two_factor.enabled(username):
+            code = str(data.get("code") or "").strip()
+            if not code:
+                raise ApiError("Enter the 6-digit code from your authenticator app.", 401, need_2fa=True)
+            if not self.two_factor.verify(username, code):
+                self._login_failed(*keys)
+                log.warning("Wrong 2FA code for '%s' from %s", username, ip)
+                raise ApiError("Wrong or used code – wait for the next one.", 401, need_2fa=True)
         self._login_ok(*keys)
         resp = web.json_response({"ok": True})
-        self._set_session_cookie(resp, username)
+        self._set_session_cookie(resp, username, request)
         log.info("Web login: %s from %s", username, ip)
-        if self.bot is not None and username != OWNER:
-            self.bot.audit(f"🌐 Web interface: **{username}** logged in")
+        if self.bot is not None:
+            self.bot.audit(f"🌐 Web interface: **{username}** logged in"
+                           + (" (2FA)" if self.two_factor.enabled(username) else "") + f" from {ip}")
         return resp
+
+    def _check_password(self, username: str, password: str) -> bool:
+        if username == OWNER:
+            return same_secret(password, self.password)
+        return self.users.authenticate(username, password) is not None
+
+    async def reauth(self, request: web.Request) -> web.Response:
+        """Confirms the password (and 2FA code) before a risky action – valid for REAUTH_SECONDS."""
+        data = await self._json(request)
+        user = request["user"]
+        keys = (self._client_ip(request), "user:" + user.lower())
+        self._rate_limit(*keys)
+        ok = await asyncio.to_thread(self._check_password, user, str(data.get("password", ""))[:256])
+        if ok and self.two_factor.enabled(user):
+            ok = self.two_factor.verify(user, str(data.get("code") or ""))
+        if not ok:
+            self._login_failed(*keys)
+            raise ApiError("Wrong password" + (" or code." if self.two_factor.enabled(user) else "."), 403,
+                           reauth=True, need_2fa=self.two_factor.enabled(user))
+        self._login_ok(*keys)
+        self._sudo[request.cookies.get(SESSION_COOKIE, "")] = time.time() + REAUTH_SECONDS
+        return web.json_response({"ok": True})
+
+    # Two-factor login (authenticator app) for the logged-in account
+
+    async def two_factor_state(self, request: web.Request) -> web.Response:
+        return web.json_response({"enabled": self.two_factor.enabled(request["user"])})
+
+    async def two_factor_setup(self, request: web.Request) -> web.Response:
+        user = request["user"]
+        if self.two_factor.enabled(user):
+            raise ApiError("Two-factor login is already on.")
+        secret = new_secret()
+        self._pending_2fa[user.lower()] = (secret, time.time() + 600)
+        issuer = (self.bot.config.server_display_name if self.bot is not None else "") or "RCE Bot"
+        return web.json_response({"secret": secret, "uri": otpauth_uri(secret, user, f"{issuer} panel")})
+
+    async def two_factor_enable(self, request: web.Request) -> web.Response:
+        user = request["user"]
+        pending = self._pending_2fa.get(user.lower())
+        if pending is None or pending[1] < time.time():
+            raise ApiError("Start again – the setup expired.")
+        if matching_step(pending[0], str((await self._json(request)).get("code") or "")) is None:
+            raise ApiError("That code doesn't match – check the time on your phone and try the next code.")
+        self.two_factor.enable(user, pending[0])
+        self._pending_2fa.pop(user.lower(), None)
+        self._audit("two-factor login switched on")
+        return web.json_response({"enabled": True})
+
+    async def two_factor_disable(self, request: web.Request) -> web.Response:
+        self.two_factor.disable(request["user"])
+        self._audit("two-factor login switched off")
+        return web.json_response({"enabled": False})
 
     async def auth_link(self, request: web.Request) -> web.Response:
         """One-time link from the bot window: logs in and opens the matching page."""
         key = "link:" + self._client_ip(request)
-        if self._login_blocked(key) is not None or not same_secret(request.query.get("token", ""), self.login_token):
+        local = request.remote in ("127.0.0.1", "::1") and not request.headers.get("CF-Connecting-IP") \
+            and not request.headers.get("X-Forwarded-For")
+        if not local or self._login_blocked(key) is not None or \
+                not same_secret(request.query.get("token", ""), self.login_token):
             self._login_failed(key)
             raise web.HTTPFound("/admin")
         self._login_ok(key)
         resp = web.HTTPFound("/admin#settings" if self.setup_mode else "/admin#overview")
-        self._set_session_cookie(resp)
+        self._set_session_cookie(resp, OWNER, request)
         raise resp
 
     async def logout(self, request: web.Request) -> web.Response:
         self._revoked.add(request.cookies.get(SESSION_COOKIE, ""))
+        self._sudo.pop(request.cookies.get(SESSION_COOKIE, ""), None)
         resp = web.json_response({"ok": True})
         resp.del_cookie(SESSION_COOKIE)
         return resp
@@ -1220,7 +1353,18 @@ class WebInterface:
     # ------------------------------------------------------------ Accounts (other admins)
 
     async def list_users(self, request: web.Request) -> web.Response:
-        return web.json_response({"users": self.users.list(), "owner_password_set": bool(self.ws.password)})
+        users = [{**u, "two_factor": self.two_factor.enabled(u["username"])} for u in self.users.list()]
+        return web.json_response({"users": users, "owner_password_set": bool(self.ws.password),
+                                  "owner_two_factor": self.two_factor.enabled(OWNER)})
+
+    async def reset_user_2fa(self, request: web.Request) -> web.Response:
+        """Owner: switch off someone's two-factor login (lost phone)."""
+        username = request.match_info["username"]
+        if not self.two_factor.enabled(username):
+            raise ApiError("Two-factor login isn't on for this account.", 404)
+        self.two_factor.disable(username)
+        self._audit(f"Two-factor login of **{username}** switched off")
+        return web.json_response({"ok": True})
 
     async def create_user(self, request: web.Request) -> web.Response:
         data = await self._json(request)
@@ -1253,6 +1397,7 @@ class WebInterface:
             raise ApiError("You can't delete your own account.")
         if not self.users.delete(username):
             raise ApiError("User not found.", 404)
+        self.two_factor.disable(username)
         self._audit(f"Account **{username}** deleted")
         return web.json_response({"ok": True})
 
@@ -1272,7 +1417,7 @@ class WebInterface:
         except UserError as exc:
             raise ApiError(str(exc)) from None
         resp = web.json_response({"ok": True})
-        self._set_session_cookie(resp, request["user"])  # old sessions end, this one continues
+        self._set_session_cookie(resp, request["user"], request)  # old sessions end, this one continues
         self._audit("changed their own password")
         return resp
 
@@ -1366,7 +1511,7 @@ class WebInterface:
                                           "applied": bool(updates), "restart_for": self.restart_for,
                                           "restart_required": self.restart_required, **(preflight or {})})
         if "WEB_PASSWORD" in updates:
-            self._set_session_cookie(resp, request["user"])
+            self._set_session_cookie(resp, request["user"], request)
         return resp
 
     async def cloudflare_domain(self, request: web.Request) -> web.Response:

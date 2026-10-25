@@ -600,6 +600,26 @@ Run the automated tests with `pip install pytest && pytest`.
 
 ---
 
+
+### 🔒 Security of the control panel and the website
+
+- **Two-factor login (2FA):** *🔐 My account* → **Set up two-factor login** – then logging in needs your password
+  **and** the 6-digit code from an authenticator app (Google/Microsoft Authenticator, Authy, 1Password, Bitwarden …).
+  Strongly recommended for everyone, especially with the public link. Each code works once. Lost phone: the owner
+  clicks **Reset 2FA** on the Users page (the owner's own: delete `data/web_2fa.json` on the bot's PC).
+- **Confirm before risky actions:** uploading or deleting plugins, changing settings, creating/changing/deleting
+  accounts, restart, update, backups, gift cards and switching 2FA off ask for your password (and 2FA code) again
+  unless you logged in or confirmed within the last 15 minutes – a forgotten open session isn't enough to run code
+  on your PC.
+- **Browser protections on every page:** a strict Content-Security-Policy for the panel (only the bot's own scripts –
+  no inline or foreign code), no framing by other sites (clickjacking), `nosniff`, a restrictive Permissions-Policy,
+  no version numbers in the `Server` header; over HTTPS (the Cloudflare tunnel) also HSTS and a `Secure` login cookie.
+  API answers are never cached.
+- **Login:** passwords hashed with PBKDF2-SHA256 (600 000 rounds), lockout after repeated failures (per IP and per
+  account), every login with its IP in the admin log, sessions end after 12 hours or when the password changes.
+- **The one-time login link** from the bot window only works on the bot's own PC (never through the public link).
+- **Website forms** (store, account, casino, battle pass …) can't be sent from other websites.
+
 ## Commands
 
 | Command | Who | What it does |
