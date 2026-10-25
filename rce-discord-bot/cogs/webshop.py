@@ -729,7 +729,34 @@ class WebShop(commands.Cog):
         except RconError:
             self.bot.db.move_store_order(order["id"], "paid", "waiting", result="paid – server not reachable, retrying")
             return None
-        return skit["kit"]
+        return skit["kit"] + await self._give_kit_role(order, skit, name)
+
+    async def _give_kit_role(self, order, skit, player: str) -> str:
+        """KIT_ROLES: the buyer also gets the kit's Discord role (for the store kit's days, else for good) – with it
+        they can claim the kit again with /customkit claim. Once, when the kit was given in-game."""
+        from cogs.timed_roles import TimedRoleError
+        custom = self.bot.get_cog("CustomKits")
+        if not self.bot.config.kit_roles or custom is None or not order["user_id"]:
+            return ""
+        guild = custom._guild()
+        role = custom.kit_role(guild, skit["kit"])
+        member = guild.get_member(int(order["user_id"])) if guild is not None and role is not None else None
+        if member is None:
+            return ""
+        days = int(skit["days"] or 0)
+        try:
+            if days:
+                timed = self.bot.get_cog("TimedRoles")
+                if timed is None:
+                    return ""
+                await timed.grant(member, role, days * 1440, reason=f"store order #{order['id']}", by="store")
+            else:
+                await member.add_roles(role, reason=f"Store order #{order['id']}: {skit['kit']}")
+        except (discord.HTTPException, TimedRoleError) as exc:
+            log.warning("Kit role %s for store order #%s: %s", role.name, order["id"], exc)
+            return ""
+        self.bot.db.record_ingame_claim(skit["kit"], player, int(order["user_id"]), f"store order #{order['id']}")
+        return f" + role {role.name}" + (f" for {days} days" if days else "")
 
     async def deliver_waiting(self, player: str | None = None) -> int:
         """Gives in-game kits that wait for their buyer (only `player`, or everyone online). Returns how many."""

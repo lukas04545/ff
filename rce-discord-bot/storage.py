@@ -21,6 +21,7 @@ LEADERBOARD_COLUMNS = {
 
 DEFAULT_CLAIM_COOLDOWN = 1440  # minutes (24 h) – default cooldown for self-service custom kit claims
 CLAIM_SOURCE = "claim"         # kit_claims.source prefix of self-service claims
+INGAME_CLAIM_SOURCE = "roleclaim"   # … of in-game kits claimed with their Discord role
 
 
 def raw_values(raw: str | None) -> set[str]:
@@ -345,6 +346,12 @@ class Storage:
                 request_id INTEGER,                    -- kit request that delivered it
                 created_at INTEGER NOT NULL,
                 paid_at INTEGER
+            );
+            -- The server's own (in-game) kits: the Discord role that lets members claim them (cogs/custom_kits.py)
+            CREATE TABLE IF NOT EXISTS ingame_kit_roles (
+                kit TEXT PRIMARY KEY COLLATE NOCASE,
+                role_id INTEGER NOT NULL,
+                cooldown_minutes INTEGER NOT NULL DEFAULT 1440
             );
             -- Nukes bought in the shop: a points drop every Discord member can claim once (cogs/economy.py)
             CREATE TABLE IF NOT EXISTS nuke_drops (
@@ -728,6 +735,46 @@ class Storage:
             args.append(player)
         cur = self._db.execute(sql, args)
         self._db.commit()
+        return cur.rowcount
+
+    # ------------------------------------------------------------ In-game kits claimed with a Discord role
+
+    def ingame_kit_roles(self) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM ingame_kit_roles ORDER BY kit COLLATE NOCASE").fetchall()
+
+    def ingame_kit_role(self, kit: str) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM ingame_kit_roles WHERE kit = ?", (kit,)).fetchone()
+
+    def set_ingame_kit_role(self, kit: str, role_id: int) -> None:
+        with self._db:
+            self._db.execute("INSERT INTO ingame_kit_roles (kit, role_id) VALUES (?, ?) "
+                             "ON CONFLICT(kit) DO UPDATE SET role_id = excluded.role_id", (kit, role_id))
+
+    def set_ingame_kit_cooldown(self, kit: str, minutes: int) -> bool:
+        with self._db:
+            cur = self._db.execute("UPDATE ingame_kit_roles SET cooldown_minutes = ? WHERE kit = ?", (minutes, kit))
+        return cur.rowcount > 0
+
+    def record_ingame_claim(self, kit: str, player: str, user_id: int | None, user: str) -> None:
+        with self._db:
+            self._db.execute("INSERT INTO kit_claims (rule_id, kit, player, source, user_id) VALUES (NULL, ?, ?, ?, ?)",
+                             (kit, player, f"{INGAME_CLAIM_SOURCE}:{user}", user_id))
+
+    def minutes_since_ingame_claim(self, kit: str, player: str) -> float | None:
+        row = self._db.execute(
+            "SELECT (julianday('now') - julianday(MAX(claimed_at))) * 1440 AS minutes FROM kit_claims "
+            "WHERE player = ? AND kit = ? COLLATE NOCASE AND source LIKE ?",
+            (player, kit, INGAME_CLAIM_SOURCE + ":%")).fetchone()
+        return row["minutes"]
+
+    def reset_ingame_claims(self, kit: str, player: str | None = None) -> int:
+        sql = "UPDATE kit_claims SET source = 'reset-' || source WHERE kit = ? COLLATE NOCASE AND source LIKE ?"
+        args: list = [kit, INGAME_CLAIM_SOURCE + ":%"]
+        if player is not None:
+            sql += " AND player = ?"
+            args.append(player)
+        with self._db:
+            cur = self._db.execute(sql, args)
         return cur.rowcount
 
     # ------------------------------------------------------------ Giveaway wins (other bots)

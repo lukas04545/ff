@@ -14,6 +14,11 @@ LINK_VERIFY_QUICKCHAT on, they also have to send two requested quick chat phrase
 player is theirs. Members with one of the roles then
 claim the kit with /customkit claim; it always goes to their own linked player. The cooldown
 (/customkit cooldown) is per kit and per player.
+
+Kit roles (KIT_ROLES, on by default): every kit has its own Discord role – custom kits without a claim role and the
+server's in-game kits (`kit list`) get an existing role with the kit's name, else a new one (checked every 10
+minutes). The role is the access: members who have it claim the kit with /customkit claim (in-game kits are given
+with KIT_GIVE_TEMPLATE, cooldown per kit, default 1 day), whoever loses it can't. Buying a kit gives its role.
 """
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from cogs.kits import ConfirmView
 from rce import items as itemlist
@@ -45,6 +50,7 @@ log = logging.getLogger("rce.customkits")
 MAX_ITEMS_PER_KIT = 60
 MAX_IMPORT_BYTES = 200_000
 MAX_COOLDOWN_MINUTES = 365 * 1440
+KIT_ROLE_SYNC_MINUTES = 10                 # how often missing kit roles are looked for
 VERIFY_SECONDS = 300                       # time to send the verification quick chats in-game
 VERIFY_SKIP_CATEGORIES = ("_responses_",)  # "Yes", "Hello", ... are sent too often to prove anything
 
@@ -178,6 +184,79 @@ class CustomKits(commands.Cog):
     async def cog_load(self) -> None:
         self.bot.add_view(LinkPanelView(self))
 
+    async def cog_unload(self) -> None:
+        self.kit_role_loop.cancel()
+
+    # ------------------------------------------------------------ Kit roles (every kit has a Discord role)
+
+    def _guild(self) -> discord.Guild | None:
+        cfg = self.bot.config
+        return self.bot.get_guild(cfg.guild_id) if cfg.guild_id else (self.bot.guilds[0] if self.bot.guilds else None)
+
+    async def _named_role(self, guild: discord.Guild, kit: str) -> discord.Role:
+        """An existing role with the kit's name, else a new one."""
+        role = discord.utils.find(lambda r: r.name.lower() == kit.lower(), guild.roles)
+        if role is None:
+            role = await guild.create_role(name=kit[:100], reason="Kit role – members with it may claim the kit")
+            log.info("Created role %s for kit %s", role.name, kit)
+        return role
+
+    async def sync_kit_roles(self) -> dict:
+        """Gives every kit a Discord role. -> {"custom": linked, "ingame": linked}."""
+        done = {"custom": 0, "ingame": 0}
+        guild = self._guild()
+        if not self.bot.config.kit_roles or guild is None:
+            return done
+        db = self.bot.db
+        for row in db.custom_kits():
+            if any(guild.get_role(r) for r in db.claim_roles(row)):
+                continue
+            role = await self._named_role(guild, row["name"])
+            db.set_custom_kit_roles(row["name"], [*db.claim_roles(row), role.id])
+            done["custom"] += 1
+        kits = self.bot.get_cog("Kits")
+        names = await kits.kit_names.get(max_wait=10, force=True) if kits and self.bot.rcon.connected else []
+        for name in names:
+            row = db.ingame_kit_role(name)
+            if row is not None and guild.get_role(row["role_id"]):
+                continue
+            role = await self._named_role(guild, name)
+            db.set_ingame_kit_role(name, role.id)
+            done["ingame"] += 1
+        if done["custom"] or done["ingame"]:
+            feed = self.bot.feed(self.bot.config.admin_log_channel_id)
+            if feed:
+                feed.add_line(f"🎭 Kit roles: linked {done['custom']} custom kit(s) and {done['ingame']} in-game "
+                              "kit(s) to a Discord role")
+        return done
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        if not self.kit_role_loop.is_running():          # started once the bot is logged in to Discord
+            self.kit_role_loop.start()
+
+    @tasks.loop(minutes=KIT_ROLE_SYNC_MINUTES)
+    async def kit_role_loop(self) -> None:
+        try:
+            await self.sync_kit_roles()
+        except discord.HTTPException as exc:          # e.g. no "Manage Roles" – try again next time
+            log.warning("Kit roles: %s", exc)
+
+    def ingame_access(self, member: discord.abc.User) -> list:
+        """In-game kits this member may claim (has the kit's role)."""
+        mine = {r.id for r in getattr(member, "roles", [])}
+        return [r for r in self.bot.db.ingame_kit_roles() if r["role_id"] in mine] if self.bot.config.kit_roles else []
+
+    def kit_role(self, guild: discord.Guild | None, kit: str) -> discord.Role | None:
+        """The Discord role of a kit (custom kit claim role or in-game kit role)."""
+        if guild is None:
+            return None
+        row = self._resolve(kit)
+        ids = self.bot.db.claim_roles(row) if row is not None else []
+        ingame = self.bot.db.ingame_kit_role(kit)
+        ids += [ingame["role_id"]] if ingame is not None else []
+        return next((guild.get_role(i) for i in ids if guild.get_role(i)), None)
+
     # ------------------------------------------------------------ Delivery (also used by autokits)
 
     async def deliver(self, kit: str, player: str) -> tuple[int, int]:
@@ -244,6 +323,13 @@ class CustomKits(commands.Cog):
     async def _claimable_ac(self, interaction: discord.Interaction,
                             current: str) -> list[app_commands.Choice[str]]:
         names = [r["name"] for r in self.bot.db.custom_kits() if self.can_claim(interaction.user, r)]
+        names += [r["kit"] for r in self.ingame_access(interaction.user) if r["kit"] not in names]
+        return [app_commands.Choice(name=n[:100], value=n[:100])
+                for n in names if current.lower() in n.lower()][:25]
+
+    async def _any_kit_ac(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        names = [r["name"] for r in self.bot.db.custom_kits()]
+        names += [r["kit"] for r in self.bot.db.ingame_kit_roles() if r["kit"] not in names]
         return [app_commands.Choice(name=n[:100], value=n[:100])
                 for n in names if current.lower() in n.lower()][:25]
 
@@ -724,6 +810,18 @@ class CustomKits(commands.Cog):
                 "can_claim_now": ready_at is None,
                 "can_claim_again_discord": f"<t:{ready_at}:R>" if ready_at else None,
             })
+        for row in self.ingame_access(member):
+            if any(k["kit"].lower() == row["kit"].lower() for k in kits):
+                continue
+            cooldown = int(row["cooldown_minutes"])
+            since = self.bot.db.minutes_since_ingame_claim(row["kit"], player) if player else None
+            ready_at = int(time.time() + (cooldown - since) * 60) if cooldown and since is not None \
+                and since < cooldown else None
+            kits.append({"kit": row["kit"], "type": "the server's in-game kit (role gives access)",
+                         "cooldown": format_minutes(cooldown),
+                         "last_claimed": (f"{format_minutes(max(1, int(since)))} ago" if since is not None else "never"),
+                         "can_claim_now": ready_at is None,
+                         "can_claim_again_discord": f"<t:{ready_at}:R>" if ready_at else None})
         return {"linked_player": player, "player_online": online, "claimable_kits": kits}
 
     async def claim_for(self, member: discord.abc.User, kit: str, *, via: str) -> ClaimOutcome:
@@ -731,7 +829,12 @@ class CustomKits(commands.Cog):
         The kit only ever goes to the player linked to this Discord account."""
         row = self._resolve(kit)
         if row is None or not self.can_claim(member, row):
+            ingame = next((r for r in self.ingame_access(member)
+                           if r["kit"].lower() == kitparse.clean_arg(kit).lower()), None)
+            if ingame is not None:
+                return await self._claim_ingame(member, ingame, via=via)
             claimable = [r["name"] for r in self.bot.db.custom_kits() if self.can_claim(member, r)]
+            claimable += [r["kit"] for r in self.ingame_access(member) if r["kit"] not in claimable]
             hint = (f"Kits you can claim: {', '.join(f'**{safe_md(n)}**' for n in claimable)}" if claimable
                     else "Your roles don't give you access to any custom kit.")
             return ClaimOutcome(False, "no_access", f"⛔ You can't claim **{safe_md(kit)}**.\n{hint}")
@@ -768,6 +871,37 @@ class CustomKits(commands.Cog):
         return ClaimOutcome(True, "claimed", f"🎁 **{safe_md(row['name'])}** sent to **{safe_md(online)}** in-game "
                                              f"({self._delivery_text(sent, total)}).{next_claim}", row["name"], online)
 
+    async def _claim_ingame(self, member: discord.abc.User, row, *, via: str) -> ClaimOutcome:
+        """One of the server's in-game kits, claimed with its Discord role: given in-game (KIT_GIVE_TEMPLATE)."""
+        kit = row["kit"]
+        player = self.bot.db.linked_player(member.id)
+        if player is None:
+            return ClaimOutcome(False, "not_linked", "🔗 First link your in-game player with `/customkit link` – "
+                                                     "the kit can only be sent to your own account.", kit)
+        async with self._claim_locks[player.lower()]:
+            cooldown = int(row["cooldown_minutes"])
+            since = self.bot.db.minutes_since_ingame_claim(kit, player)
+            if cooldown and since is not None and since < cooldown:
+                ready_at = int(time.time() + (cooldown - since) * 60)
+                return ClaimOutcome(False, "cooldown",
+                                    f"⏱️ **{safe_md(player)}** already claimed **{safe_md(kit)}**. You can claim it "
+                                    f"again <t:{ready_at}:R> (cooldown: {format_minutes(cooldown)}).", kit, player,
+                                    ready_at)
+            online = next((n for n in self.bot.online_players if n.lower() == player.lower()), None)
+            if online is None:
+                return ClaimOutcome(False, "offline", f"🎮 **{safe_md(player)}** is not online on the server right "
+                                                      "now. Join the game first, then claim the kit.", kit, player)
+            await self.bot.rcon.command(self.bot.config.kit_give_template.format(
+                kit=kitparse.clean_arg(kit), name=sanitize_player_name(online)), expect_response=False)
+            self.bot.db.record_ingame_claim(kit, player, member.id, str(member))
+        feed = self.bot.feed(self.bot.config.admin_log_channel_id)
+        if feed:
+            feed.add_line(f"🔒 {member.mention} ({safe_md(str(member))}) claimed in-game kit **{safe_md(kit)}** as "
+                          f"**{safe_md(online)}** via {via}")
+        next_claim = f" Next claim in {format_minutes(cooldown)}." if cooldown else ""
+        return ClaimOutcome(True, "claimed", f"🎁 **{safe_md(kit)}** sent to **{safe_md(online)}** in-game."
+                                             f"{next_claim}", kit, online)
+
     @customkit.command(name="access", description="Allows or removes a role that may claim a custom kit.")
     @app_commands.describe(kit="Custom kit", role="Role whose members may claim the kit",
                            allow="True = role may claim, False = remove the role")
@@ -789,13 +923,14 @@ class CustomKits(commands.Cog):
             f"(cooldown {format_minutes(row['cooldown_minutes'])}).", ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none())
 
-    @customkit.command(name="cooldown", description="Sets how often a custom kit can be claimed.")
-    @app_commands.describe(kit="Custom kit", duration="e.g. 30m, 12h, 1d, 1d 12h – or 0 for no cooldown")
-    @app_commands.autocomplete(kit=_kit_ac)
+    @customkit.command(name="cooldown", description="Sets how often a kit can be claimed (custom or in-game kit).")
+    @app_commands.describe(kit="Kit", duration="e.g. 30m, 12h, 1d, 1d 12h – or 0 for no cooldown")
+    @app_commands.autocomplete(kit=_any_kit_ac)
     @admin_only()
     async def cooldown(self, interaction: discord.Interaction, kit: str, duration: str) -> None:
         row = self._resolve(kit)
-        if row is None:
+        ingame = self.bot.db.ingame_kit_role(kitparse.clean_arg(kit)) if row is None else None
+        if row is None and ingame is None:
             await self._missing(interaction, kit)
             return
         minutes = parse_duration(duration)
@@ -804,23 +939,32 @@ class CustomKits(commands.Cog):
                 "Invalid duration. Examples: `30m`, `12h`, `1d`, `1d 12h`, `0` (no cooldown). Max. 365 days.",
                 ephemeral=True)
             return
-        self.bot.db.set_custom_kit_cooldown(row["name"], minutes)
-        self._audit(interaction, f"Custom kit **{safe_md(row['name'])}** – cooldown {format_minutes(minutes)}")
+        if row is None:
+            self.bot.db.set_ingame_kit_cooldown(ingame["kit"], minutes)
+            row = {"name": ingame["kit"]}
+        else:
+            self.bot.db.set_custom_kit_cooldown(row["name"], minutes)
+        self._audit(interaction, f"Kit **{safe_md(row['name'])}** – cooldown {format_minutes(minutes)}")
         await interaction.response.send_message(
             f"⏱️ Cooldown for **{safe_md(row['name'])}**: {format_minutes(minutes)}. "
             "Applies immediately, also to earlier claims.", ephemeral=True)
 
     @customkit.command(name="reset-cooldown", description="Lets players claim a custom kit again right away.")
     @app_commands.describe(kit="Custom kit", player="Only this in-game player (empty = everyone)")
-    @app_commands.autocomplete(kit=_kit_ac, player=_player_ac)
+    @app_commands.autocomplete(kit=_any_kit_ac, player=_player_ac)
     @admin_only()
     async def reset_cooldown(self, interaction: discord.Interaction, kit: str, player: str | None = None) -> None:
         row = self._resolve(kit)
-        if row is None:
+        ingame = self.bot.db.ingame_kit_role(kitparse.clean_arg(kit)) if row is None else None
+        if row is None and ingame is None:
             await self._missing(interaction, kit)
             return
         player = sanitize_player_name(player) if player else None
-        count = self.bot.db.reset_custom_claims(row["name"], player)
+        if row is None:
+            row = {"name": ingame["kit"]}
+            count = self.bot.db.reset_ingame_claims(row["name"], player)
+        else:
+            count = self.bot.db.reset_custom_claims(row["name"], player)
         who = f"**{safe_md(player)}**" if player else "everyone"
         self._audit(interaction, f"Custom kit **{safe_md(row['name'])}** – cooldown reset for {who}")
         await interaction.response.send_message(

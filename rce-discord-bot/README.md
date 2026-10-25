@@ -804,6 +804,27 @@ can see the server's confirmation line for each item (`🎁 Name receives 1 × r
 
 ---
 
+
+### 🎭 Every kit has its own Discord role
+
+With **Every kit has its own Discord role** on (`KIT_ROLES`, Settings → Kits – on by default) kits and Discord
+roles go hand in hand:
+
+- **Every kit gets a role** – the bot's custom kits and the server's own in-game kits (`kit list`). The bot uses an
+  existing role with the kit's name (e.g. your "VIP" role for the kit "VIP"), otherwise it creates one. It checks
+  every 10 minutes, so new kits get their role too. Custom kits that already have a claim role keep it.
+- **Role → kit:** whoever has a kit's role can claim that kit with `/customkit claim` (or ask the ticket AI) –
+  in-game kits included: they are given in-game with `KIT_GIVE_TEMPLATE` to the member's linked player while they're
+  online, once per cooldown (default 1 day, change it with `/customkit cooldown`, reset with
+  `/customkit reset-cooldown`). Give someone the role by hand (or via Tip4Serv) and they have the kit; take it
+  away and they can't claim it any more.
+- **Kit → role:** buying a kit gives its role – custom kits (ticket purchases and the web store) did that already;
+  now an in-game kit bought in the web store also gives its role (for the store kit's days, else for good) when the
+  kit is given in-game, and its cooldown starts then.
+
+The bot needs the **Manage Roles** permission and its own role above the kit roles. Points-shop items and kits
+staff hand out (`/kit give`, `/customkit give`) stay one-off gifts without a role.
+
 ## Support tickets with AI (DeepSeek)
 
 Players open a ticket with a button. The bot creates a **private channel** for it that only the
