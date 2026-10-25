@@ -16,8 +16,9 @@ claim the kit with /customkit claim; it always goes to their own linked player. 
 (/customkit cooldown) is per kit and per player.
 
 Kit roles (KIT_ROLES, on by default): every kit has its own Discord role – custom kits without a claim role and the
-server's in-game kits (`kit list`) get an existing role with the kit's name, else a new one (checked every 10
-minutes). The role is the access: members who have it claim the kit with /customkit claim (in-game kits are given
+server's in-game kits (`kit list`) are connected to the existing role for them (names compared loosely, typos too;
+checked every 10 minutes); a new role only with KIT_ROLES_CREATE. The panel (Kits → Kit roles) lets the AI match the
+rest, cleans up duplicate roles the bot made (members moved to the real role) and can delete all roles it made. The role is the access: members who have it claim the kit with /customkit claim (in-game kits are given
 with KIT_GIVE_TEMPLATE, cooldown per kit, default 1 day), whoever loses it can't. Buying a kit gives its role.
 
 Auto-give (per kit, control panel → Kits → Kit roles): the bot gives the kit by itself to every member with its role
@@ -27,6 +28,7 @@ whose linked player is online and whose cooldown is over – when they join and 
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import random
 import time
@@ -43,6 +45,7 @@ from rce import items as itemlist
 from rce import kits as kitparse
 from rce import quickchat
 from rce.rcon_client import RconError, RconNotConnected
+from support.kit_role_match import ai_match, name_match
 from utils import (admin_only, format_minutes, parse_duration, player_choices, safe_md,
                    sanitize_player_name)
 
@@ -55,6 +58,7 @@ MAX_ITEMS_PER_KIT = 60
 MAX_IMPORT_BYTES = 200_000
 MAX_COOLDOWN_MINUTES = 365 * 1440
 KIT_ROLE_SYNC_MINUTES = 10                 # how often missing kit roles are looked for
+KIT_ROLES_SINCE = datetime.datetime(2026, 10, 24, tzinfo=datetime.timezone.utc)   # kit roles were added then
 AUTO_GIVE_MINUTES = 5                      # auto-give: online role members are checked this often (and on join)
 AUTO_GIVE_JOIN_DELAY = 20                  # seconds after a join (the player has to load in first)
 VERIFY_SECONDS = 300                       # time to send the verification quick chats in-game
@@ -200,25 +204,70 @@ class CustomKits(commands.Cog):
         cfg = self.bot.config
         return self.bot.get_guild(cfg.guild_id) if cfg.guild_id else (self.bot.guilds[0] if self.bot.guilds else None)
 
-    async def _named_role(self, guild: discord.Guild, kit: str) -> discord.Role:
-        """An existing role with the kit's name, else a new one."""
-        role = discord.utils.find(lambda r: r.name.lower() == kit.lower(), guild.roles)
-        if role is None:
-            role = await guild.create_role(name=kit[:100], reason="Kit role – members with it may claim the kit")
-            log.info("Created role %s for kit %s", role.name, kit)
+    def _assignable(self, guild: discord.Guild) -> list[discord.Role]:
+        """Roles a kit may use: not @everyone, not a bot/booster role, below the bot's own role."""
+        top = guild.me.top_role if getattr(guild, "me", None) else None
+        return [r for r in guild.roles if not r.is_default() and not getattr(r, "managed", False)
+                and (top is None or r.position < top.position)]
+
+    async def created_roles(self, guild: discord.Guild) -> set[int]:
+        """Roles the bot created for kits: the ones it remembers, plus – for roles made before it remembered them –
+        role creations by the bot in the Discord audit log (needs "View Audit Log"), else roles named exactly like
+        their kit that were made since kit roles exist."""
+        ids = set(self.bot.db.created_role_ids())
+        me = getattr(guild, "me", None)
+        try:
+            async for entry in guild.audit_logs(action=discord.AuditLogAction.role_create, limit=200):
+                if me is not None and entry.user and entry.user.id == me.id and entry.target is not None:
+                    ids.add(entry.target.id)
+        except (discord.HTTPException, AttributeError, TypeError):
+            for kind, kit, role_ids in self._kit_links():
+                for rid in role_ids:
+                    role = guild.get_role(rid)
+                    created = getattr(role, "created_at", None)
+                    if role is not None and role.name == kit[:100] and created is not None \
+                            and created >= KIT_ROLES_SINCE:
+                        ids.add(rid)
+        return {i for i in ids if guild.get_role(i) is not None}
+
+    def _kit_links(self) -> list[tuple[str, str, list[int]]]:
+        """(kind, kit, role ids) of every kit the bot knows."""
+        db = self.bot.db
+        return ([("custom", r["name"], db.claim_roles(r)) for r in db.custom_kits()]
+                + [("ingame", r["kit"], [r["role_id"]]) for r in db.ingame_kit_roles()])
+
+    async def _new_role(self, guild: discord.Guild, kit: str) -> discord.Role:
+        role = await guild.create_role(name=kit[:100], reason="Kit role – members with it may claim the kit")
+        self.bot.db.record_created_role(role.id, kit)
+        log.info("Created role %s for kit %s", role.name, kit)
         return role
 
+    async def _role_for(self, guild: discord.Guild, kit: str, candidates: list[tuple[int, str]]):
+        """An existing role for the kit (names compared loosely); a new one only with KIT_ROLES_CREATE."""
+        rid = name_match(kit, candidates)
+        if rid is not None:
+            return guild.get_role(rid)
+        if self.bot.config.kit_roles_create:
+            return await self._new_role(guild, kit)
+        return None
+
     async def sync_kit_roles(self) -> dict:
-        """Gives every kit a Discord role. -> {"custom": linked, "ingame": linked}."""
-        done = {"custom": 0, "ingame": 0}
+        """Connects every kit without a role to its existing Discord role. -> {"custom": n, "ingame": n,
+        "unmatched": [kit names without a matching role]}."""
+        done = {"custom": 0, "ingame": 0, "unmatched": []}
         guild = self._guild()
         if not self.bot.config.kit_roles or guild is None:
             return done
         db = self.bot.db
+        created = await self.created_roles(guild)
+        candidates = [(r.id, r.name) for r in self._assignable(guild) if r.id not in created]
         for row in db.custom_kits():
             if any(guild.get_role(r) for r in db.claim_roles(row)):
                 continue
-            role = await self._named_role(guild, row["name"])
+            role = await self._role_for(guild, row["name"], candidates)
+            if role is None:
+                done["unmatched"].append(row["name"])
+                continue
             db.set_custom_kit_roles(row["name"], [*db.claim_roles(row), role.id])
             done["custom"] += 1
         kits = self.bot.get_cog("Kits")
@@ -227,15 +276,154 @@ class CustomKits(commands.Cog):
             row = db.ingame_kit_role(name)
             if row is not None and guild.get_role(row["role_id"]):
                 continue
-            role = await self._named_role(guild, name)
+            role = await self._role_for(guild, name, candidates)
+            if role is None:
+                done["unmatched"].append(name)
+                continue
             db.set_ingame_kit_role(name, role.id)
             done["ingame"] += 1
         if done["custom"] or done["ingame"]:
             feed = self.bot.feed(self.bot.config.admin_log_channel_id)
             if feed:
-                feed.add_line(f"🎭 Kit roles: linked {done['custom']} custom kit(s) and {done['ingame']} in-game "
-                              "kit(s) to a Discord role")
+                feed.add_line(f"🎭 Kit roles: connected {done['custom']} custom kit(s) and {done['ingame']} in-game "
+                              "kit(s) to their Discord role")
         return done
+
+    # ------------------------------------------------------------ Match with existing roles (AI) / undo
+
+    async def propose_matches(self, *, use_ai: bool = True) -> dict:
+        """For every kit: which existing role should it use? Loose name match first, the AI for the rest. Roles the
+        bot created never count as "existing". Nothing is changed – the owner applies it (apply_matches)."""
+        guild = self._guild()
+        if guild is None:
+            raise ValueError("The bot isn't on a Discord server.")
+        created = await self.created_roles(guild)
+        candidates = [(r.id, r.name) for r in self._assignable(guild) if r.id not in created]
+        links = self._kit_links()
+        kits_cog = self.bot.get_cog("Kits")
+        live = await kits_cog.kit_names.get(max_wait=10) if kits_cog and self.bot.rcon.connected else []
+        known = {(k, n.lower()) for k, n, _ in links}
+        links += [("ingame", n, []) for n in live if ("ingame", n.lower()) not in known]
+        proposals, ask = [], []
+        for kind, kit, role_ids in links:
+            existing = [rid for rid in role_ids if guild.get_role(rid) and rid not in created]
+            match = existing[0] if existing else name_match(kit, candidates)
+            source = "linked" if existing else ("name" if match else None)
+            proposals.append({"kind": kind, "kit": kit, "role_id": match, "source": source,
+                              "current": [{"id": str(r), "name": guild.get_role(r).name, "created": r in created}
+                                          for r in role_ids if guild.get_role(r)]})
+            if match is None:
+                ask.append(kit)
+        ai = getattr(self.bot.get_cog("Tickets"), "ai", None)
+        ai_used = False
+        if use_ai and ask and ai is not None and getattr(ai, "enabled", False):
+            try:
+                answers = await ai_match(ai, sorted(set(ask)), candidates)
+                ai_used = True
+            except Exception as exc:                      # the AI is a helper – never block the cleanup
+                log.warning("Kit role AI match: %s", exc)
+                answers = {}
+            for p in proposals:
+                if p["role_id"] is None and answers.get(p["kit"]):
+                    p["role_id"], p["source"] = answers[p["kit"]], "ai"
+        for p in proposals:
+            role = guild.get_role(p["role_id"]) if p["role_id"] else None
+            p["role_id"] = str(role.id) if role else None
+            p["role_name"] = role.name if role else None
+        return {"proposals": proposals, "ai": ai_used,
+                "roles": [{"id": str(rid), "name": name} for rid, name in candidates],
+                "created": [{"id": str(r), "name": guild.get_role(r).name,
+                             "members": len(getattr(guild.get_role(r), "members", []) or [])} for r in sorted(created)]}
+
+    async def apply_matches(self, choices: list[dict]) -> dict:
+        """Connects kits to the chosen existing roles; members of the bot's duplicate role get the real role
+        instead; bot-made roles no kit uses any more are deleted. choices: [{"kind", "kit", "role_id" or None}] –
+        None = leave that kit as it is."""
+        guild = self._guild()
+        if guild is None:
+            raise ValueError("The bot isn't on a Discord server.")
+        db = self.bot.db
+        created = await self.created_roles(guild)
+        allowed = {r.id: r for r in self._assignable(guild) if r.id not in created}
+        out = {"linked": 0, "moved": 0, "deleted": []}
+        for c in choices:
+            kind, kit = c.get("kind"), str(c.get("kit") or "")
+            rid = int(c["role_id"]) if str(c.get("role_id") or "").isdigit() else None
+            role = allowed.get(rid) if rid else None
+            if rid and role is None:
+                raise ValueError(f"The role for {kit} can't be used (gone, made by the bot, or above the bot's role).")
+            if role is None:
+                continue                                  # no existing role picked: the kit stays as it is
+            if kind == "custom":
+                row = self._resolve(kit)
+                if row is None:
+                    continue
+                old = db.claim_roles(row)
+                keep = [r for r in old if r not in created]
+                new = keep if role.id in keep else [role.id, *keep]
+                if new != old:
+                    db.set_custom_kit_roles(row["name"], new)
+                    out["linked"] += 1
+            elif kind == "ingame":
+                row = db.ingame_kit_role(kit)
+                old = [row["role_id"]] if row is not None else []
+                if old != [role.id]:
+                    db.set_ingame_kit_role(kit, role.id)
+                    out["linked"] += 1
+            else:
+                continue
+            for dup in (r for r in old if r in created):  # members of the bot's role get the real one
+                dup_role = guild.get_role(dup)
+                for member in list(getattr(dup_role, "members", []) or []):
+                    try:
+                        if role not in member.roles:
+                            await member.add_roles(role, reason=f"Kit role cleanup: {kit}")
+                        out["moved"] += 1
+                    except discord.HTTPException as exc:
+                        log.warning("Kit role cleanup %s: %s", member, exc)
+        out["deleted"] = await self._delete_unused_created(guild, created)
+        self._log_cleanup(f"🎭 Kit roles cleaned up: {out['linked']} kit(s) connected to existing roles, "
+                          f"{out['moved']} member(s) moved, {len(out['deleted'])} duplicate role(s) deleted")
+        return out
+
+    async def undo_created(self) -> dict:
+        """Deletes every role the bot created for kits and disconnects them from their kits."""
+        guild = self._guild()
+        if guild is None:
+            raise ValueError("The bot isn't on a Discord server.")
+        db = self.bot.db
+        created = await self.created_roles(guild)
+        for kind, kit, role_ids in self._kit_links():
+            if not any(r in created for r in role_ids):
+                continue
+            if kind == "custom":
+                db.set_custom_kit_roles(kit, [r for r in role_ids if r not in created])
+            else:
+                db.delete_ingame_kit_role(kit)
+        deleted = await self._delete_unused_created(guild, created)
+        self._log_cleanup(f"↩️ Kit roles: deleted {len(deleted)} role(s) the bot had created")
+        return {"deleted": deleted}
+
+    async def _delete_unused_created(self, guild: discord.Guild, created: set[int]) -> list[str]:
+        used = {r for _, _, ids in self._kit_links() for r in ids}
+        deleted = []
+        for rid in sorted(created - used):
+            role = guild.get_role(rid)
+            if role is None:
+                continue
+            try:
+                await role.delete(reason="Kit role cleanup: made by the bot, not needed")
+            except discord.HTTPException as exc:
+                log.warning("Couldn't delete role %s: %s", role.name, exc)
+                continue
+            self.bot.db.forget_created_role(rid)
+            deleted.append(role.name)
+        return deleted
+
+    def _log_cleanup(self, text: str) -> None:
+        feed = self.bot.feed(self.bot.config.admin_log_channel_id)
+        if feed:
+            feed.add_line(text)
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:

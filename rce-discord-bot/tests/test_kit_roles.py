@@ -25,13 +25,15 @@ def kr(shop, monkeypatch):  # noqa: F811
     monkeypatch.setattr(bot, "get_cog", lambda name, _orig=bot.get_cog: NS(kit_names=NS(get=names))
                         if name == "Kits" else _orig(name))
     bot.online_players = {"Gamer7": {}}
+    from dataclasses import replace
+    bot.config = replace(bot.config, kit_roles_create=True)          # these tests let the bot make missing roles
     return NS(bot=bot, db=shop.db, guild=guild, buyer=shop.env.buyer, said=said, shop=shop,
               custom=bot.get_cog("CustomKits"), env=shop.env)
 
 
 def test_every_kit_gets_a_role(kr):
     done = asyncio.run(kr.custom.sync_kit_roles())
-    assert done == {"custom": 2, "ingame": 2}
+    assert done == {"custom": 2, "ingame": 2, "unmatched": []}
     by_name = {r.name: r for r in kr.guild.roles}
     ak = kr.env.existing                                                  # the role "Ak Kit" already existed
     assert kr.db.claim_roles(kr.db.custom_kit("Ak Kit")) == [ak.id]
@@ -39,7 +41,7 @@ def test_every_kit_gets_a_role(kr):
     assert kr.db.ingame_kit_role("Raider")["role_id"] == by_name["Raider"].id   # created
     assert kr.db.claim_roles(kr.db.custom_kit("Mega raid kit")) == [by_name["Mega raid kit"].id]
     assert [c.name for c in kr.env.created] == ["Mega raid kit", "Raider"]
-    assert asyncio.run(kr.custom.sync_kit_roles()) == {"custom": 0, "ingame": 0}   # nothing twice
+    assert asyncio.run(kr.custom.sync_kit_roles()) == {"custom": 0, "ingame": 0, "unmatched": []}   # nothing twice
 
 
 def test_the_role_lets_members_claim_an_ingame_kit(kr):
@@ -143,8 +145,84 @@ def test_kit_roles_in_the_control_panel(kr):
             r = await c.put("/api/kit-roles", json={"kind": "ingame", "kit": "Nope"}, headers=H)
             assert r.status == 404
             r = await c.post("/api/kit-roles/sync", headers=H)
-            assert (await r.json())["done"] == {"custom": 0, "ingame": 0}
+            assert (await r.json())["done"] == {"custom": 0, "ingame": 0, "unmatched": []}
         finally:
             await c.close()
             await bot.rcon.close()
     asyncio.run(main())
+
+
+
+def test_kit_role_names_are_compared_loosely():
+    from support.kit_role_match import name_match, normalize
+    roles = [(1, "M4 Spawn"), (2, "MP5 Roadsign"), (3, "Mega Build Kit"), (4, "Admin"), (5, "Mega Raid")]
+    assert normalize("m4 spawn kit") == "m4 spawn"
+    assert name_match("m4 spawn kit", roles) == 1
+    assert name_match("mp5 roadsgin", roles) == 2                         # typo
+    assert name_match("mega build kit", roles) == 3
+    assert name_match("mega raid base", roles) is None                    # not sure – left to the AI / owner
+    assert name_match("starter", roles) is None
+
+
+def test_existing_roles_are_used_not_new_ones(kr):
+    """Without KIT_ROLES_CREATE the sync only connects kits to existing roles (names compared loosely)."""
+    from dataclasses import replace
+
+    from tests.test_kit_requests import FakeRole
+    kr.bot.config = replace(kr.bot.config, kit_roles_create=False)
+    raider = FakeRole(300, "RAIDER kit", 3)
+    kr.guild.roles.append(raider)
+    done = asyncio.run(kr.custom.sync_kit_roles())
+    assert done["ingame"] == 2 and done["custom"] == 1 and done["unmatched"] == ["Mega raid kit"]
+    assert kr.db.ingame_kit_role("Raider")["role_id"] == 300 and kr.env.created == []      # nothing created
+
+
+def test_ai_matches_cleanup_moves_members_and_deletes_duplicates(kr, monkeypatch):
+    """The bot made roles although the server had its own – the AI picks the real ones, members move over and
+    the duplicates are deleted; undo removes everything the bot made."""
+    import json
+    from dataclasses import replace
+
+    from tests.test_kit_requests import FakeRole
+    asyncio.run(kr.custom.sync_kit_roles())                                # old behaviour: made "Mega raid kit", "Raider"
+    made = {r.name: r for r in kr.env.created}
+    assert set(made) == {"Mega raid kit", "Raider"} and kr.db.created_role_ids() == {r.id for r in made.values()}
+    deleted = []
+    for r in kr.guild.roles:
+        async def delete(reason=None, r=r):
+            deleted.append(r.name)
+            kr.guild.roles.remove(r)
+        r.delete = delete
+    real = FakeRole(400, "💥 Boom Squad", 3)                                # the owner's own role (AI only)
+    kr.guild.roles.append(real)
+    made["Mega raid kit"].members = [kr.buyer]                               # someone already has the duplicate
+    kr.buyer.roles.append(made["Mega raid kit"])
+    kr.bot.config = replace(kr.bot.config, kit_roles_create=False)
+
+    class AI:
+        enabled = True
+
+        async def chat(self, messages, **kw):
+            listing = json.loads(messages[1]["content"])
+            assert "Mega raid kit" in listing["kits"] and all(r["id"] != str(made["Raider"].id) for r in listing["roles"])
+            return {"content": json.dumps({"matches": [{"kit": "Mega raid kit", "role_id": "400"},
+                                                       {"kit": "Raider", "role_id": None}]})}
+    monkeypatch.setattr(kr.bot, "get_cog", lambda name, _orig=kr.bot.get_cog:
+                        NS(ai=AI()) if name == "Tickets" else _orig(name))
+    m = asyncio.run(kr.custom.propose_matches())
+    props = {(p["kind"], p["kit"]): p for p in m["proposals"]}
+    assert m["ai"] and props[("custom", "Mega raid kit")]["role_id"] == "400" and \
+        props[("custom", "Mega raid kit")]["source"] == "ai"
+    assert props[("custom", "Ak Kit")]["source"] == "linked"
+    assert {c["name"] for c in m["created"]} == {"Mega raid kit", "Raider"}
+    choices = [{"kind": p["kind"], "kit": p["kit"], "role_id": p["role_id"]} for p in m["proposals"]]
+    out = asyncio.run(kr.custom.apply_matches(choices))
+    assert kr.db.claim_roles(kr.db.custom_kit("Mega raid kit")) == [400]
+    assert real in kr.buyer.roles and out["moved"] == 1                     # the member got the real role
+    assert out["deleted"] == ["Mega raid kit"] and "Raider" not in deleted  # Raider: no match – left as it is
+    assert kr.db.ingame_kit_role("Raider")["role_id"] == made["Raider"].id
+    with pytest.raises(ValueError, match="can't be used"):                  # a bot-made role is never "existing"
+        asyncio.run(kr.custom.apply_matches([{"kind": "ingame", "kit": "Raider", "role_id": str(made["Raider"].id)}]))
+    r = asyncio.run(kr.custom.undo_created())                                # remove everything the bot made
+    assert r["deleted"] == ["Raider"] and kr.db.ingame_kit_role("Raider") is None
+    assert kr.db.created_role_ids() == set()

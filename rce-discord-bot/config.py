@@ -110,6 +110,7 @@ class Config:
     # Kit manager (assumption about the RCE syntax, see README)
     kit_give_template: str
     kit_roles: bool                      # every kit has its own Discord role (role = may claim the kit)
+    kit_roles_create: bool               # … and the bot creates one when no existing role matches the kit
     kit_give_group_template: str
     kit_give_all_template: str
     kit_add_template: str
@@ -332,6 +333,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         unban_template=_get("UNBAN_COMMAND_TEMPLATE", 'unbanid "{name}"'),
         kit_give_template=_get("KIT_GIVE_TEMPLATE", 'kit givetoplayer "{kit}" "{name}"'),
         kit_roles=_bool("KIT_ROLES", True),
+        kit_roles_create=_bool("KIT_ROLES_CREATE", False),
         kit_give_group_template=_get("KIT_GIVE_GROUP_TEMPLATE", 'kit givetogroup "{kit}" "{group}"'),
         kit_give_all_template=_get("KIT_GIVE_ALL_TEMPLATE", 'kit giveall "{kit}"'),
         kit_add_template=_get(

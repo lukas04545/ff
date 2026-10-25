@@ -350,6 +350,9 @@ class WebInterface:
         r.add_put("/api/kit-roles", self.kit_roles_update)
         r.add_post("/api/kit-roles/sync", self.kit_roles_sync)
         r.add_post("/api/kit-roles/give", self.kit_roles_give)
+        r.add_post("/api/kit-roles/match", self.kit_roles_match)
+        r.add_post("/api/kit-roles/apply", self.kit_roles_apply)
+        r.add_post("/api/kit-roles/undo", self.kit_roles_undo)
         r.add_post("/api/linked-players", self.link_player)
         r.add_delete("/api/linked-players/{user_id:\\d+}", self.unlink_player)
         r.add_post("/api/custom-kits/{name}/items", self.add_custom_item)
@@ -1764,6 +1767,35 @@ class WebInterface:
         kind, kit = self._kit_ref(await self._json(request))
         result = await self._custom_kits_cog().auto_give(kits=[(kind, kit)])
         self._audit(f"Kit **{kit}** given to {len(result['given'])} online member(s) with its role")
+        return web.json_response(result)
+
+    async def kit_roles_match(self, request: web.Request) -> web.Response:
+        """Proposes the existing role for every kit (loose names, then the AI) – nothing is changed yet."""
+        try:
+            return web.json_response(await self._custom_kits_cog().propose_matches())
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+
+    async def kit_roles_apply(self, request: web.Request) -> web.Response:
+        choices = (await self._json(request)).get("choices")
+        if not isinstance(choices, list) or not all(isinstance(c, dict) for c in choices):
+            raise ApiError("Invalid choices.")
+        try:
+            result = await self._custom_kits_cog().apply_matches(choices[:500])
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        except discord.HTTPException as exc:
+            raise ApiError(f"Discord refused it ({exc}) – the bot needs \"Manage Roles\".") from None
+        self._audit(f"Kit roles matched: {result['linked']} connected, {result['moved']} member(s) moved, "
+                    f"{len(result['deleted'])} duplicate role(s) deleted")
+        return web.json_response(result)
+
+    async def kit_roles_undo(self, request: web.Request) -> web.Response:
+        try:
+            result = await self._custom_kits_cog().undo_created()
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        self._audit(f"Kit roles: {len(result['deleted'])} role(s) the bot created were deleted")
         return web.json_response(result)
 
     async def custom_kit_claim_settings(self, request: web.Request) -> web.Response:

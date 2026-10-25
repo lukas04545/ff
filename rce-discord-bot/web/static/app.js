@@ -1252,11 +1252,26 @@ function kitRolesCard() {
       sync.disabled = true;
       try {
         const r = await api("/api/kit-roles/sync", { method: "POST" });
-        toast(`Linked ${r.done.custom} custom and ${r.done.ingame} in-game kit(s) to a role`);
+        toast(`Connected ${r.done.custom} custom and ${r.done.ingame} in-game kit(s) to their role`
+          + (r.done.unmatched.length ? ` – no matching role for ${r.done.unmatched.length}: use 🤖 Match` : ""));
         render(r);
       } catch (e) { toast(e.message, true); } finally { sync.disabled = false; }
     } });
-    parts.push(h("div", { class: "row", style: "margin-bottom:.6rem" }, sync));
+    const match = h("button", { class: "small primary", text: "🤖 Match with existing roles (AI)", onclick: async () => {
+      match.disabled = true; match.textContent = "Matching …";
+      try { matchView(await api("/api/kit-roles/match", { method: "POST" })); }
+      catch (e) { toast(e.message, true); } finally { match.disabled = false; match.textContent = "🤖 Match with existing roles (AI)"; }
+    } });
+    const undo = h("button", { class: "small danger", text: "↩️ Remove roles the bot made", onclick: async () => {
+      let info;
+      try { info = await api("/api/kit-roles/match", { method: "POST" }); } catch (e) { toast(e.message, true); return; }
+      if (!info.created.length) { toast("The bot hasn't made any kit roles."); return; }
+      const list = info.created.map((r) => `• ${r.name}${r.members ? ` (${r.members} member${r.members === 1 ? "" : "s"} – they lose it)` : ""}`).join("\n");
+      if (!confirm(`Delete these ${info.created.length} role(s) the bot created for kits and disconnect them from their kits?\n\n${list}\n\nTip: "Match with existing roles" keeps their members by giving them your existing role instead.`)) return;
+      try { const r = await api("/api/kit-roles/undo", { method: "POST" }); toast(`Deleted ${r.deleted.length} role(s)`); load(); }
+      catch (e) { toast(e.message, true); }
+    } });
+    parts.push(h("div", { class: "row", style: "margin-bottom:.6rem" }, sync, match, undo));
     if (!d.kits.length) { parts.push(h("p", { class: "muted", text: "No kits with roles yet." })); body.replaceChildren(...parts); return; }
     const rows = [];
     for (const k of d.kits) {
@@ -1307,6 +1322,37 @@ function kitRolesCard() {
       h("thead", {}, h("tr", {}, ["Kit", "Role", "Members", "Cooldown", "Auto-give", ""].map((t) => h("th", { text: t })))),
       h("tbody", {}, rows))));
     body.replaceChildren(...parts);
+  };
+  // The AI's (and the name matcher's) proposal: check it, change what's wrong, then apply
+  const matchView = (m) => {
+    const how = { linked: "already connected", name: "similar name", ai: "🤖 AI" };
+    const picks = [];
+    const rows = m.proposals.map((p) => {
+      const sel = h("select", {}, h("option", { value: "", text: "– leave as it is –" }), m.roles.map((r) => h("option", { value: r.id, text: "@" + r.name })));
+      sel.value = p.role_id || "";
+      picks.push({ p, sel });
+      const now = p.current.length ? p.current.map((r) => "@" + r.name + (r.created ? " (made by the bot)" : "")).join(", ") : "–";
+      return h("tr", {},
+        h("td", {}, h("strong", { text: p.kit }), h("div", { class: "muted", text: p.kind === "custom" ? "bot kit" : "in-game kit" })),
+        h("td", { class: p.current.some((r) => r.created) ? "warn" : "muted", text: now }),
+        h("td", {}, sel),
+        h("td", { class: "muted", text: p.role_id ? how[p.source] || "" : "no match found" }));
+    });
+    const apply = h("button", { class: "primary", text: "✅ Apply", onclick: async () => {
+      apply.disabled = true;
+      try {
+        const r = await api("/api/kit-roles/apply", { method: "POST", body: { choices: picks.map(({ p, sel }) => ({ kind: p.kind, kit: p.kit, role_id: sel.value || null })) } });
+        toast(`${r.linked} kit(s) connected, ${r.moved} member(s) moved, ${r.deleted.length} duplicate role(s) deleted`);
+        load();
+      } catch (e) { toast(e.message, true); apply.disabled = false; }
+    } });
+    body.replaceChildren(
+      h("div", { class: "banner" }, m.ai ? "🤖 The AI and the name matcher suggest these roles – check them and change what's wrong." : "Suggested by name (the AI isn't set up or had nothing to add) – check them and change what's wrong."),
+      m.created.length ? h("p", { class: "muted", text: `Roles the bot made: ${m.created.map((r) => r.name + (r.members ? ` (${r.members})` : "")).join(", ")}. After applying, their members get the role you picked and the ones no kit uses any more are deleted. Kits left "as it is" keep their role – "↩️ Remove roles the bot made" deletes the rest.` }) : null,
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Kit", "Now", "Use role", "Found by"].map((t) => h("th", { text: t })))),
+        h("tbody", {}, rows))),
+      h("div", { class: "row", style: "margin-top:.6rem" }, apply, h("button", { class: "ghost", text: "Cancel", onclick: load })));
   };
   const load = async () => {
     try { render(await api("/api/kit-roles")); } catch (e) { body.replaceChildren(h("div", { class: "banner bad", text: e.message })); }

@@ -810,9 +810,18 @@ can see the server's confirmation line for each item (`🎁 Name receives 1 × r
 With **Every kit has its own Discord role** on (`KIT_ROLES`, Settings → Kits – on by default) kits and Discord
 roles go hand in hand:
 
-- **Every kit gets a role** – the bot's custom kits and the server's own in-game kits (`kit list`). The bot uses an
-  existing role with the kit's name (e.g. your "VIP" role for the kit "VIP"), otherwise it creates one. It checks
-  every 10 minutes, so new kits get their role too. Custom kits that already have a claim role keep it.
+- **Every kit is connected to its role** – the bot's custom kits and the server's own in-game kits (`kit list`). The
+  bot uses your **existing** roles: names are compared loosely (capitals, spaces, the word "kit", emojis and small
+  typos don't matter – "m4 spawn kit" finds "M4 Spawn", "mp5 roadsgin" finds "MP5 Roadsign"). It checks every 10
+  minutes, so new kits get connected too; custom kits that already have a claim role keep it. Kits without a
+  matching role stay without one – unless **Create a new role for kits without a matching role**
+  (`KIT_ROLES_CREATE`, off by default) is on.
+- **🤖 Match with existing roles (AI)** (Kits → Kit roles) proposes a role for every kit – the loose name match first,
+  the AI for the rest (roles the bot made itself never count). Check the list, change what's wrong, then **Apply**:
+  kits are connected to the chosen roles, members of a duplicate role the bot made get your role instead, and the
+  bot's duplicates no kit uses any more are deleted. **↩️ Remove roles the bot made** deletes every role the bot
+  created for kits (it lists them first) and disconnects them. Which roles the bot made: the ones it remembers, the
+  Discord audit log ("View Audit Log"), else roles named exactly like their kit made since kit roles exist.
 - **Role → kit:** whoever has a kit's role can claim that kit with `/customkit claim` (or ask the ticket AI) –
   in-game kits included: they are given in-game with `KIT_GIVE_TEMPLATE` to the member's linked player while they're
   online, once per cooldown (default 1 day, change it with `/customkit cooldown`, reset with
