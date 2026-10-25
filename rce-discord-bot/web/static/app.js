@@ -27,7 +27,43 @@ function toast(message, bad = false) {
   setTimeout(() => t.remove(), bad ? 6000 : 3500);
 }
 
-async function api(path, { method = "GET", body } = {}) {
+// Risky actions (plugins, settings, users …) need the password again if the login is older than 15 minutes:
+// the bot answers {reauth: true}, we ask for it (and the 2FA code) and send the request once more.
+function confirmPassword(need2fa) {
+  return new Promise((resolve) => {
+    const pw = h("input", { type: "password", placeholder: "Your password", autocomplete: "current-password", required: true });
+    const code = h("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 8, placeholder: "Code from your authenticator app" });
+    const err = h("p", { class: "error" });
+    const close = (ok) => { overlay.remove(); resolve(ok); };
+    const form = h("form", { class: "login-card", style: "max-width:380px", onsubmit: async (ev) => {
+      ev.preventDefault();
+      err.textContent = "";
+      const res = await fetch("/api/reauth", { method: "POST", credentials: "same-origin",
+        headers: { "X-Requested-With": "rce-web", "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw.value, code: code.value }) }).catch(() => null);
+      const data = res ? await res.json().catch(() => ({})) : {};
+      if (res && res.ok) close(true); else err.textContent = data.error || "No connection to the bot.";
+    } },
+      h("h2", { text: "🔒 Confirm it's you" }),
+      h("p", { class: "muted", text: "This changes something important (code, settings or accounts). Enter your password to continue – you won't be asked again for 15 minutes." }),
+      pw, need2fa ? code : null, err,
+      h("div", { class: "row" }, h("button", { class: "primary", text: "Confirm" }), h("button", { type: "button", class: "ghost", text: "Cancel", onclick: () => close(false) })));
+    const overlay = h("div", { class: "login", style: "position:fixed;inset:0;z-index:100;background:rgba(5,7,15,.75)" }, form);
+    document.body.append(overlay);
+    pw.focus();
+  });
+}
+
+async function api(path, opts = {}) {
+  try { return await apiOnce(path, opts); }
+  catch (e) {
+    if (!e.data?.reauth || path === "/api/reauth") throw e;
+    if (!(await confirmPassword(!!e.data.need_2fa))) throw new Error("Cancelled – not confirmed.");
+    return apiOnce(path, opts);
+  }
+}
+
+async function apiOnce(path, { method = "GET", body } = {}) {
   const opts = { method, headers: {}, credentials: "same-origin" };
   if (method !== "GET") {
     opts.headers["X-Requested-With"] = "rce-web";
@@ -79,10 +115,14 @@ $("#login-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   $("#login-error").textContent = "";
   try {
-    await api("/api/login", { method: "POST", body: { username: $("#login-username").value.trim(), password: $("#login-password").value } });
-    $("#login-password").value = "";
+    await api("/api/login", { method: "POST", body: { username: $("#login-username").value.trim(), password: $("#login-password").value, code: $("#login-code").value.trim() } });
+    $("#login-password").value = $("#login-code").value = "";
+    $("#login-code-row").classList.add("hidden");
     start();
-  } catch (e) { $("#login-error").textContent = e.message; }
+  } catch (e) {
+    $("#login-error").textContent = e.message;
+    if (e.data?.need_2fa) { $("#login-code-row").classList.remove("hidden"); $("#login-code").focus(); }
+  }
 });
 
 $("#account").addEventListener("click", () => { location.hash = "#account"; });
@@ -464,7 +504,7 @@ async function start() {
     (setupMode && a.dataset.view !== "settings") || (a.hasAttribute("data-owner") && !isOwner())));
   $("#whoami").replaceChildren(h("strong", { text: me.user }), h("small", { text: me.role === "owner" ? "Owner" : "Admin" }));
   $("#avatar").textContent = (me.user || "?").slice(0, 1);
-  $("#account").classList.toggle("hidden", me.user === "owner");
+  $("#account").classList.remove("hidden");        // everyone: password + two-factor login
   menuReady = loadMenu();
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
@@ -511,7 +551,7 @@ views.users = async (main) => {
       const r = await act(() => api("/api/users", { method: "POST", body: { username: name.value.trim(), password: pw.value, role: role.value } }), "Account created").catch(() => null);
       if (!r) return;
       const address = ((await api("/api/me").catch(() => ({}))).public_url || location.origin).replace(/\/$/, "") + "/admin";
-      alert(`Account created – send this to the admin:\n\nAddress: ${address}\nUsername: ${name.value.trim()}\nPassword: ${pw.value}\n\nThey can change the password after logging in (🔑 My password).`);
+      alert(`Account created – send this to the admin:\n\nAddress: ${address}\nUsername: ${name.value.trim()}\nPassword: ${pw.value}\n\nThey can change the password and turn on two-factor login after logging in (My account).`);
       name.value = ""; pw.value = ""; pw.type = "password";
       load();
     } }, name, pw, genBtn, role, h("button", { class: "primary", text: "Create" }))),
@@ -526,7 +566,8 @@ views.users = async (main) => {
       roleSel.value = u.role;
       roleSel.addEventListener("change", async () => { await act(() => api(`/api/users/${encodeURIComponent(u.username)}`, { method: "PUT", body: { role: roleSel.value } }), "Role changed").catch(() => {}); load(); });
       return h("tr", {},
-        h("td", {}, h("strong", { text: u.username }), u.disabled ? h("span", { class: "pill warn", style: "margin-left:.4rem", text: "disabled" }) : null),
+        h("td", {}, h("strong", { text: u.username }), u.disabled ? h("span", { class: "pill warn", style: "margin-left:.4rem", text: "disabled" }) : null,
+          u.two_factor ? h("span", { class: "pill ok", style: "margin-left:.4rem", text: "2FA", title: "Two-factor login is on" }) : null),
         h("td", {}, roleSel),
         h("td", { class: "muted", text: fmt(u.last_login) }),
         h("td", { class: "muted", text: `${fmt(u.created_at)} by ${u.created_by || "?"}` }),
@@ -536,6 +577,11 @@ views.users = async (main) => {
             if (!npw) return;
             await act(() => api(`/api/users/${encodeURIComponent(u.username)}`, { method: "PUT", body: { password: npw } }), "Password changed – their old sessions are logged out").catch(() => {});
           } }),
+          u.two_factor ? h("button", { class: "small", text: "Reset 2FA", title: "Lost phone: switch off their two-factor login", onclick: async () => {
+            if (!confirm(`Switch off two-factor login for ${u.username}? They can set it up again after logging in.`)) return;
+            await act(() => api(`/api/users/${encodeURIComponent(u.username)}/2fa`, { method: "DELETE" }), "Two-factor login reset").catch(() => {});
+            load();
+          } }) : null,
           h("button", { class: "small", text: u.disabled ? "Enable" : "Disable", onclick: async () => {
             await act(() => api(`/api/users/${encodeURIComponent(u.username)}`, { method: "PUT", body: { disabled: !u.disabled } }), u.disabled ? "Enabled" : "Disabled – logged out").catch(() => {});
             load();
@@ -561,8 +607,46 @@ views.users = async (main) => {
   load();
 };
 
+// Two-factor login: a code from an authenticator app on top of the password
+function twoFactorCard() {
+  const card = h("div", { class: "card", style: "max-width:560px" }, h("h2", { text: "🔐 Two-factor login" }));
+  const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  card.append(body);
+  const load = async () => {
+    const s = await api("/api/2fa").catch(() => null);
+    if (!s) { body.replaceChildren(h("p", { class: "muted", text: "Not available." })); return; }
+    if (s.enabled) {
+      body.replaceChildren(h("p", {}, h("span", { class: "pill ok", text: "On" }), " Logging in needs your password and the 6-digit code from your authenticator app."),
+        h("button", { class: "danger", text: "Switch off", onclick: async () => {
+          if (!confirm("Switch off two-factor login? Your account is then protected by the password only.")) return;
+          await act(() => api("/api/2fa/disable", { method: "POST" }), "Two-factor login is off"); load();
+        } }));
+      return;
+    }
+    body.replaceChildren(h("p", { class: "muted", text: "Strongly recommended – especially with the public link: even with your password nobody can log in without your phone. Works with Google Authenticator, Microsoft Authenticator, Authy, 1Password, Bitwarden …" }),
+      h("button", { class: "primary", text: "Set up two-factor login", onclick: async () => {
+        const r = await act(() => api("/api/2fa/setup", { method: "POST" })).catch(() => null);
+        if (!r) return;
+        const code = h("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 8, placeholder: "6-digit code", style: "max-width:10rem" });
+        body.replaceChildren(
+          h("ol", {}, h("li", {}, "Open your authenticator app and add an account – on this phone just tap ", h("a", { href: r.uri, text: "this link" }), ", otherwise choose \"enter a setup key\" and type:"),
+            h("li", {}, h("code", { style: "font-size:1.05rem;letter-spacing:.08em;user-select:all", text: r.secret.match(/.{1,4}/g).join(" ") }), h("div", { class: "muted", text: "(time-based, 6 digits)" })),
+            h("li", { text: "Enter the code the app shows to finish:" })),
+          h("form", { class: "row", onsubmit: async (ev) => {
+            ev.preventDefault();
+            const ok = await act(() => api("/api/2fa/enable", { method: "POST", body: { code: code.value } }), "Two-factor login is on").catch(() => null);
+            if (ok) load();
+          } }, code, h("button", { class: "primary", text: "Turn on" })),
+          h("p", { class: "muted", text: "Keep the setup key somewhere safe – if you lose your phone, the server owner (or, for the owner, deleting data/web_2fa.json on the bot's PC) can switch it off." }));
+        code.focus();
+      } }));
+  };
+  load();
+  return card;
+}
+
 views.account = async (main) => {
-  main.append(h("h1", { text: "My password" }));
+  main.append(h("h1", { text: "My account" }), twoFactorCard());
   if (me.user === "owner") { main.append(h("p", { class: "muted", text: "The owner password is WEB_PASSWORD – change it under Settings → Web interface." })); return; }
   const cur = h("input", { type: "password", placeholder: "Current password", autocomplete: "current-password" });
   const npw = h("input", { type: "password", placeholder: "New password (min. 8 characters)", autocomplete: "new-password" });
