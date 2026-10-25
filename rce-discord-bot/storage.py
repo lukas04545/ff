@@ -648,6 +648,12 @@ class Storage:
         self._db.commit()
         return cur.rowcount
 
+    def kit_claim_stats(self) -> dict[str, dict]:
+        """Per kit (lower case): how often it was given/claimed, by how many players, and when last."""
+        rows = self._db.execute("SELECT LOWER(kit) AS kit, COUNT(*) AS total, COUNT(DISTINCT player) AS players, "
+                                "MAX(claimed_at) AS last FROM kit_claims GROUP BY LOWER(kit)").fetchall()
+        return {r["kit"]: {"total": r["total"], "players": r["players"], "last": r["last"]} for r in rows}
+
     def kit_claim_history(self, player: str | None = None, limit: int = 15) -> list[sqlite3.Row]:
         if player:
             return self._db.execute(
