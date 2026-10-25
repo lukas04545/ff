@@ -80,8 +80,9 @@ KIT_TOOLS = [
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "claim_kit",
-        "description": "Claims one custom kit for the ticket owner – sent in-game to their linked player. "
-                       "Enforces role, cooldown, linked player and online status. Only when they asked for it.",
+        "description": "Claims one kit from get_my_kits for the ticket owner (a custom kit or one of the server's "
+                       "in-game kits their role gives them) – sent in-game to their linked player. Enforces role, "
+                       "cooldown, linked player and online status. Only when they asked for it.",
         "parameters": {"type": "object", "properties": {
             "kit": {"type": "string", "description": "Exact kit name from get_my_kits"}}, "required": ["kit"]}}},
 ]
