@@ -72,6 +72,7 @@ SESSION_TTL = 12 * 3600
 GATE_COOKIE = "rce_gate"          # set when the panel is opened at its secret address: the panel's files/API answer
 GATE_TTL = 30 * 86400             # … only with it (or a login, or on this PC) – everyone else gets "not found"
 PANEL_PATH = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+KNOCK_MIN = 8                     # WEB_PANEL_KNOCK shorter than this is off (too easy to guess)
 REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, risky actions need no new confirmation
 # Risky actions (run code, change secrets or accounts): need a password confirmation in the last REAUTH_SECONDS
 REAUTH_PATHS = (("POST", "/api/plugins/upload"), ("PUT", "/api/settings"), ("POST", "/api/users"),
@@ -234,6 +235,7 @@ class WebSettings:
     tunnel_token: str = ""
     public_url: str = ""
     panel_path: str = ""          # secret address of the control panel (/<panel_path>); /admin only on this PC
+    panel_knock: str = ""         # secret phrase: typed into the website's player search it opens the panel
 
 
 def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
@@ -253,7 +255,8 @@ def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
                        open_browser=flag("WEB_OPEN_BROWSER", True), tunnel=flag("WEB_TUNNEL", True),
                        tunnel_token=(env.get("WEB_TUNNEL_TOKEN") or "").strip(),
                        public_url=(env.get("WEB_PUBLIC_URL") or "").strip(),
-                       panel_path=(env.get("WEB_PANEL_PATH") or "").strip().strip("/"))
+                       panel_path=(env.get("WEB_PANEL_PATH") or "").strip().strip("/"),
+                       panel_knock=(env.get("WEB_PANEL_KNOCK") or "").strip())
 
 
 class WebInterface:
@@ -627,6 +630,17 @@ class WebInterface:
         resp.set_cookie(GATE_COOKIE, self._gate_value(), max_age=GATE_TTL, httponly=True, samesite="Strict",
                         secure=self._is_https(request), path="/")
         return resp
+
+    def _knock(self, request: web.Request, tail: str) -> None:
+        """The secret way in from the player website: WEB_PANEL_KNOCK typed into the player search opens the panel.
+        Nothing on the website gives it away – any other search is just a search."""
+        knock = self.ws.panel_knock
+        if (len(knock) < KNOCK_MIN or request.method != "GET" or tail not in ("player", "p/website/player")
+                or not self._website_running()):
+            return
+        if hmac.compare_digest(request.query.get("name", "").strip().encode(), knock.encode()):
+            log.info("Control panel opened from the website's secret search by %s", self._client_ip(request))
+            raise web.HTTPSeeOther(self.panel_path)
 
     async def _admin(self, request: web.Request) -> web.StreamResponse:
         """/admin: the panel on the bot's own PC only – from anywhere else it doesn't exist."""
@@ -1174,6 +1188,7 @@ class WebInterface:
         if tail.split("/", 1)[0] in ROOT_RESERVED:
             raise web.HTTPNotFound(text="Not found.")       # e.g. a wrong method on an API address
         self._public_limit(request)                          # every public page counts, also with the website off
+        self._knock(request, tail)
         if not self._website_running():
             if not tail and self._is_local(request):
                 raise web.HTTPFound("/admin")                # no website: on this PC the address opens the panel
@@ -1189,6 +1204,7 @@ class WebInterface:
 
     async def plugin_public(self, request: web.Request, pid: str | None = None) -> web.StreamResponse:
         self._public_limit(request)
+        self._knock(request, request.path.strip("/"))
         return await self._serve_plugin(request, pid or request.match_info["pid"])
 
     async def _serve_plugin(self, request: web.Request, pid: str) -> web.StreamResponse:
@@ -1545,6 +1561,8 @@ class WebInterface:
             rcon_test = {"ok": result.ok, "steps": result.steps}
         if "WEB_PANEL_PATH" in updates and PANEL_PATH.match(updates["WEB_PANEL_PATH"].strip("/")):
             self.ws.panel_path = updates["WEB_PANEL_PATH"].strip("/")     # the new address works right away
+        if "WEB_PANEL_KNOCK" in updates:
+            self.ws.panel_knock = updates["WEB_PANEL_KNOCK"].strip()
         if "WEB_PASSWORD" in updates:
             # New password applies immediately; the current session stays logged in
             self.ws.password = self.password = updates["WEB_PASSWORD"]
