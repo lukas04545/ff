@@ -9,7 +9,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 H = {"X-Requested-With": "rce-web"}
 DEFAULT_ON = {"starter_kit", "lowpop_bonus", "early_bird", "bounties", "weekly_recap", "achievements", "wipe_poll"}
-ALL = DEFAULT_ON | {"invites", "website", "filling_ping", "comeback", "casino", "offline_protection", "battlepass"}
+ALL = DEFAULT_ON | {"invites", "website", "filling_ping", "comeback", "casino", "offline_protection", "battlepass",
+                    "player_count"}
 
 HELLO = '''
 from plugin_api import Plugin, Setting
@@ -521,3 +522,60 @@ def test_panel_logo_is_the_bots_discord_picture(pb, monkeypatch):  # noqa: F811
             await c.close()
             await pb.bot.rcon.close()
     asyncio.run(main())
+
+
+def test_player_count_channel(pb, monkeypatch):  # noqa: F811
+    """The channel's name shows the players online; created by the bot if none is picked; renamed at most every
+    few minutes (Discord's rename limit) and only when the text changed."""
+    from types import SimpleNamespace as NS
+
+    from plugins import player_count as pcm
+    channels, renames = {}, []
+
+    class Channel:
+        def __init__(self, cid, name):
+            self.id, self.name = cid, name
+
+        async def edit(self, name=None, reason=None):
+            renames.append(name)
+            self.name = name
+
+    async def create_voice_channel(name, position=None, reason=None, overwrites=None):
+        assert position == 0 and list(overwrites.values())[0].connect is False      # nobody can join
+        channels[900] = Channel(900, name)
+        return channels[900]
+    guild = NS(id=1, default_role=object(), create_voice_channel=create_voice_channel)
+    monkeypatch.setattr(type(pb.bot), "guilds", property(lambda self: [guild]))
+    monkeypatch.setattr(pb.bot, "get_guild", lambda gid: guild)
+    monkeypatch.setattr(pb.bot, "get_channel", lambda cid: channels.get(int(cid)))
+    monkeypatch.setattr(pb.bot, "is_ready", lambda: True)
+    monkeypatch.setattr(type(pb.bot.rcon), "connected", property(lambda self: True))
+    clock = [1000.0]
+    monkeypatch.setattr(pcm.time, "monotonic", lambda: clock[0])
+
+    async def main():
+        await pb.m.load_all()
+        await pb.m.set_enabled("player_count", True)
+        p = pb.m.running("player_count")
+        pb.bot.server_info = {"Players": 12, "MaxPlayers": 50, "Queued": 0}
+        assert await p.refresh() and channels[900].name == "🟢 Online: 12/50" and p.data.get("created_channel") == 900
+        assert not await p.refresh()                                      # same text: no rename
+        pb.bot.server_info = {"Players": 13, "MaxPlayers": 50}
+        assert not await p.refresh() and channels[900].name == "🟢 Online: 12/50"   # too soon (Discord limit)
+        clock[0] += 5 * 60
+        assert await p.refresh() and channels[900].name == "🟢 Online: 13/50"
+        pb.bot.server_info = None                                          # server offline
+        clock[0] += 5 * 60
+        assert await p.refresh() and channels[900].name == "🔴 Server offline"
+        pb.bot.server_info = {"Players": 3, "MaxPlayers": 50, "Queued": 4}
+        await pb.m.save_settings("player_count", {"online_name": "👥 {players} online · {queued} queued"})
+        assert await p.refresh() and channels[900].name == "👥 3 online · 4 queued"   # new text: right away
+        assert p.status()["Shows"] == "👥 3 online · 4 queued" and p.problems() == []
+        channels[5] = Channel(5, "stats")
+        await pb.m.save_settings("player_count", {"channel": "5"})
+        assert await p.refresh() and channels[5].name == "👥 3 online · 4 queued"    # own channel
+        await pb.m.save_settings("player_count", {"channel": "6"})
+        assert not await p.refresh() and "wasn't found" in p.problems()[0]
+        await pb.bot.rcon.close()
+    asyncio.run(main())
+    assert renames == ["🟢 Online: 13/50", "🔴 Server offline", "👥 3 online · 4 queued", "👥 3 online · 4 queued"]
