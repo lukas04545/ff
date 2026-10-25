@@ -550,7 +550,8 @@ views.users = async (main) => {
       e.preventDefault();
       const r = await act(() => api("/api/users", { method: "POST", body: { username: name.value.trim(), password: pw.value, role: role.value } }), "Account created").catch(() => null);
       if (!r) return;
-      const address = ((await api("/api/me").catch(() => ({}))).public_url || location.origin).replace(/\/$/, "") + "/admin";
+      const info = await api("/api/me").catch(() => ({}));
+      const address = (info.public_url || location.origin).replace(/\/$/, "") + (info.panel_path || "/admin");
       alert(`Account created – send this to the admin:\n\nAddress: ${address}\nUsername: ${name.value.trim()}\nPassword: ${pw.value}\n\nThey can change the password and turn on two-factor login after logging in (My account).`);
       name.value = ""; pw.value = ""; pw.type = "password";
       load();
@@ -836,7 +837,7 @@ views.overview = (main) => {
     shownPublic = key;
     publicCard.style.borderLeft = "4px solid var(" + (url ? "--ok" : err ? "--bad" : "--warn") + ")";
     if (url) {
-      const root = url.replace(/\/$/, ""), panel = root + "/admin";
+      const root = url.replace(/\/$/, ""), panel = root + (me.panel_path || "/admin");
       const copy = (text) => h("button", { class: "small", text: "📋 Copy", onclick: async () => {
         try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { prompt("Copy the address:", text); }
       } });

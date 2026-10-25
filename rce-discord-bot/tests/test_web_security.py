@@ -106,7 +106,7 @@ def test_login_link_only_on_this_pc_and_no_cross_site_posts(bot):  # noqa: F811
         token = holder["web"].login_token
         r = await c.get(f"/auth?token={token}", allow_redirects=False,
                         headers={"CF-Connecting-IP": "203.0.113.5"})           # through the public tunnel
-        assert r.status == 302 and "rce_session" not in r.headers.get("Set-Cookie", "")
+        assert r.status == 404 and "rce_session" not in r.headers.get("Set-Cookie", "")
         r = await c.get(f"/auth?token={token}", allow_redirects=False)         # on the bot's PC
         assert r.status == 302 and "rce_session" in r.headers.get("Set-Cookie", "")
         r = await c.post("/store/checkout", data={"kind": "kit"}, headers={"Origin": "https://evil.example"})
@@ -135,3 +135,56 @@ def test_totp_codes_match_the_rfc():
     secret = base64.b32encode(b"12345678901234567890").decode()
     assert totp.code_at(secret, 59 // 30) == "287082"
     assert totp.matching_step(secret, "287 082", now=59) == 1 and totp.matching_step(secret, "000000", now=59) is None
+
+
+
+def test_the_panel_is_hidden_behind_its_secret_address(bot):  # noqa: F811
+    """From outside (the tunnel) /admin, the panel's files, login and API don't exist – only the secret address
+    opens the panel, and from then on (gate cookie) its login works. On the bot's PC /admin still works."""
+    holder = {}
+    OUT = {"CF-Connecting-IP": "203.0.113.9"}                                  # a visitor through the public link
+
+    async def scenario(c):
+        web = holder["web"]
+        secret = web.panel_path
+        assert secret.startswith("/panel-") and len(secret) > 14
+        assert f"WEB_PANEL_PATH={secret[1:]}" in (bot.config.database_path.parent / ".env").read_text()
+        assert (await c.get("/admin")).status == 200                          # on the bot's PC
+        c.session.cookie_jar.clear()                                          # a new visitor from outside
+        for path in ("/admin", "/api/status", "/api/me", "/static/app.js"):
+            r = await c.get(path, headers=OUT)
+            assert r.status == 404, path                                       # doesn't exist for visitors
+        r = await c.post("/api/login", json={"password": "secret123"}, headers={**H, **OUT})
+        assert r.status == 404                                                 # can't even try passwords
+        r = await c.get(secret, headers=OUT)
+        page = await r.text()
+        assert r.status == 200 and "RCE Bot Panel" in page and "rce_gate" in r.headers["Set-Cookie"]
+        assert "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
+        assert (await c.get("/static/app.js", headers=OUT)).status == 200         # now the panel loads
+        r = await c.post("/api/login", json={"password": "secret123"}, headers={**H, **OUT})
+        assert r.status == 200
+        me = await (await c.get("/api/me", headers=OUT)).json()
+        assert me["panel_path"] == secret
+        r = await c.put("/api/settings", json={"values": {"WEB_PANEL_PATH": "my-own-panel-2026"}},
+                        headers={**H, **OUT})
+        assert r.status == 200 and web.panel_path == "/my-own-panel-2026"      # a new address works right away
+        c.session.cookie_jar.clear()
+        assert (await c.get(secret, headers=OUT)).status == 404                # the old one is gone
+        assert (await c.get("/api/status", headers=OUT)).status == 404
+        assert (await c.get("/my-own-panel-2026", headers=OUT)).status == 200
+        r = await c.put("/api/settings", json={"values": {"WEB_PANEL_PATH": "admin"}}, headers={**H, **OUT})
+        assert r.status in (400, 401)
+
+    async def main():
+        from web.server import WebInterface
+        tmp = bot.config.database_path.parent
+        web = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        holder["web"] = web
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            await scenario(c)
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    asyncio.run(main())

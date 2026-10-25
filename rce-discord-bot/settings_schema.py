@@ -412,6 +412,11 @@ FIELDS: list[Field] = [
                "\"Use your own domain (Cloudflare)\" below – it fills this in for you."),
     Field("WEB_PUBLIC_URL", "Fixed public address", "web", advanced=True, placeholder="https://panel.example.com",
           help="Only with a tunnel token: the address you configured for it in Cloudflare."),
+    Field("WEB_PANEL_PATH", "Secret address of the control panel", "web", placeholder="panel-…",
+          help="The panel is at https://<your address>/<this> – from anywhere else than the bot's PC only there "
+               "(/admin works on this PC only). Without it, the panel, its login and its API don't exist for "
+               "visitors. Made randomly at the first start; 8–64 letters, digits, - or _. Changing it: the new "
+               "address works right away, tell your admins."),
     Field("WEB_OPEN_BROWSER", "Open browser on start", "web", "bool"),
     Field("ITEM_IMAGE_URL", "Item pictures from", "web", advanced=True,
           placeholder="https://rustlabs.com/img/items180/{shortname}.png",
@@ -481,6 +486,10 @@ def validate(key: str, value: str) -> str | None:
     if key == "ITEM_IMAGE_URL" and value.lower() != "off" and (
             not value.startswith("https://") or "{shortname}" not in value):
         return f'"{f.label}" must start with https:// and contain {{shortname}} (or be "off").'
+    if key == "WEB_PANEL_PATH" and (not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", value.strip("/"))
+                                    or value.strip("/").lower() in ("admin", "api", "static", "store", "casino",
+                                                                    "account", "battlepass", "streams")):
+        return f'"{f.label}" must be 8–64 letters, digits, - or _ (and not a page of the website).'
     if key == "WEB_PUBLIC_URL" and not value.startswith(("https://", "http://")):
         return f'"{f.label}" must start with https://'
     if "\n" in value and f.kind != "textarea":

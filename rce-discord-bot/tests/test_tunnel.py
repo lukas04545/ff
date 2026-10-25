@@ -77,8 +77,10 @@ def test_web_interface_with_tunnel(tmp_path, monkeypatch):
         assert f"WEB_PASSWORD={w.generated_password}" in env.read_text()
         assert await asyncio.to_thread(_wait, lambda: w.public_url)
         await asyncio.sleep(0.2)  # banner + PUBLIC_LINK.txt are written on the event loop
-        assert (tmp_path / "PUBLIC_LINK.txt").read_text().startswith(
-            "Control panel: https://quiet-fox-123.trycloudflare.com/admin\nPlayer website: https://quiet-fox-123.trycloudflare.com/")
+        assert w.panel_path.startswith("/panel-") and f"WEB_PANEL_PATH={w.ws.panel_path}" in env.read_text()
+        assert (tmp_path / "PUBLIC_LINK.txt").read_text().startswith(        # the secret panel address, not /admin
+            f"Control panel: https://quiet-fox-123.trycloudflare.com{w.panel_path}\n"
+            "Player website: https://quiet-fox-123.trycloudflare.com/")
         tunnelmod.stop_tunnel()
 
         w = WebInterface(None, web_settings=WebSettings(password="secret123", tunnel=True),
