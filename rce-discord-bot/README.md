@@ -603,6 +603,12 @@ Run the automated tests with `pip install pytest && pytest`.
 
 ### 🔒 Security of the control panel and the website
 
+- **Hidden panel address:** from outside, the panel isn't at `/admin`. It lives at a random secret address
+  (`WEB_PANEL_PATH`, e.g. `/panel-Ab3x…`), created at the first start. You'll find it in `PUBLIC_LINK.txt`, the bot
+  window and *Settings → Web interface → Secret address of the control panel*, where you can also change it. The
+  change applies right away, and the old link stops working. `/admin` still works on the bot's own PC. Anyone without the
+  address gets "not found" for `/admin`, the login, the API and the panel's files, so scanners can't even tell a
+  panel exists. Share the address only with your admins.
 - **Two-factor login (2FA):** *🔐 My account* → **Set up two-factor login** – then logging in needs your password
   **and** the 6-digit code from an authenticator app (Google/Microsoft Authenticator, Authy, 1Password, Bitwarden …).
   Strongly recommended for everyone, especially with the public link. Each code works once. Lost phone: the owner

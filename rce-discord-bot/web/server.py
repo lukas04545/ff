@@ -69,6 +69,9 @@ STATIC_LINK = re.compile(r'(/static/([\w.-]+))\?v=[\w]+')     # index.html: ?v=�
 SESSION_COOKIE = "rce_session"
 PUBLIC_LINK_FILE = "PUBLIC_LINK.txt"  # current public address (Cloudflare tunnel), next to start.bat
 SESSION_TTL = 12 * 3600
+GATE_COOKIE = "rce_gate"          # set when the panel is opened at its secret address: the panel's files/API answer
+GATE_TTL = 30 * 86400             # … only with it (or a login, or on this PC) – everyone else gets "not found"
+PANEL_PATH = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, risky actions need no new confirmation
 # Risky actions (run code, change secrets or accounts): need a password confirmation in the last REAUTH_SECONDS
 REAUTH_PATHS = (("POST", "/api/plugins/upload"), ("PUT", "/api/settings"), ("POST", "/api/users"),
@@ -230,6 +233,7 @@ class WebSettings:
     tunnel: bool = False
     tunnel_token: str = ""
     public_url: str = ""
+    panel_path: str = ""          # secret address of the control panel (/<panel_path>); /admin only on this PC
 
 
 def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
@@ -248,7 +252,8 @@ def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
                        port=port, password=(env.get("WEB_PASSWORD") or "").strip(),
                        open_browser=flag("WEB_OPEN_BROWSER", True), tunnel=flag("WEB_TUNNEL", True),
                        tunnel_token=(env.get("WEB_TUNNEL_TOKEN") or "").strip(),
-                       public_url=(env.get("WEB_PUBLIC_URL") or "").strip())
+                       public_url=(env.get("WEB_PUBLIC_URL") or "").strip(),
+                       panel_path=(env.get("WEB_PANEL_PATH") or "").strip().strip("/"))
 
 
 class WebInterface:
@@ -278,6 +283,7 @@ class WebInterface:
         self._secret = self._load_secret(secret_path)
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
         self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
+        self._ensure_panel_path()
         self._pending_2fa: dict[str, tuple[str, float]] = {}     # username -> (new secret, valid until)
         self._sudo: dict[str, float] = {}                        # session token -> confirmed until
         self._revoked: set[str] = set()
@@ -318,13 +324,13 @@ class WebInterface:
 
     def _build_app(self) -> web.Application:
         app = web.Application(middlewares=[self._compress_middleware, self._error_middleware, self._host_middleware,
-                                           self._origin_middleware, self._auth_middleware],
+                                           self._gate_middleware, self._origin_middleware, self._auth_middleware],
                               client_max_size=1024 ** 2)
         app.on_response_prepare.append(self._security_headers)
         r = app.router
         r.add_get("/", self._root)                                  # player website (or -> /admin if it's off)
-        r.add_get("/admin", self._index)                            # the control panel
-        r.add_get("/admin/", self._index)
+        r.add_get("/admin", self._admin)                            # the control panel – only on this PC; from
+        r.add_get("/admin/", self._admin)                           # anywhere else: /<WEB_PANEL_PATH>
         r.add_get("/static/{name}", self._static)
         r.add_post("/api/item-images/scan", self.item_images_scan)
         r.add_get("/api/item-images/scan", self.item_images_scan_state)
@@ -541,7 +547,7 @@ class WebInterface:
 
     def _tunnel_online(self, url: str | None, announce: bool = True) -> None:
         url = (url or self.ws.public_url or "(your fixed tunnel address)").rstrip("/")
-        panel = f"{url}/admin"
+        panel = f"{url}{self.panel_path}"
         if self.tunnel is not None and self.tunnel.adopted:
             announce = False     # same link as before the update restart – no new announcement
         login = (f"owner / {self.generated_password}   (new password, saved in .env as WEB_PASSWORD)"
@@ -577,6 +583,59 @@ class WebInterface:
         if self._runner is not None:
             await self._runner.cleanup()
 
+    # ------------------------------------------------------------ Hidden panel address
+
+    def _ensure_panel_path(self) -> None:
+        """The panel's secret address: WEB_PANEL_PATH, else a random one – saved in the .env (shown in Settings)."""
+        if PANEL_PATH.match(self.ws.panel_path or ""):
+            return
+        self.ws.panel_path = "panel-" + secrets.token_urlsafe(12).replace("_", "x").replace("-", "y")
+        try:
+            update_env(self.env_path, {"WEB_PANEL_PATH": self.ws.panel_path})
+        except OSError as exc:
+            log.warning("Could not save WEB_PANEL_PATH to the .env (%s) – the panel address changes on restart.",
+                        exc)
+
+    @property
+    def panel_path(self) -> str:
+        return "/" + self.ws.panel_path
+
+    @staticmethod
+    def _is_local(request: web.Request) -> bool:
+        """A request from the bot's own PC – not through the public tunnel or a proxy."""
+        return request.remote in ("127.0.0.1", "::1") and not request.headers.get("CF-Connecting-IP") \
+            and not request.headers.get("X-Forwarded-For")
+
+    def _gate_value(self) -> str:
+        return hmac.new(self._secret, f"gate:{self.ws.panel_path}".encode(), hashlib.sha256).hexdigest()[:40]
+
+    def _may_see_panel(self, request: web.Request) -> bool:
+        """Knows the panel: on this PC, opened its secret address (gate cookie) or is logged in."""
+        return self._is_local(request) or hmac.compare_digest(request.cookies.get(GATE_COOKIE, ""), self._gate_value()) \
+            or self._session_user(request) is not None
+
+    @web.middleware
+    async def _gate_middleware(self, request: web.Request, handler):
+        """Without knowing the panel's address, its files, login and API don't exist (plain "not found")."""
+        if request.path.startswith(("/api/", "/static/")) and not self._may_see_panel(request):
+            raise web.HTTPNotFound(text="Not found.")
+        return await handler(request)
+
+    async def _panel(self, request: web.Request) -> web.StreamResponse:
+        """The control panel at its secret address – remembers the visitor may see the panel (gate cookie)."""
+        resp = await self._index(request)
+        resp.set_cookie(GATE_COOKIE, self._gate_value(), max_age=GATE_TTL, httponly=True, samesite="Strict",
+                        secure=self._is_https(request), path="/")
+        return resp
+
+    async def _admin(self, request: web.Request) -> web.StreamResponse:
+        """/admin: the panel on the bot's own PC only – from anywhere else it doesn't exist."""
+        if self._is_local(request):
+            return await self._panel(request)
+        if self._website_running():
+            return await self._serve_plugin(request, "website")      # the website's normal "not found" page
+        raise web.HTTPNotFound(text="Not found.")
+
     # ------------------------------------------------------------ Middleware
 
     @staticmethod
@@ -594,7 +653,7 @@ class WebInterface:
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         resp.headers["Server"] = "RCE-Bot"                     # no version numbers for scanners
         path = request.path
-        if path.startswith(("/admin", "/static/", "/api/", "/auth")):
+        if path.startswith(("/admin", "/static/", "/api/", "/auth")) or path.rstrip("/") == self.panel_path:
             resp.headers["Content-Security-Policy"] = PANEL_CSP
         if path.startswith("/api/"):
             resp.headers.setdefault("Cache-Control", "no-store")
@@ -1110,12 +1169,14 @@ class WebInterface:
     async def _root(self, request: web.Request) -> web.StreamResponse:
         """The site root is the player website; the control panel lives at /admin."""
         tail = request.match_info.get("tail", "").strip("/")
+        if tail and tail == self.ws.panel_path and request.method == "GET":
+            return await self._panel(request)                 # the control panel's secret address
         if tail.split("/", 1)[0] in ROOT_RESERVED:
             raise web.HTTPNotFound(text="Not found.")       # e.g. a wrong method on an API address
         self._public_limit(request)                          # every public page counts, also with the website off
         if not self._website_running():
-            if not tail:
-                raise web.HTTPFound("/admin")                # no website: the address opens the panel
+            if not tail and self._is_local(request):
+                raise web.HTTPFound("/admin")                # no website: on this PC the address opens the panel
             raise web.HTTPNotFound(text="Not found.")
         return await self._serve_plugin(request, "website")
 
@@ -1322,10 +1383,9 @@ class WebInterface:
     async def auth_link(self, request: web.Request) -> web.Response:
         """One-time link from the bot window: logs in and opens the matching page."""
         key = "link:" + self._client_ip(request)
-        local = request.remote in ("127.0.0.1", "::1") and not request.headers.get("CF-Connecting-IP") \
-            and not request.headers.get("X-Forwarded-For")
-        if not local or self._login_blocked(key) is not None or \
-                not same_secret(request.query.get("token", ""), self.login_token):
+        if not self._is_local(request):
+            raise web.HTTPNotFound(text="Not found.")         # the bot window's link: only on this PC
+        if self._login_blocked(key) is not None or not same_secret(request.query.get("token", ""), self.login_token):
             self._login_failed(key)
             raise web.HTTPFound("/admin")
         self._login_ok(key)
@@ -1341,7 +1401,7 @@ class WebInterface:
         return resp
 
     async def me(self, request: web.Request) -> web.Response:
-        return web.json_response({"ok": True, "setup_mode": self.setup_mode,
+        return web.json_response({"ok": True, "setup_mode": self.setup_mode, "panel_path": self.panel_path,
                                   "user": request["user"], "role": request["role"], **self._tunnel_info()})
 
     def _tunnel_info(self) -> dict:
@@ -1483,6 +1543,8 @@ class WebInterface:
             result = await diagnose_rcon(saved.get("RCON_HOST") or "", saved.get("RCON_PORT") or "",
                                          saved.get("RCON_PASSWORD") or "")
             rcon_test = {"ok": result.ok, "steps": result.steps}
+        if "WEB_PANEL_PATH" in updates and PANEL_PATH.match(updates["WEB_PANEL_PATH"].strip("/")):
+            self.ws.panel_path = updates["WEB_PANEL_PATH"].strip("/")     # the new address works right away
         if "WEB_PASSWORD" in updates:
             # New password applies immediately; the current session stays logged in
             self.ws.password = self.password = updates["WEB_PASSWORD"]
