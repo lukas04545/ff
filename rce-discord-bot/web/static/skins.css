@@ -1,0 +1,167 @@
+/* Panel themes the owner picks per account (Users → Panel themes): html[data-skin="retro"] / [data-skin="jumpscare"].
+   Loaded after neon.css so the same selectors win; both look the same with the light/dark switch. skins.js adds the
+   moving parts (popup ads, marquee, scares). */
+
+/* ================================================================ Early 2000s */
+html:root[data-skin="retro"] {
+  color-scheme: light;
+  --bg: #000080; --sidebar: #008080; --panel: #c0c0c0; --panel-2: #d4d0c8; --input: #ffffff;
+  --text: #000000; --muted: #202020; --faint: #505050; --border: #808080; --border-strong: #404040;
+  --accent: #0000ee; --accent-hover: #551a8b; --accent-text: #ffffff; --accent-soft: #ffff99; --accent-ring: #ff00ff;
+  --ok: #008000; --ok-soft: #ccffcc; --warn: #ff6600; --warn-soft: #ffff99; --bad: #ff0000; --bad-soft: #ffcccc;
+  --info: #0000ee; --code-bg: #000000; --code-text: #00ff00;
+  --shadow-sm: none; --shadow: none; --shadow-lg: 4px 4px 0 #000;
+  --radius: 0; --radius-sm: 0;
+  --font: "Comic Sans MS", "Comic Sans", "Chalkboard SE", cursive;
+}
+html:root[data-skin="retro"] body {
+  font-family: var(--font);
+  background:
+    radial-gradient(circle, #ffffff 1px, transparent 1.6px) 0 0 / 26px 26px,
+    radial-gradient(circle, #ffff00 1px, transparent 1.6px) 13px 13px / 26px 26px,
+    #000080;
+  cursor: crosshair;
+}
+html:root[data-skin="retro"] body::before, html:root[data-skin="retro"] body::after { display: none; }
+html:root[data-skin="retro"] .card, html:root[data-skin="retro"] .nav-group, html:root[data-skin="retro"] .stat {
+  background: #c0c0c0; border: 3px outset #ffffff; border-radius: 0; box-shadow: none;
+}
+html:root[data-skin="retro"] main h1, html:root[data-skin="retro"] .top-h1 {
+  font-family: "Times New Roman", Times, serif; font-size: 2.1rem; color: #ffff00; -webkit-text-fill-color: #ffff00;
+  background: none; text-shadow: 3px 3px 0 #ff00ff;
+}
+html:root[data-skin="retro"] .card h2 { color: #000080; text-decoration: underline; -webkit-text-fill-color: #000080; background: none; }
+html:root[data-skin="retro"] .card h2::after { content: " 🆕"; }
+html:root[data-skin="retro"] button {
+  background: #c0c0c0; color: #000000; border: 2px outset #ffffff; border-radius: 0; box-shadow: none;
+  font-family: var(--font);
+}
+html:root[data-skin="retro"] button:active { border-style: inset; }
+html:root[data-skin="retro"] button.primary { background: linear-gradient(#ffff00, #ff9900); color: #000000; font-weight: 700; }
+html:root[data-skin="retro"] button.danger { background: #ff0000; color: #ffff00; }
+html:root[data-skin="retro"] input, html:root[data-skin="retro"] select, html:root[data-skin="retro"] textarea {
+  background: #ffffff; color: #000000; border: 2px inset #ffffff; border-radius: 0; box-shadow: none;
+}
+html:root[data-skin="retro"] main > p, html:root[data-skin="retro"] main > .muted { color: #ffff00; font-weight: 700; }
+html:root[data-skin="retro"] a { color: #0000ee; text-decoration: underline; }
+html:root[data-skin="retro"] a:visited { color: #551a8b; }
+html:root[data-skin="retro"] th { background: #000080; color: #ffffff; }
+html:root[data-skin="retro"] td { border-bottom: 1px solid #808080; }
+html:root[data-skin="retro"] .sidebar { background: #008080; border-right: 4px ridge #c0c0c0; }
+html:root[data-skin="retro"] .sidebar a { color: #0000ee; background: none; border-radius: 0; }
+html:root[data-skin="retro"] .sidebar a.active { background: #ffff00; color: #ff0000; }
+html:root[data-skin="retro"] .sidebar a.active::before { content: "👉 "; }
+html:root[data-skin="retro"] .topbar { background: #000080; color: #ffffff; border-bottom: 4px ridge #c0c0c0; }
+html:root[data-skin="retro"] .topbar .eyebrow { color: #00ff00; }
+html:root[data-skin="retro"] .pill { border-radius: 0; border: 1px solid #000; }
+html:root[data-skin="retro"] .logo { background: #ff00ff; border-radius: 0; }
+html:root[data-skin="retro"] #motion { display: none; }
+
+.retro-marquee {
+  overflow: hidden; white-space: nowrap; background: #000000; color: #00ff00; border-bottom: 3px ridge #c0c0c0;
+  font: 700 15px/1.9 "Courier New", monospace;
+}
+.retro-marquee span { display: inline-block; padding-left: 100%; animation: retro-scroll 22s linear infinite; }
+@keyframes retro-scroll { to { transform: translateX(-100%); } }
+.retro-construction {
+  margin: 8px 0; padding: 6px; text-align: center; font: 700 13px var(--font); color: #000;
+  background: repeating-linear-gradient(45deg, #ffcc00 0 14px, #000 14px 28px); border: 2px solid #000;
+}
+.retro-construction b { background: #ffcc00; padding: 2px 6px; }
+.retro-footer { text-align: center; padding: 14px; color: #ffffff; font: 13px var(--font); }
+.retro-footer .counter {
+  display: inline-block; margin: 6px; padding: 2px 8px; background: #000; color: #ff0000;
+  font: 700 18px "Courier New", monospace; letter-spacing: 3px; border: 2px inset #808080;
+}
+.retro-blink { animation: retro-blink 1s steps(1) infinite; }
+@keyframes retro-blink { 50% { visibility: hidden; } }
+.retro-rainbow { animation: retro-rainbow 3s linear infinite; }
+@keyframes retro-rainbow { to { filter: hue-rotate(360deg); } }
+.retro-spark { position: fixed; pointer-events: none; z-index: 2147483000; font-size: 14px; transition: opacity .8s, transform .8s; }
+
+/* the popup ads: old-style windows */
+.retro-ad {
+  position: fixed; z-index: 2147482000; width: 270px; background: #c0c0c0; border: 2px outset #ffffff;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, .55); font: 13px "Comic Sans MS", "Comic Sans", cursive; color: #000;
+  animation: retro-pop .18s ease-out;
+}
+@keyframes retro-pop { from { transform: scale(.4); } }
+.retro-ad .bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 2px 3px 2px 6px;
+  background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font: 700 12px Tahoma, Verdana, sans-serif;
+  cursor: move; user-select: none;
+}
+.retro-ad .bar button {
+  width: 18px; height: 16px; padding: 0; line-height: 12px; font: 700 11px Tahoma, sans-serif; color: #000;
+  background: #c0c0c0; border: 2px outset #fff; border-radius: 0;
+}
+.retro-ad .body { padding: 10px; text-align: center; }
+.retro-ad .big { display: block; font-size: 30px; margin-bottom: 4px; }
+.retro-ad .headline { display: block; font-weight: 700; font-size: 15px; color: #ff0000; margin-bottom: 8px; }
+.retro-ad .go {
+  display: inline-block; padding: 4px 12px; background: linear-gradient(#ffff00, #ff9900); border: 2px outset #fff;
+  font-weight: 700; cursor: pointer; color: #000;
+}
+.retro-ad.flashy .body { background: #ffff00; }
+.retro-ad.hot .body { background: #ff99cc; }
+.retro-ad.cool .body { background: #99ffff; }
+
+/* ================================================================ Jump scares */
+html:root[data-skin="jumpscare"] {
+  color-scheme: dark;
+  --bg: #050303; --sidebar: #0a0505; --panel: rgba(20, 8, 8, .92); --panel-2: rgba(36, 12, 12, .85);
+  --input: #0b0505; --text: #e8dcdc; --muted: #a08080; --faint: #6e5050;
+  --border: rgba(160, 20, 20, .35); --border-strong: rgba(200, 30, 30, .6);
+  --accent: #b30000; --accent-hover: #e00000; --accent-text: #fff; --accent-soft: rgba(179, 0, 0, .18);
+  --accent-ring: rgba(220, 0, 0, .45);
+  --ok: #7fbf7f; --warn: #d9a441; --bad: #ff3030; --info: #c08080;
+  --code-bg: #000; --code-text: #e8c0c0;
+  --font: "Chiller", "Creepster", "Papyrus", "Luminari", fantasy;
+}
+html:root[data-skin="jumpscare"] body {
+  background:
+    radial-gradient(60rem 40rem at 50% 0%, rgba(120, 0, 0, .28), transparent 60%),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, .9)),
+    #050303;
+  cursor: crosshair;
+}
+html:root[data-skin="jumpscare"] body::before { display: none; }
+html:root[data-skin="jumpscare"] main h1, html:root[data-skin="jumpscare"] .top-h1 {
+  font-family: var(--font); font-size: 2.6rem; letter-spacing: .04em; color: #c00000; -webkit-text-fill-color: #c00000;
+  background: none; text-shadow: 0 0 12px rgba(255, 0, 0, .55); animation: scare-flicker 7s infinite;
+}
+html:root[data-skin="jumpscare"] .card h2 { color: #d02020; -webkit-text-fill-color: #d02020; background: none; }
+/* slow flicker like a dying bulb (no fast flashing) */
+@keyframes scare-flicker { 0%, 91%, 95%, 100% { opacity: 1; } 93% { opacity: .35; } }
+html:root[data-skin="jumpscare"] .card { position: relative; border-color: rgba(150, 0, 0, .55); }
+/* blood dripping from the top edge of the cards */
+html:root[data-skin="jumpscare"] .card::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 18px; pointer-events: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background:
+    radial-gradient(4px 12px at 12% 0, #7a0000 98%, transparent) ,
+    radial-gradient(3px 16px at 37% 0, #7a0000 98%, transparent),
+    radial-gradient(5px 10px at 64% 0, #7a0000 98%, transparent),
+    radial-gradient(3px 14px at 88% 0, #7a0000 98%, transparent),
+    linear-gradient(#7a0000, #7a0000) top / 100% 3px no-repeat;
+}
+html:root[data-skin="jumpscare"] button.primary { background: linear-gradient(#8b0000, #4a0000); color: #fff; }
+html:root[data-skin="jumpscare"] .sidebar a.active { background: rgba(150, 0, 0, .35); color: #fff; }
+html:root[data-skin="jumpscare"] #motion { display: none; }
+
+.scare-eyes {
+  position: fixed; right: 18px; bottom: 18px; z-index: 50; display: flex; gap: 14px; pointer-events: none;
+  opacity: .0; transition: opacity 2.5s;
+}
+.scare-eyes.on { opacity: .85; }
+.scare-eyes i { width: 14px; height: 8px; border-radius: 50%; background: #ff1a1a; box-shadow: 0 0 10px #ff0000; }
+.scare-whisper {
+  position: fixed; left: 50%; top: 40%; transform: translateX(-50%); z-index: 2147482500; pointer-events: none;
+  font: 2.2rem "Chiller", "Creepster", fantasy; color: rgba(200, 0, 0, .0); transition: color 1.6s; white-space: nowrap;
+}
+.scare-whisper.on { color: rgba(200, 0, 0, .75); }
+.scare-overlay {
+  position: fixed; inset: 0; z-index: 2147483600; display: grid; place-items: center; background: #000;
+  cursor: none;
+}
+.scare-overlay svg { width: min(92vw, 92vh); height: min(92vw, 92vh); }
