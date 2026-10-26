@@ -151,7 +151,10 @@ def test_the_panel_is_hidden_behind_its_secret_address(bot):  # noqa: F811
         assert f"WEB_PANEL_PATH={secret[1:]}" in (bot.config.database_path.parent / ".env").read_text()
         assert (await c.get("/admin")).status == 200                          # on the bot's PC
         c.session.cookie_jar.clear()                                          # a new visitor from outside
-        for path in ("/admin", "/api/status", "/api/me", "/static/app.js"):
+        r = await c.get("/admin", headers=OUT)                                # the honeypot, not the panel
+        assert r.status == 200 and "RCE Bot Panel" not in await r.text() and "rce_gate" not in r.headers.get(
+            "Set-Cookie", "")
+        for path in ("/api/status", "/api/me", "/static/app.js"):
             r = await c.get(path, headers=OUT)
             assert r.status == 404, path                                       # doesn't exist for visitors
         r = await c.post("/api/login", json={"password": "secret123"}, headers={**H, **OUT})
@@ -224,6 +227,62 @@ def test_secret_phrase_in_the_player_search_opens_the_panel(bot):  # noqa: F811
         await c.put("/api/settings", json={"values": {"WEB_PANEL_KNOCK": "off"}}, headers=H)
         r = await c.get("/player", params={"name": "open sesame 42"}, headers=OUT, allow_redirects=False)
         assert r.status == 200                                                 # switched off again
+
+    async def main():
+        from web.server import WebInterface
+        tmp = bot.config.database_path.parent
+        w = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        holder["web"] = w
+        c = TestClient(TestServer(w.app))
+        await c.start_server()
+        try:
+            await scenario(c)
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    asyncio.run(main())
+
+
+def test_admin_is_a_honeypot_from_outside(bot):  # noqa: F811
+    """/admin from outside: a fake login that never lets anyone in; visits and login tries are logged with IP,
+    location, browser and system – never the password. On the bot's PC /admin is still the real panel."""
+    holder, told = {}, []
+    OUT = {"CF-Connecting-IP": "198.51.100.7", "CF-IPCountry": "DE", "CF-IPCity": "Berlin",
+           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36",
+           "Accept-Language": "de-DE,de;q=0.9", "Referer": "https://evil.example/list"}
+
+    async def scenario(c):
+        w = holder["web"]
+        bot.audit = told.append
+        r = await c.get("/admin", headers=OUT)
+        page = await r.text()
+        assert r.status == 200 and "Administration" in page and 'action="/admin"' in page
+        r = await c.post("/admin", data={"username": "root", "password": "hunter2!"}, headers=OUT)
+        assert r.status == 401 and "Invalid username or password" in await r.text()
+        assert "rce_session" not in r.headers.get("Set-Cookie", "")             # never lets anyone in
+        stored = (bot.config.database_path.parent / "web_honeypot.json").read_text()
+        assert "hunter2" not in stored                                         # passwords are never kept
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)  # on this PC
+        d = await (await c.get("/api/honeypot")).json()
+        login, visit = d["entries"]
+        assert visit["ip"] == "198.51.100.7" and visit["location"] == "Berlin, DE" and visit["method"] == "GET"
+        assert visit["browser"] == "Chrome" and visit["os"] == "Windows 10/11" and visit["language"] == "de-DE"
+        assert login["username"] == "root" and login["password_given"] is True and "password" not in login
+        assert d["ips"] == 1 and d["logins"] == 1
+        pots = [t for t in told if "Honeypot" in t]
+        assert len(pots) == 2 and "198.51.100.7" in pots[0] and "Berlin" in pots[0] and "**root**" in pots[1]
+        await c.get("/admin", headers=OUT)
+        assert len([t for t in told if "Honeypot" in t]) == 2                                                  # no flood: once per IP and 6 hours
+        r = await c.get("/admin", headers={"User-Agent": "curl/8.0"})
+        assert r.status == 200 and "RCE Bot Panel" in await r.text()          # the real panel on this PC
+        assert (await c.delete("/api/honeypot", headers=H)).status == 200
+        assert (await (await c.get("/api/honeypot")).json())["entries"] == []
+        r = await c.put("/api/settings", json={"values": {"WEB_HONEYPOT": "false"}}, headers=H)
+        assert r.status == 200 and w.ws.honeypot is False
+        assert (await c.get("/admin", headers=OUT)).status == 404              # off: "not found"
+        # the bot's own start (settings from its config) keeps the secret address from the .env
+        again = type(w)(bot, env_path=w.env_path, secret_path=bot.config.database_path.parent / "web_secret.key")
+        assert again.panel_path == w.panel_path and again.ws.honeypot is False
 
     async def main():
         from web.server import WebInterface

@@ -44,6 +44,8 @@ from web.caching import YEAR, conditional, maybe_compress
 from web.item_images import THUMB_SIZES, WAIT_FOR_DOWNLOAD
 from web.ratelimit import RateLimiter
 from web.totp import TwoFactorStore, matching_step, new_secret, otpauth_uri
+from web import honeypot
+from web.honeypot import HoneypotLog
 from web.users import OWNER, UserError, UserStore, hash_password, is_hashed, same_secret, verify_password
 from cogs.economy import SHOP_KINDS
 from permcheck import check_permissions, explain_forbidden
@@ -72,6 +74,7 @@ SESSION_TTL = 12 * 3600
 GATE_COOKIE = "rce_gate"          # set when the panel is opened at its secret address: the panel's files/API answer
 GATE_TTL = 30 * 86400             # … only with it (or a login, or on this PC) – everyone else gets "not found"
 PANEL_PATH = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+HONEYPOT_TELL_EVERY = 6 * 3600    # admin log: one line per IP (visit / login try) per 6 hours
 KNOCK_MIN = 8                     # WEB_PANEL_KNOCK shorter than this is off (too easy to guess)
 KNOCK_ROUNDS = 100_000            # hash rounds of WEB_PANEL_KNOCK: every long player search is checked against it
 REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, risky actions need no new confirmation
@@ -97,7 +100,8 @@ CSRF_HEADER = "X-Requested-With"
 # First path segments that are never a page of the player website (it lives at the site root)
 ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
-                       "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection")
+                       "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection",
+                       "/api/honeypot")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -237,6 +241,7 @@ class WebSettings:
     public_url: str = ""
     panel_path: str = ""          # secret address of the control panel (/<panel_path>); /admin only on this PC
     panel_knock: str = ""         # secret phrase: typed into the website's player search it opens the panel
+    honeypot: bool = True         # /admin from outside: fake login that logs every visitor
 
 
 def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
@@ -257,7 +262,8 @@ def web_settings_from_env(path: Path = ENV_PATH) -> WebSettings:
                        tunnel_token=(env.get("WEB_TUNNEL_TOKEN") or "").strip(),
                        public_url=(env.get("WEB_PUBLIC_URL") or "").strip(),
                        panel_path=(env.get("WEB_PANEL_PATH") or "").strip().strip("/"),
-                       panel_knock=(env.get("WEB_PANEL_KNOCK") or "").strip())
+                       panel_knock=(env.get("WEB_PANEL_KNOCK") or "").strip(),
+                       honeypot=flag("WEB_HONEYPOT", True))
 
 
 class WebInterface:
@@ -278,6 +284,11 @@ class WebInterface:
             cfg = bot.config
             web_settings = WebSettings(True, cfg.web_host, cfg.web_port, cfg.web_password, cfg.web_open_browser,
                                        cfg.web_tunnel, cfg.web_tunnel_token, cfg.web_public_url)
+            saved = read_env(env_path)                              # .env-only values (not in the bot's config)
+            web_settings.panel_path = (saved.get("WEB_PANEL_PATH") or "").strip().strip("/")
+            web_settings.panel_knock = (saved.get("WEB_PANEL_KNOCK") or "").strip()
+            web_settings.honeypot = (saved.get("WEB_HONEYPOT") or "true").strip().lower() in ("1", "true", "yes",
+                                                                                              "ja", "on")
         self.ws = web_settings
         # The .env keeps only salted hashes of WEB_PASSWORD / WEB_PANEL_KNOCK – a plain value (typed into the .env
         # by hand) is hashed and replaced on the start. A login hashes what was typed and compares the hashes.
@@ -296,6 +307,8 @@ class WebInterface:
         self._secret = self._load_secret(secret_path)
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
         self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
+        self.honeypot = HoneypotLog(secret_path.parent / "web_honeypot.json")
+        self._honeypot_told: dict[str, float] = {}               # ip:kind -> last admin log line (no flooding)
         self._ensure_panel_path()
         self._pending_2fa: dict[str, tuple[str, float]] = {}     # username -> (new secret, valid until)
         self._sudo: dict[str, float] = {}                        # session token -> confirmed until
@@ -344,6 +357,10 @@ class WebInterface:
         r.add_get("/", self._root)                                  # player website (or -> /admin if it's off)
         r.add_get("/admin", self._admin)                            # the control panel – only on this PC; from
         r.add_get("/admin/", self._admin)                           # anywhere else: /<WEB_PANEL_PATH>
+        r.add_post("/admin", self._admin)                           # the honeypot's fake login form
+        r.add_post("/admin/", self._admin)
+        r.add_get("/api/honeypot", self.honeypot_list)
+        r.add_delete("/api/honeypot", self.honeypot_clear)
         r.add_get("/static/{name}", self._static)
         r.add_post("/api/item-images/scan", self.item_images_scan)
         r.add_get("/api/item-images/scan", self.item_images_scan_state)
@@ -669,12 +686,51 @@ class WebInterface:
             raise web.HTTPSeeOther(self.panel_path)
 
     async def _admin(self, request: web.Request) -> web.StreamResponse:
-        """/admin: the panel on the bot's own PC only – from anywhere else it doesn't exist."""
+        """/admin: the panel on the bot's own PC only – from anywhere else a honeypot (fake login, every visit
+        logged) or, with the honeypot off, it doesn't exist."""
         if self._is_local(request):
+            if request.method != "GET":
+                raise web.HTTPMethodNotAllowed(request.method, ["GET"])
             return await self._panel(request)
+        if self.ws.honeypot:
+            return await self._honeypot(request)
+        if request.method != "GET":
+            raise web.HTTPNotFound(text="Not found.")
         if self._website_running():
             return await self._serve_plugin(request, "website")      # the website's normal "not found" page
         raise web.HTTPNotFound(text="Not found.")
+
+    async def _honeypot(self, request: web.Request) -> web.Response:
+        """The fake login at /admin: notes who came (IP, location, browser …) – never lets anyone in."""
+        self._public_limit(request)
+        entry = honeypot.visitor(request, self._client_ip(request))
+        if request.method == "POST":
+            form = await request.post()
+            entry["username"] = str(form.get("username") or "")[:64]
+            entry["password_given"] = bool(form.get("password"))       # the password itself is never kept
+        self.honeypot.add(entry)
+        log.warning("Honeypot: %s %s from %s (%s, %s on %s)", request.method, request.path, entry["ip"],
+                    entry["location"], entry["browser"], entry["os"])
+        told_key, now = f"{entry['ip']}:{request.method}", time.time()
+        if self.bot is not None and now - self._honeypot_told.get(told_key, 0) > HONEYPOT_TELL_EVERY:
+            self._honeypot_told[told_key] = now
+            self.bot.audit(honeypot.summary(entry))
+        if request.method == "POST":
+            await asyncio.sleep(1.5)                                    # like a real login check – slows guessing
+        return web.Response(text=honeypot.fake_login_page(error=request.method == "POST"), content_type="text/html",
+                            status=401 if request.method == "POST" else 200,
+                            headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+    async def honeypot_list(self, request: web.Request) -> web.Response:
+        entries = self.honeypot.entries()
+        return web.json_response({"enabled": self.ws.honeypot, "entries": entries,
+                                  "ips": len({e.get("ip") for e in entries}),
+                                  "logins": sum(1 for e in entries if e.get("method") == "POST")})
+
+    async def honeypot_clear(self, request: web.Request) -> web.Response:
+        self.honeypot.clear()
+        self._audit("Honeypot log cleared")
+        return web.json_response({"ok": True})
 
     # ------------------------------------------------------------ Middleware
 
@@ -1591,6 +1647,8 @@ class WebInterface:
             rcon_test = {"ok": result.ok, "steps": result.steps}
         if "WEB_PANEL_PATH" in updates and PANEL_PATH.match(updates["WEB_PANEL_PATH"].strip("/")):
             self.ws.panel_path = updates["WEB_PANEL_PATH"].strip("/")     # the new address works right away
+        if "WEB_HONEYPOT" in updates:
+            self.ws.honeypot = updates["WEB_HONEYPOT"].lower() in ("1", "true", "yes", "on")
         if "WEB_PANEL_KNOCK" in updates:
             self.ws.panel_knock = updates["WEB_PANEL_KNOCK"]
         if "WEB_PASSWORD" in updates:
