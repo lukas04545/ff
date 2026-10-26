@@ -556,7 +556,7 @@ role:
   ========================================================================
   ```
   If you haven't set a `WEB_PASSWORD`, the bot creates a strong one on the first start, saves it in the
-  `.env` and shows it in that box. Nothing to open on your router; the web interface itself still only
+  `.env` (as a hash only) and shows it once in that box. Nothing to open on your router; the web interface itself still only
   listens on your PC. To turn it off: Settings → Web interface → *Reachable from the internet* → Off.
   - The link is also saved in **`PUBLIC_LINK.txt`** (next to `start.bat`), shown as a card on the
     **Overview** (with a copy button) and posted in your **admin log channel** – so your admins always find
@@ -626,6 +626,11 @@ Run the automated tests with `pip install pytest && pytest`.
   no inline or foreign code), no framing by other sites (clickjacking), `nosniff`, a restrictive Permissions-Policy,
   no version numbers in the `Server` header; over HTTPS (the Cloudflare tunnel) also HSTS and a `Secure` login cookie.
   API answers are never cached.
+- **No plain passwords stored:** the owner password (`WEB_PASSWORD`) and the secret phrase (`WEB_PANEL_KNOCK`)
+  are kept in the `.env` only as salted PBKDF2-SHA256 hashes. If you type a plain password into the `.env` by hand,
+  for example after forgetting it, the bot replaces it with its hash on the next start. A login hashes what you
+  typed and compares the two hashes. Your browser sends the password only through the encrypted connection (https
+  through the Cloudflare tunnel).
 - **Login:** passwords hashed with PBKDF2-SHA256 (600 000 rounds), lockout after repeated failures (per IP and per
   account), every login with its IP in the admin log, sessions end after 12 hours or when the password changes.
 - **The one-time login link** from the bot window only works on the bot's own PC (never through the public link).

@@ -149,8 +149,12 @@ def test_host_check_and_persistent_sessions(tmp_path, monkeypatch):
         finally:
             await c1.close()
 
-        # "Restart": new instance with the same key -> session stays valid
-        w2 = WebInterface(None, web_settings=WebSettings(password="pw"), env_path=env, secret_path=key)
+        # Only a salted hash of the password is kept in the .env (the plain one was replaced on the start)
+        stored = next(line.split("=", 1)[1] for line in env.read_text().splitlines()
+                      if line.startswith("WEB_PASSWORD="))
+        assert stored.startswith("pbkdf2_sha256$") and "pw" not in stored.split("$")[-1:]
+        # "Restart": new instance with the same key (reads the hash from the .env) -> session stays valid
+        w2 = WebInterface(None, web_settings=WebSettings(password=stored), env_path=env, secret_path=key)
         c2 = await _client(w2)
         try:
             assert (await c2.get("/api/me", cookies={"rce_session": cookie})).status == 200

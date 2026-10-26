@@ -210,6 +210,8 @@ def test_secret_phrase_in_the_player_search_opens_the_panel(bot):  # noqa: F811
         assert r.status == 400                                                 # too easy to guess
         r = await c.put("/api/settings", json={"values": {"WEB_PANEL_KNOCK": "open sesame 42"}}, headers=H)
         assert r.status == 200
+        env = (bot.config.database_path.parent / ".env").read_text()
+        assert "open sesame" not in env and "WEB_PANEL_KNOCK=pbkdf2_sha256$" in env   # only its hash is saved
         c.session.cookie_jar.clear()
         for path in ("/player", "/p/website/player"):
             r = await c.get(path, params={"name": " open sesame 42 "}, headers=OUT, allow_redirects=False)
