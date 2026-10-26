@@ -500,7 +500,7 @@ const isOwner = () => me.role === "owner";
 async function start() {
   try { me = await api("/api/me"); } catch { return; }
   setupMode = !!me.setup_mode;
-  window.RCE_SKINS?.apply(me.skin);              // the panel theme the owner picked for this account
+  window.RCE_SKINS?.apply(me.skin, me.skin_options);              // the panel theme the owner picked for this account
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("hidden",
     (setupMode && a.dataset.view !== "settings") || (a.hasAttribute("data-owner") && !isOwner())));
   $("#whoami").replaceChildren(h("strong", { text: me.user }), h("small", { text: me.role === "owner" ? "Owner" : "Admin" }));
@@ -613,7 +613,7 @@ views.users = async (main) => {
 // The panel theme of every account – only the owner picks (web/panel_themes.py)
 function themesCard() {
   const card = h("div", { class: "card" }, h("h2", { text: "🎨 Panel themes" }),
-    h("p", { class: "muted", text: "Pick how the control panel looks for each account – they can't change it themselves. Neon is the normal look. Jump scares: a creepy look and, now and then, a scary face with a scream (sound starts after their first click). Early 2000s: an old home page with 20 popup ads. Takes effect the next time they open or reload the panel." }));
+    h("p", { class: "muted", text: "Pick how the control panel looks for each account – they can't change it themselves. Neon is the normal look. Jump scares: a creepy look and, now and then, a scary face with a scream (sound starts after their first click). Early 2000s: an old home page full of popup ads (how many and how often: below). Takes effect the next time they open or reload the panel." }));
   const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
   card.append(body);
   (async () => {
@@ -629,8 +629,24 @@ function themesCard() {
       });
       return h("tr", {}, h("td", {}, h("strong", { text: u.username }), u.username === me.user ? h("span", { class: "muted", text: " (you)" }) : null), h("td", {}, sel));
     });
+    // Early 2000s: how many popup ads and how often they come back
+    const fields = [["popups_start", "Popup ads at login", 0, 100, ""], ["popups_every", "Come back every", 0, 120, "minutes (0 = never)"],
+      ["popups_wave", "How many come back each time", 1, 50, ""], ["popups_max", "Never more than", 1, 100, "open at once"]];
+    const inputs = {};
+    const popupForm = h("form", { class: "stack", onsubmit: async (e) => {
+      e.preventDefault();
+      const values = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, Number(el.value)]));
+      const r = await act(() => api("/api/themes/options", { method: "PUT", body: values }), "Popup settings saved – applies when they reload the panel").catch(() => null);
+      if (r) Object.entries(r.options).forEach(([k, v]) => { inputs[k].value = v; });
+    } },
+      h("h3", { text: "💾 Early 2000s popup ads" }),
+      h("div", { class: "row" }, fields.map(([key, label, min, max, unit]) => {
+        inputs[key] = h("input", { type: "number", min, max, value: d.options[key], style: "max-width:6rem" });
+        return h("label", { class: "stack" }, label, h("span", { class: "row tight" }, inputs[key], unit ? h("span", { class: "muted", text: unit }) : null));
+      })),
+      h("div", {}, h("button", { class: "primary", text: "Save" })));
     body.replaceChildren(h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["Account", "Theme"].map((t) => h("th", { text: t })))), h("tbody", {}, rows))));
+      h("thead", {}, h("tr", {}, ["Account", "Theme"].map((t) => h("th", { text: t })))), h("tbody", {}, rows))), popupForm);
   })();
   return card;
 }

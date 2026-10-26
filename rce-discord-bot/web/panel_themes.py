@@ -13,6 +13,9 @@ from pathlib import Path
 
 THEMES = {"neon": "Neon (default)", "jumpscare": "Jump scares 👻", "retro": "Early 2000s 💾"}
 DEFAULT = "neon"
+# Early 2000s: popup ads at login, how often (minutes, 0 = never) and how many come back, at most this many open
+POPUP_OPTIONS = {"popups_start": (20, 0, 100), "popups_every": (3, 0, 120), "popups_wave": (2, 1, 50),
+                 "popups_max": (6, 1, 100)}            # key: (default, min, max)
 
 
 class ThemeStore:
@@ -25,6 +28,35 @@ class ThemeStore:
                 if isinstance(data, dict) else {}
         except (OSError, ValueError):
             self._themes = {}
+        self.options_path = self.path.with_name(self.path.stem + "_options.json")
+        try:
+            saved = json.loads(self.options_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            saved = {}
+        self._options = self._clean(saved if isinstance(saved, dict) else {})
+
+    @staticmethod
+    def _clean(values: dict, base: dict | None = None) -> dict:
+        out = dict(base or {k: d for k, (d, _, _) in POPUP_OPTIONS.items()})
+        for key, (_, low, high) in POPUP_OPTIONS.items():
+            if key in values:
+                try:
+                    out[key] = max(low, min(high, int(values[key])))
+                except (TypeError, ValueError):
+                    pass
+        return out
+
+    def options(self) -> dict:
+        return dict(self._options)
+
+    def set_options(self, values: dict) -> dict:
+        with self._lock:
+            self._options = self._clean(values, self._options)
+            self.options_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.options_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._options, indent=1), encoding="utf-8")
+            os.replace(tmp, self.options_path)
+        return self.options()
 
     def get(self, username: str) -> str:
         return self._themes.get(username.lower(), DEFAULT)
