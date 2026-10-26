@@ -36,8 +36,15 @@
     ["📡", "Dial-up too SLOW?", "Get 56k NOW and download a JPEG in 3 minutes!", "UPGRADE"],
     ["🐻", "HOT SINGLE BEARS", "...near your base!!! Click to see!", "SEE BEARS"],
   ];
-  const KIDDING = ["Just kidding 😜", "Nice try 😂", "Nothing happened. Or did it?", "Error 404: prize not found",
-    "Your prize: absolutely nothing 🎁", "lol"];
+  // Clicking an ad opens a real 2000s ad on YouTube – or a rickroll. Search pages, so a deleted video can't break it.
+  const RICKROLL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+  const OLD_ADS = ["early 2000s commercials compilation", "2003 tv commercials", "2005 commercials compilation",
+    "punch the monkey banner ad", "old internet popup ads", "2000s toy commercials", "2001 commercials",
+    "2000s cereal commercials", "y2k era commercials", "2004 tv ads", "old dial up internet ad",
+    "2000s ringtone commercials", "2002 commercial break", "2006 commercials compilation"];
+  const isRetro = () => document.documentElement.dataset.skin === "retro";
+  const adLink = () => Math.random() < 0.4 ? RICKROLL
+    : `https://www.youtube.com/results?search_query=${encodeURIComponent(pick(OLD_ADS))}`;
   let zTop = 2147482000;
 
   function popupAd(ad, i, gap) {
@@ -53,7 +60,9 @@
     const body = el("div", "body");
     body.append(el("span", "big retro-rainbow", icon), el("span", "headline retro-blink", headline), el("div", "", text));
     const go = el("span", "go", button);
-    go.addEventListener("click", () => { body.replaceChildren(el("span", "big", "🤡"), el("span", "headline", pick(KIDDING))); });
+    body.title = "Click me!!!";
+    body.style.cursor = "pointer";
+    body.addEventListener("click", () => { window.open(adLink(), "_blank", "noopener,noreferrer"); win.remove(); });
     body.append(el("br"), go);
     win.append(bar, body);
     const w = Math.max(window.innerWidth - 290, 10), h = Math.max(window.innerHeight - 220, 10);
@@ -70,7 +79,7 @@
       addEventListener("pointermove", move);
       addEventListener("pointerup", up);
     });
-    setTimeout(() => document.body.append(win), i * gap);
+    setTimeout(() => { if (isRetro()) document.body.append(win); }, i * gap);
   }
 
   function retro(options) {
@@ -111,6 +120,7 @@
     const gap = Math.min(450, 9000 / Math.max(o.popups_start, 1));
     for (let i = 0; i < o.popups_start; i++) popupAd(ADS[i % ADS.length], i, gap);
     if (o.popups_every > 0) setInterval(() => {
+      if (!isRetro()) return;
       const room = o.popups_max - document.querySelectorAll(".retro-ad").length;
       for (let i = 0; i < Math.min(o.popups_wave, room); i++) popupAd(pick(ADS), i, 450);
     }, o.popups_every * 60 * 1000);
@@ -222,6 +232,8 @@
   window.RCE_SKINS = {
     applied: null,
     apply(skin, options) {
+      // another account (or a new theme) on the same page: start over from a clean page
+      if (this.applied && this.applied !== skin) { location.reload(); return; }
       if (this.applied || !skin || skin === "neon") return;
       this.applied = skin;
       const root = document.documentElement;

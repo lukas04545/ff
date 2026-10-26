@@ -387,6 +387,7 @@ document.addEventListener("keydown", (e) => {
 
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" }).catch(() => {});
+  if (window.RCE_SKINS?.applied) { location.reload(); return; }   // no theme (or popups) left for the next login
   showLogin();
 });
 
@@ -625,7 +626,7 @@ function themesCard() {
       sel.addEventListener("change", async () => {
         const ok = await act(() => api("/api/themes", { method: "PUT", body: { username: u.username, theme: sel.value } }), "Theme saved").catch(() => null);
         if (!ok) sel.value = u.theme; else u.theme = sel.value;
-        if (ok && u.username === me.user) toast("Reload the page to see your new theme.");
+        if (ok && u.username === me.user) location.reload();   // your own theme: switch right away
       });
       return h("tr", {}, h("td", {}, h("strong", { text: u.username }), u.username === me.user ? h("span", { class: "muted", text: " (you)" }) : null), h("td", {}, sel));
     });
