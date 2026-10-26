@@ -40,7 +40,7 @@
     "Your prize: absolutely nothing 🎁", "lol"];
   let zTop = 2147482000;
 
-  function popupAd(ad, i) {
+  function popupAd(ad, i, gap) {
     const [icon, headline, text, button] = ad;
     const win = el("div", `retro-ad ${pick(["", "flashy", "hot", "cool"])}`);
     const bar = el("div", "bar");
@@ -70,10 +70,10 @@
       addEventListener("pointermove", move);
       addEventListener("pointerup", up);
     });
-    setTimeout(() => document.body.append(win), i * 450);
+    setTimeout(() => document.body.append(win), i * gap);
   }
 
-  function retro() {
+  function retro(options) {
     const content = document.querySelector(".content") || document.body;
     const marquee = el("div", "retro-marquee");
     marquee.append(el("span", "", "★·.·´¯`·.·★ WELCOME 2 MY RUST SERVER CONTROL PANEL!!! ★·.·´¯`·.·★   " +
@@ -106,10 +106,14 @@
       setTimeout(() => s.remove(), 850);
     });
     // 20 popup ads after login, a couple more every few minutes
-    ADS.forEach((ad, i) => popupAd(ad, i));
-    setInterval(() => {
-      if (document.querySelectorAll(".retro-ad").length < 6) for (let i = 0; i < 2; i++) popupAd(pick(ADS), i);
-    }, 3 * 60 * 1000);
+    // popup ads: how many and how often – the owner sets it (Users → Panel themes)
+    const o = { popups_start: 20, popups_every: 3, popups_wave: 2, popups_max: 6, ...options };
+    const gap = Math.min(450, 9000 / Math.max(o.popups_start, 1));
+    for (let i = 0; i < o.popups_start; i++) popupAd(ADS[i % ADS.length], i, gap);
+    if (o.popups_every > 0) setInterval(() => {
+      const room = o.popups_max - document.querySelectorAll(".retro-ad").length;
+      for (let i = 0; i < Math.min(o.popups_wave, room); i++) popupAd(pick(ADS), i, 450);
+    }, o.popups_every * 60 * 1000);
   }
 
   // ------------------------------------------------------------------ Jump scares
@@ -217,7 +221,7 @@
 
   window.RCE_SKINS = {
     applied: null,
-    apply(skin) {
+    apply(skin, options) {
       if (this.applied || !skin || skin === "neon") return;
       this.applied = skin;
       const root = document.documentElement;
@@ -226,7 +230,7 @@
       delete root.dataset.motion;          // they need their animations
       const toggle = document.getElementById("theme");
       if (toggle) toggle.hidden = true;
-      if (skin === "retro") retro();
+      if (skin === "retro") retro(options || {});
       if (skin === "jumpscare") jumpscare();
     },
   };

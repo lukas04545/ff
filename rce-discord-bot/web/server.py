@@ -364,6 +364,7 @@ class WebInterface:
         r.add_get("/api/honeypot", self.honeypot_list)
         r.add_get("/api/themes", self.themes_list)
         r.add_put("/api/themes", self.themes_set)
+        r.add_put("/api/themes/options", self.themes_options)
         r.add_delete("/api/honeypot", self.honeypot_clear)
         r.add_get("/static/{name}", self._static)
         r.add_post("/api/item-images/scan", self.item_images_scan)
@@ -1505,7 +1506,8 @@ class WebInterface:
     async def me(self, request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "setup_mode": self.setup_mode, "panel_path": self.panel_path,
                                   "user": request["user"], "role": request["role"],
-                                  "skin": self.themes.get(request["user"]), **self._tunnel_info()})
+                                  "skin": self.themes.get(request["user"]), "skin_options": self.themes.options(),
+                                  **self._tunnel_info()})
 
     def _tunnel_info(self) -> dict:
         t = self.tunnel
@@ -1518,6 +1520,7 @@ class WebInterface:
     async def themes_list(self, request: web.Request) -> web.Response:
         names = [OWNER] + [u["username"] for u in self.users.list()]
         return web.json_response({"themes": [{"id": k, "label": v} for k, v in THEMES.items()],
+                                  "options": self.themes.options(),
                                   "users": [{"username": n, "theme": self.themes.get(n)} for n in names]})
 
     async def themes_set(self, request: web.Request) -> web.Response:
@@ -1533,6 +1536,14 @@ class WebInterface:
         self.themes.set(username, theme)
         self._audit(f"Panel theme of {username}: {THEMES[theme]}")
         return web.json_response({"ok": True, "username": username, "theme": theme})
+
+    async def themes_options(self, request: web.Request) -> web.Response:
+        """Early 2000s theme: how many popup ads, how often they come back (out-of-range values are clamped)."""
+        data = await self._json(request)
+        options = self.themes.set_options(data if isinstance(data, dict) else {})
+        self._audit("Popup ads: {popups_start} at login, {popups_wave} more every {popups_every} min "
+                    "(at most {popups_max} open)".format(**options))
+        return web.json_response({"ok": True, "options": options})
 
     # ------------------------------------------------------------ Accounts (other admins)
 

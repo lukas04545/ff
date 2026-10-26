@@ -612,8 +612,10 @@ their own. Admins can't change it themselves. The new theme shows the next time 
   scream. The sound is made in the browser, and only starts after their first click (a browser rule). There is no
   fast flashing.
 - **Early 2000s 💾:** an old-school home page with a scrolling marquee, an "under construction" sign, a visitor
-  counter, a sparkle trail and **20 popup ads**. The ads are windows inside the page, not real popups or links. They
-  can be dragged and closed, and a couple come back every few minutes.
+  counter, a sparkle trail and **popup ads**. The ads are windows inside the page, not real popups or links. They
+  can be dragged and closed. Under *Panel themes → Early 2000s popup ads* you set how many appear at login (0–100,
+  default 20), how often they come back (every 0–120 minutes, 0 = never, default 3), how many come back each time
+  (default 2) and the most open at once (default 6). Changes apply when they reload the panel.
 
 ### 🔒 Security of the control panel and the website
 
