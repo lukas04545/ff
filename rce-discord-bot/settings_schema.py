@@ -423,6 +423,11 @@ FIELDS: list[Field] = [
                "you land on the control panel (you still log in as usual). Nothing on the website shows it exists; "
                "any other search is a normal player search. At least 8 characters – pick something nobody would "
                "search for. Not set or \"off\" = off."),
+    Field("WEB_HONEYPOT", "Honeypot at /admin", "web", "bool",
+          help="On (default): from outside, /admin shows a fake login page that never lets anyone in. Every visit "
+               "and login try is logged with IP, location (country/city from Cloudflare), browser and system – "
+               "see Users → Honeypot – and noted in the admin log channel (once per IP every 6 hours). Passwords "
+               "typed there are never stored. Off: /admin just answers \"not found\"."),
     Field("WEB_OPEN_BROWSER", "Open browser on start", "web", "bool"),
     Field("ITEM_IMAGE_URL", "Item pictures from", "web", advanced=True,
           placeholder="https://rustlabs.com/img/items180/{shortname}.png",

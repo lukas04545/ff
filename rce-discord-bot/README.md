@@ -609,6 +609,13 @@ Run the automated tests with `pip install pytest && pytest`.
   change applies right away, and the old link stops working. `/admin` still works on the bot's own PC. Anyone without the
   address gets "not found" for `/admin`, the login, the API and the panel's files, so scanners can't even tell a
   panel exists. Share the address only with your admins.
+- **Honeypot at `/admin`:** anyone outside the bot's PC who opens `/admin` gets a fake login page that never lets
+  anyone in. Every visit and login try is logged with the time, IP, location (country and city from Cloudflare when
+  available), browser, operating system, language, the referring site and the username tried. You see it under
+  **👥 Users → 🍯 Honeypot**, and a short line goes to the admin log channel (once per IP every 6 hours, never a
+  ping). Passwords typed into the fake form are never stored. A website can't see a visitor's MAC address, so it
+  isn't logged. Turn it off under *Settings → Web interface → Honeypot at /admin*; `/admin` then just answers
+  "not found".
 - **Secret way in from the player website:** in *Settings → Web interface → Secret phrase to the panel from the
   website* (`WEB_PANEL_KNOCK`), set a phrase of at least 8 characters. An admin who types it into the **Players**
   search of the player website lands on the control panel and logs in as usual. Nothing on the website shows that this

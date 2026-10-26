@@ -603,10 +603,51 @@ views.users = async (main) => {
         h("ul", {},
           h("li", {}, h("strong", { text: "Same home network: " }), "Settings → Web interface → Reachable from: “Also home network (0.0.0.0)”, restart the bot, then they open ", h("code", { text: "http://<your PC's IP>:" + (location.port || 80) }), "."),
           h("li", {}, h("strong", { text: "From anywhere (recommended): " }), "Settings → Web interface → “Reachable from the internet (Cloudflare tunnel)” → On, restart the bot. You get an encrypted https:// address (shown on the Overview and in the admin log channel) – nothing to open on your router."),
-          h("li", {}, h("strong", { text: "Don't " }), "forward the port on your router: the web interface uses plain HTTP, passwords would travel unencrypted."))));
+          h("li", {}, h("strong", { text: "Don't " }), "forward the port on your router: the web interface uses plain HTTP, passwords would travel unencrypted."))),
+      honeypotCard(fmt));
   }
   load();
 };
+
+// Who tried the fake /admin login (web/honeypot.py)
+function honeypotCard(fmt) {
+  const refHost = (u) => { try { return new URL(u, location.origin).host; } catch { return u; } };
+  const card = h("div", { class: "card" }, h("h2", { text: "🍯 Honeypot – who tried /admin" }));
+  const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  card.append(body);
+  const load = async () => {
+    const d = await api("/api/honeypot").catch(() => null);
+    if (!d) { body.replaceChildren(h("p", { class: "muted", text: "Not available." })); return; }
+    const intro = h("p", { class: "muted", text: d.enabled
+      ? "From outside, /admin shows a fake login page that never lets anyone in – your real panel is at its secret address. Every visit and login try is listed here (the last 500). Passwords typed there are never stored. A web page can't see MAC addresses; location comes from Cloudflare (country, city when available)."
+      : "The honeypot is off (Settings → Web interface → Honeypot at /admin) – /admin just answers “not found”." });
+    if (!d.entries.length) { body.replaceChildren(intro, h("p", { class: "muted", text: "Nobody yet." })); return; }
+    const rows = d.entries.map((e) => h("tr", {},
+      h("td", { class: "muted", text: fmt(e.time) }),
+      h("td", {}, h("code", { text: e.ip })),
+      h("td", { text: e.location }),
+      h("td", { title: e.agent || "", text: `${e.browser} · ${e.os}` }),
+      h("td", { class: "muted", text: e.language || "–" }),
+      h("td", {}, e.method === "POST"
+        ? h("span", { class: "pill warn", text: `login try${e.username ? ": " + e.username : ""}` })
+        : h("span", { class: "muted", text: "visit" })),
+      h("td", { class: "muted", title: e.referer || "", text: e.referer ? refHost(e.referer) : "–" })));
+    body.replaceChildren(intro,
+      h("p", {}, h("strong", { text: `${d.entries.length} entries` }), ` from ${d.ips} IP${d.ips === 1 ? "" : "s"}, ${d.logins} login tr${d.logins === 1 ? "y" : "ies"}.`),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Time", "IP", "Location", "Browser · system", "Language", "What", "Came from"].map((t) => h("th", { text: t })))),
+        h("tbody", {}, rows))),
+      h("div", { class: "row" },
+        h("button", { class: "small", text: "Refresh", onclick: load }),
+        h("button", { class: "small danger", text: "Clear the list", onclick: async () => {
+          if (!confirm("Clear the honeypot list?")) return;
+          await act(() => api("/api/honeypot", { method: "DELETE" }), "Cleared").catch(() => {});
+          load();
+        } })));
+  };
+  load();
+  return card;
+}
 
 // Two-factor login: a code from an authenticator app on top of the password
 function twoFactorCard() {
