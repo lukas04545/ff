@@ -73,8 +73,9 @@ def test_web_interface_with_tunnel(tmp_path, monkeypatch):
         w = WebInterface(None, web_settings=WebSettings(password="", tunnel=True), env_path=env,
                          secret_path=tmp_path / "k")
         w._start_tunnel()
-        assert w.generated_password and len(w.generated_password) >= 16 and w.ws.password == w.generated_password
-        assert f"WEB_PASSWORD={w.generated_password}" in env.read_text()
+        assert w.generated_password and len(w.generated_password) >= 16
+        assert w.ws.password.startswith("pbkdf2_sha256$")                   # only its hash is kept
+        assert f"WEB_PASSWORD={w.ws.password}" in env.read_text() and w.generated_password not in env.read_text()
         assert await asyncio.to_thread(_wait, lambda: w.public_url)
         await asyncio.sleep(0.2)  # banner + PUBLIC_LINK.txt are written on the event loop
         assert w.panel_path.startswith("/panel-") and f"WEB_PANEL_PATH={w.ws.panel_path}" in env.read_text()

@@ -250,7 +250,8 @@ def test_admin_link_web_endpoint(cog):
         await cog.bot.add_cog(cog)
         web = WebInterface(cog.bot, env_path=cog.bot.config.database_path.parent / ".env",
                            secret_path=cog.bot.config.database_path.parent / "web_secret.key")
-        web.ws.password = web.password = "secret123"
+        from web.users import hash_password
+        web.ws.password = web.password_hash = hash_password("secret123")
         c = TestClient(TestServer(web.app))
         await c.start_server()
         H = {"X-Requested-With": "rce-web"}

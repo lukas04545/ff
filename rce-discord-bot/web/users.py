@@ -59,6 +59,12 @@ def needs_rehash(stored: str) -> bool:
     return parts[0] != SCHEME or len(parts) != 4 or parts[1] != str(PBKDF2_ROUNDS)
 
 
+def is_hashed(value: str) -> bool:
+    """A stored password hash (hash_password) – not a plain password."""
+    parts = str(value or "").split("$")
+    return (parts[0] == SCHEME and len(parts) == 4) or (parts[0] == "scrypt" and len(parts) == 3)
+
+
 def same_secret(given: str, expected: str) -> bool:
     """Constant-time comparison of two secrets via their SHA-256 (also hides the length)."""
     return hmac.compare_digest(hashlib.sha256(given.encode()).digest(), hashlib.sha256(expected.encode()).digest())

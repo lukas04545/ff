@@ -44,7 +44,7 @@ from web.caching import YEAR, conditional, maybe_compress
 from web.item_images import THUMB_SIZES, WAIT_FOR_DOWNLOAD
 from web.ratelimit import RateLimiter
 from web.totp import TwoFactorStore, matching_step, new_secret, otpauth_uri
-from web.users import OWNER, UserError, UserStore, same_secret
+from web.users import OWNER, UserError, UserStore, hash_password, is_hashed, same_secret, verify_password
 from cogs.economy import SHOP_KINDS
 from permcheck import check_permissions, explain_forbidden
 from rce import items as itemlist
@@ -73,6 +73,7 @@ GATE_COOKIE = "rce_gate"          # set when the panel is opened at its secret a
 GATE_TTL = 30 * 86400             # … only with it (or a login, or on this PC) – everyone else gets "not found"
 PANEL_PATH = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 KNOCK_MIN = 8                     # WEB_PANEL_KNOCK shorter than this is off (too easy to guess)
+KNOCK_ROUNDS = 100_000            # hash rounds of WEB_PANEL_KNOCK: every long player search is checked against it
 REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, risky actions need no new confirmation
 # Risky actions (run code, change secrets or accounts): need a password confirmation in the last REAUTH_SECONDS
 REAUTH_PATHS = (("POST", "/api/plugins/upload"), ("PUT", "/api/settings"), ("POST", "/api/users"),
@@ -278,10 +279,19 @@ class WebInterface:
             web_settings = WebSettings(True, cfg.web_host, cfg.web_port, cfg.web_password, cfg.web_open_browser,
                                        cfg.web_tunnel, cfg.web_tunnel_token, cfg.web_public_url)
         self.ws = web_settings
-        self.password = web_settings.password
-        if not self.password:
+        # The .env keeps only salted hashes of WEB_PASSWORD / WEB_PANEL_KNOCK – a plain value (typed into the .env
+        # by hand) is hashed and replaced on the start. A login hashes what was typed and compares the hashes.
+        self.password = None                 # a random password made right now (shown in the bot window), else None
+        if not web_settings.password:
             # No fixed password: random password + one-time link (see start())
             self.password = secrets.token_urlsafe(9)
+        self.password_hash = self._hashed_env("WEB_PASSWORD", web_settings.password or self.password,
+                                              save=bool(web_settings.password))
+        if web_settings.password:
+            web_settings.password = self.password_hash
+        if len(web_settings.panel_knock) >= KNOCK_MIN:
+            web_settings.panel_knock = self._hashed_env("WEB_PANEL_KNOCK", web_settings.panel_knock,
+                                                        rounds=KNOCK_ROUNDS)
         self.login_token = secrets.token_urlsafe(24)
         self._secret = self._load_secret(secret_path)
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
@@ -532,15 +542,18 @@ class WebInterface:
         if not ws.password:
             # Public address without a fixed password: create a strong one and keep it in the .env
             password = secrets.token_urlsafe(12)
+            hashed = hash_password(password)
             try:
-                update_env(self.env_path, {"WEB_PASSWORD": password})
+                update_env(self.env_path, {"WEB_PASSWORD": hashed})
             except OSError as exc:
                 self.tunnel_problem = f"Not started: could not save a WEB_PASSWORD to the .env ({exc})."
                 log.error("Cloudflare tunnel %s", self.tunnel_problem)
                 tunnelmod.stop_tunnel()
                 return
-            ws.password = self.password = self.generated_password = password
-            log.warning("Created a web interface password (saved in .env as WEB_PASSWORD): %s", password)
+            ws.password = self.password_hash = hashed
+            self.password = self.generated_password = password
+            log.warning("Created a web interface password (its hash is saved in .env as WEB_PASSWORD): %s",
+                        password)
         log.info("Setting up the Cloudflare tunnel – the link follows in a few seconds …")
         self.tunnel = tunnelmod.ensure_tunnel(ws.port, token=ws.tunnel_token, public_url=ws.public_url)
         loop = asyncio.get_running_loop()
@@ -599,6 +612,18 @@ class WebInterface:
             log.warning("Could not save WEB_PANEL_PATH to the .env (%s) – the panel address changes on restart.",
                         exc)
 
+    def _hashed_env(self, key: str, value: str, *, save: bool = True, rounds: int | None = None) -> str:
+        """The hash of a secret from the .env; a plain value is hashed and the .env updated."""
+        if is_hashed(value):
+            return value
+        hashed = hash_password(value, **({"rounds": rounds} if rounds else {}))
+        if save:
+            try:
+                update_env(self.env_path, {key: hashed})
+            except OSError as exc:
+                log.warning("Could not save the hashed %s to the .env (%s).", key, exc)
+        return hashed
+
     @property
     def panel_path(self) -> str:
         return "/" + self.ws.panel_path
@@ -631,14 +656,15 @@ class WebInterface:
                         secure=self._is_https(request), path="/")
         return resp
 
-    def _knock(self, request: web.Request, tail: str) -> None:
+    async def _knock(self, request: web.Request, tail: str) -> None:
         """The secret way in from the player website: WEB_PANEL_KNOCK typed into the player search opens the panel.
         Nothing on the website gives it away – any other search is just a search."""
         knock = self.ws.panel_knock
-        if (len(knock) < KNOCK_MIN or request.method != "GET" or tail not in ("player", "p/website/player")
+        if (not is_hashed(knock) or request.method != "GET" or tail not in ("player", "p/website/player")
                 or not self._website_running()):
             return
-        if hmac.compare_digest(request.query.get("name", "").strip().encode(), knock.encode()):
+        typed = request.query.get("name", "").strip()[:256]
+        if len(typed) >= KNOCK_MIN and await asyncio.to_thread(verify_password, typed, knock):
             log.info("Control panel opened from the website's secret search by %s", self._client_ip(request))
             raise web.HTTPSeeOther(self.panel_path)
 
@@ -742,7 +768,7 @@ class WebInterface:
         """Secret part of the signature: the owner's WEB_PASSWORD or the user's password hash.
         Changing the password (or deleting/disabling the account) ends all their sessions."""
         if username == OWNER:
-            return self.ws.password
+            return self.password_hash
         return self.users.session_key(username)
 
     def _sign(self, username: str, expires: int, nonce: str) -> str | None:
@@ -1188,7 +1214,7 @@ class WebInterface:
         if tail.split("/", 1)[0] in ROOT_RESERVED:
             raise web.HTTPNotFound(text="Not found.")       # e.g. a wrong method on an API address
         self._public_limit(request)                          # every public page counts, also with the website off
-        self._knock(request, tail)
+        await self._knock(request, tail)
         if not self._website_running():
             if not tail and self._is_local(request):
                 raise web.HTTPFound("/admin")                # no website: on this PC the address opens the panel
@@ -1204,7 +1230,7 @@ class WebInterface:
 
     async def plugin_public(self, request: web.Request, pid: str | None = None) -> web.StreamResponse:
         self._public_limit(request)
-        self._knock(request, request.path.strip("/"))
+        await self._knock(request, request.path.strip("/"))
         return await self._serve_plugin(request, pid or request.match_info["pid"])
 
     async def _serve_plugin(self, request: web.Request, pid: str) -> web.StreamResponse:
@@ -1317,7 +1343,7 @@ class WebInterface:
 
         if username.lower() == OWNER:
             username = OWNER
-            ok = same_secret(password, self.password)
+            ok = await asyncio.to_thread(verify_password, password, self.password_hash)
         else:
             user = await asyncio.to_thread(self.users.authenticate, username, password)
             ok = user is not None
@@ -1345,7 +1371,7 @@ class WebInterface:
 
     def _check_password(self, username: str, password: str) -> bool:
         if username == OWNER:
-            return same_secret(password, self.password)
+            return verify_password(password, self.password_hash)
         return self.users.authenticate(username, password) is not None
 
     async def reauth(self, request: web.Request) -> web.Response:
@@ -1549,6 +1575,10 @@ class WebInterface:
         if errors:
             return web.json_response({"error": "Please fix the highlighted fields.", "errors": errors},
                                      status=400)
+        for key in ("WEB_PASSWORD", "WEB_PANEL_KNOCK"):     # only their hashes go into the .env
+            if key in updates and (key == "WEB_PASSWORD" or len(updates[key]) >= KNOCK_MIN):
+                updates[key] = await asyncio.to_thread(
+                    hash_password, updates[key], **({"rounds": KNOCK_ROUNDS} if key == "WEB_PANEL_KNOCK" else {}))
         if updates:
             update_env(self.env_path, updates, template=ENV_TEMPLATE)
             self._audit("Settings changed: " + ", ".join(sorted(updates)))
@@ -1562,10 +1592,11 @@ class WebInterface:
         if "WEB_PANEL_PATH" in updates and PANEL_PATH.match(updates["WEB_PANEL_PATH"].strip("/")):
             self.ws.panel_path = updates["WEB_PANEL_PATH"].strip("/")     # the new address works right away
         if "WEB_PANEL_KNOCK" in updates:
-            self.ws.panel_knock = updates["WEB_PANEL_KNOCK"].strip()
+            self.ws.panel_knock = updates["WEB_PANEL_KNOCK"]
         if "WEB_PASSWORD" in updates:
             # New password applies immediately; the current session stays logged in
-            self.ws.password = self.password = updates["WEB_PASSWORD"]
+            self.ws.password = self.password_hash = updates["WEB_PASSWORD"]
+            self.password = None
         try:
             load_config(self.env_path)
         except ConfigError as exc:
