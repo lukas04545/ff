@@ -601,6 +601,20 @@ Run the automated tests with `pip install pytest && pytest`.
 ---
 
 
+### 🎨 Panel themes (owner picks one per account)
+
+Under **👥 Users → 🎨 Panel themes** the owner chooses how the control panel looks for every account, including
+their own. Admins can't change it themselves. The new theme shows the next time they open or reload the panel.
+
+- **Neon (default):** the normal look, with the ☀️/🌙 and ✨ buttons.
+- **Jump scares 👻:** a dark, blood-red horror look with flickering headings, dripping cards and red eyes in the
+  corner. Now and then, every few minutes and sometimes on a menu click, a scary face jumps at the screen with a
+  scream. The sound is made in the browser, and only starts after their first click (a browser rule). There is no
+  fast flashing.
+- **Early 2000s 💾:** an old-school home page with a scrolling marquee, an "under construction" sign, a visitor
+  counter, a sparkle trail and **20 popup ads**. The ads are windows inside the page, not real popups or links. They
+  can be dragged and closed, and a couple come back every few minutes.
+
 ### 🔒 Security of the control panel and the website
 
 - **Hidden panel address:** from outside, the panel isn't at `/admin`. It lives at a random secret address

@@ -500,6 +500,7 @@ const isOwner = () => me.role === "owner";
 async function start() {
   try { me = await api("/api/me"); } catch { return; }
   setupMode = !!me.setup_mode;
+  window.RCE_SKINS?.apply(me.skin);              // the panel theme the owner picked for this account
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("hidden",
     (setupMode && a.dataset.view !== "settings") || (a.hasAttribute("data-owner") && !isOwner())));
   $("#whoami").replaceChildren(h("strong", { text: me.user }), h("small", { text: me.role === "owner" ? "Owner" : "Admin" }));
@@ -604,10 +605,35 @@ views.users = async (main) => {
           h("li", {}, h("strong", { text: "Same home network: " }), "Settings → Web interface → Reachable from: “Also home network (0.0.0.0)”, restart the bot, then they open ", h("code", { text: "http://<your PC's IP>:" + (location.port || 80) }), "."),
           h("li", {}, h("strong", { text: "From anywhere (recommended): " }), "Settings → Web interface → “Reachable from the internet (Cloudflare tunnel)” → On, restart the bot. You get an encrypted https:// address (shown on the Overview and in the admin log channel) – nothing to open on your router."),
           h("li", {}, h("strong", { text: "Don't " }), "forward the port on your router: the web interface uses plain HTTP, passwords would travel unencrypted."))),
-      honeypotCard(fmt));
+      themesCard(), honeypotCard(fmt));
   }
   load();
 };
+
+// The panel theme of every account – only the owner picks (web/panel_themes.py)
+function themesCard() {
+  const card = h("div", { class: "card" }, h("h2", { text: "🎨 Panel themes" }),
+    h("p", { class: "muted", text: "Pick how the control panel looks for each account – they can't change it themselves. Neon is the normal look. Jump scares: a creepy look and, now and then, a scary face with a scream (sound starts after their first click). Early 2000s: an old home page with 20 popup ads. Takes effect the next time they open or reload the panel." }));
+  const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  card.append(body);
+  (async () => {
+    const d = await api("/api/themes").catch(() => null);
+    if (!d) { body.replaceChildren(h("p", { class: "muted", text: "Not available." })); return; }
+    const rows = d.users.map((u) => {
+      const sel = h("select", {}, d.themes.map((t) => h("option", { value: t.id, text: t.label })));
+      sel.value = u.theme;
+      sel.addEventListener("change", async () => {
+        const ok = await act(() => api("/api/themes", { method: "PUT", body: { username: u.username, theme: sel.value } }), "Theme saved").catch(() => null);
+        if (!ok) sel.value = u.theme; else u.theme = sel.value;
+        if (ok && u.username === me.user) toast("Reload the page to see your new theme.");
+      });
+      return h("tr", {}, h("td", {}, h("strong", { text: u.username }), u.username === me.user ? h("span", { class: "muted", text: " (you)" }) : null), h("td", {}, sel));
+    });
+    body.replaceChildren(h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Account", "Theme"].map((t) => h("th", { text: t })))), h("tbody", {}, rows))));
+  })();
+  return card;
+}
 
 // Who tried the fake /admin login (web/honeypot.py)
 function honeypotCard(fmt) {

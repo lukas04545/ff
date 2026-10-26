@@ -46,6 +46,7 @@ from web.ratelimit import RateLimiter
 from web.totp import TwoFactorStore, matching_step, new_secret, otpauth_uri
 from web import honeypot
 from web.honeypot import HoneypotLog
+from web.panel_themes import THEMES, ThemeStore
 from web.users import OWNER, UserError, UserStore, hash_password, is_hashed, same_secret, verify_password
 from cogs.economy import SHOP_KINDS
 from permcheck import check_permissions, explain_forbidden
@@ -101,7 +102,7 @@ CSRF_HEADER = "X-Requested-With"
 ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
                        "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection",
-                       "/api/honeypot")
+                       "/api/honeypot", "/api/themes")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -308,6 +309,7 @@ class WebInterface:
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
         self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
         self.honeypot = HoneypotLog(secret_path.parent / "web_honeypot.json")
+        self.themes = ThemeStore(secret_path.parent / "web_themes.json")
         self._honeypot_told: dict[str, float] = {}               # ip:kind -> last admin log line (no flooding)
         self._ensure_panel_path()
         self._pending_2fa: dict[str, tuple[str, float]] = {}     # username -> (new secret, valid until)
@@ -360,6 +362,8 @@ class WebInterface:
         r.add_post("/admin", self._admin)                           # the honeypot's fake login form
         r.add_post("/admin/", self._admin)
         r.add_get("/api/honeypot", self.honeypot_list)
+        r.add_get("/api/themes", self.themes_list)
+        r.add_put("/api/themes", self.themes_set)
         r.add_delete("/api/honeypot", self.honeypot_clear)
         r.add_get("/static/{name}", self._static)
         r.add_post("/api/item-images/scan", self.item_images_scan)
@@ -1500,13 +1504,35 @@ class WebInterface:
 
     async def me(self, request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "setup_mode": self.setup_mode, "panel_path": self.panel_path,
-                                  "user": request["user"], "role": request["role"], **self._tunnel_info()})
+                                  "user": request["user"], "role": request["role"],
+                                  "skin": self.themes.get(request["user"]), **self._tunnel_info()})
 
     def _tunnel_info(self) -> dict:
         t = self.tunnel
         return {"public_url": self.public_url, "tunnel_enabled": self.ws.tunnel,
                 "tunnel_state": t.state if t else ("error" if self.tunnel_problem else None),
                 "tunnel_error": (t.error if t and t.state != "online" else None) or self.tunnel_problem}
+
+    # ------------------------------------------------------------ Panel themes (owner picks one per account)
+
+    async def themes_list(self, request: web.Request) -> web.Response:
+        names = [OWNER] + [u["username"] for u in self.users.list()]
+        return web.json_response({"themes": [{"id": k, "label": v} for k, v in THEMES.items()],
+                                  "users": [{"username": n, "theme": self.themes.get(n)} for n in names]})
+
+    async def themes_set(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        username, theme = str(data.get("username") or ""), str(data.get("theme") or "")
+        if theme not in THEMES:
+            raise ApiError("Unknown theme.")
+        if username != OWNER:
+            user = self.users.get(username)
+            if user is None:
+                raise ApiError("No such account.", 404)
+            username = user["username"]
+        self.themes.set(username, theme)
+        self._audit(f"Panel theme of {username}: {THEMES[theme]}")
+        return web.json_response({"ok": True, "username": username, "theme": theme})
 
     # ------------------------------------------------------------ Accounts (other admins)
 
