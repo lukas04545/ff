@@ -398,3 +398,49 @@ def test_red_and_green_are_sent_again_when_rcon_was_down(zp, monkeypatch):
     zp.bot.online_players = {"Stranger": {}, "Mate": {}}
     asyncio.run(zp.p._update(5))                                                # the next check
     assert zp.p.zone(5)["state"] == "green" and zp.said[-1] == "TEST_GREEN team_5"
+
+
+def test_status_is_sent_again_after_reconnect_and_regularly(zp, monkeypatch):
+    """A zone stuck green in-game (server restart reset it, or a command got lost) is fixed: the bot sends the
+    current status again after RCON reconnects and every reapply_minutes."""
+    configure(zp, team_sync_minutes=0, reapply_minutes=10)
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    zp.bot.online_players = {"Stranger": {}}
+    asyncio.run(zp.p.on_rce_player_leave("Lead"))
+    start = zp.p.zone(5)["offline_since"]
+    asyncio.run(zp.p._update(5, now=start + 31 * 60))
+    assert zp.p.zone(5)["state"] == "red" and zp.said.count("TEST_RED team_5") == 1
+    asyncio.run(zp.p.clock())
+    assert zp.said.count("TEST_RED team_5") == 1                       # just sent: not again yet
+    asyncio.run(zp.p.on_rce_connection(True))                          # e.g. the server restarted
+    asyncio.run(zp.p.clock())
+    assert zp.said.count("TEST_RED team_5") == 2 and zp.p.zone(5)["state"] == "red"
+    zone = zp.p.zone(5)
+    zone["applied"] -= 11 * 60                                          # 11 minutes later
+    zp.p._save(5, zone)
+    asyncio.run(zp.p.clock())
+    assert zp.said.count("TEST_RED team_5") == 3
+    old = zp.p.zone(5)                                                  # zones from before this update
+    old.pop("applied")
+    zp.p._save(5, old)
+    asyncio.run(zp.p.clock())
+    assert zp.said.count("TEST_RED team_5") == 4
+    asyncio.run(zp.m.save_settings("offline_protection", {"reapply_minutes": 0}))
+    asyncio.run(zp.p.on_rce_connection(True))
+    asyncio.run(zp.p.clock())
+    assert zp.said.count("TEST_RED team_5") == 4                       # 0 = only on changes
+
+
+def test_panel_shows_who_keeps_a_zone_green(zp):
+    configure(zp)
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    zp.bot.online_players = {"mate": {}}                                # names compared without case
+    asyncio.run(zp.p._update(5))
+    z = zp.p.zone_list()[0]
+    assert z["state"] == "green" and z["online"] == ["Mate"] and z["red_at"] is None
+    zp.bot.online_players = {}
+    asyncio.run(zp.p.on_rce_player_leave("Mate"))
+    z = zp.p.zone_list()[0]
+    assert z["online"] == [] and z["red_at"] == zp.p.zone(5)["offline_since"] + 30 * 60

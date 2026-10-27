@@ -3465,8 +3465,13 @@ function protectionZones(r, reload) {
     h("tbody", {}, r.zones.map((z) => h("tr", {},
       h("td", {}, h("code", { text: z.name })),
       h("td", { text: z.leader }),
-      h("td", { class: "muted", text: z.members.length ? z.members.join(", ") : "–" }),
-      h("td", {}, h("span", { class: `pill keep ${z.state === "red" ? "bad" : "ok"}`, text: z.state === "red" ? "🔴 red – offline" : "🟢 green" })),
+      h("td", {}, z.members.length ? z.members.flatMap((m, i) => [i ? ", " : "",
+        (z.online || []).includes(m) ? h("strong", { style: "color:var(--ok)", title: "online right now", text: `🟢 ${m}` }) : h("span", { class: "muted", text: m })]) : "–"),
+      h("td", {}, h("span", { class: `pill keep ${z.state === "red" ? "bad" : "ok"}`, text: z.state === "red" ? "🔴 red – offline" : "🟢 green" }),
+        h("div", { class: "muted", style: "font-size:.8rem;margin-top:.2rem", text: z.state === "red" ? ""
+          : (z.online || []).length ? `kept green by: ${z.online.join(", ")}`
+          : z.red_at ? `turns red ${z.red_at <= now ? "at the next check" : "in " + fmtDuration(z.red_at - now)}` : "" }),
+        z.applied ? null : h("div", { class: "muted", style: "font-size:.8rem", text: "status not sent yet – goes out at the next check" })),
       h("td", { class: "muted", text: z.offline_since ? `${fmt(z.offline_since)} (${fmtDuration(now - z.offline_since)} ago)` : "someone is online" }),
       h("td", { text: z.expires_at ? `${fmt(z.expires_at)} (in ${fmtDuration(Math.max(0, z.expires_at - now))})` : z.offline_since ? "never" : "–" }),
       h("td", { class: "muted", text: `${Math.round(z.x)} ${Math.round(z.y)} ${Math.round(z.z)}` }),
