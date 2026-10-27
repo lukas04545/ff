@@ -250,6 +250,25 @@ class TicketPanelView(discord.ui.View):
         await self.cog.start_ticket_flow(interaction)
 
 
+class TicketServerButton(discord.ui.DynamicItem[discord.ui.Button], template=r"srv:(?P<sid>[a-z0-9-]+):ticket-open"):
+    """Several servers on one Discord bot: "which server is your ticket for?" – the click goes straight to that
+    server's bot (discord_router.py routes "srv:<id>:…"), which opens the ticket as its own."""
+
+    def __init__(self, sid: str, label: str = "", emoji: str | None = None) -> None:
+        super().__init__(discord.ui.Button(label=label or sid, emoji=emoji, style=discord.ButtonStyle.primary,
+                                           custom_id=f"srv:{sid}:ticket-open"))
+        self.sid = sid
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
+        return cls(match["sid"])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        cog = interaction.client.get_cog("Tickets")
+        if cog is not None:
+            await cog.start_ticket_flow(interaction, picked=True)
+
+
 class TicketControlView(discord.ui.View):
     """Persistent buttons in every ticket channel."""
 
@@ -310,6 +329,7 @@ class Tickets(commands.Cog):
         self.bot.add_view(TicketPanelView(self))
         self.bot.add_view(TicketControlView(self))
         self.bot.add_view(ResolveView(self))
+        self.bot.add_dynamic_items(TicketServerButton)
         if self.bot.config.ticket_category_id and not self.ai.enabled:
             log.warning("Tickets enabled, but no DEEPSEEK_API_KEY – tickets go straight to staff. "
                         "Create an API key: %s", PLATFORM_KEYS_URL)
@@ -399,7 +419,34 @@ class Tickets(commands.Cog):
 
     # ------------------------------------------------------------ Open ticket
 
-    async def start_ticket_flow(self, interaction: discord.Interaction) -> None:
+    def ticket_servers(self) -> list[str]:
+        """Several servers on this Discord bot: the servers a ticket can be for (else just this one)."""
+        if getattr(self.bot, "router", None) is None:
+            return []
+        import discord_router
+        found = discord_router.participants()
+        return found if len(found) > 1 else []
+
+    def _server_prefix(self) -> str:
+        """Several servers on this Discord bot: ticket channels of an extra server start with its id ("kryvon2x-…")
+        so they don't mix with the main server's numbers."""
+        import servers
+        return f"{servers.server_id()}-" if self.ticket_servers() and servers.is_child() else ""
+
+    def other_server_names(self) -> list[str]:
+        import servers
+        return [servers.server_name(s) for s in self.ticket_servers() if s != servers.server_id()]
+
+    async def start_ticket_flow(self, interaction: discord.Interaction, *, picked: bool = False) -> None:
+        choices = [] if picked else self.ticket_servers()
+        if choices:
+            # First: which server is it about? Each server's bot handles its own tickets (its kits, its AI).
+            import servers
+            view = discord.ui.View(timeout=300)
+            for sid in choices:
+                view.add_item(TicketServerButton(sid, servers.server_name(sid), "🏠" if sid == servers.MAIN_ID else "🛢️"))
+            await interaction.response.send_message("🎫 Which server is your ticket about?", view=view, ephemeral=True)
+            return
         if not self.enabled or interaction.guild is None:
             await self._not_enabled(interaction)
             return
@@ -440,8 +487,9 @@ class Tickets(commands.Cog):
                                                            read_message_history=True, attach_files=True)
         slug = re.sub(r"[^a-z0-9]+", "-", user.name.lower()).strip("-")[:20] or "user"
         try:
+            prefix = self._server_prefix()
             channel = await guild.create_text_channel(
-                f"ticket-{ticket_id:04d}-{slug}", category=category, overwrites=overwrites,
+                f"{prefix}ticket-{ticket_id:04d}-{slug}", category=category, overwrites=overwrites,
                 topic=f"Ticket #{ticket_id} by {user} ({user.id})", reason=f"Support ticket #{ticket_id}")
         except discord.HTTPException as exc:
             self.bot.db.delete_ticket(ticket_id)
@@ -610,6 +658,7 @@ class Tickets(commands.Cog):
         system = build_system_prompt(server_name=self._server_name(), topic=ticket["topic"],
                                      ingame_name=ticket["ingame_name"], status=self._status_text(),
                                      knowledge=self._knowledge(), kit_tools=bool(tools),
+                                     other_servers=self.other_server_names(),
                                      giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools),
                 purchase_tools=any(t in PURCHASE_TOOLS for t in tools),
                 protection_tools=any(t in PROTECTION_TOOLS for t in tools), keep_open=bool(ticket["keep_open"]))

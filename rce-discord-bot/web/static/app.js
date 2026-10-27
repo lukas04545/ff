@@ -1788,6 +1788,8 @@ async function switchServer(id) {
   status = null; settingsIndex = null; paletteItems = [];
   await refreshConnection().catch(() => {});
   await start();
+  const now = await api("/api/servers").then((d) => d.current).catch(() => id);
+  if (now !== id) { toast("The switch didn't stick – reload the page (Ctrl+F5) and pick the server again.", true); return false; }
   return true;
 }
 

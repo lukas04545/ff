@@ -619,6 +619,13 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
     server), and *show each server for … seconds*. Each server's short name in it is *This server's name in the bot
     status* (in that server's own panel).
   - An existing server with its own bot can be switched over with **Use the main Discord bot**.
+  - **Tickets are split by server.** "Open ticket" first asks *Which server is your ticket about?* (🏠 Main server /
+    🛢️ Kryvon2x). The chosen server's bot opens the ticket as its own, so everything in it is that server's: its
+    AI, its kits, its rules, and its staff tools. The AI is told the ticket is only about that server. It never
+    gives or promises anything for another server, and asks the player to open a new ticket for the other one. A kit
+    that's only for another server can't be claimed through it either. An extra server's ticket channels start with
+    its name (`kryvon2x-ticket-0007-…`). Until it has its own, it uses the main server's ticket category, ticket log,
+    support roles and DeepSeek key.
 - **A Discord bot of its own:** paste its token. Create another application in the Discord Developer Portal: Bot →
   Reset Token, switch on the Message Content and Server Members intents, and invite it to your Discord. The Discord
   server ID is optional; empty means the same Discord as the main server.
