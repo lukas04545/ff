@@ -40,7 +40,8 @@ ENV_SHARED_BOT = "RCE_SHARED_BOT"   # "1": this extra server uses the main serve
 SERVERS_DIR = "servers"
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 # Admin abuse protection: one setup for every server (edited on the main server)
-SHARED_KEYS = tuple(f.key for f in FIELDS if f.group == "abuse")
+OWN_ABUSE_KEY = "ABUSE_OWN_SETTINGS"   # an extra server with its own abuse protection settings (not the main's)
+SHARED_KEYS = tuple(f.key for f in FIELDS if f.group == "abuse" and f.key != OWN_ABUSE_KEY)
 GUILD_SPECIFIC = frozenset(f.key for f in FIELDS if f.group == "abuse" and f.pick)   # roles/channels of one Discord
 LOGIN_KEYS = ("WEB_PASSWORD",)
 DISCORD_KEYS = ("DISCORD_TOKEN", "GUILD_ID")      # servers on the main server's Discord bot: taken from the main
@@ -143,12 +144,23 @@ def all_servers() -> list[dict]:
 
 # ------------------------------------------------------------ Shared settings
 
+def _truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "ja", "on")
+
+
+def own_abuse_settings(sid: str) -> bool:
+    """An extra server set to its own abuse protection settings (instead of the main server's)."""
+    return sid != MAIN_ID and _truthy(read_env(env_path(sid)).get(OWN_ABUSE_KEY))
+
+
 def shared_values(child_env: dict) -> dict[str, str]:
     """The main server's abuse protection settings and owner password, for an extra server. Discord roles and
     channels only if both use the same Discord server (IDs of another Discord mean nothing there)."""
     main_env = read_env(env_path(MAIN_ID))
     same_guild = (child_env.get("GUILD_ID") or "").strip() in ("", (main_env.get("GUILD_ID") or "").strip())
-    out = {k: main_env[k] for k in SHARED_KEYS if k in main_env and (same_guild or k not in GUILD_SPECIFIC)}
+    own = _truthy(child_env.get(OWN_ABUSE_KEY))       # its own abuse protection settings: not the main's
+    out = {} if own else {k: main_env[k] for k in SHARED_KEYS
+                          if k in main_env and (same_guild or k not in GUILD_SPECIFIC)}
     for key in LOGIN_KEYS:
         if main_env.get(key):
             out[key] = main_env[key]

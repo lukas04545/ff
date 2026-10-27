@@ -89,7 +89,9 @@ def locked_settings() -> frozenset[str]:
     if not servers.is_child():
         return frozenset()
     import discord_router
-    return SHARED_SETTINGS | frozenset(servers.DISCORD_KEYS) if discord_router.uses_main_bot() else SHARED_SETTINGS
+    locked = SHARED_SETTINGS - frozenset(servers.SHARED_KEYS) if servers.own_abuse_settings(servers.server_id()) \
+        else SHARED_SETTINGS                                      # own abuse protection settings: editable here
+    return locked | frozenset(servers.DISCORD_KEYS) if discord_router.uses_main_bot() else locked
 KNOCK_MIN = 8                     # WEB_PANEL_KNOCK shorter than this is off (too easy to guess)
 KNOCK_ROUNDS = 100_000            # hash rounds of WEB_PANEL_KNOCK: every long player search is checked against it
 REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, risky actions need no new confirmation
@@ -486,6 +488,7 @@ class WebInterface:
         r.add_get("/api/population", self.population)
         r.add_get("/api/abuse", self.abuse_status)
         r.add_post("/api/abuse/cases/{case_id:\\d+}/{action:approve|reject}", self.abuse_decide)
+        r.add_post("/api/abuse/loops/stop", self.abuse_loop_stop)
         r.add_get("/api/shop", self.shop)
         r.add_post("/api/shop/items", self.create_shop_item)
         r.add_put("/api/shop/items/{item_id:\\d+}", self.update_shop_item)
@@ -1799,6 +1802,8 @@ class WebInterface:
         locked = locked_settings()
         fields = []
         for f in settings_schema.FIELDS:
+            if f.key == servers.OWN_ABUSE_KEY and not servers.is_child():
+                continue                        # only extra servers choose between the main's settings and their own
             item = {"key": f.key, "label": f.label, "group": f.group, "kind": f.kind, "help": f.help,
                     "required": f.required, "pick": f.pick, "advanced": f.advanced,
                     "placeholder": f.placeholder, "choices": list(f.choices)}
@@ -2843,6 +2848,12 @@ class WebInterface:
         if not ok:
             raise ApiError(text, 409)
         return web.json_response({"ok": True, "message": text})
+
+    async def abuse_loop_stop(self, request: web.Request) -> web.Response:
+        player = self._text(await self._json(request), "player", limit=64)
+        if not self._cog("AbuseGuard").stop_loop(player, f"by {_current_user.get()} (web)"):
+            raise ApiError("That loop isn't running any more.", 409)
+        return web.json_response({"ok": True})
 
     async def population(self, request: web.Request) -> web.Response:
         try:

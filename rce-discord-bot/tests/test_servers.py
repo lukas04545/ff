@@ -276,3 +276,24 @@ def test_every_server_gets_the_same_password_hash(main_dir):
     assert main_hash.startswith("pbkdf2_sha256$") and verify_password("hunter2hunter2", main_hash)
     servers.sync_env("two")
     assert read_env(servers.env_path("two"))["WEB_PASSWORD"] == main_hash
+
+
+def test_an_extra_server_can_have_its_own_abuse_protection(main_dir, monkeypatch):
+    """ABUSE_OWN_SETTINGS on an extra server: its forbidden items, allowed names and commands stay its own."""
+    from envfile import update_env
+    servers.create_server("Two", "1.2.3.4", "28016", "pw", TOKEN_2)
+    assert read_env(servers.env_path("two"))["ABUSE_ITEMS"] == "rocket,c4"          # the main's, by default
+    update_env(servers.env_path("two"), {"ABUSE_OWN_SETTINGS": "true", "ABUSE_ITEMS": "ak47,m249",
+                                         "ABUSE_LOOP_SECONDS": "10"})
+    assert servers.own_abuse_settings("two") and not servers.own_abuse_settings("main")
+    assert "ABUSE_ITEMS" not in servers.sync_env("two")                               # not overwritten
+    assert read_env(servers.env_path("two"))["ABUSE_ITEMS"] == "ak47,m249"
+    monkeypatch.setenv(servers.ENV_ID, "two")
+    monkeypatch.setenv(servers.ENV_SHARED, str(main_dir / "data"))
+    monkeypatch.chdir(main_dir / "servers" / "two")
+    from web.server import locked_settings
+    locked = locked_settings()
+    assert "ABUSE_ITEMS" not in locked and "ABUSE_LOOP_SECONDS" not in locked and "WEB_PASSWORD" in locked
+    update_env(servers.env_path("two"), {"ABUSE_OWN_SETTINGS": "false"})              # back to the main's
+    assert "ABUSE_ITEMS" in locked_settings()
+    assert servers.sync_env("two")["ABUSE_ITEMS"] == "rocket,c4"

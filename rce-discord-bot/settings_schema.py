@@ -337,38 +337,54 @@ FIELDS: list[Field] = [
                "bot removes their admin and "
                "kills them in-game, and pings staff. Only active once you set who IS allowed (the next two fields) – "
                "so the owner can never be hit by accident."),
+    Field("ABUSE_OWN_SETTINGS", "This server has its own abuse protection settings", "abuse", "bool",
+          help="Extra servers only (Servers page). Off (default) = this server uses the main server's abuse "
+               "protection settings. On = its own: forbidden items, who is allowed, the commands and the loop below "
+               "are set here, for this server only. A punishment on any server still removes the abuser's admin on "
+               "every server."),
     Field("ABUSE_EXEMPT_ROLE_IDS", "Allowed Discord roles (owner, co-owner)", "abuse", "ids", pick="role",
           help="Members with one of these roles may spawn – the bot knows their in-game name from /customkit link."),
     Field("ABUSE_EXEMPT_PLAYERS", "Allowed in-game names", "abuse", placeholder="e.g. MyGamertag, CoOwnerPSN",
           help="Comma-separated, upper/lower case doesn't matter. Works without linking – put the owner's name here."),
-    Field("ABUSE_ITEMS", "Forbidden items", "abuse", advanced=True, placeholder="rocket,c4,timed explosive,explosive.timed",
-          help="Comma-separated words matched in the spawned item's name (rocket launchers don't count)."),
-    Field("ABUSE_REMOVE_ADMIN_COMMANDS", "Commands to remove admin", "abuse", advanced=True,
+    Field("ABUSE_ITEMS", "Forbidden items", "abuse", placeholder="rocket,c4,timed explosive,explosive.timed",
+          help="What may NOT be spawned with the admin panel – everything else is allowed. Comma-separated words "
+               "matched in the spawned item's name, e.g. rocket,c4,explosive.timed,satchel,ak47,m249 (rocket "
+               "launchers don't count as rockets)."),
+    Field("ABUSE_REMOVE_ADMIN_COMMANDS", "Commands to remove admin", "abuse",
           placeholder='removeowner "{name}";removemoderator "{name}"',
           help="Separated by ; – {name} = player. Test them first with /rcon on a test account; the server's reply is "
                "shown in the alert."),
-    Field("ABUSE_BEFORE_KILL_COMMANDS", "Commands before the kill", "abuse", advanced=True,
+    Field("ABUSE_BEFORE_KILL_COMMANDS", "Commands before the kill", "abuse",
           placeholder='global.god 0 "{name}"',
           help="Run right before the kill (default: switch god mode off so the kill works). Separated by ; – "
                "{name} = player, - = nothing."),
-    Field("ABUSE_TELEPORT_COMMAND", "Teleport the abuser away before the kill", "abuse", advanced=True,
+    Field("ABUSE_TELEPORT_COMMAND", "Teleport the abuser away before the kill", "abuse",
           placeholder='global.teleportpos (999,999,999) "{name}"',
           help="Run before the kill to teleport the abuser far away (default: to (999,999,999)). {name} = player, "
                "empty = don't teleport."),
-    Field("ABUSE_KILL_DELAY", "Wait before the kill (seconds)", "abuse", "int", advanced=True, placeholder="10",
+    Field("ABUSE_KILL_DELAY", "Wait before the kill (seconds)", "abuse", "int", placeholder="10",
           help="Seconds to wait after the teleport before the kill command runs (0 = kill right away). Max 300."),
-    Field("ABUSE_KILL_COMMAND", "Kill command", "abuse", advanced=True, placeholder='global.killplayer "{name}"'),
-    Field("ABUSE_AFTER_KILL_COMMANDS", "Commands right after the kill", "abuse", advanced=True, placeholder="-",
+    Field("ABUSE_KILL_COMMAND", "Kill command", "abuse", placeholder='global.killplayer "{name}"'),
+    Field("ABUSE_AFTER_KILL_COMMANDS", "Commands right after the kill", "abuse", placeholder="-",
           help="Run automatically right after the kill, separated by ; – {name} = player. Default: nothing."),
-    Field("ABUSE_APPROVAL_COMMANDS", "Commands only after staff approval", "abuse", advanced=True,
+    Field("ABUSE_APPROVAL_COMMANDS", "Commands only after staff approval", "abuse",
           placeholder='entity.deleteby "{name}"',
           help="NOT run automatically: staff approves or rejects them with the buttons on the Discord alert or here in "
                "the web interface. Default entity.deleteby deletes everything the player owns (bases, deployables). "
                "Separated by ; – {name} = player, - = nothing."),
-    Field("ABUSE_ON_RESPAWN_COMMANDS", "Commands when they respawn", "abuse", advanced=True,
+    Field("ABUSE_ON_RESPAWN_COMMANDS", "Commands when they respawn", "abuse",
           placeholder='global.sleep "{name}"',
           help="Run once the punished player respawns (\"has entered the game\" in the log, within 1 hour). "
                "Separated by ; – {name} = player, - = nothing."),
+    Field("ABUSE_LOOP_COMMANDS", "Loop: commands to repeat", "abuse", placeholder='global.killplayer "{name}"',
+          help="Repeated after the punishment, like the RCON repeater – e.g. kill them again and again. Separated "
+               "by ; – {name} = player. Only runs when \"Loop: every … seconds\" is set."),
+    Field("ABUSE_LOOP_SECONDS", "Loop: every … seconds", "abuse", "int", placeholder="0",
+          help="0 (default) = no loop. Otherwise the loop commands run every this many seconds (at least 3) – "
+               "staff stop it with ⏹ Stop loop on the Discord alert or here in the web interface. Keeps running "
+               "after a bot restart."),
+    Field("ABUSE_LOOP_TIMES", "Loop: how many times", "abuse", "int", placeholder="0",
+          help="0 (default) = forever, until staff press Stop. Otherwise it stops by itself after this many runs."),
     Field("AI_ABUSE_WATCH", "AI watches the server log for admin abuse", "abuse", "bool",
           help="On (default, needs the DeepSeek key): the AI checks admin actions in the server log (admin-panel "
                "spawns, kit gives, bans, role changes, the kills of those admins) and flags suspicious patterns – "
