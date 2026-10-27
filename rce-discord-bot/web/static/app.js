@@ -1796,7 +1796,7 @@ const SERVER_STATES = { running: ["ok", "Running"], starting: ["warn", "Starting
 
 views.servers = async (main) => {
   main.append(h("h1", { text: "Servers" }),
-    h("p", { class: "muted", text: "Run more than one Rust server with this bot. Every server has its own RCON, console, kits, players, stats, tickets, Discord channels and its own control panel. Shared by all: the logins (accounts, two-factor login, panel themes) and the admin abuse protection – set it up on the main server; a punishment on one server removes the abuser's admin on every server." }));
+    h("p", { class: "muted", text: "Run more than one Rust server with this bot – all on one Discord bot if you like (every command then has a “server” choice). Every server has its own RCON, console, kits, players, stats, tickets, Discord channels and its own control panel. Shared by all: the logins (accounts, two-factor login, panel themes) and the admin abuse protection – set it up on the main server; a punishment on one server removes the abuser's admin on every server." }));
   const list = h("div");
   main.append(list);
   const load = async () => {
@@ -1822,6 +1822,11 @@ views.servers = async (main) => {
             logBox.textContent = r.log || "No log yet.";
             logBox.classList.toggle("hidden");
           } }),
+          s.discord === "own" ? h("button", { class: "small", text: "Use the main Discord bot", title: "One bot for every server: pick the server in each command", onclick: async () => {
+            if (!confirm(`Switch ${s.name} to the main server's Discord bot? Its own bot stops answering; commands for it then get a "server" choice. It restarts now.`)) return;
+            await act(() => api(`/api/servers/${s.id}/use-main-bot`, { method: "POST" }), "Switched – restarting …").catch(() => {});
+            setTimeout(load, 1500);
+          } }) : null,
           h("button", { class: "small danger", text: "Remove", onclick: async () => {
             if (!confirm(`Remove ${s.name}? It stops and leaves this list. Its folder (database, settings, kits) is kept as servers/_removed-${s.id}-… so nothing is lost.`)) return;
             await act(() => api(`/api/servers/${s.id}`, { method: "DELETE" }), "Removed").catch(() => {});
@@ -1831,7 +1836,7 @@ views.servers = async (main) => {
       return h("div", { class: "card" },
         h("h2", {}, (s.main ? "🏠 " : "🛢️ ") + s.name, s.id === d.current ? h("span", { class: "muted", text: " (this panel)" }) : null),
         h("p", {}, h("span", { class: `pill ${tone}`, text: label }), " ",
-          h("span", { class: "muted", text: `RCON ${s.rcon || "–"} · panel port ${s.port}` })),
+          h("span", { class: "muted", text: `RCON ${s.rcon || "–"} · panel port ${s.port} · Discord: ${s.main ? "the main bot" : s.discord === "shared" ? `the main bot (pick “${s.name}” in a command's server choice, or use it in this server's channels)` : "its own bot"}` })),
         s.public_url ? h("p", { class: "muted" }, "Public link: ", h("code", { text: s.public_url + s.panel_path })) : null,
         h("div", { class: "row" }, buttons.filter(Boolean)), logBox);
     });
@@ -1848,14 +1853,20 @@ function addServerCard(reload) {
     rcon_host: h("input", { placeholder: "Server IP" }),
     rcon_port: h("input", { placeholder: "RCON port", inputmode: "numeric", style: "max-width:8rem" }),
     rcon_password: h("input", { type: "password", placeholder: "RCON password", autocomplete: "new-password" }),
-    discord_token: h("input", { type: "password", placeholder: "Discord bot token (a second bot)", autocomplete: "new-password" }),
+    discord_token: h("input", { type: "password", placeholder: "Its Discord bot token", autocomplete: "new-password" }),
     guild_id: h("input", { placeholder: "Discord server ID (empty = same as the main server)", inputmode: "numeric", style: "min-width:20rem" }),
   };
+  const mode = h("select", {}, h("option", { value: "shared", text: "The main Discord bot – pick the server in each command (recommended)" }),
+    h("option", { value: "own", text: "A Discord bot of its own" }));
+  const ownRow = h("div", { class: "row hidden" }, f.discord_token, f.guild_id);
+  mode.addEventListener("change", () => ownRow.classList.toggle("hidden", mode.value !== "own"));
   return h("div", { class: "card" }, h("h2", { text: "➕ Add a server" }),
-    h("p", { class: "muted", text: "You need a second Discord bot for it – one Discord bot can only answer one server's slash commands: Discord Developer Portal → New Application → Bot → Reset Token, enable the Message Content and Server Members intents, and invite it to your Discord. The new server starts right away with its own panel; set its channels and everything else there (Settings)." }),
+    h("p", { class: "muted", text: "With the main Discord bot, every slash command gets a “server” choice (the server whose channel you're in is picked by itself) and each server's buttons, tickets and channels stay its own. Or give it a Discord bot of its own (Developer Portal → New Application → Bot → Reset Token, Message Content + Server Members intents, invite it). The new server starts right away with its own panel – set its channels there (Settings)." }),
     h("form", { class: "stack", onsubmit: async (e) => {
       e.preventDefault();
       const body = Object.fromEntries(Object.entries(f).map(([k, el]) => [k, el.value.trim()]));
+      if (mode.value === "shared") { body.discord_token = ""; body.guild_id = ""; }
+      else if (!body.discord_token) { toast("Enter its Discord bot token – or pick the main Discord bot.", true); return; }
       const r = await act(() => api("/api/servers", { method: "POST", body }), "Server added – starting …").catch(() => null);
       if (!r) return;
       Object.values(f).forEach((el) => { el.value = ""; });
@@ -1863,7 +1874,7 @@ function addServerCard(reload) {
       loadServerSwitch();
     } },
       h("div", { class: "row" }, f.name), h("div", { class: "row" }, f.rcon_host, f.rcon_port, f.rcon_password),
-      h("div", { class: "row" }, f.discord_token, f.guild_id),
+      h("label", { class: "stack" }, "Discord bot", mode), ownRow,
       h("div", {}, h("button", { class: "primary", text: "Add server" }))));
 }
 

@@ -78,6 +78,14 @@ GATE_TTL = 30 * 86400             # … only with it (or a login, or on this PC)
 PANEL_PATH = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 HONEYPOT_TELL_EVERY = 6 * 3600    # admin log: one line per IP (visit / login try) per 6 hours
 SHARED_SETTINGS = frozenset(servers.SHARED_KEYS + servers.LOGIN_KEYS)   # extra servers: from the main server
+
+
+def locked_settings() -> frozenset[str]:
+    """Settings an extra server takes from the main server (shown, but not changeable on its panel)."""
+    if not servers.is_child():
+        return frozenset()
+    import discord_router
+    return SHARED_SETTINGS | frozenset(servers.DISCORD_KEYS) if discord_router.uses_main_bot() else SHARED_SETTINGS
 KNOCK_MIN = 8                     # WEB_PANEL_KNOCK shorter than this is off (too easy to guess)
 KNOCK_ROUNDS = 100_000            # hash rounds of WEB_PANEL_KNOCK: every long player search is checked against it
 REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, risky actions need no new confirmation
@@ -369,6 +377,7 @@ class WebInterface:
         r.add_get("/api/servers", self.servers_list)                     # several Rust servers (servers.py)
         r.add_post("/api/servers", self.servers_create)
         r.add_post("/api/servers/{sid}/{action:start|stop|restart}", self.servers_action)
+        r.add_post("/api/servers/{sid}/use-main-bot", self.servers_use_main_bot)
         r.add_delete("/api/servers/{sid}", self.servers_remove)
         r.add_get("/api/servers/{sid}/log", self.servers_log)
         r.add_post("/api/kits/copy", self.kits_copy)
@@ -1562,7 +1571,8 @@ class WebInterface:
         except ValueError as exc:
             raise ApiError(str(exc))
         manager.start(info["id"])
-        self._audit(f"Server added: {info['name']} (RCON {info['rcon']}, panel port {info['port']})")
+        self._audit(f"Server added: {info['name']} (RCON {info['rcon']}, panel port {info['port']}, Discord: "
+                    + ("the main bot" if info["discord"] == "shared" else "its own bot") + ")")
         return web.json_response({"ok": True, "server": info})
 
     async def servers_action(self, request: web.Request) -> web.Response:
@@ -1571,6 +1581,15 @@ class WebInterface:
         await asyncio.to_thread(getattr(manager, action), sid)
         self._audit(f"Server {servers.server_name(sid)}: {action}")
         return web.json_response({"ok": True, **manager.info(sid)})
+
+    async def servers_use_main_bot(self, request: web.Request) -> web.Response:
+        """Switches an extra server from its own Discord bot to the main server's (one bot for every server)."""
+        manager = self._servers_owner(request)
+        sid = self._known_server(request.match_info["sid"])
+        await asyncio.to_thread(servers.use_main_bot, sid)
+        manager.restart(sid)
+        self._audit(f"Server {servers.server_name(sid)} now uses the main Discord bot")
+        return web.json_response({"ok": True})
 
     async def servers_remove(self, request: web.Request) -> web.Response:
         manager = self._servers_owner(request)
@@ -1707,14 +1726,17 @@ class WebInterface:
 
     async def get_settings(self, request: web.Request) -> web.Response:
         env = read_env(self.env_path)
+        locked = locked_settings()
         fields = []
         for f in settings_schema.FIELDS:
             item = {"key": f.key, "label": f.label, "group": f.group, "kind": f.kind, "help": f.help,
                     "required": f.required, "pick": f.pick, "advanced": f.advanced,
                     "placeholder": f.placeholder, "choices": list(f.choices)}
-            if servers.is_child() and f.key in SHARED_SETTINGS:
-                item["locked"] = ("Set on the main server's panel – the same for every server."
-                                  if f.key != "WEB_PASSWORD" else "Same as on the main server – change it there.")
+            if f.key in locked:
+                item["locked"] = {"WEB_PASSWORD": "Same as on the main server – change it there.",
+                                  "DISCORD_TOKEN": "This server uses the main server's Discord bot.",
+                                  "GUILD_ID": "This server uses the main server's Discord bot."}.get(
+                    f.key, "Set on the main server's panel – the same for every server.")
             if f.kind == "secret":
                 item["is_set"] = bool((env.get(f.key) or "").strip())  # never send secrets out
             else:
@@ -1740,7 +1762,7 @@ class WebInterface:
         updates, errors = {}, {}
         for key, raw in values.items():
             f = settings_schema.FIELDS_BY_KEY.get(key)
-            if f is None or (servers.is_child() and key in SHARED_SETTINGS):
+            if f is None or key in locked_settings():
                 continue                     # an extra server takes these from the main server (servers.py)
             value = "" if raw is None else str(raw)
             if f.kind != "textarea":

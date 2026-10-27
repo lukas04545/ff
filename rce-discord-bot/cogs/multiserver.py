@@ -36,15 +36,53 @@ class MultiServer(commands.Cog):
         self.bus = servers.shared_data() / BUS_FILE
         self._offset = self.bus.stat().st_size if self.bus.exists() else 0     # only what happens from now on
         self._seen: set[str] = set()
+        self._synced_state: tuple = ()
 
     async def cog_load(self) -> None:
         self.bus_loop.start()
         if servers.is_child():
             self.sync_loop.start()
+        else:
+            self.commands_loop.start()
 
     async def cog_unload(self) -> None:
-        for loop in (self.bus_loop, self.sync_loop):
+        for loop in (self.bus_loop, self.sync_loop, self.commands_loop):
             loop.cancel()
+
+    # ------------------------------------------------------------ Main server: one Discord bot for several servers
+
+    def _commands_state(self) -> tuple:
+        """Changes when a server joins/leaves the main bot or its slash commands change."""
+        import discord_router
+        state = []
+        for sid in discord_router.shared_bot_servers():
+            path = discord_router.commands_dir() / f"{sid}.json"
+            state.append((sid, servers.server_name(sid), path.stat().st_mtime if path.exists() else 0))
+        return tuple(state)
+
+    @tasks.loop(seconds=20)
+    async def commands_loop(self) -> None:
+        import discord_router
+        state = self._commands_state()
+        if state == self._synced_state:
+            return
+        if state and discord_router.setup(self.bot) is None:
+            return
+        try:
+            synced = await self.bot.sync_commands()
+        except Exception as exc:              # Discord unreachable – next round tries again
+            log.warning("Registering the slash commands for every server failed: %s", exc)
+            return
+        self._synced_state = state
+        if state:
+            log.info("Slash commands registered for %d server(s) on this Discord bot (%d commands).",
+                     len(state) + 1, len(synced))
+
+    @commands_loop.before_loop
+    async def _before_commands(self) -> None:
+        await self.bot.wait_until_ready()
+        # the start already registered what was there (a server whose commands come later changes the state)
+        self._synced_state = self._commands_state() if getattr(self.bot, "router", None) is not None else ()
 
     # ------------------------------------------------------------ Abuse: one protection for every server
 

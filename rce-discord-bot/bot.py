@@ -113,6 +113,8 @@ class RceBot(commands.Bot):
             log.exception("Loading plugins failed")
 
         self.tree.on_error = self.on_app_command_error
+        import discord_router
+        discord_router.setup(self)        # several servers on one Discord bot: each event to the right server
         synced = await self.sync_commands()
         log.info("Synced %d slash commands.", len(synced))
 
@@ -127,6 +129,23 @@ class RceBot(commands.Bot):
 
     async def sync_commands(self) -> list:
         """Registers the slash commands with Discord (at the start and when a plugin is switched on/off)."""
+        import discord_router
+        import servers
+        own = [command.to_dict(self.tree) for command in self.tree._get_all_commands(guild=None)]
+        if getattr(self, "router", None) is not None:
+            discord_router.write_commands(servers.server_id(), own)     # which server has which command (routing)
+        if discord_router.uses_main_bot():
+            return []        # on the main server's bot: the main server registers every server's commands
+        others = {sid: discord_router.read_commands(sid) or [] for sid in discord_router.shared_bot_servers()}
+        if getattr(self, "router", None) is not None and others:
+            names = {sid: servers.server_name(sid) for sid in others}
+            payload = discord_router.merged_payload(own, others, names)
+            if self.config.guild_id:
+                guild = discord.Object(id=self.config.guild_id)
+                self.tree.clear_commands(guild=guild)
+                self.tree.copy_global_to(guild=guild)
+                return await self.http.bulk_upsert_guild_commands(self.application_id, guild.id, payload=payload)
+            return await self.http.bulk_upsert_global_commands(self.application_id, payload=payload)
         if self.config.guild_id:
             # Guild sync: commands show up immediately (global can take up to 1 h)
             guild = discord.Object(id=self.config.guild_id)
@@ -147,7 +166,9 @@ class RceBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (ID %s).", self.user, self.user.id if self.user else "?")
-        if not self.config.guild_id and not getattr(self, "_guild_commands_cleaned", False):
+        import discord_router
+        if not self.config.guild_id and not getattr(self, "_guild_commands_cleaned", False) \
+                and not discord_router.uses_main_bot():
             # Commands are global: remove old server-only registrations (from a start with GUILD_ID)
             self._guild_commands_cleaned = True
             for guild in self.guilds:

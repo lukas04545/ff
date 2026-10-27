@@ -34,7 +34,7 @@ def main_dir(tmp_path, monkeypatch):
 def test_adding_a_server_makes_its_own_folder_and_settings(main_dir):
     with pytest.raises(ValueError, match="name"):
         servers.create_server("", "1.2.3.4", "28016", "pw", TOKEN_2)
-    with pytest.raises(ValueError, match="own Discord bot"):
+    with pytest.raises(ValueError, match="already runs another server"):
         servers.create_server("Two", "1.2.3.4", "28016", "pw", "main-token-" + "z" * 60)
     info = servers.create_server("2x Monthly!", "1.2.3.4", "28016", "rconpw", TOKEN_2, "111")
     assert info["id"] == "2x-monthly" and info["port"] == 8081 and info["rcon"] == "1.2.3.4:28016"
@@ -45,7 +45,7 @@ def test_adding_a_server_makes_its_own_folder_and_settings(main_dir):
     assert env["ABUSE_ITEMS"] == "rocket,c4" and env["ABUSE_EXEMPT_ROLE_IDS"] == "55" and env["AI_ABUSE_CHANNEL_ID"] == "77"
     assert env["WEB_PASSWORD"] == "pbkdf2_sha256$1$aa$bb"
     assert env["ADMIN_ROLE_IDS"] == "9" and env["ADMIN_USER_IDS"] == "1234"     # same admins, starts right away
-    with pytest.raises(ValueError, match="own Discord bot"):
+    with pytest.raises(ValueError, match="already runs another server"):
         servers.create_server("Three", "1.2.3.4", "28017", "pw", TOKEN_2)
     other = servers.create_server("Other Discord", "5.6.7.8", "28016", "pw", TOKEN_3, "999")
     env3 = read_env(main_dir / "servers" / other["id"] / ".env")

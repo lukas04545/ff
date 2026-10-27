@@ -604,10 +604,20 @@ Run the automated tests with `pip install pytest && pytest`.
 ### 🖥️ Several Rust servers
 
 One bot install can run more than one Rust server. Open **🖥️ Servers** (Admin, owner only) → **Add a server**, then
-enter a name, the server's IP, RCON port and password, and a **Discord bot token of a second Discord bot**. One
-Discord bot can only answer one server's slash commands, so create another application in the Discord Developer
-Portal: Bot → Reset Token, switch on the Message Content and Server Members intents, and invite it to your Discord.
-The Discord server ID is optional; empty means the same Discord as the main server.
+enter a name, the server's IP, RCON port and password, and choose its Discord bot:
+
+- **The main Discord bot (recommended):** one bot for every server. Every slash command that more than one server
+  has gets an optional **`server`** choice, e.g. `/status server:2x Monthly`. Leave it out and the command goes to
+  the server whose channel you're typing in, otherwise to the main server. A command only one server has (e.g. a
+  plugin that's only on there) always goes there.
+  - **Buttons, menus and pop-up forms** go to the server whose message they're on.
+  - **Chat messages and reactions** go to the server whose channel it is: the channels set in that server's
+    settings and the ticket channels it created. Every other channel belongs to the main server.
+  - The bot's status line shows the main server. An existing server with its own bot can be switched over with
+    **Use the main Discord bot**.
+- **A Discord bot of its own:** paste its token. Create another application in the Discord Developer Portal: Bot →
+  Reset Token, switch on the Message Content and Server Members intents, and invite it to your Discord. The Discord
+  server ID is optional; empty means the same Discord as the main server.
 
 - **Everything is separate:** each server gets its own folder `servers/<name>/` with its own settings (`.env`),
   database (kits, players, stats, points, tickets …), console, Discord channels, **its own control panel** (next port:
