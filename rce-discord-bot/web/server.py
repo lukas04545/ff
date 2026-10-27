@@ -33,6 +33,7 @@ import discord
 from aiohttp import web
 
 import backups
+import servers
 import settings_schema
 from config import ConfigError, load_config, required_intents
 from envfile import read_env, update_env
@@ -76,11 +77,12 @@ GATE_COOKIE = "rce_gate"          # set when the panel is opened at its secret a
 GATE_TTL = 30 * 86400             # … only with it (or a login, or on this PC) – everyone else gets "not found"
 PANEL_PATH = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 HONEYPOT_TELL_EVERY = 6 * 3600    # admin log: one line per IP (visit / login try) per 6 hours
+SHARED_SETTINGS = frozenset(servers.SHARED_KEYS + servers.LOGIN_KEYS)   # extra servers: from the main server
 KNOCK_MIN = 8                     # WEB_PANEL_KNOCK shorter than this is off (too easy to guess)
 KNOCK_ROUNDS = 100_000            # hash rounds of WEB_PANEL_KNOCK: every long player search is checked against it
 REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, risky actions need no new confirmation
 # Risky actions (run code, change secrets or accounts): need a password confirmation in the last REAUTH_SECONDS
-REAUTH_PATHS = (("POST", "/api/plugins/upload"), ("PUT", "/api/settings"), ("POST", "/api/users"),
+REAUTH_PATHS = (("POST", "/api/plugins/upload"), ("POST", "/api/servers"), ("DELETE", "/api/servers"), ("PUT", "/api/settings"), ("POST", "/api/users"),
                 ("PUT", "/api/users"), ("DELETE", "/api/users"), ("POST", "/api/restart"), ("POST", "/api/update"),
                 ("POST", "/api/backups"), ("DELETE", "/api/plugins"), ("POST", "/api/2fa/disable"),
                 ("POST", "/api/webshop/giftcards"))
@@ -273,7 +275,7 @@ class WebInterface:
     def __init__(self, bot: "RceBot | None", *, web_settings: WebSettings | None = None,
                  setup_error: str | None = None, setup_fix_url: str | None = None,
                  on_config_saved: Callable[[], None] | None = None,
-                 env_path: Path = ENV_PATH, secret_path: Path = Path("data") / "web_secret.key",
+                 env_path: Path = ENV_PATH, secret_path: Path | None = None,
                  users_path: Path | None = None) -> None:
         self.bot = bot
         self.setup_mode = bot is None
@@ -305,6 +307,8 @@ class WebInterface:
             web_settings.panel_knock = self._hashed_env("WEB_PANEL_KNOCK", web_settings.panel_knock,
                                                         rounds=KNOCK_ROUNDS)
         self.login_token = secrets.token_urlsafe(24)
+        # Logins (key, accounts, 2FA, themes) are the main server's – the same for every server (servers.py)
+        secret_path = secret_path or servers.shared_data() / "web_secret.key"
         self._secret = self._load_secret(secret_path)
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
         self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
@@ -362,6 +366,12 @@ class WebInterface:
         r.add_post("/admin", self._admin)                           # the honeypot's fake login form
         r.add_post("/admin/", self._admin)
         r.add_get("/api/honeypot", self.honeypot_list)
+        r.add_get("/api/servers", self.servers_list)                     # several Rust servers (servers.py)
+        r.add_post("/api/servers", self.servers_create)
+        r.add_post("/api/servers/{sid}/{action:start|stop|restart}", self.servers_action)
+        r.add_delete("/api/servers/{sid}", self.servers_remove)
+        r.add_get("/api/servers/{sid}/log", self.servers_log)
+        r.add_post("/api/kits/copy", self.kits_copy)
         r.add_get("/api/themes", self.themes_list)
         r.add_put("/api/themes", self.themes_set)
         r.add_put("/api/themes/options", self.themes_options)
@@ -1515,6 +1525,83 @@ class WebInterface:
                 "tunnel_state": t.state if t else ("error" if self.tunnel_problem else None),
                 "tunnel_error": (t.error if t and t.state != "online" else None) or self.tunnel_problem}
 
+    # ------------------------------------------------------------ Several Rust servers (servers.py)
+
+    def _servers_owner(self, request: web.Request):
+        """Adding, starting and removing servers: the owner, on the main server's panel."""
+        if request["role"] != "owner":
+            raise ApiError("Only the owner can manage servers.", 403)
+        if servers.is_child() or servers.manager is None:
+            raise ApiError("Servers are managed on the main server's panel.")
+        return servers.manager
+
+    def _known_server(self, sid: str) -> str:
+        if not any(s["id"] == sid for s in servers.load_registry()):
+            raise ApiError("No such server.", 404)
+        return sid
+
+    async def servers_list(self, request: web.Request) -> web.Response:
+        manager = servers.manager
+        out = []
+        for s in await asyncio.to_thread(servers.all_servers):
+            if s["main"]:
+                s["state"] = "running"
+            elif manager is not None:
+                s.update(manager.info(s["id"]))
+            out.append(s)
+        return web.json_response({"current": servers.server_id(), "servers": out,
+                                  "manage": servers.manager is not None and not servers.is_child()})
+
+    async def servers_create(self, request: web.Request) -> web.Response:
+        manager = self._servers_owner(request)
+        data = await self._json(request)
+        try:
+            info = await asyncio.to_thread(
+                servers.create_server, data.get("name", ""), data.get("rcon_host", ""), data.get("rcon_port", ""),
+                str(data.get("rcon_password") or ""), data.get("discord_token", ""), data.get("guild_id", ""))
+        except ValueError as exc:
+            raise ApiError(str(exc))
+        manager.start(info["id"])
+        self._audit(f"Server added: {info['name']} (RCON {info['rcon']}, panel port {info['port']})")
+        return web.json_response({"ok": True, "server": info})
+
+    async def servers_action(self, request: web.Request) -> web.Response:
+        manager = self._servers_owner(request)
+        sid, action = self._known_server(request.match_info["sid"]), request.match_info["action"]
+        await asyncio.to_thread(getattr(manager, action), sid)
+        self._audit(f"Server {servers.server_name(sid)}: {action}")
+        return web.json_response({"ok": True, **manager.info(sid)})
+
+    async def servers_remove(self, request: web.Request) -> web.Response:
+        manager = self._servers_owner(request)
+        sid = self._known_server(request.match_info["sid"])
+        name = servers.server_name(sid)
+        await asyncio.to_thread(manager.remove, sid)
+        self._audit(f"Server removed: {name} (its folder was kept as servers/_removed-{sid}-…)")
+        return web.json_response({"ok": True})
+
+    async def servers_log(self, request: web.Request) -> web.Response:
+        self._servers_owner(request)
+        sid = self._known_server(request.match_info["sid"])
+        return web.json_response({"log": await asyncio.to_thread(servers.log_tail, sid)})
+
+    async def kits_copy(self, request: web.Request) -> web.Response:
+        """Copies custom kits of this server to another one (items, description, claim cooldown)."""
+        data = await self._json(request)
+        names = data.get("kits")
+        if not isinstance(names, list) or not names or len(names) > 500:
+            raise ApiError("Pick the kits to copy.")
+        target = self._text(data, "target", limit=40)
+        kits, missing = servers.export_custom_kits(self.bot.db, [str(n)[:60] for n in names])   # this thread's DB
+        try:
+            result = await asyncio.to_thread(servers.import_custom_kits, kits, target,
+                                             overwrite=bool(data.get("overwrite")), missing=missing)
+        except ValueError as exc:
+            raise ApiError(str(exc))
+        if result["copied"]:
+            self._audit(f"Kits copied to {servers.server_name(target)}: " + ", ".join(result["copied"]))
+        return web.json_response({"ok": True, **result})
+
     # ------------------------------------------------------------ Panel themes (owner picks one per account)
 
     async def themes_list(self, request: web.Request) -> web.Response:
@@ -1625,6 +1712,9 @@ class WebInterface:
             item = {"key": f.key, "label": f.label, "group": f.group, "kind": f.kind, "help": f.help,
                     "required": f.required, "pick": f.pick, "advanced": f.advanced,
                     "placeholder": f.placeholder, "choices": list(f.choices)}
+            if servers.is_child() and f.key in SHARED_SETTINGS:
+                item["locked"] = ("Set on the main server's panel – the same for every server."
+                                  if f.key != "WEB_PASSWORD" else "Same as on the main server – change it there.")
             if f.kind == "secret":
                 item["is_set"] = bool((env.get(f.key) or "").strip())  # never send secrets out
             else:
@@ -1650,8 +1740,8 @@ class WebInterface:
         updates, errors = {}, {}
         for key, raw in values.items():
             f = settings_schema.FIELDS_BY_KEY.get(key)
-            if f is None:
-                continue
+            if f is None or (servers.is_child() and key in SHARED_SETTINGS):
+                continue                     # an extra server takes these from the main server (servers.py)
             value = "" if raw is None else str(raw)
             if f.kind != "textarea":
                 value = value.strip()

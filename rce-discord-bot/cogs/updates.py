@@ -39,8 +39,14 @@ class Updates(commands.Cog):
                 except OSError:
                     pass       # the local backup exists; the copy is a bonus
 
+    @property
+    def follower(self) -> bool:
+        """An extra server (servers.py) shares the main server's code – only the main server updates it."""
+        import servers
+        return servers.is_child()
+
     async def cog_load(self) -> None:
-        if self.bot.config.auto_update:
+        if self.bot.config.auto_update and not self.follower:
             self.update_loop.change_interval(minutes=self.bot.config.auto_update_interval)
             self.update_loop.start()
 
@@ -51,7 +57,7 @@ class Updates(commands.Cog):
         self.updater.repo, self.updater.branch = new.auto_update_repo.strip().strip("/"), new.auto_update_branch or "main"
         if new.auto_update_interval != old.auto_update_interval:
             self.update_loop.change_interval(minutes=new.auto_update_interval)
-        if new.auto_update and not self.update_loop.is_running():
+        if new.auto_update and not self.follower and not self.update_loop.is_running():
             self.update_loop.start()
         elif not new.auto_update and self.update_loop.is_running():
             self.update_loop.cancel()
@@ -67,6 +73,8 @@ class Updates(commands.Cog):
 
     async def check_now(self) -> Result:
         """Checks once (also from the web interface) and restarts after a successful update."""
+        if self.follower:
+            return Result("skipped", "Updates are installed by the main server – this server restarts with it.")
         async with self._lock:
             result = await asyncio.to_thread(self.updater.check)
         if result.status == "error":
@@ -87,7 +95,7 @@ class Updates(commands.Cog):
 
     def info(self) -> dict:
         last = self.updater.last_result
-        return {"enabled": self.bot.config.auto_update, "interval": self.bot.config.auto_update_interval,
+        return {"enabled": self.bot.config.auto_update and not self.follower, "follower": self.follower, "interval": self.bot.config.auto_update_interval,
                 "repo": self.updater.repo, "branch": self.updater.branch, "mode": self.updater.mode,
                 "current": self.updater.current_version(), "last_check": self.updater.last_check,
                 "last_status": last.status if last else None, "last_message": last.message if last else None,

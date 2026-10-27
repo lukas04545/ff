@@ -118,6 +118,8 @@ main { padding: 2rem 2.25rem 3rem; max-width: 1280px; width: 100%; animation: fa
 .content > main { flex: 1; }
 .server-card { border: 1px solid var(--border); border-radius: var(--radius); padding: .7rem .75rem; background: var(--panel); }
 .brand-text .eyebrow, .eyebrow { font-size: .62rem; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.srv-switch { margin: .45rem 0 .1rem; }
+.srv-switch select { width: 100%; }
 .server-chip { display: flex; align-items: center; gap: .55rem; margin: .55rem 0 .2rem; padding: .5rem .7rem; border: 1px solid var(--border);
   border-radius: var(--radius-sm); background: var(--panel-2); font-size: .88rem; }
 .server-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }

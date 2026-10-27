@@ -5,6 +5,7 @@ Start:  python bot.py   (or start.bat / start.sh – they set everything up auto
 from __future__ import annotations
 
 import asyncio
+import atexit
 import itertools
 import json
 import logging
@@ -39,7 +40,8 @@ BASE_DIR = Path(__file__).resolve().parent
 COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits", "cogs.tickets",
         "cogs.community", "cogs.moderation", "cogs.giveaways", "cogs.updates", "cogs.timed_roles", "cogs.monitor",
         "cogs.economy", "cogs.wipe", "cogs.schedule", "cogs.reports", "cogs.abuse", "cogs.kit_requests", "cogs.store", "cogs.automod", "cogs.abusewatch",
-        "cogs.webshop", "cogs.aichat", "cogs.countdown", "cogs.prison", "cogs.player_accounts")
+        "cogs.webshop", "cogs.aichat", "cogs.countdown", "cogs.prison", "cogs.player_accounts",
+        "cogs.multiserver")
 
 # Event class -> Discord event name (listeners are then called on_<name>)
 EVENT_NAMES: dict[type, str] = {
@@ -344,9 +346,9 @@ def setup_logging() -> None:
             stream.reconfigure(encoding="utf-8", errors="replace")
 
     fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S")
-    (BASE_DIR / "logs").mkdir(exist_ok=True)
+    Path("logs").mkdir(exist_ok=True)       # in the working folder: the bot folder, or servers/<id> (servers.py)
     file_handler = logging.handlers.RotatingFileHandler(
-        BASE_DIR / "logs" / "bot.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+        Path("logs") / "bot.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
     console = logging.StreamHandler()
     for handler in (file_handler, console, memory_log):
         handler.setFormatter(fmt)
@@ -383,10 +385,18 @@ PRIVILEGED_INTENTS_HELP = (
 
 def main() -> None:
     # Working directory = bot folder, so .env, database and knowledge base are found
-    # even when started by double-click or autostart.
-    os.chdir(BASE_DIR)
+    # even when started by double-click or autostart. An extra server (servers.py) runs in its own folder.
+    import servers
+    os.chdir(os.environ.get(servers.ENV_HOME) or BASE_DIR)
     disable_console_quick_edit()
     setup_logging()
+    if servers.is_child():
+        servers.watch_parent()          # an extra server ends with the main bot
+    else:
+        # The main server starts the extra servers (servers/<id>) and stops them when it stops
+        servers.manager = servers.ServerManager()
+        servers.manager.start_all()
+        atexit.register(servers.manager.stop_all)
     from web.server import discord_preflight, intent_warning, intents_fix_url, web_settings_from_env
 
     setup_error: str | None = None
@@ -461,6 +471,9 @@ def restart_after_update(launched_by_script: bool) -> None:
     from web.tunnel import detach_tunnel
     log.warning("Restarting with the new version (python bot.py) …")
     detach_tunnel()      # the new process takes over the running tunnel – same link
+    import servers
+    if servers.manager is not None:
+        servers.manager.stop_all()      # exec skips atexit: the new version starts them again
     logging.shutdown()
     os.execv(sys.executable, [sys.executable, str(BASE_DIR / "bot.py")])
 

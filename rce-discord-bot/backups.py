@@ -36,13 +36,13 @@ then start the bot again. Your .env (tokens, passwords) is only included if BACK
 
 
 def backup_dir(base: Path | None = None) -> Path:
-    return (base or BASE_DIR) / "data" / "backups"
+    return (base or Path.cwd()) / "data" / "backups"
 
 
 def make_backup(db_path: Path, *, base: Path | None = None, label: str = "daily",
                 include_env: bool = False) -> Path:
     """Creates a backup ZIP and returns its path. Uses its own DB connection (safe from any thread)."""
-    base = base or BASE_DIR
+    base = base or Path.cwd()   # the server's folder (servers.py)
     target_dir = backup_dir(base)
     target_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%d_%H%M%S")
@@ -106,7 +106,7 @@ def prune_folder(folder: Path, keep_days: int, min_keep: int = 3) -> int:
 
 def write_live(db_path: Path, folder: Path, *, base: Path | None = None, include_env: bool = False) -> Path:
     """Refreshes live-backup.zip in the copy folder (Google Drive keeps older versions in its history)."""
-    base = base or BASE_DIR
+    base = base or Path.cwd()   # the server's folder (servers.py)
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / LIVE_NAME
     _write_zip(db_path, target, base=base, include_env=include_env)
@@ -115,7 +115,7 @@ def write_live(db_path: Path, folder: Path, *, base: Path | None = None, include
 
 def change_marker(db_path: Path, base: Path | None = None) -> tuple:
     """Changes when the database or one of the backed-up files changed (cheap: sizes and modification times)."""
-    base = base or BASE_DIR
+    base = base or Path.cwd()   # the server's folder (servers.py)
     db_path = db_path if db_path.is_absolute() else base / db_path
     marks = []
     for p in (db_path, db_path.with_name(db_path.name + "-wal"), *(base / rel for rel in EXTRA_FILES),

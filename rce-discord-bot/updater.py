@@ -44,7 +44,8 @@ BASE_DIR = Path(__file__).resolve().parent
 SUBDIR = "rce-discord-bot"                   # the bot's folder inside the repository
 STATE_FILE = Path("data") / "update_state.json"
 # Never written or deleted by the updater (relative to the bot folder; folders end with "/")
-PROTECTED = (".env", "PUBLIC_LINK.txt", "data/", "logs/", "bin/", ".venv/", "venv/", ".git/", ".pytest_cache/")
+PROTECTED = (".env", "PUBLIC_LINK.txt", "data/", "servers/", "logs/", "bin/", ".venv/", "venv/", ".git/",
+             ".pytest_cache/")
 # Files the owner edits (also in the web interface): only replaced while still unchanged
 USER_EDITABLE = ("rules.md", "support_knowledge.md", "prices.txt")
 # Start scripts run while the bot runs: only replaced if they are the update-safe version (marker inside)

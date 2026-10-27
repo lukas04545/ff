@@ -71,7 +71,7 @@ def test_web_backups_and_timed_roles(tmp_path, monkeypatch):
                      ADMIN_ROLE_IDS="1", WEB_PASSWORD="secret123", DATABASE_PATH=str(tmp_path / "bot.db"),
                      SUPPORT_KNOWLEDGE_FILE=str(tmp_path / "k.md")).items():
         monkeypatch.setenv(k, v)
-    monkeypatch.setattr(backups, "BASE_DIR", tmp_path)
+    monkeypatch.chdir(tmp_path)                 # backups go into the server's folder (the working folder)
     from bot import RceBot
     from config import load_config
     from web.server import WebInterface

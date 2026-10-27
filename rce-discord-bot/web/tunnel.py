@@ -42,8 +42,8 @@ log = logging.getLogger("rce.tunnel")
 
 BOT_DIR = Path(__file__).resolve().parents[1]
 BIN_DIR = BOT_DIR / "bin"
-STATE_FILE = BOT_DIR / "data" / "tunnel_state.json"
-LOG_FILE = BOT_DIR / "logs" / "cloudflared.log"
+STATE_FILE = Path("data") / "tunnel_state.json"     # in the working folder: every server (servers.py) has its own
+LOG_FILE = Path("logs") / "cloudflared.log"
 RELEASE_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/"
 QUICK_URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 CONNECTED = re.compile(r"Registered tunnel connection|Connection [0-9a-f-]+ registered", re.IGNORECASE)
