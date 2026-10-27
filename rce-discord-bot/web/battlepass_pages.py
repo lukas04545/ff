@@ -98,6 +98,7 @@ def page(site, bp, shop, base: str, uid: int, *, ok: str = "", error: str = "") 
         days = max(0, (ends - int(time.time())) // 86400)
         left = f' · ends in {days} day{"s" if days != 1 else ""}'
     price = int(bp.setting("pass_price"))
+    money = bp.money_price() if shop is not None else 0
     if p["premium"]:
         premium = '<span class="premium-badge">Premium pass</span>'
     else:
@@ -105,6 +106,12 @@ def page(site, bp, shop, base: str, uid: int, *, ok: str = "", error: str = "") 
                    f'<button class="pay" type="submit">Get the premium pass – {esc(bp.fmt_coins(price))}</button>'
                    f'</form><div class="muted" style="font-size:.85rem">The premium track pays back '
                    f'{esc(bp.fmt_coins(bp.premium_coins()))} over the season.</div>')
+        if money:
+            premium += (f'<form method="post" action="{base}/battlepass" style="margin-top:8px"><input type="hidden" '
+                        f'name="action" value="buy_money"><input name="gift_code" placeholder="Gift card (optional)" '
+                        f'maxlength="40" style="width:100%;padding:7px;background:rgba(0,0,0,.5);color:var(--text);'
+                        f'border:1px solid var(--line)"><button class="pay" type="submit">… or buy it for '
+                        f'{esc(shop.fmt(money))}</button></form>')
     today = time.strftime("%Y-%m-%d", time.gmtime())
     daily = ("" if not int(bp.setting("daily_xp")) else
              '<span class="muted">Daily bonus claimed ✓</span>' if p["daily"] == today else
@@ -185,6 +192,18 @@ async def handle(site, bp, request, base: str) -> web.Response:
             given, failed = await bp.claim_all(uid)
             return page(site, bp, shop, base, uid, ok=("Claimed: " + ", ".join(given)) if given else "",
                         error=" · ".join(failed[:3]) if failed else ("" if given else "Nothing to claim yet."))
+        if action == "buy_money":
+            if shop is None:
+                raise PassError("The store isn't open right now.")
+            from cogs.webshop import CheckoutError
+            from web.server import WebInterface
+            try:
+                result = await shop.checkout("battlepass", base_url=_base_url(request, base), user_id=uid,
+                                             gift_code=str(form.get("gift_code", "")),
+                                             ip=WebInterface._client_ip(request))
+            except CheckoutError as exc:
+                raise PassError(str(exc)) from None
+            raise web.HTTPSeeOther(result.get("redirect") or f"{base}/store/order/{result['token']}")
         if action == "coins":
             if shop is None:
                 raise PassError("The store isn't open right now.")
