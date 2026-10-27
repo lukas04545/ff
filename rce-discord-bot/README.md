@@ -634,6 +634,10 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
   - **Logins:** the same accounts, owner password, two-factor login and panel themes. Logged in on one panel at
     home, you're logged in on all.
 - **Switch panels:** with more than one server, a drop-down at the top of the sidebar jumps to another server's panel.
+  From outside (your public link or your own domain) every panel opens **at the same address**: the main server
+  passes the other server's panel through. No second link or domain is needed, and it works from your phone. The
+  address bar briefly shows `/switch/<server>`, and you need to be logged in. Your player website stays the main
+  server's. At home (http://localhost:8080) the drop-down opens the other server's own port.
 - **Copy kits across:** *Kits → 📋 Copy kits to another server* copies the bot's custom kits (items, description,
   claim cooldown) to another server. Claim roles come along when both use the same Discord. "Replace" overwrites
   kits with the same name there.

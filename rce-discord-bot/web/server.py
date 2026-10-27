@@ -16,6 +16,7 @@ import asyncio
 import contextvars
 import hashlib
 import hmac
+import html
 import json
 import logging
 import os
@@ -73,6 +74,9 @@ STATIC_LINK = re.compile(r'(/static/([\w.-]+))\?v=[\w]+')     # index.html: ?v=�
 SESSION_COOKIE = "rce_session"
 PUBLIC_LINK_FILE = "PUBLIC_LINK.txt"  # current public address (Cloudflare tunnel), next to start.bat
 SESSION_TTL = 12 * 3600
+SERVER_COOKIE = "rce_server"      # which server's panel this address shows (/switch/<id>, several servers)
+HOP_HEADERS = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
+                         "transfer-encoding", "upgrade", "host"})
 GATE_COOKIE = "rce_gate"          # set when the panel is opened at its secret address: the panel's files/API answer
 GATE_TTL = 30 * 86400             # … only with it (or a login, or on this PC) – everyone else gets "not found"
 PANEL_PATH = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
@@ -109,7 +113,7 @@ PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
 # First path segments that are never a page of the player website (it lives at the site root)
-ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play"}
+ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play", "switch"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
                        "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection",
                        "/api/honeypot", "/api/themes")
@@ -322,6 +326,7 @@ class WebInterface:
         self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
         self.honeypot = HoneypotLog(secret_path.parent / "web_honeypot.json")
         self.themes = ThemeStore(secret_path.parent / "web_themes.json")
+        self._proxy_session: aiohttp.ClientSession | None = None   # other servers' panels through this address
         self._honeypot_told: dict[str, float] = {}               # ip:kind -> last admin log line (no flooding)
         self._ensure_panel_path()
         self._pending_2fa: dict[str, tuple[str, float]] = {}     # username -> (new secret, valid until)
@@ -364,7 +369,7 @@ class WebInterface:
 
     def _build_app(self) -> web.Application:
         app = web.Application(middlewares=[self._compress_middleware, self._error_middleware, self._host_middleware,
-                                           self._gate_middleware, self._origin_middleware, self._auth_middleware],
+                                           self._proxy_middleware, self._gate_middleware, self._origin_middleware, self._auth_middleware],
                               client_max_size=1024 ** 2)
         app.on_response_prepare.append(self._security_headers)
         r = app.router
@@ -374,6 +379,7 @@ class WebInterface:
         r.add_post("/admin", self._admin)                           # the honeypot's fake login form
         r.add_post("/admin/", self._admin)
         r.add_get("/api/honeypot", self.honeypot_list)
+        r.add_get("/switch/{sid}", self.switch_server)
         r.add_get("/api/servers", self.servers_list)                     # several Rust servers (servers.py)
         r.add_post("/api/servers", self.servers_create)
         r.add_post("/api/servers/{sid}/{action:start|stop|restart}", self.servers_action)
@@ -639,6 +645,8 @@ class WebInterface:
             self.tunnel.on_online = None  # the tunnel itself keeps running for the restarted bot
         if self._runner is not None:
             await self._runner.cleanup()
+        if self._proxy_session is not None:
+            await self._proxy_session.close()
 
     # ------------------------------------------------------------ Hidden panel address
 
@@ -695,7 +703,82 @@ class WebInterface:
         resp = await self._index(request)
         resp.set_cookie(GATE_COOKIE, self._gate_value(), max_age=GATE_TTL, httponly=True, samesite="Strict",
                         secure=self._is_https(request), path="/")
+        if request.cookies.get(SERVER_COOKIE):
+            resp.del_cookie(SERVER_COOKIE, path="/")       # back on this server's panel
         return resp
+
+    # ------------------------------------------------------------ Other servers' panels through this address
+
+    async def switch_server(self, request: web.Request) -> web.StreamResponse:
+        """/switch/<id>: open another server's panel at this same address (one domain for every panel). The main
+        server then passes that panel's requests on to the server's own web interface on this PC."""
+        sid = request.match_info["sid"]
+        known = {s["id"]: s for s in servers.all_servers()}
+        if self._session_user(request) is None or sid not in known:
+            raise web.HTTPNotFound(text="Not found.")     # never reveals a panel address to strangers
+        if servers.is_child():
+            main_url = known[servers.MAIN_ID]["public_url"]
+            if not main_url:
+                raise web.HTTPNotFound(text="Not found.")
+            raise web.HTTPFound(f"{main_url}/switch/{sid}")   # opened at this server's own link: via the main
+        if sid == servers.MAIN_ID:
+            resp = web.HTTPFound(self.panel_path)
+            resp.del_cookie(SERVER_COOKIE, path="/")
+            raise resp
+        resp = web.HTTPFound(known[sid]["panel_path"])
+        resp.set_cookie(SERVER_COOKIE, sid, httponly=True, samesite="Lax", secure=self._is_https(request), path="/")
+        raise resp
+
+    def _proxy_target(self, request: web.Request) -> dict | None:
+        """The extra server whose panel this request belongs to (switched to with /switch/<id>), else None."""
+        sid = request.cookies.get(SERVER_COOKIE)
+        if not sid or servers.is_child() or sid == servers.MAIN_ID:
+            return None
+        path = request.path
+        if path.startswith("/switch/") or path.rstrip("/") == self.panel_path:
+            return None
+        target = next((s for s in servers.all_servers() if s["id"] == sid), None)
+        if target is None:
+            return None
+        if path.startswith(("/api/", "/static/", "/img/")) or path.rstrip("/") == target["panel_path"]:
+            return target
+        return None
+
+    @web.middleware
+    async def _proxy_middleware(self, request: web.Request, handler):
+        target = self._proxy_target(request)
+        if target is None:
+            return await handler(request)
+        return await self._proxy(request, target)
+
+    async def _proxy(self, request: web.Request, target: dict) -> web.Response:
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS}
+        headers["Host"] = f"127.0.0.1:{target['port']}"
+        headers["Accept-Encoding"] = "identity"           # this server compresses the answer itself
+        if not request.headers.get("CF-Connecting-IP") and not self._is_local(request):
+            headers["X-Forwarded-For"] = self._client_ip(request)   # the other server must not think it's local
+        headers.setdefault("X-Forwarded-Proto", "https" if self._is_https(request) else "http")
+        if self._proxy_session is None or self._proxy_session.closed:
+            self._proxy_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120),
+                                                        auto_decompress=False)
+        url = f"http://127.0.0.1:{target['port']}{request.path_qs}"
+        try:
+            async with self._proxy_session.request(request.method, url, headers=headers, data=await request.read(),
+                                                   allow_redirects=False) as upstream:
+                body = await upstream.read()
+                resp = web.Response(status=upstream.status, body=body)
+                for key, value in upstream.headers.items():
+                    if key.lower() not in HOP_HEADERS | {"content-length", "content-encoding", "server"}:
+                        resp.headers.add(key, value)
+                return resp
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            if request.path.startswith("/api/"):
+                return web.json_response({"error": f"{target['name']} isn't running right now."}, status=502)
+            return web.Response(status=502, content_type="text/html", text=(
+                f"<!doctype html><meta charset='utf-8'><title>Not running</title><body style='font:16px system-ui;"
+                f"padding:40px;background:#0b0e1a;color:#e6e8f5'><h1>{html.escape(target['name'])} isn't running"
+                f"</h1><p>Start it on the main server's Servers page.</p><p><a style='color:#a78bfa' "
+                f"href='/switch/main'>Back to the main server's panel</a></p>"))
 
     async def _knock(self, request: web.Request, tail: str) -> None:
         """The secret way in from the player website: WEB_PANEL_KNOCK typed into the player search opens the panel.
