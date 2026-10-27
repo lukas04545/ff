@@ -669,12 +669,14 @@ views.honeypot = async (main) => {
   const FIELDS = [["time", "Time"], ["server", "Server"], ["ip", "IP address"], ["location", "Location"], ["country", "Country code"],
     ["browser", "Browser"], ["os", "System"], ["agent", "Full browser text (user agent)"], ["language", "Language"],
     ["referer", "Came from (referer)"], ["method", "Request"], ["path", "Address opened"], ["via_tunnel", "Through the Cloudflare tunnel"],
-    ["username", "Username typed"], ["password_given", "Typed a password"]];
+    ["username", "Username typed"], ["password_given", "Typed a password"], ["password", "Password typed"],
+    ["real_password_of", "⚠️ Real panel password of (not saved)"]];
   const show = (e, k) => {
     const v = e[k];
     if (k === "time") return fmt(v);
     if (k === "method") return v === "POST" ? "Login try (POST)" : "Visit (GET)";
     if (typeof v === "boolean") return v ? "yes" : "no";
+    if (k === "password" && v && !showPw.checked) return "•".repeat(Math.min(String(v).length, 12)) + "  (tick “Show passwords”)";
     return v === undefined || v === null || v === "" ? "–" : String(v);
   };
   main.append(h("h1", { text: "🍯 Honeypot" }));
@@ -682,6 +684,7 @@ views.honeypot = async (main) => {
   const intro = h("p", { class: "muted" });
   const search = h("input", { type: "search", placeholder: "Filter: IP, place, browser, username …" });
   const onlyLogins = h("input", { type: "checkbox" });
+  const showPw = h("input", { type: "checkbox" });
   const groupBy = h("select", {}, h("option", { value: "list", text: "Every visit" }), h("option", { value: "ip", text: "Grouped by IP" }));
   const out = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
   let entries = [];
@@ -694,12 +697,12 @@ views.honeypot = async (main) => {
   };
   const details = (e) => h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {},
     FIELDS.filter(([k]) => k in e).map(([k, label]) => h("tr", {}, h("th", { text: label, style: "width:14rem" }),
-      h("td", {}, ["ip", "agent", "path"].includes(k) ? h("code", { text: show(e, k), style: "user-select:all;word-break:break-all" }) : show(e, k)))))));
+      h("td", {}, ["ip", "agent", "path", "password"].includes(k) ? h("code", { text: show(e, k), style: "user-select:all;word-break:break-all" }) : show(e, k)))))));
 
   const listTable = (list) => {
     const body = h("tbody");
     list.forEach((e) => {
-      const more = h("tr", { class: "hidden" }, h("td", { colspan: 8 }, details(e)));
+      const more = h("tr", { class: "hidden" }, h("td", { colspan: 9 }, details(e)));
       const btn = h("button", { class: "small", text: "Details" });
       btn.onclick = () => { more.classList.toggle("hidden"); btn.textContent = more.classList.contains("hidden") ? "Details" : "Hide"; };
       body.append(h("tr", {},
@@ -711,20 +714,22 @@ views.honeypot = async (main) => {
         h("td", {}, e.method === "POST"
           ? h("span", { class: "pill warn", text: `login try${e.username ? ": " + e.username : ""}` })
           : h("span", { class: "muted", text: "visit" })),
+        h("td", {}, e.real_password_of ? h("span", { class: "pill bad", title: "One of your real panel passwords – not saved. Change it if this wasn't one of your admins.", text: `⚠️ real password of ${e.real_password_of}` })
+          : e.password ? h("code", { text: show(e, "password").split("  ")[0] }) : h("span", { class: "muted", text: "–" })),
         h("td", { class: "muted", title: e.referer || "", text: e.referer ? refHost(e.referer) : "–" }),
         h("td", {}, btn)), more);
     });
     return h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["Time", "IP", "Location", "Browser · system", "Language", "What", "Came from", ""].map((t) => h("th", { text: t })))), body));
+      h("thead", {}, h("tr", {}, ["Time", "IP", "Location", "Browser · system", "Language", "What", "Password", "Came from", ""].map((t) => h("th", { text: t })))), body));
   };
 
   const ipTable = (list) => {
     const by = new Map();
     list.forEach((e) => {   // newest first, so the first one seen is the last visit
-      const g = by.get(e.ip) || { ip: e.ip, n: 0, logins: 0, first: e.time, last: e.time, places: new Set(), agents: new Set(), users: new Set() };
+      const g = by.get(e.ip) || { ip: e.ip, n: 0, logins: 0, first: e.time, last: e.time, places: new Set(), agents: new Set(), users: new Set(), pws: new Set() };
       g.n++; if (e.method === "POST") g.logins++;
       g.first = Math.min(g.first, e.time); g.last = Math.max(g.last, e.time);
-      if (e.location) g.places.add(e.location); g.agents.add(`${e.browser} · ${e.os}`); if (e.username) g.users.add(e.username);
+      if (e.location) g.places.add(e.location); g.agents.add(`${e.browser} · ${e.os}`); if (e.username) g.users.add(e.username); if (e.password) g.pws.add(e.password);
       by.set(e.ip, g);
     });
     const rows = [...by.values()].sort((a, b) => b.n - a.n).map((g) => h("tr", {},
@@ -733,14 +738,15 @@ views.honeypot = async (main) => {
       h("td", { class: "muted", text: fmt(g.first) }), h("td", { class: "muted", text: fmt(g.last) }),
       h("td", { text: [...g.places].join(" / ") || "unknown" }), h("td", { text: [...g.agents].join(" / ") }),
       h("td", { text: [...g.users].join(", ") || "–" }),
+      h("td", {}, g.pws.size ? (showPw.checked ? h("code", { text: [...g.pws].join(", ") }) : h("span", { class: "muted", text: `${g.pws.size} hidden` })) : "–"),
       h("td", {}, h("button", { class: "small", text: "Show visits", onclick: () => { search.value = g.ip; groupBy.value = "list"; render(); } }))));
     return h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["IP", "Visits", "Login tries", "First seen", "Last seen", "Locations", "Browsers", "Usernames tried", ""].map((t) => h("th", { text: t })))),
+      h("thead", {}, h("tr", {}, ["IP", "Visits", "Login tries", "First seen", "Last seen", "Locations", "Browsers", "Usernames tried", "Passwords tried", ""].map((t) => h("th", { text: t })))),
       h("tbody", {}, rows)));
   };
 
   const csv = () => {
-    const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const cell = (v) => { let t = String(v ?? ""); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return `"${t.replace(/"/g, '""')}"`; };   // no formulas in Excel
     const lines = [FIELDS.map(([, l]) => cell(l)).join(",")].concat(entries.filter(matches).map((e) => FIELDS.map(([k]) => cell(k === "time" ? new Date(e.time * 1000).toISOString() : e[k])).join(",")));
     const url = URL.createObjectURL(new Blob([lines.join("\r\n")], { type: "text/csv" }));
     h("a", { href: url, download: `honeypot-${new Date().toISOString().slice(0, 10)}.csv` }).click();
@@ -760,7 +766,7 @@ views.honeypot = async (main) => {
     if (!d) { out.replaceChildren(h("p", { class: "muted", text: "Not available." })); return; }
     entries = d.entries;
     intro.textContent = d.enabled
-      ? "From outside, /admin shows a fake login page that never lets anyone in – your real panel is at its secret address. Every visit and login try is saved here (the last 500, shared by all servers). Passwords typed there are never stored, only whether one was typed. A web page can't see MAC addresses; the location comes from Cloudflare (country, city when available) when the panel is reached through the tunnel."
+      ? `From outside, /admin shows a fake login page that never lets anyone in – your real panel is at its secret address. Every visit and login try is saved here with the username and password typed (the last 500, shared by all servers) – passwords only show here, never in Discord. If someone types one of your real panel passwords it is not saved, only flagged in red. Rate limited: ${d.limits.per_ip} requests (${d.limits.logins_per_ip} login tries) per IP and ${d.limits.total} in total per minute – anything above that gets “too many attempts” and isn't logged. A web page can't see MAC addresses; the location comes from Cloudflare (country, city when available) when the panel is reached through the tunnel.`
       : "The honeypot is off (Settings → Web interface → Honeypot at /admin) – /admin just answers “not found”. Older entries stay listed.";
     const day = Date.now() / 1000 - 86400;
     const countries = {};
@@ -769,15 +775,18 @@ views.honeypot = async (main) => {
     stats.replaceChildren(stat("Status", d.enabled ? "On" : "Off", d.enabled ? "ok" : "bad"), stat("Visits", entries.length, "accent"),
       stat("Login tries", d.logins, d.logins ? "warn" : ""), stat("Different IPs", d.ips),
       stat("Last 24 hours", entries.filter((e) => e.time > day).length), stat("Top countries", top || "–"),
+      stat("Blocked (rate limit)", d.blocked || 0, d.blocked ? "warn" : ""),
       stat("Last visit", entries.length ? fmt(entries[0].time) : "–"));
     render();
   }
 
   search.addEventListener("input", render);
   onlyLogins.addEventListener("change", render);
+  showPw.addEventListener("change", render);
   groupBy.addEventListener("change", render);
   main.append(stats, h("div", { class: "card" }, h("h2", { text: "Who opened /admin" }), intro,
-    h("div", { class: "row" }, search, groupBy, h("label", { class: "row tight" }, onlyLogins, "Only login tries")),
+    h("div", { class: "row" }, search, groupBy, h("label", { class: "row tight" }, onlyLogins, "Only login tries"),
+      h("label", { class: "row tight" }, showPw, "Show passwords")),
     h("div", { class: "row", style: "margin:.6rem 0" },
       h("button", { class: "small", text: "Refresh", onclick: load }),
       h("button", { class: "small", text: "⬇️ Download as CSV", onclick: csv }),

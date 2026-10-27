@@ -709,7 +709,11 @@ their own. Admins can't change it themselves. The new theme shows the next time 
   tries" switch, every entry with a **Details** button listing everything saved, a **Grouped by IP** view (visits,
   first and last seen, locations, browsers, usernames tried) and a **CSV download**. The last 500 entries are kept,
   shared by all servers. A short line also goes to the admin log channel (once per IP every 6 hours, never a
-  ping). Passwords typed into the fake form are never stored. A website can't see a visitor's MAC address, so it
+  ping). The username **and password** tried are saved; the password only shows on the Honeypot page (behind a
+  "Show passwords" switch, and in the CSV), never in Discord. If someone types one of your *real* panel passwords
+  (an admin who went to `/admin` by mistake), it is **not** saved – the entry is flagged red and the admin log warns
+  you to change that password. `/admin` is **rate limited**: 10 requests (5 login tries) per IP and 120 in total per
+  minute; anything above that gets "Too many login attempts" and isn't logged, so nobody can flood the list. A website can't see a visitor's MAC address, so it
   isn't logged. Turn it off under *Settings → Web interface → Honeypot at /admin*; `/admin` then just answers
   "not found".
 - **Secret way in from the player website:** in *Settings → Web interface → Secret phrase to the panel from the

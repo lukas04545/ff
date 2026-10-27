@@ -112,6 +112,9 @@ LOGIN_FAILURES_PER_15_MIN = 15         # failed attempts -> locked for up to 15 
 PUBLIC_PAGES_PER_MINUTE = 60           # player website per visitor
 PUBLIC_IMAGES_PER_MINUTE = 1200        # item pictures per visitor (the store's kit builder shows ~570)
 PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
+HONEYPOT_PER_IP_PER_MINUTE = 10        # /admin from outside: visits + login tries per visitor
+HONEYPOT_LOGINS_PER_IP_PER_MINUTE = 5  # of those, login tries
+HONEYPOT_TOTAL_PER_MINUTE = 120        # everyone together – a flood can't push real entries out of the list
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
 # First path segments that are never a page of the player website (it lives at the site root)
@@ -339,6 +342,10 @@ class WebInterface:
         self._public_pages = RateLimiter(PUBLIC_PAGES_PER_MINUTE, 60)
         self._public_images = RateLimiter(PUBLIC_IMAGES_PER_MINUTE, 60)
         self._public_total = RateLimiter(PUBLIC_PAGES_TOTAL_PER_MINUTE, 60)
+        self._honeypot_ip = RateLimiter(HONEYPOT_PER_IP_PER_MINUTE, 60)
+        self._honeypot_logins = RateLimiter(HONEYPOT_LOGINS_PER_IP_PER_MINUTE, 60)
+        self._honeypot_total = RateLimiter(HONEYPOT_TOTAL_PER_MINUTE, 60)
+        self._honeypot_blocked = 0                                # requests turned away by the limits (since start)
         self._static_cache: dict[str, tuple[int, bytes, str]] = {}
         self._runner: web.AppRunner | None = None
         self.tunnel: tunnelmod.Tunnel | None = None
@@ -861,22 +868,59 @@ class WebInterface:
             return await self._serve_plugin(request, "website")      # the website's normal "not found" page
         raise web.HTTPNotFound(text="Not found.")
 
+    def _honeypot_limited(self, request: web.Request) -> float | None:
+        """Seconds to wait if this visitor (or everyone together) is over the honeypot's limits."""
+        ip = self._client_ip(request)
+        if request.method == "POST" and (wait := self._honeypot_logins.retry_after(ip)) is not None:
+            return wait
+        for limiter, key in ((self._honeypot_ip, ip), (self._honeypot_total, "all")):
+            if (wait := limiter.retry_after(key)) is not None:
+                return wait
+        self._honeypot_ip.hit(ip)
+        self._honeypot_total.hit("all")
+        if request.method == "POST":
+            self._honeypot_logins.hit(ip)
+        return None
+
+    def _real_password_of(self, password: str) -> str | None:
+        """Account whose real panel password this is (owner or another account) – or None."""
+        if self.password_hash and verify_password(password, self.password_hash):
+            return OWNER
+        return self.users.password_of(password)
+
     async def _honeypot(self, request: web.Request) -> web.Response:
-        """The fake login at /admin: notes who came (IP, location, browser …) – never lets anyone in."""
-        self._public_limit(request)
+        """The fake login at /admin: notes who came (IP, location, browser, the login tried …) – never lets anyone
+        in. Rate limited: over the limit it answers "too many attempts" and logs nothing (no flooding the list)."""
+        wait = self._honeypot_limited(request)
+        if wait is not None:
+            self._honeypot_blocked += 1
+            return web.Response(text=honeypot.fake_login_page(error="Too many login attempts. Try again later."),
+                                content_type="text/html", status=429,
+                                headers={"Retry-After": str(int(wait) + 1), "Cache-Control": "no-store",
+                                         "X-Robots-Tag": "noindex"})
         entry = honeypot.visitor(request, self._client_ip(request))
         entry["server"] = servers.server_name(servers.server_id())     # whose /admin it was (several servers)
         if request.method == "POST":
             form = await request.post()
+            password = str(form.get("password") or "")[:128]
             entry["username"] = str(form.get("username") or "")[:64]
-            entry["password_given"] = bool(form.get("password"))       # the password itself is never kept
+            entry["password_given"] = bool(password)
+            real = await asyncio.to_thread(self._real_password_of, password) if password else None
+            if real:                                                    # an admin at the wrong address: not saved
+                entry["real_password_of"] = real
+                if self.bot is not None:
+                    self.bot.audit(f"⚠️ Honeypot: someone typed the real panel password of **{real}** into the "
+                                   f"fake /admin login (IP {entry['ip']}). It was not saved – if that wasn't one "
+                                   "of your admins, change that password.")
+            elif password:
+                entry["password"] = password
         self.honeypot.add(entry)
         log.warning("Honeypot: %s %s from %s (%s, %s on %s)", request.method, request.path, entry["ip"],
                     entry["location"], entry["browser"], entry["os"])
         told_key, now = f"{entry['ip']}:{request.method}", time.time()
         if self.bot is not None and now - self._honeypot_told.get(told_key, 0) > HONEYPOT_TELL_EVERY:
             self._honeypot_told[told_key] = now
-            self.bot.audit(honeypot.summary(entry))
+            self.bot.audit(honeypot.summary(entry))                     # never contains the password
         if request.method == "POST":
             await asyncio.sleep(1.5)                                    # like a real login check – slows guessing
         return web.Response(text=honeypot.fake_login_page(error=request.method == "POST"), content_type="text/html",
@@ -885,7 +929,10 @@ class WebInterface:
 
     async def honeypot_list(self, request: web.Request) -> web.Response:
         entries = self.honeypot.entries()
-        return web.json_response({"enabled": self.ws.honeypot, "entries": entries,
+        return web.json_response({"enabled": self.ws.honeypot, "entries": entries, "blocked": self._honeypot_blocked,
+                                  "limits": {"per_ip": HONEYPOT_PER_IP_PER_MINUTE,
+                                             "logins_per_ip": HONEYPOT_LOGINS_PER_IP_PER_MINUTE,
+                                             "total": HONEYPOT_TOTAL_PER_MINUTE},
                                   "ips": len({e.get("ip") for e in entries}),
                                   "logins": sum(1 for e in entries if e.get("method") == "POST")})
 

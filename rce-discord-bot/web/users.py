@@ -120,6 +120,13 @@ class UserStore:
             return None
         return user["hash"]
 
+    def password_of(self, password: str) -> str | None:
+        """Whose password this is (username) or None – the honeypot never saves a real one."""
+        for user in list(self._users.values()):
+            if verify_password(password, user["hash"]):
+                return user["username"]
+        return None
+
     def authenticate(self, username: str, password: str) -> dict | None:
         user = self.get(username)
         if user is None:
