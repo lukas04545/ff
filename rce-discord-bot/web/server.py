@@ -16,7 +16,6 @@ import asyncio
 import contextvars
 import hashlib
 import hmac
-import html
 import json
 import logging
 import os
@@ -114,7 +113,7 @@ PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
 # First path segments that are never a page of the player website (it lives at the site root)
-ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play", "switch"}
+ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
                        "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection",
                        "/api/honeypot", "/api/themes")
@@ -704,8 +703,6 @@ class WebInterface:
         resp = await self._index(request)
         resp.set_cookie(GATE_COOKIE, self._gate_value(), max_age=GATE_TTL, httponly=True, samesite="Strict",
                         secure=self._is_https(request), path="/")
-        if request.cookies.get(SERVER_COOKIE):
-            resp.del_cookie(SERVER_COOKIE, path="/")       # back on this server's panel
         return resp
 
     # ------------------------------------------------------------ Other servers' panels through this address
