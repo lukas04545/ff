@@ -1770,24 +1770,36 @@ async function copyKitsCard(kits) {
 
 // ------------------------------------------------------------------ Servers (several Rust servers, servers.py)
 
-// The address of another server's panel: same host on its port here at home; from outside (your link / domain)
-// the same address – /switch/<id> lets the main server show that server's panel
-function serverUrl(s) {
-  if (location.protocol === "http:") return `http://${location.hostname}:${s.port}${s.panel_path}`;
-  return `/switch/${encodeURIComponent(s.id)}`;
+// Which server the panel shows: same address, same page – the main server passes the panel's requests on
+async function switchServer(id) {
+  const ok = await api("/api/switch", { method: "POST", body: { server: id } }).catch((e) => { toast(e.message, true); return null; });
+  if (!ok) return false;
+  if (id !== "main") {
+    // Does that server answer (running, and your login valid there)? If not, stay on the one shown so far.
+    const res = await fetch("/api/me", { credentials: "same-origin" }).catch(() => null);
+    if (!res || !res.ok) {
+      const why = res ? (await res.json().catch(() => ({}))).error || `HTTP ${res.status}` : "no answer";
+      await apiOnce("/api/switch", { method: "POST", body: { server: "main" } }).catch(() => {});
+      toast(res && res.status === 401 ? "That server doesn't accept your login yet – wait a moment and try again (it takes over the main server's password within 15 seconds)." : why, true);
+      await start();
+      return false;
+    }
+  }
+  status = null; settingsIndex = null; paletteItems = [];
+  await refreshConnection().catch(() => {});
+  await start();
+  return true;
 }
 
 async function loadServerSwitch() {
   const box = $("#srv-switch");
   const d = await api("/api/servers").catch(() => null);
   if (!d || d.servers.length < 2) { box.classList.add("hidden"); return; }
-  const sel = h("select", { title: "Switch to another server's panel" }, d.servers.map((s) => h("option", { value: s.id, text: (s.main ? "🏠 " : "🛢️ ") + s.name })));
+  const sel = h("select", { title: "Which server this panel shows" }, d.servers.map((s) => h("option", { value: s.id, text: (s.main ? "🏠 " : "🛢️ ") + s.name })));
   sel.value = d.current;
-  sel.addEventListener("change", () => {
-    const s = d.servers.find((x) => x.id === sel.value);
-    const url = s && serverUrl(s);
-    if (url) location.href = url;
-    else { toast(`${s.name} has no public link yet – open it from the bot's PC or wait until its link is up.`, true); sel.value = d.current; }
+  sel.addEventListener("change", async () => {
+    sel.disabled = true;
+    if (!await switchServer(sel.value)) { sel.value = d.current; sel.disabled = false; }
   });
   box.replaceChildren(sel);
   box.classList.remove("hidden");
@@ -1805,9 +1817,10 @@ views.servers = async (main) => {
     if (!d) return;
     const cards = d.servers.map((s) => {
       const [tone, label] = SERVER_STATES[s.state] || ["", s.state || "–"];
-      const url = serverUrl(s);
       const logBox = h("pre", { class: "hidden", style: "max-height:320px;overflow:auto;font-size:.78rem" });
-      const buttons = [url && s.id !== d.current ? h("button", { class: "small primary", text: "Open its panel", onclick: () => { location.href = url; } }) : null];
+      const buttons = [s.id !== d.current ? h("button", { class: "small primary", text: "Show this server", title: "The panel switches to this server (same as the drop-down in the menu)", onclick: async () => {
+        if (await switchServer(s.id)) location.hash = "#overview";
+      } }) : null];
       if (d.manage && !s.main) {
         const run = (action, okText) => async () => {
           await act(() => api(`/api/servers/${s.id}/${action}`, { method: "POST" }), okText).catch(() => {});
@@ -1835,7 +1848,7 @@ views.servers = async (main) => {
           } }));
       }
       return h("div", { class: "card" },
-        h("h2", {}, (s.main ? "🏠 " : "🛢️ ") + s.name, s.id === d.current ? h("span", { class: "muted", text: " (this panel)" }) : null),
+        h("h2", {}, (s.main ? "🏠 " : "🛢️ ") + s.name, s.id === d.current ? h("span", { class: "muted", text: " (shown now)" }) : null),
         h("p", {}, h("span", { class: `pill ${tone}`, text: label }), " ",
           h("span", { class: "muted", text: `RCON ${s.rcon || "–"} · panel port ${s.port} · Discord: ${s.main ? "the main bot" : s.discord === "shared" ? `the main bot (pick “${s.name}” in a command's server choice, or use it in this server's channels)` : "its own bot"}` })),
         s.public_url ? h("p", { class: "muted" }, "Public link: ", h("code", { text: s.public_url + s.panel_path })) : null,

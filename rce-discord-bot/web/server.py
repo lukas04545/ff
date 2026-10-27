@@ -16,7 +16,6 @@ import asyncio
 import contextvars
 import hashlib
 import hmac
-import html
 import json
 import logging
 import os
@@ -74,7 +73,8 @@ STATIC_LINK = re.compile(r'(/static/([\w.-]+))\?v=[\w]+')     # index.html: ?v=�
 SESSION_COOKIE = "rce_session"
 PUBLIC_LINK_FILE = "PUBLIC_LINK.txt"  # current public address (Cloudflare tunnel), next to start.bat
 SESSION_TTL = 12 * 3600
-SERVER_COOKIE = "rce_server"      # which server's panel this address shows (/switch/<id>, several servers)
+SERVER_COOKIE = "rce_server"      # which server the panel shows (its server drop-down, several servers)
+MAIN_ONLY_API = frozenset({"/api/switch", "/api/login", "/api/logout"})   # never passed on to the other server
 HOP_HEADERS = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
                          "transfer-encoding", "upgrade", "host"})
 GATE_COOKIE = "rce_gate"          # set when the panel is opened at its secret address: the panel's files/API answer
@@ -113,7 +113,7 @@ PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
 # First path segments that are never a page of the player website (it lives at the site root)
-ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play", "switch"}
+ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
                        "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection",
                        "/api/honeypot", "/api/themes")
@@ -379,7 +379,7 @@ class WebInterface:
         r.add_post("/admin", self._admin)                           # the honeypot's fake login form
         r.add_post("/admin/", self._admin)
         r.add_get("/api/honeypot", self.honeypot_list)
-        r.add_get("/switch/{sid}", self.switch_server)
+        r.add_post("/api/switch", self.switch_server)
         r.add_get("/api/servers", self.servers_list)                     # several Rust servers (servers.py)
         r.add_post("/api/servers", self.servers_create)
         r.add_post("/api/servers/{sid}/{action:start|stop|restart}", self.servers_action)
@@ -703,46 +703,35 @@ class WebInterface:
         resp = await self._index(request)
         resp.set_cookie(GATE_COOKIE, self._gate_value(), max_age=GATE_TTL, httponly=True, samesite="Strict",
                         secure=self._is_https(request), path="/")
-        if request.cookies.get(SERVER_COOKIE):
-            resp.del_cookie(SERVER_COOKIE, path="/")       # back on this server's panel
         return resp
 
     # ------------------------------------------------------------ Other servers' panels through this address
 
-    async def switch_server(self, request: web.Request) -> web.StreamResponse:
-        """/switch/<id>: open another server's panel at this same address (one domain for every panel). The main
-        server then passes that panel's requests on to the server's own web interface on this PC."""
-        sid = request.match_info["sid"]
-        known = {s["id"]: s for s in servers.all_servers()}
-        if self._session_user(request) is None or sid not in known:
-            raise web.HTTPNotFound(text="Not found.")     # never reveals a panel address to strangers
+    async def switch_server(self, request: web.Request) -> web.Response:
+        """The panel's server drop-down: which server this panel shows – same address, same page. Afterwards the
+        main server passes the panel's API requests on to that server's web interface on this PC."""
         if servers.is_child():
-            main_url = known[servers.MAIN_ID]["public_url"]
-            if not main_url:
-                raise web.HTTPNotFound(text="Not found.")
-            raise web.HTTPFound(f"{main_url}/switch/{sid}")   # opened at this server's own link: via the main
+            raise ApiError("Switch servers on the main server's panel.")
+        sid = self._text(await self._json(request), "server", limit=40)
+        if sid not in {s["id"] for s in servers.all_servers()}:
+            raise ApiError("No such server.", 404)
+        resp = web.json_response({"ok": True, "server": sid})
         if sid == servers.MAIN_ID:
-            resp = web.HTTPFound(self.panel_path)
             resp.del_cookie(SERVER_COOKIE, path="/")
-            raise resp
-        resp = web.HTTPFound(known[sid]["panel_path"])
-        resp.set_cookie(SERVER_COOKIE, sid, httponly=True, samesite="Lax", secure=self._is_https(request), path="/")
-        raise resp
+        else:
+            resp.set_cookie(SERVER_COOKIE, sid, httponly=True, samesite="Strict", secure=self._is_https(request),
+                            path="/")             # until the browser closes
+        return resp
 
     def _proxy_target(self, request: web.Request) -> dict | None:
-        """The extra server whose panel this request belongs to (switched to with /switch/<id>), else None."""
+        """The extra server this panel shows (picked in the drop-down) for an API request, else None."""
         sid = request.cookies.get(SERVER_COOKIE)
         if not sid or servers.is_child() or sid == servers.MAIN_ID:
             return None
-        path = request.path
-        if path.startswith("/switch/") or path.rstrip("/") == self.panel_path:
-            return None
-        target = next((s for s in servers.all_servers() if s["id"] == sid), None)
-        if target is None:
-            return None
-        if path.startswith(("/api/", "/static/", "/img/")) or path.rstrip("/") == target["panel_path"]:
-            return target
-        return None
+        if not request.path.startswith("/api/") or request.path in MAIN_ONLY_API \
+                or request.path.startswith("/api/servers"):
+            return None                     # the server list and managing servers stay the main server's
+        return next((s for s in servers.all_servers() if s["id"] == sid), None)
 
     @web.middleware
     async def _proxy_middleware(self, request: web.Request, handler):
@@ -772,13 +761,8 @@ class WebInterface:
                         resp.headers.add(key, value)
                 return resp
         except (aiohttp.ClientError, asyncio.TimeoutError):
-            if request.path.startswith("/api/"):
-                return web.json_response({"error": f"{target['name']} isn't running right now."}, status=502)
-            return web.Response(status=502, content_type="text/html", text=(
-                f"<!doctype html><meta charset='utf-8'><title>Not running</title><body style='font:16px system-ui;"
-                f"padding:40px;background:#0b0e1a;color:#e6e8f5'><h1>{html.escape(target['name'])} isn't running"
-                f"</h1><p>Start it on the main server's Servers page.</p><p><a style='color:#a78bfa' "
-                f"href='/switch/main'>Back to the main server's panel</a></p>"))
+            return web.json_response({"error": f"{target['name']} isn't running right now – start it on the Servers "
+                                               "page, or pick another server.", "server_down": True}, status=502)
 
     async def _knock(self, request: web.Request, tail: str) -> None:
         """The secret way in from the player website: WEB_PANEL_KNOCK typed into the player search opens the panel.
@@ -1603,6 +1587,7 @@ class WebInterface:
         self._sudo.pop(request.cookies.get(SESSION_COOKIE, ""), None)
         resp = web.json_response({"ok": True})
         resp.del_cookie(SESSION_COOKIE)
+        resp.del_cookie(SERVER_COOKIE, path="/")          # the next login starts on the main server
         return resp
 
     async def me(self, request: web.Request) -> web.Response:
@@ -1641,7 +1626,9 @@ class WebInterface:
             elif manager is not None:
                 s.update(manager.info(s["id"]))
             out.append(s)
-        return web.json_response({"current": servers.server_id(), "servers": out,
+        shown = request.cookies.get(SERVER_COOKIE) if not servers.is_child() else None
+        current = shown if shown in {s["id"] for s in out} else servers.server_id()
+        return web.json_response({"current": current, "servers": out,
                                   "manage": servers.manager is not None and not servers.is_child()})
 
     async def servers_create(self, request: web.Request) -> web.Response:
