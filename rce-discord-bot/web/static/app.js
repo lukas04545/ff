@@ -188,6 +188,7 @@ const ICONS = {
   plugins: '<path d="M10 3h4v3a2 2 0 1 0 4 0V3h3v7h-3a2 2 0 1 0 0 4h3v7h-7v-3a2 2 0 1 0-4 0v3H3v-7h3a2 2 0 1 0 0-4H3V3z"/>',
   makeplugin: '<path d="M4 20L15 9"/><path d="M15 3v3M18 6h3M19 10v2M17 4l2 2"/>',
   users2: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 6"/>',
+  servers: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/>',
   settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
 };
 const GROUP_ICON_NAMES = { Server: "home", Kits: "box", Community: "users", Plugins: "plugins", Admin: "shield" };
@@ -409,7 +410,7 @@ function route() {
   updateNavCounts();
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore", "protection"].includes(view) || view.startsWith("p/"))) {
+  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore", "protection", "servers"].includes(view) || view.startsWith("p/"))) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
@@ -508,6 +509,7 @@ async function start() {
   $("#avatar").textContent = (me.user || "?").slice(0, 1);
   $("#account").classList.remove("hidden");        // everyone: password + two-factor login
   menuReady = loadMenu();
+  loadServerSwitch();
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   if (setupMode && location.hash !== "#settings") location.hash = "#settings";
@@ -1735,7 +1737,135 @@ views.kits = async (main) => {
       h("tbody", {}, data.history.map((r) => h("tr", {},
         h("td", { text: r.claimed_at }), h("td", { text: r.kit }), h("td", { text: r.player }),
         h("td", { class: "muted", text: r.rule_id !== null ? `Autokit #${r.rule_id} (${r.source})` : r.source }))))))));
+  copyKitsCard(data.custom.map((k) => k.name)).then((card) => { if (card) box.append(card); });
 };
+
+// Several Rust servers: copy this server's custom kits to another one
+async function copyKitsCard(kits) {
+  const d = await api("/api/servers").catch(() => null);
+  const others = d ? d.servers.filter((s) => s.id !== d.current) : [];
+  if (!others.length) return null;
+  const picks = kits.map((k) => [k, h("input", { type: "checkbox", value: k })]);
+  const target = h("select", {}, others.map((s) => h("option", { value: s.id, text: s.name })));
+  const overwrite = h("input", { type: "checkbox" });
+  const result = h("div", { class: "muted" });
+  return h("div", { class: "card" }, h("h2", { text: "📋 Copy kits to another server" }),
+    h("p", { class: "muted", text: "Copies the bot's custom kits – items, description and claim cooldown – into another server's kits. Claim roles come along when both servers use the same Discord server. The server's own in-game kits can't be copied (they live on the Rust server)." }),
+    kits.length ? h("div", { class: "row" }, picks.map(([k, cb]) => h("label", { class: "row tight" }, cb, k)),
+      h("button", { class: "small", type: "button", text: "All", onclick: () => picks.forEach(([, cb]) => { cb.checked = true; }) }))
+      : h("p", { class: "muted", text: "No custom kits on this server yet." }),
+    h("div", { class: "row" }, h("span", { text: "To" }), target,
+      h("label", { class: "row tight", title: "Replace kits with the same name there" }, overwrite, "replace kits with the same name"),
+      h("button", { class: "primary", text: "Copy", onclick: async () => {
+        const chosen = picks.filter(([, cb]) => cb.checked).map(([k]) => k);
+        if (!chosen.length) { toast("Tick the kits to copy.", true); return; }
+        const r = await act(() => api("/api/kits/copy", { method: "POST", body: { kits: chosen, target: target.value, overwrite: overwrite.checked } })).catch(() => null);
+        if (!r) return;
+        const name = target.selectedOptions[0]?.textContent || "the other server";
+        result.textContent = [r.copied.length ? `✅ Copied to ${name}: ${r.copied.join(", ")}` : "",
+          r.skipped.length ? `⏭️ Already there (tick "replace" to overwrite): ${r.skipped.join(", ")}` : ""].filter(Boolean).join(" · ") || "Nothing copied.";
+      } })),
+    result);
+}
+
+// ------------------------------------------------------------------ Servers (several Rust servers, servers.py)
+
+// The address of another server's panel: same host on its port here at home, its public link from outside
+function serverUrl(s) {
+  if (location.protocol === "http:") return `http://${location.hostname}:${s.port}${s.panel_path}`;
+  return s.public_url ? s.public_url + s.panel_path : null;
+}
+
+async function loadServerSwitch() {
+  const box = $("#srv-switch");
+  const d = await api("/api/servers").catch(() => null);
+  if (!d || d.servers.length < 2) { box.classList.add("hidden"); return; }
+  const sel = h("select", { title: "Switch to another server's panel" }, d.servers.map((s) => h("option", { value: s.id, text: (s.main ? "🏠 " : "🛢️ ") + s.name })));
+  sel.value = d.current;
+  sel.addEventListener("change", () => {
+    const s = d.servers.find((x) => x.id === sel.value);
+    const url = s && serverUrl(s);
+    if (url) location.href = url;
+    else { toast(`${s.name} has no public link yet – open it from the bot's PC or wait until its link is up.`, true); sel.value = d.current; }
+  });
+  box.replaceChildren(sel);
+  box.classList.remove("hidden");
+}
+
+const SERVER_STATES = { running: ["ok", "Running"], starting: ["warn", "Starting"], restarting: ["warn", "Restarting after a crash"], stopped: ["", "Stopped"], error: ["bad", "Stopped – settings incomplete (open its panel)"] };
+
+views.servers = async (main) => {
+  main.append(h("h1", { text: "Servers" }),
+    h("p", { class: "muted", text: "Run more than one Rust server with this bot. Every server has its own RCON, console, kits, players, stats, tickets, Discord channels and its own control panel. Shared by all: the logins (accounts, two-factor login, panel themes) and the admin abuse protection – set it up on the main server; a punishment on one server removes the abuser's admin on every server." }));
+  const list = h("div");
+  main.append(list);
+  const load = async () => {
+    const d = await api("/api/servers").catch((e) => { toast(e.message, true); return null; });
+    if (!d) return;
+    const cards = d.servers.map((s) => {
+      const [tone, label] = SERVER_STATES[s.state] || ["", s.state || "–"];
+      const url = serverUrl(s);
+      const logBox = h("pre", { class: "hidden", style: "max-height:320px;overflow:auto;font-size:.78rem" });
+      const buttons = [url && s.id !== d.current ? h("button", { class: "small primary", text: "Open its panel", onclick: () => { location.href = url; } }) : null];
+      if (d.manage && !s.main) {
+        const run = (action, okText) => async () => {
+          await act(() => api(`/api/servers/${s.id}/${action}`, { method: "POST" }), okText).catch(() => {});
+          setTimeout(load, 1500);
+        };
+        buttons.push(
+          s.state === "running" || s.state === "starting" || s.state === "restarting"
+            ? h("button", { class: "small", text: "Stop", onclick: run("stop", "Stopped") })
+            : h("button", { class: "small", text: "Start", onclick: run("start", "Starting …") }),
+          h("button", { class: "small", text: "Restart", onclick: run("restart", "Restarting …") }),
+          h("button", { class: "small", text: "Show log", onclick: async () => {
+            const r = await api(`/api/servers/${s.id}/log`).catch(() => ({ log: "" }));
+            logBox.textContent = r.log || "No log yet.";
+            logBox.classList.toggle("hidden");
+          } }),
+          h("button", { class: "small danger", text: "Remove", onclick: async () => {
+            if (!confirm(`Remove ${s.name}? It stops and leaves this list. Its folder (database, settings, kits) is kept as servers/_removed-${s.id}-… so nothing is lost.`)) return;
+            await act(() => api(`/api/servers/${s.id}`, { method: "DELETE" }), "Removed").catch(() => {});
+            load();
+          } }));
+      }
+      return h("div", { class: "card" },
+        h("h2", {}, (s.main ? "🏠 " : "🛢️ ") + s.name, s.id === d.current ? h("span", { class: "muted", text: " (this panel)" }) : null),
+        h("p", {}, h("span", { class: `pill ${tone}`, text: label }), " ",
+          h("span", { class: "muted", text: `RCON ${s.rcon || "–"} · panel port ${s.port}` })),
+        s.public_url ? h("p", { class: "muted" }, "Public link: ", h("code", { text: s.public_url + s.panel_path })) : null,
+        h("div", { class: "row" }, buttons.filter(Boolean)), logBox);
+    });
+    list.replaceChildren(...cards);
+    if (d.manage) list.append(addServerCard(load));
+    else if (!d.manage) list.append(h("p", { class: "muted", text: "Servers are added and started on the main server's panel." }));
+  };
+  load();
+};
+
+function addServerCard(reload) {
+  const f = {
+    name: h("input", { placeholder: "Name, e.g. 2x Monthly", maxlength: 40 }),
+    rcon_host: h("input", { placeholder: "Server IP" }),
+    rcon_port: h("input", { placeholder: "RCON port", inputmode: "numeric", style: "max-width:8rem" }),
+    rcon_password: h("input", { type: "password", placeholder: "RCON password", autocomplete: "new-password" }),
+    discord_token: h("input", { type: "password", placeholder: "Discord bot token (a second bot)", autocomplete: "new-password" }),
+    guild_id: h("input", { placeholder: "Discord server ID (empty = same as the main server)", inputmode: "numeric", style: "min-width:20rem" }),
+  };
+  return h("div", { class: "card" }, h("h2", { text: "➕ Add a server" }),
+    h("p", { class: "muted", text: "You need a second Discord bot for it – one Discord bot can only answer one server's slash commands: Discord Developer Portal → New Application → Bot → Reset Token, enable the Message Content and Server Members intents, and invite it to your Discord. The new server starts right away with its own panel; set its channels and everything else there (Settings)." }),
+    h("form", { class: "stack", onsubmit: async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(Object.entries(f).map(([k, el]) => [k, el.value.trim()]));
+      const r = await act(() => api("/api/servers", { method: "POST", body }), "Server added – starting …").catch(() => null);
+      if (!r) return;
+      Object.values(f).forEach((el) => { el.value = ""; });
+      setTimeout(reload, 1500);
+      loadServerSwitch();
+    } },
+      h("div", { class: "row" }, f.name), h("div", { class: "row" }, f.rcon_host, f.rcon_port, f.rcon_password),
+      h("div", { class: "row" }, f.discord_token, f.guild_id),
+      h("div", {}, h("button", { class: "primary", text: "Add server" }))));
+}
 
 // Cooldown in minutes -> "1d 12h" (input format of the cooldown field)
 function minutesToDuration(min) {
@@ -2485,6 +2615,11 @@ views.settings = async (main) => {
   const advancedCards = [];
   const optionList = (pick) => ({ guild: opts.guilds, text_channel: opts.text_channels, category: opts.categories, role: opts.roles }[pick] || []);
 
+  // set on the main server (shared by every server): shown, but can't be changed here
+  const lockable = (el, f) => {
+    if (f.locked) [el, ...el.querySelectorAll("input, select, textarea, button")].forEach((x) => { if ("disabled" in x) x.disabled = true; });
+    return el;
+  };
   const control = (f) => {
     const value = f.value ?? "";
     if (f.kind === "secret") {
@@ -2540,7 +2675,8 @@ views.settings = async (main) => {
       const err = h("div", { class: "field-error" });
       const row = h("div", { class: "field" + (f.advanced ? " advanced hidden" : "") },
         h("label", {}, f.label, f.required ? h("span", { class: "req", text: " *" }) : null),
-        h("div", { class: "control" }, control(f), f.help ? h("div", { class: "help", text: f.help }) : null, err));
+        h("div", { class: "control" }, lockable(control(f), f), f.locked ? h("div", { class: "help", text: "🔒 " + f.locked }) : null,
+          f.help ? h("div", { class: "help", text: f.help }) : null, err));
       rows[f.key] = { row, err };
       card.append(row);
     }

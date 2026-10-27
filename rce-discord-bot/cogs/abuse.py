@@ -270,6 +270,9 @@ class AbuseGuard(commands.Cog):
         log.warning("Admin abuse: %s spawned %s – %s.", player, what, done)
         self.bot.audit(f"🚨 **{safe_md(player)}** spawned **{safe_md(what)}** without permission – {safe_md(done)}")
         await self._alert(player, what, results, case_id)
+        multi = getattr(self.bot, "get_cog", lambda _: None)("MultiServer")
+        if multi is not None:
+            multi.broadcast_abuse(player, what)     # one protection for every server: admin goes there too
         return results
 
     # ------------------------------------------------------------ Staff approval (Discord buttons + web interface)

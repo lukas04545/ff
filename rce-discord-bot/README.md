@@ -601,6 +601,33 @@ Run the automated tests with `pip install pytest && pytest`.
 ---
 
 
+### 🖥️ Several Rust servers
+
+One bot install can run more than one Rust server. Open **🖥️ Servers** (Admin, owner only) → **Add a server**, then
+enter a name, the server's IP, RCON port and password, and a **Discord bot token of a second Discord bot**. One
+Discord bot can only answer one server's slash commands, so create another application in the Discord Developer
+Portal: Bot → Reset Token, switch on the Message Content and Server Members intents, and invite it to your Discord.
+The Discord server ID is optional; empty means the same Discord as the main server.
+
+- **Everything is separate:** each server gets its own folder `servers/<name>/` with its own settings (`.env`),
+  database (kits, players, stats, points, tickets …), console, Discord channels, **its own control panel** (next port:
+  8081, 8082 …, with its own secret address) and its own public link. The main bot starts the extra servers by
+  itself in the background (no extra window), restarts a crashed one, and stops them when it stops. On the Servers
+  page you start, stop, restart or remove a server, open its panel and read its log.
+- **Shared by all servers:**
+  - **Admin abuse protection:** set it up on the main server; the extra servers' panels show it locked. When one
+    server punishes an abuser, the others run the "remove admin" commands for that player too.
+  - **Logins:** the same accounts, owner password, two-factor login and panel themes. Logged in on one panel at
+    home, you're logged in on all.
+- **Switch panels:** with more than one server, a drop-down at the top of the sidebar jumps to another server's panel.
+- **Copy kits across:** *Kits → 📋 Copy kits to another server* copies the bot's custom kits (items, description,
+  claim cooldown) to another server. Claim roles come along when both use the same Discord. "Replace" overwrites
+  kits with the same name there.
+- **New servers start with:** the main server's admin user IDs, plus its admin roles when it's the same Discord. Set
+  the channels and everything else in the new server's own panel (Settings).
+- **Updates:** installed by the main server only; the extra servers restart with it. Removing a server keeps its
+  folder (renamed to `servers/_removed-…`), so nothing is lost.
+
 ### 🎨 Panel themes (owner picks one per account)
 
 Under **👥 Users → 🎨 Panel themes** the owner chooses how the control panel looks for every account, including

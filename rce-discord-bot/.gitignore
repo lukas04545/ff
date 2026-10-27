@@ -1,5 +1,6 @@
 .env
 data/
+servers/
 __pycache__/
 *.pyc
 .venv/
