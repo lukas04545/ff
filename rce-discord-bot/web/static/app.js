@@ -3461,12 +3461,13 @@ function protectionZones(r, reload) {
   if (!r.zones.length) { card.append(h("p", { class: "muted", text: "No zones yet – a team leader places one in-game." })); return card; }
   const now = r.now, fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "–";
   card.append(h("div", { class: "table-wrap" }, h("table", {},
-    h("thead", {}, h("tr", {}, ["Zone", "Leader", "Team", "Status", "Offline since", "Deleted at", "Position", ""].map((t) => h("th", { text: t })))),
+    h("thead", {}, h("tr", {}, ["Zone", "Leader", "Team", "Size", "Status", "Offline since", "Deleted at", "Position", ""].map((t) => h("th", { text: t })))),
     h("tbody", {}, r.zones.map((z) => h("tr", {},
       h("td", {}, h("code", { text: z.name })),
       h("td", { text: z.leader }),
       h("td", {}, z.members.length ? z.members.flatMap((m, i) => [i ? ", " : "",
         (z.online || []).includes(m) ? h("strong", { style: "color:var(--ok)", title: "online right now", text: `🟢 ${m}` }) : h("span", { class: "muted", text: m })]) : "–"),
+      h("td", {}, `${z.radius} m`, z.vip ? h("span", { class: "pill warn", style: "margin-left:.35rem", title: "VIP size", text: "⭐ VIP" }) : null),
       h("td", {}, h("span", { class: `pill keep ${z.state === "red" ? "bad" : "ok"}`, text: z.state === "red" ? "🔴 red – offline" : "🟢 green" }),
         h("div", { class: "muted", style: "font-size:.8rem;margin-top:.2rem", text: z.state === "red" ? ""
           : (z.online || []).length ? `kept green by: ${z.online.join(", ")}`

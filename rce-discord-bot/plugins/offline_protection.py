@@ -7,6 +7,11 @@ Only the leader of a team can place (or move) its zone; members and players with
 Status: red when every member has been offline for longer than "Offline time before red" (minutes); green as soon as
 one member comes online (checked on every join, no waiting for the timer).
 
+Size: the zone radius, or – with "Zone size by team size" – a size per number of team members (e.g. 1=20, 2=25,
+3-4=30, 5+=40), times "VIP zone size (%)" for VIP teams (Discord VIP role via the linked account, or a name on the VIP
+list). The guide has no command to change a zone's size, so a zone whose size changes is deleted and created again at
+the same spot with the documented commands, then gets its red/green status again.
+
 Expiry: a zone whose team nobody has been online for "Delete the zone after … hours" is deleted from the server (the
 remove command) – abandoned bases don't stay protected forever. The leader can place a new one when the team is back.
 
@@ -59,6 +64,26 @@ zones.editcustomzone "{zone}" color (0,255,0)
 zones.editcustomzone "{zone}" entermessage "This team is online – offline protection is off." """
 REMOVE_DEFAULT = 'zones.deletecustomzone "{zone}"'
 POSITION_DEFAULT = 'server.printpos "{name}"'
+# "Zone size by team size": one line per team size – "2=25", a range "3-4=30" or "and more" "5+=40"
+SIZE_LINE = re.compile(r"^\s*(\d+)\s*(?:-\s*(\d+)|(\+))?\s*[=:]\s*(\d+)\s*$")
+VIP_LEADER, VIP_ANY = "the leader is VIP", "any member is VIP"
+
+
+def parse_size_table(text: str) -> tuple[list[tuple[int, int | None, int]], list[str]]:
+    """[(from members, to members or None = and more, radius)] and the lines that couldn't be read."""
+    rows, bad = [], []
+    for line in str(text or "").splitlines():
+        if not line.strip():
+            continue
+        m = SIZE_LINE.match(line)
+        if m is None or int(m[4]) < 1:
+            bad.append(line.strip())
+            continue
+        low = int(m[1])
+        rows.append((low, None if m[3] else int(m[2] or low), int(m[4])))
+    return rows, bad
+
+
 COMMAND_HELP = ("Placeholders: {zone} (zone name), {team} (team ID), {leader} (leader's name), {x} {y} {z} "
                 "(position), {radius}. Several commands: one per line. Empty = nothing is sent.")
 
@@ -82,6 +107,20 @@ class OfflineProtection(Plugin):
                 help="Time between \"Can I build here?\" and \"Yes\" for the leader to place the zone."),
         Setting("radius", "Zone radius in metres ({radius})", "int", 30, min=1, max=100000,
                 help="Size of the sphere around the leader's position (zones.createcustomzone, Zone Size)."),
+        Setting("size_by_team", "Zone size by team size", "textarea", "",
+                help="One line per team size: members=radius in metres, e.g. 1=20, 2=25, 3-4=30, 5+=40 (one per "
+                     "line). Team sizes no line covers use the zone radius above. Empty = every zone uses the zone "
+                     "radius. When a team grows or shrinks its zone is deleted and created again at the same spot "
+                     "with the new size."),
+        Setting("vip_percent", "VIP zone size (%)", "int", 150, min=1, max=1000,
+                help="Size of VIP teams' zones in percent of the normal size: 150 = 1.5×, 200 = double, 100 = no "
+                     "bonus."),
+        Setting("vip_role", "VIP Discord role", "role", None,
+                help="Players whose linked Discord account (/customkit link) has this role count as VIP."),
+        Setting("vip_players", "VIP players (in-game names)", "textarea", "",
+                help="One name per line – these count as VIP too (no Discord role needed)."),
+        Setting("vip_who", "VIP size when …", "choice", VIP_LEADER, choices=(VIP_LEADER, VIP_ANY),
+                help="Whose VIP status counts for the team's zone."),
         Setting("zone_prefix", "Zone name prefix ({zone})", "text", "team_",
                 help="Zone names are this + the team ID, e.g. team_123."),
         Setting("position_command", "Command that returns a player's position", "text", POSITION_DEFAULT,
@@ -166,6 +205,10 @@ class OfflineProtection(Plugin):
             ("red_command", "the command for status red"),
             ("green_command", "the command for status green"))
             if not str(self.setting(key) or "").strip()]
+        bad = parse_size_table(self.setting("size_by_team"))[1]
+        if bad and not missing:
+            return ["Zone size by team size: can't read " + ", ".join(f'"{b[:30]}"' for b in bad[:3])
+                    + " – write one line per team size like 2=25, 3-4=30 or 5+=40."]
         if not missing:
             pattern = str(self.setting("position_pattern") or "").strip()
             try:
@@ -201,7 +244,8 @@ class OfflineProtection(Plugin):
                         "online": [m for m in members if m.lower() in online], "state": zone["state"] or "green",
                         "red_at": (zone["offline_since"] + self.setting("offline_minutes") * 60
                                    if zone.get("offline_since") is not None and zone["state"] != "red" else None),
-                        "applied": zone.get("applied"),
+                        "applied": zone.get("applied"), "radius": zone.get("radius") or self.setting("radius"),
+                        "vip": bool(team) and self.team_is_vip(team[0]["leader"] or zone["leader"], members),
                         "x": zone["x"], "y": zone["y"], "z": zone["z"], "placed": zone.get("placed"),
                         "offline_since": zone.get("offline_since"), "expires_at": self.expires_at(zone)})
         return out
@@ -230,7 +274,63 @@ class OfflineProtection(Plugin):
     def _vars(self, zone: dict) -> dict:
         leader = sanitize_player_name(zone["leader"])        # no quotes: it goes into "…" in commands
         return {"zone": zone["name"], "team": zone["team"], "leader": leader, "name": leader,
-                "x": zone["x"], "y": zone["y"], "z": zone["z"], "radius": self.setting("radius")}
+                "x": zone["x"], "y": zone["y"], "z": zone["z"], "radius": zone.get("radius") or self.setting("radius")}
+
+    # ------------------------------------------------------------ Size (team size, VIP)
+
+    def is_vip(self, player: str) -> bool:
+        if player.lower() in {n.strip().lower() for n in str(self.setting("vip_players") or "").splitlines()}:
+            return True
+        role_id, guild = self.setting("vip_role"), self.guild
+        if not role_id or guild is None:
+            return False
+        uid = self.bot.db.player_owner(player)
+        member = guild.get_member(uid) if uid else None
+        return member is not None and any(r.id == role_id for r in member.roles)
+
+    def team_is_vip(self, leader: str, members: list[str]) -> bool:
+        if self.setting("vip_who") == VIP_ANY:
+            return any(self.is_vip(m) for m in {*members, leader} if m)
+        return bool(leader) and self.is_vip(leader)
+
+    def wanted_radius(self, leader: str, members: list[str]) -> int:
+        """The team's zone size: from the team size table (or the zone radius), times the VIP size."""
+        radius = self.setting("radius")
+        count = len(members)
+        for low, high, size in parse_size_table(self.setting("size_by_team"))[0]:
+            if count >= low and (high is None or count <= high):
+                radius = size
+                break
+        if self.team_is_vip(leader, members):
+            radius = radius * self.setting("vip_percent") / 100
+        return max(1, round(radius))
+
+    async def _resize(self, team_id: int) -> None:
+        """Team size or VIP status changed: delete the zone and create it again at the same spot, new size."""
+        zone, team = self.zone(team_id), self.bot.db.team_by_id(team_id)
+        if zone is None or team is None or not team[1]:
+            return
+        if not zone.get("radius"):                          # zones from before sizes: made with the zone radius
+            zone["radius"] = self.setting("radius")
+            self._save(team_id, zone)
+        want = self.wanted_radius(team[0]["leader"] or zone["leader"], team[1])
+        old = zone["radius"]
+        if want == old:
+            return
+        await self._run("remove_command", self._vars(zone))
+        zone["radius"] = want
+        if not await self._run("create_command", self._vars(zone)):
+            zone["radius"] = old                             # try again at the next check
+            self._save(team_id, zone)
+            return
+        if zone["state"] in ("red", "green") and await self._run(f"{zone['state']}_command", self._vars(zone)):
+            zone["applied"] = time.time()
+        self._save(team_id, zone)
+        vip = " (VIP)" if self.team_is_vip(team[0]["leader"] or zone["leader"], team[1]) else ""
+        self.audit(f"Offline protection zone of team {team_id} resized {old} → {want} m – {len(team[1])} "
+                   f"member(s){vip}")
+        await self._announce(f"📏 Zone `{zone['name']}` of team **{self.md(zone['leader'])}** is now {want} m "
+                             f"({len(team[1])} member{'s' if len(team[1]) != 1 else ''}{vip}).")
 
     async def _run(self, key: str, values: dict) -> bool:
         """Runs the command lines of a setting with the placeholders filled in. False if empty or failed."""
@@ -306,7 +406,8 @@ class OfflineProtection(Plugin):
             await self._run("remove_command", self._vars(old))
         x, y, z = position
         zone = {"team": team_id, "name": f"{self.setting('zone_prefix')}{team_id}", "leader": leader,
-                "x": x, "y": y, "z": z, "state": "", "offline_since": None, "placed": int(time.time())}
+                "x": x, "y": y, "z": z, "state": "", "offline_since": None, "placed": int(time.time()),
+                "radius": self.wanted_radius(leader, members)}
         if not await self._run("create_command", self._vars(zone)):
             return "failed", "the zone couldn't be created – tell an admin."
         self._save(team_id, zone)
@@ -474,6 +575,7 @@ class OfflineProtection(Plugin):
         for team_id in list(self.zones()):
             try:
                 await self._update(team_id)
+                await self._resize(team_id)
                 await self._reapply(team_id)
             except Exception:
                 self.log.exception("Offline protection zone of team %s", team_id)
