@@ -706,3 +706,59 @@ def test_nuke_for_real_money_drops_on_discord(shop, monkeypatch):
     r = run(s.checkout("nuke", base_url="https://x", player="Gamer7", gift_code=code))
     order = db.store_order_by("token", r["token"])
     assert order["status"] == "failed" and "no channel for nukes" in order["result"]
+
+
+def test_kits_for_one_server_or_several(shop, monkeypatch, tmp_path):
+    """Several servers: a store kit is for this server, another one, or several. In-game kits are given once on
+    each server it's for (when the buyer is online there); bot kits are copied there with their claim role."""
+    import servers
+    from cogs.custom_kits import CustomKits
+    s, db, bot = shop.s, shop.db, shop.env.bot
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"WEB_PORT=8080\nGUILD_ID=1\nDATABASE_PATH={bot.config.database_path}\n",
+                                   encoding="utf-8")
+    servers.create_server("Two", "1.2.3.4", "28016", "pw", "MTEx" + "a" * 66, "1")
+    said, remote = [], {"online": [], "gave": []}
+
+    async def command(cmd, **kw):
+        said.append(cmd)
+        return ""
+    monkeypatch.setattr(bot.rcon, "command", command)
+    monkeypatch.setattr(type(bot.rcon), "connected", property(lambda self: True))
+
+    async def give_on(sid, player, *, item=None, amount=1, kit=None):
+        if player.lower() not in [n.lower() for n in remote["online"]]:
+            return "offline"
+        remote["gave"].append((sid, player, kit))
+        return "given"
+
+    async def online_on(sid):
+        return list(remote["online"])
+    monkeypatch.setattr(servers, "give_on", give_on)
+    monkeypatch.setattr(servers, "online_on", online_on)
+    # an in-game kit for both servers
+    vip = db.store_kit(db.add_store_kit("VIP", "vip", 4.5, 0, None, source="ingame"))
+    db.update_store_kit(vip["id"], servers="main,two")
+    assert s.kit_servers(db.store_kit(vip["id"])) == ["main", "two"]
+    bot.online_players = {"Gamer7": {}}                                       # on the main server, not on Two
+    order = run(s.complete(run(s.checkout("kit", base_url="https://x", kit_id=vip["id"], player="Gamer7"))["token"]))
+    assert order["status"] == "waiting" and order["servers_done"] == "main"
+    assert said.count('kit givetoplayer "vip" "Gamer7"') == 1 and "next time you're on Two" in shop.dms[-1]
+    dms = len(shop.dms)
+    assert run(s.deliver_waiting()) == 0 and len(shop.dms) == dms             # still not on Two: no new message
+    remote["online"] = ["Gamer7"]                                             # now on Two
+    assert run(s.deliver_waiting()) == 1
+    order = db.store_order(order["id"])
+    assert order["status"] == "delivered" and order["result"] == "vip – given on Main server, Two"
+    assert remote["gave"] == [("two", "Gamer7", "vip")] and said.count('kit givetoplayer "vip" "Gamer7"') == 1
+    # a bot kit for Two only: copied there; on this server claiming says where it's for
+    ak = db.store_kit(shop.kit_id)
+    db.update_store_kit(ak["id"], servers="two")
+    assert run(s.sync_kit_servers(db.store_kit(ak["id"]))) == ["Two"]
+    from storage import Storage
+    two_db = Storage(servers.database_file("two"))
+    assert two_db.custom_kit("Ak Kit") is not None
+    two_db.close()
+    assert CustomKits.other_servers_only(NS(bot=bot), "Ak Kit") == ["Two"]
+    db.update_store_kit(ak["id"], servers="")                                  # back to: this server
+    assert CustomKits.other_servers_only(NS(bot=bot), "Ak Kit") is None

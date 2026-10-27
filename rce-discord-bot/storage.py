@@ -504,7 +504,8 @@ class Storage:
                 self._db.execute(f"ALTER TABLE kit_requests ADD COLUMN {column} {kind}")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(store_kits)")}
         for column, kind in (("source", "TEXT NOT NULL DEFAULT 'custom'"), ("auto", "INTEGER NOT NULL DEFAULT 0"),
-                             ("items", "TEXT"), ("category", "TEXT")):
+                             ("items", "TEXT"), ("category", "TEXT"),
+                             ("servers", "TEXT NOT NULL DEFAULT ''")):          # several servers: where it's for
             if column not in columns:
                 self._db.execute(f"ALTER TABLE store_kits ADD COLUMN {column} {kind}")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(prison)")}
@@ -519,6 +520,8 @@ class Storage:
         for column in ("slot_count", "months", "slot_id", "coins"):  # team slots ("slots"), coin packs ("coins")
             if column not in columns:
                 self._db.execute(f"ALTER TABLE store_orders ADD COLUMN {column} INTEGER")
+        if "servers_done" not in columns:          # in-game kit for several servers: where it was given already
+            self._db.execute("ALTER TABLE store_orders ADD COLUMN servers_done TEXT")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 
@@ -1635,7 +1638,7 @@ class Storage:
 
     # ------------------------------------------------------------ Web store
 
-    _STORE_KIT_FIELDS = ("name", "kit", "price", "days", "description", "enabled", "items", "category")
+    _STORE_KIT_FIELDS = ("name", "kit", "price", "days", "description", "enabled", "items", "category", "servers")
 
     def store_kits(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
         """enabled_only: what is on sale (switched on and has a price)."""

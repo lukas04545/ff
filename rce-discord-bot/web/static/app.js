@@ -3519,10 +3519,18 @@ views.webstore = async (main) => {
     const kDesc = h("input", { placeholder: "Description (optional)" });
     const catList = h("datalist", { id: "store-cats" }, [...new Set(d.kits.map((k) => k.category).filter(Boolean))].sort().map((c) => h("option", { value: c })));
     const kCat = h("input", { placeholder: "Category, e.g. Raid kits (optional)", list: "store-cats", maxlength: "40" });
+    // Several servers: which server(s) the kit is for (bot kits: copied there with their claim role; in-game kits:
+    // given on each of them once)
+    const multi = (d.servers || []).length > 1;
+    const serverName = (id) => (d.servers.find((s) => s.id === id) || { name: id }).name;
+    const kServers = multi ? d.servers.map((s) => [s.id, h("input", { type: "checkbox", value: s.id, checked: s.id === d.this_server })]) : [];
+    const kServersBox = multi ? h("div", { class: "row tight", title: "Which server(s) the kit is for" },
+      h("span", { class: "muted", text: "For:" }), kServers.map(([id, cb]) => h("label", { class: "row tight" }, cb, serverName(id)))) : null;
     const kSave = h("button", { class: "primary", text: "Add kit" });
     const kCancel = h("button", { class: "ghost hidden", text: "Cancel", onclick: () => { editId = null; load(); } });
     kSave.addEventListener("click", async () => {
       const body = { name: kName.value, kit: kKit.value, price: kPrice.value, days: kDays.value || 0, description: kDesc.value, category: kCat.value };
+      if (multi) body.servers = kServers.filter(([, cb]) => cb.checked).map(([id]) => id);
       await act(() => editId ? api(`/api/webshop/kits/${editId}`, { method: "PUT", body }) : api("/api/webshop/kits", { method: "POST", body }), editId ? "Kit saved" : "Kit added");
       editId = null; load();
     });
@@ -3534,6 +3542,7 @@ views.webstore = async (main) => {
         + (!ingame(k) && !d.custom_kits.includes(k.kit) ? " · missing!" : "") + ` · ${k.items} item${k.items === 1 ? "" : "s"}` })),
       h("td", {}, k.price > 0 ? money(k.price, cur) : h("span", { class: "pill warn", text: "needs a price" })),
       h("td", { text: ingame(k) ? "one-time (in-game)" : k.days ? `${k.days} days` : "permanent" }),
+      multi ? h("td", { text: (k.for_servers || []).map(serverName).join(" + ") }) : null,
       h("td", {}, h("span", { class: "pill " + (k.enabled && k.price > 0 ? "ok" : ""), text: k.enabled && k.price > 0 ? "for sale" : "hidden" })),
       h("td", { class: "row tight" },
         k.price > 0 ? h("button", { class: "small", text: k.enabled ? "Hide" : "Show", onclick: async () => { await act(() => api(`/api/webshop/kits/${k.id}`, { method: "PUT", body: { enabled: !k.enabled } })); load(); } })
@@ -3544,13 +3553,15 @@ views.webstore = async (main) => {
           } }),
         h("button", { class: "small", text: "Edit", onclick: () => {
           editId = k.id; kName.value = k.name; kKit.value = k.kit; kPrice.value = k.price; kDays.value = k.days; kDesc.value = k.description || ""; kCat.value = k.category || "";
+          kServers.forEach(([id, cb]) => { cb.checked = (k.for_servers || []).includes(id); });
           kSave.textContent = "Save kit"; kCancel.classList.remove("hidden"); kName.focus();
         } }),
         h("button", { class: "small danger", text: "Remove", onclick: async () => { if (!confirm(`Remove ${k.name} from the store?` + (k.auto ? " It won't be added again automatically." : "") + " (The kit itself stays.)")) return; await act(() => api(`/api/webshop/kits/${k.id}`, { method: "DELETE" }), "Removed"); load(); } }))));
     const kits = h("div", { class: "card" }, h("h2", { text: "🎒 Kits for sale" }),
       h("p", { class: "muted", text: "New bot kits (Kit builder / Kits page) and the server's in-game kits are added here automatically – hidden until you set a price. Bot kits give the kit's claim role (for N days or permanently); in-game kits are given in-game once. You can also add a bot kit by hand below." }),
-      d.kits.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Kit", "Custom kit", "Price", "Duration", "", ""].map((t) => h("th", { text: t })))), h("tbody", {}, kitRows))) : h("p", { class: "muted", text: "Nothing for sale yet." }),
-      h("div", { class: "row", style: "margin-top:.75rem" }, kName, kKit, kPrice, kDays),
+      d.kits.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Kit", "Custom kit", "Price", "Duration", ...(multi ? ["For"] : []), "", ""].map((t) => h("th", { text: t })))), h("tbody", {}, kitRows))) : h("p", { class: "muted", text: "Nothing for sale yet." }),
+      multi ? h("p", { class: "muted", style: "margin:.6rem 0 0", text: "Several servers: tick which server(s) a kit is for. A bot kit is copied to each of them with its claim role, so buyers claim it there – on a server it's not for, claiming says where it's for. An in-game kit is given once on each server it's for, when the buyer is online there (the kit must exist on that server with the same name)." }) : null,
+      h("div", { class: "row", style: "margin-top:.75rem" }, kName, kKit, kPrice, kDays, kServersBox),
       h("div", { class: "row", style: "margin-top:.5rem" }, kCat, catList, kDesc, kSave, kCancel));
 
     // --- Gift cards

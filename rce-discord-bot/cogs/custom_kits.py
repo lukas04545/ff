@@ -596,6 +596,16 @@ class CustomKits(commands.Cog):
         await interaction.response.send_message(
             f"Custom kit **{safe_md(kit)}** does not exist. Overview: `/customkit list`", ephemeral=True)
 
+    def other_servers_only(self, kit: str) -> list[str] | None:
+        """Several servers: a kit sold in the web store for other servers only (not this one) – their names."""
+        import servers
+        for r in self.bot.db.store_kits():
+            if r["source"] == "custom" and r["kit"].lower() == kit.lower() and (r["servers"] or "").strip():
+                ids = [s for s in r["servers"].split(",") if s]
+                if servers.server_id() not in ids:
+                    return [servers.server_name(s) for s in ids]
+        return None
+
     def can_claim(self, member: discord.abc.User, row) -> bool:
         """May this member claim the kit themselves? (has one of the kit's claim roles)"""
         allowed = set(self.bot.db.claim_roles(row))
@@ -1097,7 +1107,7 @@ class CustomKits(commands.Cog):
         online = player is not None and any(n.lower() == player.lower() for n in self.bot.online_players)
         kits = []
         for row in self.bot.db.custom_kits():
-            if not self.can_claim(member, row):
+            if not self.can_claim(member, row) or self.other_servers_only(row["name"]):
                 continue
             cooldown = int(row["cooldown_minutes"])
             since = self.bot.db.minutes_since_custom_claim(row["name"], player) if player else None
@@ -1139,6 +1149,11 @@ class CustomKits(commands.Cog):
             hint = (f"Kits you can claim: {', '.join(f'**{safe_md(n)}**' for n in claimable)}" if claimable
                     else "Your roles don't give you access to any custom kit.")
             return ClaimOutcome(False, "no_access", f"⛔ You can't claim **{safe_md(kit)}**.\n{hint}")
+        elsewhere = self.other_servers_only(row["name"])
+        if elsewhere:
+            return ClaimOutcome(False, "other_server", f"🖥️ **{safe_md(row['name'])}** is for "
+                                                       f"{', '.join(f'**{safe_md(n)}**' for n in elsewhere)} – claim "
+                                                       "it there (pick that server in the command).", row["name"])
         player = self.bot.db.linked_player(member.id)
         if player is None:
             return ClaimOutcome(False, "not_linked", "🔗 First link your in-game player with `/customkit link` – "

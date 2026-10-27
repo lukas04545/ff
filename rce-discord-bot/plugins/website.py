@@ -259,7 +259,9 @@ class PlayerWebsite(Plugin):
             return None
         kits = bool(self.bot.db.store_kits(enabled_only=True))     # (can also be paid with gift cards alone)
         paypal_only = shop.paypal is not None and (shop.builder_problem() is None or bool(shop.giftcard_values()))
-        return shop if kits or paypal_only else None
+        battlepass = shop._battlepass()
+        selling_pass = battlepass is not None and battlepass.money_price() > 0   # the premium pass for money
+        return shop if kits or paypal_only or selling_pass else None
 
     def accounts(self):
         """The PlayerAccounts cog if player login is on, else None."""

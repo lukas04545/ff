@@ -132,6 +132,10 @@ class BattlePass(Plugin):
         Setting("currency_name", "Premium currency name", "text", "Coins"),
         Setting("currency_icon", "Premium currency icon", "text", "💎"),
         Setting("pass_price", "Premium pass price (premium currency)", "int", 1100, min=0, max=10_000_000),
+        Setting("pass_money_price", "Premium pass price in the web store (money)", "text", "",
+                help="Also sell the premium pass directly for real money (PayPal / gift card), e.g. 9.99 in the store "
+                     "currency – next to buying it with the premium currency. Empty = only with the premium "
+                     "currency."),
         Setting("xp_per_tier", "XP per tier", "int", 500, min=10, max=10_000_000,
                 help="100 tiers × 500 XP ≈ 80 hours online over the season (kills and the daily bonus make it less)."),
         Setting("xp_per_minute", "XP per minute online", "int", 10, min=0, max=100_000),
@@ -251,6 +255,23 @@ class BattlePass(Plugin):
 
     # ------------------------------------------------------------ Buying and claiming
 
+    def money_price(self) -> float:
+        """The premium pass's price in the web store (0 = not for sale for money)."""
+        try:
+            return max(0.0, round(float(str(self.setting("pass_money_price")).replace(",", ".").strip() or 0), 2))
+        except ValueError:
+            return 0.0
+
+    def grant_pass(self, user_id: int, why: str) -> bool:
+        """Premium pass bought in the web store. False if they had it already."""
+        p = self.progress(user_id)
+        if p["premium"]:
+            return False
+        p["premium"] = True
+        self._save(user_id, p)
+        self.audit(f"<@{user_id}> got the premium battle pass ({self.setting('season_name')}, {why})")
+        return True
+
     def buy_pass(self, user_id: int) -> None:
         p = self.progress(user_id)
         if p["premium"]:
@@ -316,6 +337,12 @@ class BattlePass(Plugin):
             player = self.linked_player(user_id)
             online = self.online_name(player) if player else None
             if online is None:
+                # Several servers (servers.py): given on whichever of our servers the player is on
+                import servers
+                for s in servers.load_registry():
+                    if player and s.get("enabled", True) and \
+                            await servers.give_on(s["id"], player, item=reward.item, amount=reward.amount) == "given":
+                        return
                 raise PassError("Join the server first – items are given to you in-game.")
             command = self.bot.config.item_give_template.format(name=sanitize_player_name(online),
                                                                 item=reward.item, amount=reward.amount)

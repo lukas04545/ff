@@ -115,7 +115,7 @@ PUBLIC_PAGES_TOTAL_PER_MINUTE = 1200   # player website, all visitors together
 CSRF_HEADER = "X-Requested-With"
 # Only for role "owner": settings (tokens/passwords), bot restart, user management
 # First path segments that are never a page of the player website (it lives at the site root)
-ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play"}
+ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play", "internal"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
                        "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection",
                        "/api/honeypot", "/api/themes", "/api/allplugins")
@@ -382,6 +382,7 @@ class WebInterface:
         r.add_post("/admin/", self._admin)
         r.add_get("/api/honeypot", self.honeypot_list)
         r.add_post("/api/switch", self.switch_server)
+        r.add_post("/internal/{action:online|give}", self.internal)          # other servers of this bot (signed)
         r.add_get("/api/servers", self.servers_list)                     # several Rust servers (servers.py)
         r.add_post("/api/servers", self.servers_create)
         r.add_post("/api/servers/{sid}/{action:start|stop|restart}", self.servers_action)
@@ -729,6 +730,48 @@ class WebInterface:
                             path="/")             # until the browser closes
         return resp
 
+    async def internal(self, request: web.Request) -> web.Response:
+        """Another server of this bot asks (servers.ask_server): who's online here, or give an item / in-game kit to
+        an online player. Only from this PC and signed with the servers' shared key."""
+        body = await request.read()
+        if not self._is_local(request) or not servers.internal_ok(
+                self._secret, request.headers.get("X-RCE-Time", ""), request.path, body,
+                request.headers.get("X-RCE-Sig", "")):
+            raise web.HTTPNotFound(text="Not found.")
+        if self.bot is None:
+            return web.json_response({"players": [], "result": "unreachable"})
+        if request.match_info["action"] == "online":
+            return web.json_response({"players": list(self.bot.online_players)})
+        try:
+            data = json.loads(body or b"{}")
+        except ValueError:
+            raise web.HTTPBadRequest() from None
+        from rce import kits as kitparse
+        from utils import sanitize_player_name
+        wanted = str(data.get("player") or "").lower()
+        name = next((n for n in self.bot.online_players if n.lower() == wanted), None)
+        if name is None or not self.bot.rcon.connected:
+            return web.json_response({"result": "offline"})
+        cfg = self.bot.config
+        if data.get("kit"):
+            command = cfg.kit_give_template.format(kit=kitparse.clean_arg(str(data["kit"])), name=name)
+        else:
+            item = re.sub(r"[^\w.\-]", "", str(data.get("item") or ""))[:60]
+            try:
+                amount = max(1, min(int(data.get("amount") or 1), 100_000))
+            except (TypeError, ValueError):
+                amount = 1
+            if not item:
+                raise web.HTTPBadRequest()
+            command = cfg.item_give_template.format(name=sanitize_player_name(name), item=item, amount=amount)
+        try:
+            await self.bot.rcon.command(command, expect_response=False)
+        except Exception as exc:                     # RCON down
+            log.warning("Give for another server failed: %s", exc)
+            return web.json_response({"result": "offline"})
+        log.info("Given for another server: %s", command)
+        return web.json_response({"result": "given"})
+
     def _proxy_target(self, request: web.Request) -> dict | None:
         """The extra server this panel shows (picked in the drop-down) for an API request, else None."""
         sid = request.cookies.get(SERVER_COOKIE)
@@ -1012,7 +1055,10 @@ class WebInterface:
                   for o in db.store_orders(limit=150)]
         return web.json_response({
             "status": shop.status(), "syncing": syncing,
-            "kits": [{**dict(r), "items": len(shop.kit_items(r))} for r in db.store_kits()],
+            "kits": [{**dict(r), "items": len(shop.kit_items(r)), "for_servers": shop.kit_servers(r)}
+                     for r in db.store_kits()],
+            "servers": [{"id": s["id"], "name": s["name"]} for s in servers.all_servers()],
+            "this_server": servers.server_id(),
             "custom_kits": [k["name"] for k in db.custom_kits()],
             "gift_cards": [dict(g) for g in db.gift_cards()], "orders": orders,
             "price_list": bool(shop.price_list())})
@@ -1024,6 +1070,13 @@ class WebInterface:
             if kit is None:
                 raise ApiError("Choose an existing custom kit (create one in the kit builder first).")
             out["kit"] = kit["name"]
+        if "servers" in data:                  # several servers: which one(s) the kit is for
+            wanted = [str(s) for s in data.get("servers") or [] if isinstance(s, str)]
+            known = [s["id"] for s in servers.all_servers()]
+            picked = [s for s in known if s in wanted]
+            if wanted and not picked:
+                raise ApiError("Pick at least one server for the kit.")
+            out["servers"] = "" if picked in ([], [servers.server_id()]) else ",".join(picked)
         if not partial or "name" in data:
             out["name"] = self._text(data, "name", limit=60)
         if not partial or "price" in data:
@@ -1054,6 +1107,9 @@ class WebInterface:
         f = self._store_kit_fields(await self._json(request))
         kit_id = self.bot.db.add_store_kit(f["name"], f["kit"], f["price"], f["days"], f["description"],
                                            category=f["category"])
+        if f.get("servers"):
+            self.bot.db.update_store_kit(kit_id, servers=f["servers"])
+            await self._cog("WebShop").sync_kit_servers(self.bot.db.store_kit(kit_id))
         self._audit(f"store: kit **{f['name']}** for sale ({f['kit']}, {f['price']})")
         return web.json_response({"id": kit_id})
 
@@ -1068,6 +1124,8 @@ class WebInterface:
         if f.get("enabled") and (f.get("price") or row["price"]) <= 0:
             raise ApiError("Set a price first.")
         self.bot.db.update_store_kit(kit_id, **f)
+        if "servers" in f:
+            await self._cog("WebShop").sync_kit_servers(self.bot.db.store_kit(kit_id))
         self._audit(f"store: kit #{kit_id} changed")
         return web.json_response({"ok": True})
 

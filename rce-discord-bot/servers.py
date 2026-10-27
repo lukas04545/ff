@@ -482,6 +482,73 @@ class ServerManager:
 manager: ServerManager | None = None        # set by bot.main() in the main process
 
 
+# ------------------------------------------------------------ Asking another server (same PC, signed)
+# The servers share one secret key (web_secret.key in the main server's data/). A request to another server's
+# /internal/<action> carries a signature over time, path and body with it – only the bot's own processes on this PC
+# can make one. Actions: "online" (who's online there), "give" (an item or in-game kit to an online player).
+
+INTERNAL_SKEW = 60          # seconds a signed request stays valid
+
+
+def internal_key() -> bytes:
+    try:
+        return bytes.fromhex((shared_data() / "web_secret.key").read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return b""
+
+
+def internal_signature(key: bytes, stamp: str, path: str, body: bytes) -> str:
+    import hashlib
+    import hmac
+    return hmac.new(key, f"{stamp}\n{path}\n".encode() + body, hashlib.sha256).hexdigest()
+
+
+def internal_ok(key: bytes, stamp: str, path: str, body: bytes, signature: str) -> bool:
+    import hmac
+    try:
+        fresh = abs(time.time() - float(stamp)) < INTERNAL_SKEW
+    except ValueError:
+        return False
+    return bool(key) and fresh and hmac.compare_digest(internal_signature(key, stamp, path, body), signature or "")
+
+
+async def ask_server(sid: str, action: str, payload: dict | None = None, timeout: float = 10) -> dict | None:
+    """Calls /internal/<action> of another server on this PC. None if it can't be reached."""
+    import asyncio
+
+    import aiohttp
+    target = next((s for s in all_servers() if s["id"] == sid), None)
+    key = internal_key()
+    if target is None or not key:
+        return None
+    path = f"/internal/{action}"
+    body = json.dumps(payload or {}).encode()
+    stamp = str(time.time())
+    headers = {"Content-Type": "application/json", "X-RCE-Time": stamp,
+               "X-RCE-Sig": internal_signature(key, stamp, path, body)}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+            async with session.post(f"http://127.0.0.1:{target['port']}{path}", data=body, headers=headers) as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.json(content_type=None)
+    except (aiohttp.ClientError, OSError, ValueError, asyncio.TimeoutError):
+        return None
+
+
+async def online_on(sid: str) -> list[str] | None:
+    """Who is online on that server (None: it can't be reached)."""
+    data = await ask_server(sid, "online")
+    return [str(n) for n in data.get("players", [])] if isinstance(data, dict) else None
+
+
+async def give_on(sid: str, player: str, *, item: str | None = None, amount: int = 1,
+                  kit: str | None = None) -> str:
+    """Gives an item or in-game kit on another server. "given", "offline" (not online there) or "unreachable"."""
+    data = await ask_server(sid, "give", {"player": player, "item": item, "amount": amount, "kit": kit})
+    return str(data.get("result")) if isinstance(data, dict) else "unreachable"
+
+
 def watch_parent(interval: float = 5) -> None:
     """Extra server: end this process when the main bot is gone (e.g. its window was closed) – also in setup mode,
     so no second bot keeps running on its own."""

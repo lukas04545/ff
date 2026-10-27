@@ -88,9 +88,11 @@ class WebShop(commands.Cog):
 
     async def cog_load(self) -> None:
         self.check_loop.start()
+        self.remote_loop.start()
 
     async def cog_unload(self) -> None:
         self.check_loop.cancel()
+        self.remote_loop.cancel()
 
     # ------------------------------------------------------------ Setup
 
@@ -458,6 +460,17 @@ class WebShop(commands.Cog):
                 raise CheckoutError("This pack isn't available.")
             fields.update(title=f"{coins:,} {bp.coin_name}".replace(",", " "), total=price, coins=coins,
                           user_id=user_id, player=db.linked_player(user_id) or "")
+        elif kind == "battlepass":             # the premium battle pass for money (plugins/battlepass.py)
+            if user_id is None:
+                raise CheckoutError("Log in first.")
+            bp = self._battlepass()
+            price = bp.money_price() if bp is not None else 0
+            if not price:
+                raise CheckoutError("The battle pass isn't for sale right now.")
+            if bp.progress(user_id)["premium"]:
+                raise CheckoutError("You already have the premium pass for this season.")
+            fields.update(title=f"Premium battle pass – {bp.setting('season_name')}", total=price, user_id=user_id,
+                          player=db.linked_player(user_id) or "")
         elif kind == "nuke":                   # 💣 points drop on Discord (cogs/economy.py)
             cfg = self.bot.config
             if cfg.store_nuke_price <= 0 or not cfg.economy_enabled:
@@ -634,6 +647,12 @@ class WebShop(commands.Cog):
                     raise CheckoutError("the battle pass plugin is switched off")
                 bp.add_coins_from_store(order["user_id"], int(order["coins"]), order_id)
                 result = f"{order['coins']} {bp.coin_name}"
+            elif order["kind"] == "battlepass":
+                bp = self._battlepass()
+                if bp is None:
+                    raise CheckoutError("the battle pass plugin is switched off")
+                fresh = bp.grant_pass(order["user_id"], f"store order #{order_id}")
+                result = "premium battle pass" + ("" if fresh else " (they already had it)")
             elif order["kind"] == "slots":
                 expires = int(time.time()) + int(order["months"]) * 30 * 86400
                 db.add_kit_slots(order["kit_name"], order["user_id"], int(order["slot_count"]), expires)
@@ -682,6 +701,10 @@ class WebShop(commands.Cog):
                 if not ok:
                     raise CheckoutError(text)
                 result = db.kit_request(rid)["kit"]
+                if order["kind"] == "kit" and skit is not None:
+                    copied = await self.sync_kit_servers(skit)     # for other servers too: the kit is there
+                    if copied:
+                        result += " (also on " + ", ".join(copied) + ")"
         except (CheckoutError, discord.HTTPException) as exc:
             db.move_store_order(order_id, "paid", "failed", result=str(exc)[:300])
             await self._log(f"❌ Store order #{order_id} is paid but could not be delivered: {safe_md(str(exc))} – "
@@ -699,6 +722,9 @@ class WebShop(commands.Cog):
             elif order["kind"] == "coins":
                 text = (f"✅ Thanks! **{safe_md(order['title'])}** were added to your account – spend them on the "
                         "Battle pass page of our website.")
+            elif order["kind"] == "battlepass":
+                text = ("✅ Thanks! Your **premium battle pass** is unlocked – claim the premium rewards on the "
+                        "Battle pass page of our website.")
             elif order["kind"] == "slots":
                 text = (f"✅ Thanks! You added **{order['slot_count']} team slot(s)** to **{safe_md(order['kit_name'])}** "
                         f"for {order['months']} month(s). Put your teammates on them under **My account** on the website.")
@@ -713,23 +739,79 @@ class WebShop(commands.Cog):
             await self._dm(order["user_id"], text)
         return True
 
+    # ------------------------------------------------------------ Several servers (servers.py): where a kit is for
+
+    def kit_servers(self, skit) -> list[str]:
+        """The servers a store kit is for (its "servers" setting; empty = this server)."""
+        import servers
+        raw = (skit["servers"] or "").strip() if "servers" in skit.keys() else ""
+        if not raw:
+            return [servers.server_id()]
+        known = {s["id"] for s in servers.all_servers()}
+        return [s for s in raw.split(",") if s in known] or [servers.server_id()]
+
+    async def sync_kit_servers(self, skit) -> list[str]:
+        """A bot kit for other servers too: the kit (items, cooldown, claim roles) is copied there, so its claim
+        role works on every server it's for. Returns the servers it was copied to."""
+        import servers
+        if skit["source"] != "custom":
+            return []
+        others = [s for s in self.kit_servers(skit) if s != servers.server_id()]
+        kits, _ = servers.export_custom_kits(self.bot.db, [skit["kit"]])
+        done = []
+        for sid in others if kits else []:
+            try:
+                await asyncio.to_thread(servers.import_custom_kits, kits, sid, overwrite=True)
+                done.append(servers.server_name(sid))
+            except (ValueError, OSError) as exc:
+                log.warning("Copying store kit %s to %s failed: %s", skit["kit"], sid, exc)
+        return done
+
     async def _give_ingame(self, order, skit) -> str | None:
-        """Gives an in-game kit to the buyer. None = they're offline (order waits until they join)."""
+        """Gives an in-game kit to the buyer – on every server it's for, once each. None = still waiting for the
+        buyer to be online somewhere (the order waits)."""
+        import servers
+        me = servers.server_id()
+        targets = self.kit_servers(skit)
+        done = [s for s in (order["servers_done"] or "").split(",") if s] if "servers_done" in order.keys() else []
+        given: dict[str, str] = {}
+        for sid in targets:
+            if sid in done:
+                continue
+            if sid == me:
+                text = await self._give_ingame_here(order, skit)
+            else:
+                text = "" if await servers.give_on(sid, order["player"] or "", kit=skit["kit"]) == "given" else None
+            if text is not None:
+                done.append(sid)
+                given[sid] = text
+        if given:
+            self.bot.db.update_store_order(order["id"], servers_done=",".join(done))
+        missing = [s for s in targets if s not in done]
+        if missing:
+            where = "the server" if targets == [me] else ", ".join(servers.server_name(s) for s in missing)
+            first = not str(order["result"] or "").startswith("waiting")
+            if self.bot.db.move_store_order(order["id"], "paid", "waiting",
+                                            result=f"waiting – given when the player is online on {where}") and first:
+                await self._dm(order["user_id"], f"✅ Thanks for your purchase! **{safe_md(order['title'])}** is "
+                                                 f"paid – you get it in-game the next time you're on {where}.")
+            return None
+        if targets == [me]:
+            return skit["kit"] + given.get(me, "")
+        return skit["kit"] + " – given on " + ", ".join(servers.server_name(s) for s in targets)
+
+    async def _give_ingame_here(self, order, skit) -> str | None:
+        """The in-game kit on this server, if the buyer is online here. None = not now."""
         name = next((n for n in self.bot.online_players if n.lower() == (order["player"] or "").lower()), None)
         if name is None or not self.bot.rcon.connected:
-            if self.bot.db.move_store_order(order["id"], "paid", "waiting",
-                                            result="paid – given when the player is online"):
-                await self._dm(order["user_id"], f"✅ Thanks for your purchase! **{safe_md(order['title'])}** is "
-                                                 "paid – you get it in-game the next time you're on the server.")
             return None
         template = self.bot.config.kit_give_template
         try:
             await self.bot.rcon.command(template.format(kit=kitparse.clean_arg(skit["kit"]), name=name),
                                         expect_response=False)
         except RconError:
-            self.bot.db.move_store_order(order["id"], "paid", "waiting", result="paid – server not reachable, retrying")
             return None
-        return skit["kit"] + await self._give_kit_role(order, skit, name)
+        return await self._give_kit_role(order, skit, name)
 
     async def _give_kit_role(self, order, skit, player: str) -> str:
         """KIT_ROLES: the buyer also gets the kit's Discord role (for the store kit's days, else for good) – with it
@@ -759,12 +841,28 @@ class WebShop(commands.Cog):
         return f" + role {role.name}" + (f" for {days} days" if days else "")
 
     async def deliver_waiting(self, player: str | None = None) -> int:
-        """Gives in-game kits that wait for their buyer (only `player`, or everyone online). Returns how many."""
+        """Gives in-game kits that wait for their buyer (only `player`, or everyone online – here or, for kits for
+        several servers, on the others). Returns how many orders are complete now."""
+        import servers
         done = 0
+        me = servers.server_id()
         online = {n.lower() for n in self.bot.online_players}
+        remote: dict[str, set[str]] = {}
+
+        async def online_on(sid: str) -> set[str]:
+            if sid not in remote:
+                remote[sid] = {n.lower() for n in (await servers.online_on(sid) or [])}
+            return remote[sid]
         for order in self.bot.db.store_orders(status="waiting", limit=200):
             buyer = (order["player"] or "").lower()
-            if buyer not in online or (player is not None and buyer != player.lower()):
+            if player is not None and buyer != player.lower():
+                continue
+            skit = self.bot.db.store_kit(order["store_kit_id"]) if order["store_kit_id"] else None
+            have = [s for s in (order["servers_done"] or "").split(",") if s]
+            pending = [s for s in (self.kit_servers(skit) if skit is not None else [me]) if s not in have]
+            ready = (me in pending and buyer in online) or (player is None and any(
+                [buyer in await online_on(s) for s in pending if s != me]))
+            if not ready:
                 continue
             if self.bot.db.move_store_order(order["id"], "waiting", "paid") and await self.fulfil(order["id"]):
                 done += self.bot.db.store_order(order["id"])["status"] == "delivered"
@@ -917,6 +1015,17 @@ class WebShop(commands.Cog):
                     continue
             if age >= PENDING_EXPIRE:
                 self._release(order["id"], "expired", "not paid within 3 hours")
+
+    @tasks.loop(minutes=1)
+    async def remote_loop(self) -> None:
+        """Several servers: in-game kits waiting for a buyer who's on another of our servers."""
+        import servers
+        if servers.load_registry() and self.bot.db.store_orders(status="waiting", limit=1):
+            await self.deliver_waiting()
+
+    @remote_loop.before_loop
+    async def _before_remote(self) -> None:
+        await self.bot.wait_until_ready()
 
     @tasks.loop(minutes=5)
     async def check_loop(self) -> None:

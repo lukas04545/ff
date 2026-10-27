@@ -363,3 +363,42 @@ def test_plugins_on_every_server(bot, monkeypatch):  # noqa: F811
         d = await (await c.get("/api/allplugins")).json()
         assert d["servers"][1]["ok"] is False and "isn't running" in d["servers"][1]["error"]
     run(bot, scenario)
+
+
+def test_servers_ask_each_other_signed(bot, monkeypatch):  # noqa: F811
+    """/internal/online and /internal/give: only for the bot's own servers on this PC (signed with the shared key)."""
+    from envfile import update_env
+    tmp = bot.config.database_path.parent
+    monkeypatch.chdir(tmp)
+    (tmp / ".env").write_text("WEB_PORT=8080\nGUILD_ID=1\n", encoding="utf-8")
+    said = []
+
+    async def command(cmd, **kw):
+        said.append(cmd)
+        return ""
+    monkeypatch.setattr(bot.rcon, "command", command)
+    monkeypatch.setattr(type(bot.rcon), "connected", property(lambda self: True))
+    bot.online_players = {"Gamer7": {}}
+
+    async def scenario(c):
+        servers.create_server("Two", "1.2.3.4", "28016", "pw", TOKEN_2)
+        update_env(servers.env_path("two"), {"WEB_PORT": str(c.server.port)})   # "Two" is this test server
+        assert await servers.online_on("two") == ["Gamer7"]
+        assert await servers.give_on("two", "gamer7", item="rifle.ak", amount=1) == "given"
+        assert said[-1] == 'inventory.giveto "Gamer7" "rifle.ak" 1'
+        assert await servers.give_on("two", "gamer7", kit="vip") == "given" and said[-1].startswith("kit givetoplayer")
+        assert await servers.give_on("two", "Nobody", kit="vip") == "offline"
+        assert await servers.give_on("two", "gamer7", item='ak" ; ban "x', amount=5) == "given"
+        assert said[-1] == 'inventory.giveto "Gamer7" "akbanx" 5'                   # item name cleaned
+        r = await c.post("/internal/online", data=b"{}")                           # unsigned: doesn't exist
+        assert r.status == 404
+        stamp = str(time.time() - 300)                                              # too old
+        sig = servers.internal_signature(servers.internal_key(), stamp, "/internal/online", b"{}")
+        r = await c.post("/internal/online", data=b"{}", headers={"X-RCE-Time": stamp, "X-RCE-Sig": sig})
+        assert r.status == 404
+        stamp = str(time.time())
+        sig = servers.internal_signature(servers.internal_key(), stamp, "/internal/online", b"{}")
+        r = await c.post("/internal/online", data=b"{}", headers={"X-RCE-Time": stamp, "X-RCE-Sig": sig,
+                                                                  "CF-Connecting-IP": "203.0.113.9"})
+        assert r.status == 404                                                      # never from outside
+    run(bot, scenario, secret_path=tmp / "data" / "web_secret.key")

@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
+import servers
 from rce import items as itemlist
 from support import pricing
 
@@ -138,6 +139,9 @@ def store_tabs(base: str, active: str, shop, admin: bool = False) -> str:
         tabs.append(("store/build", "Build your own"))
     if shop.bot.config.store_nuke_price > 0 and shop.bot.config.economy_enabled:
         tabs.append(("store/nukes", "💣 Nukes"))
+    bp = shop._battlepass()
+    if bp is not None and bp.money_price():
+        tabs.append(("battlepass", "🎖️ Battle pass"))          # the premium pass for money (on its own page)
     tabs.append(("store/giftcards", "Gift cards"))
     if len(tabs) == 1:
         return ""
@@ -179,6 +183,9 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
         else:
             days = f'<div class="days">{row["days"]} days</div>' if row["days"] else '<div class="days">Permanent</div>'
         desc = f'<div class="muted">{esc(row["description"])}</div>' if row["description"] else ""
+        if len(servers.all_servers()) > 1:                 # several servers: where the kit is for
+            names = " + ".join(servers.server_name(s) for s in shop.kit_servers(row))
+            days += f'<div class="days">🖥️ For: {esc(names)}</div>'
         values = form if form and str(form.get("kit")) == str(row["id"]) else {}
         cards = groups.setdefault((row["category"] or "").strip(), [])
         cards.append(f'<div class="card"><h2>{esc(row["name"])}</h2><div class="price">{esc(shop.fmt(row["price"]))}'

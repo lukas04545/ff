@@ -191,3 +191,54 @@ def test_account_page_without_a_store(bp_env):
             await c.close()
             await bp_env.bot.rcon.close()
     asyncio.run(main())
+
+
+def test_premium_pass_for_money_in_the_store(bp_env, monkeypatch):
+    """pass_money_price: the premium pass bought directly in the web store (PayPal / gift card)."""
+    from cogs.webshop import CheckoutError, WebShop
+
+    async def no_loop(self):
+        return None
+    monkeypatch.setattr(WebShop, "cog_load", no_loop)
+    shop = WebShop(bp_env.bot)
+    asyncio.run(bp_env.bot.add_cog(shop))
+    dms = []
+
+    async def dm(uid, text):
+        dms.append(text)
+
+    async def quiet(*args, **kwargs):
+        return None
+    monkeypatch.setattr(shop, "_dm", dm)
+    monkeypatch.setattr(shop, "_log", quiet)
+    code = shop.create_gift_cards(50, 1, "test")[0]
+    with pytest.raises(CheckoutError, match="isn't for sale"):
+        asyncio.run(shop.checkout("battlepass", base_url="http://x", user_id=7, gift_code=code))
+    asyncio.run(bp_env.m.save_settings("battlepass", {"pass_money_price": "9,99"}))
+    bp = bp_env.m.running("battlepass")
+    assert bp.money_price() == 9.99
+    with pytest.raises(CheckoutError, match="Log in"):
+        asyncio.run(shop.checkout("battlepass", base_url="http://x", gift_code=code))
+    out = asyncio.run(shop.checkout("battlepass", base_url="http://x", user_id=7, gift_code=code))
+    order = bp_env.db.store_order_by("token", out["token"])
+    assert order["status"] == "delivered" and order["total"] == 9.99 and bp.progress(7)["premium"]
+    assert bp_env.db.coins(7) == 0 and "premium battle pass" in dms[-1]
+    with pytest.raises(CheckoutError, match="already have"):
+        asyncio.run(shop.checkout("battlepass", base_url="http://x", user_id=7, gift_code=code))
+
+    async def page():
+        from web.server import WebInterface
+        from aiohttp.test_utils import TestClient, TestServer
+        web = WebInterface(bp_env.bot, env_path=bp_env.tmp / ".env", secret_path=bp_env.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            c.session.cookie_jar.update_cookies({"rce_player": "tok"})
+            bp._save(7, {**bp.progress(7), "premium": False})
+            text = await (await c.get("/battlepass")).text()
+            assert "… or buy it for" in text and "9.99" in text
+            assert 'href="/battlepass"' in await (await c.get("/store")).text()           # a tab in the store
+        finally:
+            await c.close()
+            await bp_env.bot.rcon.close()
+    asyncio.run(page())
