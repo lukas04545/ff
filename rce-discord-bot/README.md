@@ -654,6 +654,13 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
   file, settings and pictures from the server that has it; it arrives switched off. **📤 Copy to …** updates it on
   another server after you changed it. Built-in plugins are on every server already. The rest of the Plugins page is
   the server you're viewing (drop-down).
+- **The player website shows every server:** the home page has a card per server (name, online, players). The main
+  server's name there is *Settings → Server display name* (e.g. "Kryvon 10x"); the others use their name from the
+  Servers page. **Store:** players first pick a server's shop ("Enter the Kryvon 2x shop"). Each shop shows only
+  the kits for that server; kits for both appear in both. A *Change server* link sits at the top. The other
+  servers' in-game kits are added to their shop automatically (hidden until you set a price under 💳 Store). An own
+  kit built in the 2x shop is the 2x server's: it's copied there, and the 10x server says where it's for. Gift
+  cards, nukes and the battle pass are the same in every shop.
 - **Store kits for one server or several:** in *💳 Store → Kits for sale*, tick which server(s) each kit is for. The
   website shows it ("For: Main + Kryvon2x").
   - **Bot kits:** copied to every server they're for, with their claim role, so buyers claim them there. On a server

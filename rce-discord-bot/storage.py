@@ -522,6 +522,8 @@ class Storage:
                 self._db.execute(f"ALTER TABLE store_orders ADD COLUMN {column} INTEGER")
         if "servers_done" not in columns:          # in-game kit for several servers: where it was given already
             self._db.execute("ALTER TABLE store_orders ADD COLUMN servers_done TEXT")
+        if "shop_server" not in columns:           # several servers: the server whose shop it was bought in
+            self._db.execute("ALTER TABLE store_orders ADD COLUMN shop_server TEXT")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
 

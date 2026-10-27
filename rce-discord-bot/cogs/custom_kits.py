@@ -598,7 +598,15 @@ class CustomKits(commands.Cog):
 
     def other_servers_only(self, kit: str) -> list[str] | None:
         """Several servers: a kit sold in the web store for other servers only (not this one) – their names."""
+        import json
+
         import servers
+        try:
+            only = json.loads(self.bot.db.get_value("kit_only_on") or "{}")   # built in another server's shop
+        except ValueError:
+            only = {}
+        if only.get(kit.lower()) and only[kit.lower()] != servers.server_id():
+            return [servers.server_name(only[kit.lower()])]
         for r in self.bot.db.store_kits():
             if r["source"] == "custom" and r["kit"].lower() == kit.lower() and (r["servers"] or "").strip():
                 ids = [s for s in r["servers"].split(",") if s]

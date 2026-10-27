@@ -49,6 +49,7 @@ log = logging.getLogger("rce.webshop")
 STORE_BY = "Web store (paid)"
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"      # no 0/O, 1/I – easy to type
 BOUGHT_MARKER = "Bought by user "    # description of custom kits created for a buyer (not offered in the store)
+KIT_SERVERS_KEY = "kit_only_on"       # own kits built in another server's shop: kit (lower case) -> that server
 DISMISSED_KEY = "store_dismissed"     # kits an owner removed from the store – never added again automatically
 JOIN_DELAY = 20                       # seconds after joining before an in-game kit is given (still loading)
 ITEMS_REFRESH = 6 * 3600              # in-game kit contents are read again after this
@@ -303,7 +304,11 @@ class WebShop(commands.Cog):
         if row is None or not db.delete_store_kit(kit_id):
             return False
         if row["auto"]:
-            db.set_value(DISMISSED_KEY, json.dumps(sorted(self._dismissed() | {f"{row['source']}:{row['kit'].lower()}"})))
+            import servers
+            where = [s for s in self.kit_servers(row) if s != servers.server_id()]
+            key = f"{row['source']}:{where[0]}:{row['kit'].lower()}" if row["source"] == "ingame" and where \
+                else f"{row['source']}:{row['kit'].lower()}"            # another server's in-game kit: its own key
+            db.set_value(DISMISSED_KEY, json.dumps(sorted(self._dismissed() | {key})))
         return True
 
     def start_sync(self) -> bool:
@@ -319,8 +324,11 @@ class WebShop(commands.Cog):
 
     async def sync_kits(self) -> int:
         """Adds new staff-made bot kits and in-game kits to the store (hidden, no price). Returns how many."""
+        import servers
         db = self.bot.db
-        have = {(r["source"], r["kit"].lower()) for r in db.store_kits()}
+        me = servers.server_id()
+        have = {(r["source"], r["kit"].lower()) for r in db.store_kits()        # another server's in-game kit with
+                if r["source"] == "custom" or me in self.kit_servers(r)}         # the same name is a different one
         dismissed = self._dismissed()
         added = 0
 
@@ -343,10 +351,33 @@ class WebShop(commands.Cog):
                 names = []
             for name in names:
                 add("ingame", name)
-            await self._refresh_ingame_items()
+        added += await self._sync_other_servers_kits(dismissed)
+        await self._refresh_ingame_items()
         if added:
             await self._log(f"🛒 {added} kit(s) added to the store – hidden until you set a price (web interface → "
                             "Store → Kits for sale).")
+        return added
+
+    async def _sync_other_servers_kits(self, dismissed: set) -> int:
+        """Several servers: the other servers' in-game kits come into this store too (for that server only,
+        hidden until priced) – each server's shop on the website sells its own in-game kits."""
+        import servers
+        db, added = self.bot.db, 0
+        for s in servers.load_registry():
+            data = await servers.ask_server(s["id"], "kits")
+            names = data.get("kits") if isinstance(data, dict) else None
+            if not names:
+                continue
+            have = {r["kit"].lower() for r in db.store_kits() if r["source"] == "ingame"
+                    and s["id"] in self.kit_servers(r)}
+            for name in names:
+                name = str(name)[:60]
+                if name.lower() in have or f"ingame:{s['id']}:{name.lower()}" in dismissed:
+                    continue
+                kit_id = db.add_store_kit(name, name, 0, 0, None, source="ingame", auto=True, enabled=False)
+                db.update_store_kit(kit_id, servers=s["id"])
+                have.add(name.lower())
+                added += 1
         return added
 
     async def _refresh_ingame_items(self) -> None:
@@ -356,8 +387,16 @@ class WebShop(commands.Cog):
         rows = [r for r in self.bot.db.store_kits() if r["source"] == "ingame"
                 and now - self._items_read.get(r["id"], -1e9) >= ITEMS_REFRESH]
         rows.sort(key=lambda r: (bool(r["items"]), self._items_read.get(r["id"], 0)))
+        import servers
         for row in rows[:ITEMS_PER_SYNC]:
             self._items_read[row["id"]] = now
+            where = self.kit_servers(row)
+            if servers.server_id() not in where:          # another server's in-game kit: its contents from there
+                data = await servers.ask_server(where[0], "kitinfo", {"kit": row["kit"]})
+                items = data.get("items") if isinstance(data, dict) else None
+                if items:
+                    self.bot.db.update_store_kit(row["id"], items=json.dumps(items))
+                continue
             try:
                 raw = await self.bot.rcon.command(f'kit info "{kitparse.clean_arg(row["kit"])}"', timeout=4)
             except RconError:
@@ -400,7 +439,7 @@ class WebShop(commands.Cog):
     async def checkout(self, kind: str, *, base_url: str, kit_id=None, items: dict | None = None,
                        timer_hours: int | None = None, value=None, player: str = "", gift_code: str = "",
                        name: str = "", admin_key: str = "", ip: str = "?", user_id: int | None = None,
-                       slot_count: int | None = None, months: int | None = None) -> dict:
+                       slot_count: int | None = None, months: int | None = None, shop_server: str = "") -> dict:
         """Starts an order. Returns {"token", "redirect"} (PayPal) or {"token"} (paid with a gift card or free with
         the admin key). `user_id` (a logged-in player) is required for the "addon" and "slots" kinds."""
         db = self.bot.db
@@ -490,6 +529,8 @@ class WebShop(commands.Cog):
             raise CheckoutError("Unknown product.")
         if kind in ("kit", "custom", "nuke"):
             fields["player"], fields["user_id"] = self._buyer(player)
+        if shop_server:
+            fields["shop_server"] = shop_server[:40]
         elif kind in ("addon", "slots"):
             fields["user_id"] = user_id
             fields["player"] = db.linked_player(user_id) or ""
@@ -705,6 +746,8 @@ class WebShop(commands.Cog):
                     copied = await self.sync_kit_servers(skit)     # for other servers too: the kit is there
                     if copied:
                         result += " (also on " + ", ".join(copied) + ")"
+                elif order["kind"] == "custom":
+                    result += await self._custom_kit_for_shop(order, result)
         except (CheckoutError, discord.HTTPException) as exc:
             db.move_store_order(order_id, "paid", "failed", result=str(exc)[:300])
             await self._log(f"❌ Store order #{order_id} is paid but could not be delivered: {safe_md(str(exc))} – "
@@ -766,6 +809,27 @@ class WebShop(commands.Cog):
             except (ValueError, OSError) as exc:
                 log.warning("Copying store kit %s to %s failed: %s", skit["kit"], sid, exc)
         return done
+
+    async def _custom_kit_for_shop(self, order, kit: str) -> str:
+        """Several servers: an own kit built in another server's shop is that server's kit – copied there (with its
+        claim role) and not claimable on this server (cogs/custom_kits.py: other_servers_only)."""
+        import servers
+        sid = order["shop_server"] if "shop_server" in order.keys() else None
+        if not sid or sid == servers.server_id() or sid not in {s["id"] for s in servers.all_servers()}:
+            return ""
+        kits, _ = servers.export_custom_kits(self.bot.db, [kit])
+        try:
+            await asyncio.to_thread(servers.import_custom_kits, kits, sid, overwrite=True)
+        except (ValueError, OSError) as exc:
+            log.warning("Copying kit %s to %s failed: %s", kit, sid, exc)
+            return f" (⚠️ could not be copied to {servers.server_name(sid)} – use Kits → Copy kits)"
+        try:
+            only = json.loads(self.bot.db.get_value(KIT_SERVERS_KEY) or "{}")
+        except ValueError:
+            only = {}
+        only[kit.lower()] = sid
+        self.bot.db.set_value(KIT_SERVERS_KEY, json.dumps(only))
+        return f" (for {servers.server_name(sid)})"
 
     async def _give_ingame(self, order, skit) -> str | None:
         """Gives an in-game kit to the buyer – on every server it's for, once each. None = still waiting for the

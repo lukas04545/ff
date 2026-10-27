@@ -243,6 +243,31 @@ class PlayerWebsite(Plugin):
         self._status = (time.monotonic(), data)
         return data
 
+    async def refresh_servers(self) -> None:
+        """Several servers (servers.py): the others' live status for the home page (asked every CACHE_SECONDS)."""
+        import servers
+        if servers.is_child() or not servers.load_registry():
+            self._servers_live = []
+            return
+        cached = getattr(self, "_servers_live_at", 0)
+        if time.monotonic() - cached < CACHE_SECONDS and getattr(self, "_servers_live", None) is not None:
+            return
+        out = []
+        for s in servers.load_registry():
+            if not s.get("enabled", True):
+                continue
+            state = await servers.status_of(s["id"]) or {"online": False, "players": 0, "max_players": 0, "queued": 0}
+            out.append({"id": s["id"], "name": servers.server_name(s["id"]), **state})
+        self._servers_live, self._servers_live_at = out, time.monotonic()
+
+    def all_servers_live(self) -> list[dict]:
+        """This server first, then the others (empty with one server)."""
+        import servers
+        others = getattr(self, "_servers_live", None) or []
+        if not others:
+            return []
+        return [{"id": servers.MAIN_ID, "name": servers.server_name(servers.MAIN_ID), **self.live()}] + others
+
     def bounties(self) -> list[tuple[str, int]]:
         plugin = self.plugin("bounties")
         if plugin is None:
@@ -361,6 +386,24 @@ class PlayerWebsite(Plugin):
 
     # ------------------------------------------------------------ Pages
 
+    def _server_cards(self, players: str, live: dict) -> str:
+        """The "Server" card – one per server when this bot runs several (name, online, players)."""
+        every = self.all_servers_live()
+        if not every:
+            return (f'<div class="card"><h2>Server</h2><span class="pill{" on" if live["online"] else ""}">'
+                    f'{"Online" if live["online"] else "Offline"}</span><div class="big">{esc(players)}</div>'
+                    f'<div class="muted">{str(live["queued"]) + " in queue" if live["queued"] else "players online"}'
+                    f'</div></div>')
+        cards = ""
+        for s in every:
+            count = (f'{s["players"]} / {s["max_players"]}' if s.get("max_players") else str(s.get("players", 0))) \
+                if s.get("online") else "–"
+            cards += (f'<div class="card"><h2>{esc(s["name"])}</h2><span class="pill{" on" if s.get("online") else ""}">'
+                      f'{"Online" if s.get("online") else "Offline"}</span><div class="big">{esc(count)}</div>'
+                      f'<div class="muted">{str(s["queued"]) + " in queue" if s.get("queued") else "players online"}'
+                      f'</div></div>')
+        return cards
+
     def home(self, base: str) -> str:
         live, tz = self.live(), self.tz
         invite, store = self.setting("invite").strip(), self.setting("store").strip()
@@ -388,9 +431,7 @@ class PlayerWebsite(Plugin):
                 + (f'<div class="kicker">{esc(tagline)}</div>' if tagline else "")
                 + (f'<div class="motto">{esc(motto)}</div>' if motto else "")
                 + f'{buttons}</section><div class="grid">'
-                f'<div class="card"><h2>Server</h2><span class="pill{" on" if live["online"] else ""}">'
-                f'{"Online" if live["online"] else "Offline"}</span><div class="big">{esc(players)}</div>'
-                f'<div class="muted">{str(live["queued"]) + " in queue" if live["queued"] else "players online"}</div></div>'
+                + self._server_cards(players, live) +
                 f'<div class="card"><h2>Next wipe</h2><div class="big" style="font-size:1.3rem">{esc(wipe)}</div>'
                 f'<div class="muted">{esc(wipe_sub)}</div></div>')
         if live["peak_24h"]:
@@ -701,5 +742,7 @@ class PlayerWebsite(Plugin):
             return web.Response(status=status, text=text, content_type="text/html", headers=headers)
         if request.method != "GET":
             raise web.HTTPMethodNotAllowed(request.method, ["GET"])
+        if path.strip("/") in ("", "index.html"):
+            await self.refresh_servers()             # several servers: every one on the home page
         status, text = self.render(base, path, request.query)
         return web.Response(status=status, text=text, content_type="text/html", headers=headers)

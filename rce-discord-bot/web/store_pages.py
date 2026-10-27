@@ -171,12 +171,45 @@ def _cat_id(name: str) -> str:
     return "cat-" + (re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "other")
 
 
-def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, admin: bool = False) -> str:
+SHOP_COOKIE = "rce_shop"      # several servers: whose shop the visitor is in
+
+
+def shop_choice(request) -> str:
+    """The server whose shop this visitor picked ("" = not picked yet, or only one server)."""
+    ids = [s["id"] for s in servers.all_servers()]
+    if len(ids) < 2:
+        return ""
+    chosen = getattr(request, "cookies", {}).get(SHOP_COOKIE, "")
+    return chosen if chosen in ids else ""
+
+
+def chooser_page(site, shop, base: str, live: dict[str, dict]) -> str:
+    """Several servers: "which server's shop?" – each with its status and how many kits are for it."""
+    cards = ""
+    rows = shop.bot.db.store_kits(enabled_only=True)
+    for s in servers.all_servers():
+        state = live.get(s["id"]) or {}
+        kits = sum(1 for r in rows if s["id"] in shop.kit_servers(r))
+        count = ((f'{state.get("players", 0)} / {state.get("max_players")}' if state.get("max_players")
+                  else str(state.get("players", 0))) + " players") if state.get("online") else "offline"
+        cards += (f'<div class="card"><h2>{esc(s["name"])}</h2><div class="days">'
+                  f'{"🟢" if state.get("online") else "🔴"} {esc(count)} · {kits} kit{"s" if kits != 1 else ""}'
+                  f'</div><p><a class="btn" href="{base}/store?server={quote(s["id"])}">Enter the '
+                  f'{esc(s["name"])} shop</a></p></div>')
+    body = ('<div class="card"><h2>Choose your server</h2><p class="muted">We run more than one server – each has its '
+            'own kits. Pick the server you play on.</p></div>' + f'<div class="grid">{cards}</div>')
+    return wrap(site, shop, base, "store", "Store", body)
+
+
+def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, admin: bool = False,
+              shop_server: str = "") -> str:
     db = shop.bot.db
     groups: dict[str, list[str]] = {}
     for row in db.store_kits(enabled_only=True):
         if row["source"] == "custom" and db.custom_kit(row["kit"]) is None:
             continue
+        if shop_server and shop_server not in shop.kit_servers(row):
+            continue                                       # another server's kit
         items = shop.kit_items(row)
         if row["source"] == "ingame":
             days = '<div class="days">One-time – given to you in-game</div>'
@@ -198,6 +231,10 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
              '<b>/customkit link</b>. After the payment the kit is yours right away: one-time kits are given to you '
              'in-game (when you\'re online), the others you claim with <b>/customkit claim</b> on Discord while '
              'you\'re online.</div>')
+    if shop_server:
+        intro = (f'<div class="card"><h2>🛒 {esc(servers.server_name(shop_server))} shop</h2><p class="muted">Kits for '
+                 f'{esc(servers.server_name(shop_server))}. <a href="{base}/store?server=">Change server</a></p></div>'
+                 + intro)
     # Categories (set per kit in the web interface → Store) in A–Z order, kits without one last ("Other kits")
     named = sorted((c for c in groups if c), key=str.lower)
     order = named + ([""] if "" in groups else [])
@@ -378,6 +415,17 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
     sub = path.removeprefix("store").strip("/")
     query = request.query
     admin_on = bool(shop.bot.config.store_admin_key)
+    several = len(servers.all_servers()) > 1
+    if several and request.method == "GET" and sub == "" and "server" in query:
+        # the visitor picked a server's shop (or "Change server": an empty one)
+        sid = str(query.get("server", ""))
+        resp = web.HTTPSeeOther(f"{base}/store")
+        if sid in {s["id"] for s in servers.all_servers()}:
+            resp.set_cookie(SHOP_COOKIE, sid, max_age=30 * 86400, path="/", httponly=True, samesite="Lax")
+        else:
+            resp.del_cookie(SHOP_COOKIE, path="/")
+        raise resp
+    chosen = shop_choice(request)
     if request.method == "POST" and sub == "giftcards/combine":
         form = await request.post()
         target, codes = str(form.get("target", ""))[:40], str(form.get("codes", ""))[:600]
@@ -403,7 +451,8 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
                 kind, base_url=_base_url(request, base), kit_id=form.get("kit"), items=amounts,
                 timer_hours=int(timer) if timer.isdigit() else None, value=form.get("value"),
                 player=str(form.get("player", "")), gift_code=str(form.get("gift", "")),
-                name=str(form.get("name", "")), admin_key=str(form.get("admin_key", "")) if admin else "", ip=ip)
+                name=str(form.get("name", "")), admin_key=str(form.get("admin_key", "")) if admin else "", ip=ip,
+                shop_server=chosen)
         except CheckoutError as exc:
             values = {k: str(v) for k, v in form.items() if k != "admin_key"}
             if kind == "custom":
@@ -412,11 +461,16 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
                 return 400, giftcards_page(site, shop, base, {}, ip, str(exc), admin)
             if kind == "nuke":
                 return 400, nukes_page(site, shop, base, str(exc), values, admin)
-            return 400, kits_page(site, shop, base, str(exc), values, admin)
+            return 400, kits_page(site, shop, base, str(exc), values, admin, shop_server=chosen)
         raise web.HTTPSeeOther(result.get("redirect") or f"{base}/store/order/{result['token']}")
     admin = admin_on and query.get("admin") == "1"
+    if several and not chosen and sub in ("", "build"):
+        live = {servers.MAIN_ID: site.live()}
+        for s in servers.load_registry():
+            live[s["id"]] = await servers.status_of(s["id"]) or {}
+        return 200, chooser_page(site, shop, base, live)
     if sub == "":
-        return 200, kits_page(site, shop, base, admin=admin)
+        return 200, kits_page(site, shop, base, admin=admin, shop_server=chosen)
     if sub == "build":
         return 200, build_page(site, shop, base, query, admin=admin)
     if sub == "giftcards":
