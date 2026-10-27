@@ -58,14 +58,20 @@ def visitor(request, ip: str) -> dict:
 
 
 class HoneypotLog:
+    """The list in a JSON file. Several servers (servers.py) share it – so it's read again before every change and
+    every listing, never kept only in memory."""
+
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self._lock = threading.Lock()
+        self._entries: list[dict] = self._load()
+
+    def _load(self) -> list[dict]:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._entries = [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []
         except (OSError, ValueError):
-            self._entries = []
+            return []
+        return [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +85,7 @@ class HoneypotLog:
 
     def add(self, entry: dict) -> None:
         with self._lock:
+            self._entries = self._load()                  # another server may have added some meanwhile
             self._entries.append(entry)
             del self._entries[:-LIMIT]
             try:
@@ -87,7 +94,7 @@ class HoneypotLog:
                 pass
 
     def entries(self) -> list[dict]:
-        return list(reversed(self._entries))          # newest first
+        return list(reversed(self._load()))           # newest first (also what the other servers logged)
 
     def clear(self) -> None:
         with self._lock:

@@ -865,6 +865,7 @@ class WebInterface:
         """The fake login at /admin: notes who came (IP, location, browser …) – never lets anyone in."""
         self._public_limit(request)
         entry = honeypot.visitor(request, self._client_ip(request))
+        entry["server"] = servers.server_name(servers.server_id())     # whose /admin it was (several servers)
         if request.method == "POST":
             form = await request.post()
             entry["username"] = str(form.get("username") or "")[:64]

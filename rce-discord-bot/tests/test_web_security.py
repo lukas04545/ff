@@ -267,6 +267,7 @@ def test_admin_is_a_honeypot_from_outside(bot):  # noqa: F811
         login, visit = d["entries"]
         assert visit["ip"] == "198.51.100.7" and visit["location"] == "Berlin, DE" and visit["method"] == "GET"
         assert visit["browser"] == "Chrome" and visit["os"] == "Windows 10/11" and visit["language"] == "de-DE"
+        assert visit["server"] and visit["via_tunnel"] is True and visit["referer"] == "https://evil.example/list"
         assert login["username"] == "root" and login["password_given"] is True and "password" not in login
         assert d["ips"] == 1 and d["logins"] == 1
         pots = [t for t in told if "Honeypot" in t]
@@ -297,3 +298,15 @@ def test_admin_is_a_honeypot_from_outside(bot):  # noqa: F811
             await c.close()
             await bot.rcon.close()
     asyncio.run(main())
+
+
+def test_honeypot_log_is_shared_by_several_servers(tmp_path):
+    """Every server writes the same file – one must not overwrite what another just added."""
+    from web.honeypot import HoneypotLog
+    a, b = HoneypotLog(tmp_path / "web_honeypot.json"), HoneypotLog(tmp_path / "web_honeypot.json")
+    a.add({"ip": "1.1.1.1", "time": 1})
+    b.add({"ip": "2.2.2.2", "time": 2})
+    a.add({"ip": "3.3.3.3", "time": 3})
+    assert [e["ip"] for e in b.entries()] == ["3.3.3.3", "2.2.2.2", "1.1.1.1"]
+    b.clear()
+    assert a.entries() == []
