@@ -28,7 +28,31 @@ if TYPE_CHECKING:
 log = logging.getLogger("rce.status")
 
 STATUS_MSG_KEY = "status_message_id"
+ACTIVITY_LIMIT = 128     # characters Discord shows of an activity name
 POPULATION_EVERY = 300   # seconds between samples for the population graph
+
+
+def _players(state: dict, *, short: bool = False) -> str:
+    if not state.get("online"):
+        return "offline" if short else "Server offline"
+    text = f"{state.get('players', '?')}/{state.get('max', '?')}" + ("" if short else " players")
+    if state.get("queued"):
+        text += f" (+{state['queued']}{'' if short else ' queued'})"
+    return text
+
+
+def presence_line(entries: list[tuple[str, dict]], mode: str, rotate: int,
+                  now: float | None = None) -> tuple[str, bool]:
+    """The bot's status line: one server (the first entry is this one), all of them in turn, or all in one line.
+    -> (text, online)"""
+    if len(entries) == 1 or mode == "main":
+        name, state = entries[0]
+        return _players(state), bool(state.get("online"))
+    if mode == "combined":
+        text = " · ".join(f"{name} {_players(state, short=True)}" for name, state in entries)
+        return text[:ACTIVITY_LIMIT], any(state.get("online") for _, state in entries)
+    name, state = entries[int((time.time() if now is None else now) // max(rotate, 1)) % len(entries)]
+    return f"{name}: {_players(state)}"[:ACTIVITY_LIMIT], bool(state.get("online"))
 
 
 def _parse_json(raw: str):
@@ -48,16 +72,19 @@ class Status(commands.Cog):
         self._parse_warned = False
         self._poll_lock = asyncio.Lock()  # prevents duplicate join/leave messages
         self._last_sample = 0.0
+        self._last_presence: tuple | None = None
 
     async def cog_load(self) -> None:
         self.poll_players.change_interval(seconds=self.bot.config.playerlist_interval)
         self.update_status.change_interval(seconds=self.bot.config.status_interval)
         self.poll_players.start()
+        self.presence_loop.start()
         self.update_status.start()
 
     async def cog_unload(self) -> None:
         self.poll_players.cancel()
         self.update_status.cancel()
+        self.presence_loop.cancel()
 
     async def on_config_changed(self, old, new) -> None:
         if old.playerlist_interval != new.playerlist_interval:
@@ -174,26 +201,53 @@ class Status(commands.Cog):
         except (TypeError, ValueError):
             pass
 
+    def own_status(self) -> dict:
+        """This server for the bot's status line: online, players, max, queued."""
+        info = self.bot.server_info
+        if not self.bot.rcon.connected or not info:
+            return {"online": False}
+        return {"online": True, "players": info.get("Players", len(self.bot.online_players)),
+                "max": info.get("MaxPlayers", "?"), "queued": info.get("Queued") or 0}
+
+    def status_name(self) -> str:
+        import servers
+        return self.bot.config.bot_status_name or ("Main" if not servers.is_child()
+                                                    else servers.server_name(servers.server_id()))
+
     async def _update_presence(self) -> None:
         if not self.bot.is_ready():
             return
-        info = self.bot.server_info
-        if not self.bot.rcon.connected or not info:
-            activity = discord.Activity(type=discord.ActivityType.watching, name="Server offline")
-            status = discord.Status.dnd
-        else:
-            text = f"{info.get('Players', len(self.bot.online_players))}/{info.get('MaxPlayers', '?')} players"
-            if info.get("Queued"):
-                text += f" (+{info['Queued']} queued)"
-            activity = discord.Activity(type=discord.ActivityType.watching, name=text)
-            status = discord.Status.online
         import discord_router
+        import servers
+        own = self.own_status()
+        if discord_router.uses_main_bot() or getattr(self.bot, "router", None) is not None:
+            # Several servers on this Discord bot: tell the main server (it shows them all)
+            discord_router.write_presence(servers.server_id(), self.status_name(), own)
         if discord_router.uses_main_bot():
-            return                     # one Discord bot for several servers: its status shows the main server
+            return                     # the main server sets the bot's status line
+        entries = [(self.status_name(), own)]
+        if getattr(self.bot, "router", None) is not None and self.bot.config.bot_status_mode != "main":
+            entries += discord_router.read_presences(max(180, self.bot.config.status_interval * 3))
+        text, online = presence_line(entries, self.bot.config.bot_status_mode, self.bot.config.bot_status_rotate)
+        if (text, online) == self._last_presence:
+            return
+        activity = discord.Activity(type=discord.ActivityType.watching, name=text)
         try:
-            await self.bot.change_presence(activity=activity, status=status)
+            await self.bot.change_presence(activity=activity,
+                                           status=discord.Status.online if online else discord.Status.dnd)
+            self._last_presence = (text, online)
         except (discord.HTTPException, ConnectionError):
             pass
+
+    @tasks.loop(seconds=5)
+    async def presence_loop(self) -> None:
+        """Several servers on this bot: rotate the status line between them (no RCON – just what they reported)."""
+        if getattr(self.bot, "router", None) is not None and self.bot.config.bot_status_mode == "rotate":
+            await self._update_presence()
+
+    @presence_loop.before_loop
+    async def _before_presence(self) -> None:
+        await self.bot.wait_until_ready()
 
     def build_status_embed(self) -> discord.Embed:
         info = self.bot.server_info

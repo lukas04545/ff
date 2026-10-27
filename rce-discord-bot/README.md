@@ -613,8 +613,12 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
   - **Buttons, menus and pop-up forms** go to the server whose message they're on.
   - **Chat messages and reactions** go to the server whose channel it is: the channels set in that server's
     settings and the ticket channels it created. Every other channel belongs to the main server.
-  - The bot's status line shows the main server. An existing server with its own bot can be switched over with
-    **Use the main Discord bot**.
+  - **The bot's status line shows every server.** By default it takes turns ("Main: 12/100 players", then
+    "2x Monthly: 30/50 players", 15 seconds each). Settings → Behaviour on the main server: *Bot status with several
+    servers* = `rotate` / `combined` (all in one line: "Main 12/100 · 2x Monthly 30/50") / `main` (only the main
+    server), and *show each server for … seconds*. Each server's short name in it is *This server's name in the bot
+    status* (in that server's own panel).
+  - An existing server with its own bot can be switched over with **Use the main Discord bot**.
 - **A Discord bot of its own:** paste its token. Create another application in the Discord Developer Portal: Bot →
   Reset Token, switch on the Message Content and Server Members intents, and invite it to your Discord. The Discord
   server ID is optional; empty means the same Discord as the main server.
