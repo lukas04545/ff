@@ -232,6 +232,9 @@ class Config:
     abuse_after_kill_commands: tuple[str, ...]   # run right after the kill (default: none)
     abuse_approval_commands: tuple[str, ...]     # only after staff approval, e.g. entity.deleteby "{name}"
     abuse_on_respawn_commands: tuple[str, ...]   # when the punished player respawns, e.g. global.sleep "{name}"
+    abuse_loop_commands: tuple[str, ...]   # repeated after the punishment (like the RCON repeater)
+    abuse_loop_seconds: int                # 0 = no loop
+    abuse_loop_times: int                  # 0 = until staff stop it
 
     # Staff alerts & backups
     server_down_alert_minutes: int        # ping staff after the server is offline this long (0 = off)
@@ -454,6 +457,9 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         abuse_after_kill_commands=_commands("ABUSE_AFTER_KILL_COMMANDS", "-"),
         abuse_approval_commands=_commands("ABUSE_APPROVAL_COMMANDS", 'entity.deleteby "{name}"'),
         abuse_on_respawn_commands=_commands("ABUSE_ON_RESPAWN_COMMANDS", 'global.sleep "{name}"'),
+        abuse_loop_commands=_commands("ABUSE_LOOP_COMMANDS", 'global.killplayer "{name}"'),
+        abuse_loop_seconds=(lambda s: 0 if s <= 0 else max(3, min(s, 86400)))(_int("ABUSE_LOOP_SECONDS", 0) or 0),
+        abuse_loop_times=max(0, min(_int("ABUSE_LOOP_TIMES", 0) or 0, 1_000_000)),
         server_down_alert_minutes=max(0, _int("SERVER_DOWN_ALERT_MINUTES", 10)),
         alert_channel_id=_int("ALERT_CHANNEL_ID"),
         alert_role_ids=_id_set("ALERT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),

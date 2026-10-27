@@ -629,8 +629,11 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
   itself in the background (no extra window), restarts a crashed one, and stops them when it stops. On the Servers
   page you start, stop, restart or remove a server, open its panel and read its log.
 - **Shared by all servers:**
-  - **Admin abuse protection:** set it up on the main server; the extra servers' panels show it locked. When one
-    server punishes an abuser, the others run the "remove admin" commands for that player too.
+  - **Admin abuse protection:** by default it's set up on the main server, and the extra servers' panels show it
+    locked. To give a server its own setup (other forbidden items, other allowed players, other commands, its own
+    loop), switch to it in the panel and turn on *Settings → 🛡️ Admin abuse protection → This server has its own
+    abuse protection settings*, save, and reload. Either way, when one server punishes an abuser, the others run the
+    "remove admin" commands for that player too.
   - **Logins:** the same accounts, owner password, two-factor login and panel themes. Logged in on one panel at
     home, you're logged in on all.
 - **Switch servers in the panel:** with more than one server, pick the server in the drop-down at the top of the
@@ -1488,9 +1491,15 @@ Deleting their stuff is **never automatic**: the alert in the alert channel (wit
 bot run `entity.deleteby "<name>"` (**deletes everything that player owns** – bases, deployables). Staff can also
 decide in the web interface (🚩 Reports → 🚨 Admin abuse, or ⚙️ Settings → 🛡️ Admin abuse protection). Each case
 can only be decided once; it survives restarts. Every step and the server's replies are in the admin log.
-All commands can be changed in the advanced settings (*Commands before the kill / teleport the abuser away / wait
-before the kill / right after the kill / only after staff approval / when they respawn*, `-` = nothing, and an
-empty teleport or a 0-second wait skips that step).
+All commands can be changed in ⚙️ Settings → 🛡️ Admin abuse protection (*Commands to remove admin / before the
+kill / teleport the abuser away / wait before the kill / kill command / right after the kill / only after staff
+approval / when they respawn*, `-` = nothing, and an empty teleport or a 0-second wait skips that step).
+
+**Loop (like the RCON repeater):** *Loop: commands to repeat* (default `global.killplayer "{name}"`), *Loop: every …
+seconds* (0 = off, at least 3) and *Loop: how many times* (0 = forever). After the punishment the bot repeats those
+commands for the abuser until the count is reached, or until staff press **⏹ Stop loop**. That button is on the
+Discord message under the alert and in ⚙️ Settings → 🛡️ Admin abuse protection, which also lists every running loop.
+A running loop goes on after a bot restart.
 
 **Who is allowed** (⚙️ Settings → 🛡️ Admin abuse protection):
 - `ABUSE_EXEMPT_ROLE_IDS` – Discord roles such as *Owner* and *Co-Owner*. The bot recognises their in-game

@@ -2802,6 +2802,14 @@ function abuseBox() {
                 h("button", { class: "small danger", text: "🗑️ Approve deletion", onclick: () => decide(c, "approve") }),
                 h("button", { class: "small", text: "✖️ Reject", onclick: () => decide(c, "reject") }))
             : h("span", { class: "muted", text: `${c.status} by ${c.decided_by}${c.result && c.status === "approved" ? ": " + c.result : ""}` })))] : []),
+      h("div", { class: "muted", style: "font-size:.85rem", text: "Forbidden: " + (s.items.join(", ") || "nothing") + " · Loop: " + (s.loop.every ? `every ${s.loop.every}s ${s.loop.commands.join("; ")} – ${s.loop.times ? s.loop.times + " times" : "until stopped"}` : "off") }),
+      ...(s.loops.length ? [h("div", { style: "font-size:.85rem;margin-top:.3rem" }, h("strong", { text: "🔁 Running loops:" })),
+        ...s.loops.map((l) => h("div", { class: "row", style: "font-size:.82rem" },
+          h("span", {}, h("strong", { text: l.player }), ` · ${l.runs}${l.times ? "/" + l.times : ""} run(s), every ${l.every}s`),
+          h("button", { class: "small danger", text: "⏹ Stop loop", onclick: async () => {
+            await act(() => api("/api/abuse/loops/stop", { method: "POST", body: { player: l.player } }), "Loop stopped").catch(() => {});
+            load();
+          } })))] : []),
       h("div", { style: "font-size:.85rem;margin-top:.3rem" }, h("strong", { text: "Last rockets/C4 spawns the bot received:" })),
       ...(s.recent.length ? s.recent.slice(0, 8).map((e) => h("div", { class: "muted", style: "font-size:.82rem" },
         `${new Date(e.ts * 1000).toLocaleTimeString()} · `, h("strong", { text: e.player }), ` ${e.what} → ${e.result}`))

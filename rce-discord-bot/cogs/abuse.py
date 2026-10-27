@@ -15,6 +15,7 @@ player – the alert says so, staff should check it.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections import deque
@@ -38,6 +39,8 @@ IGNORED_WORDS = ("launcher",)   # "Rocket Launcher" is not a rocket
 RETRIES = 3                  # a command that failed (RCON down) is sent again this many times
 RECONNECT_WAIT = 30          # seconds to wait for RCON to come back before each retry
 BLIND_NOTICE = 3             # RCON gaps longer than this many seconds are reported (spawns in them can't be seen)
+LOOPS_KEY = "abuse_loops"    # running punishment loops (kv store) – they go on after a restart
+LOOP_MIN_SECONDS = 3         # the loop never runs faster than this (RCON must keep up)
 
 
 class AbuseGuard(commands.Cog):
@@ -48,9 +51,136 @@ class AbuseGuard(commands.Cog):
         self.recent: deque[dict] = deque(maxlen=15)   # last raid item spawns seen (web interface status box)
         self._await_respawn: dict[str, float] = {}     # punished players -> on-respawn commands still to run
         self._lost_at: float | None = None             # when the RCON connection was lost (monotonic)
+        self._loop_tasks: dict[str, asyncio.Task] = {}  # player (lower case) -> running loop
 
     async def cog_load(self) -> None:
         self.bot.add_view(CaseView(self))
+        self.bot.add_view(LoopView(self))
+        if self._saved_loops():
+            asyncio.create_task(self._resume_loops())
+
+    async def cog_unload(self) -> None:
+        for task in self._loop_tasks.values():
+            task.cancel()
+
+    # ------------------------------------------------------------ Loop: commands repeated after the punishment
+
+    def _saved_loops(self) -> dict[str, dict]:
+        try:
+            data = json.loads(self.bot.db.get_value(LOOPS_KEY) or "{}")
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_loops(self, loops: dict[str, dict]) -> None:
+        self.bot.db.set_value(LOOPS_KEY, json.dumps(loops))
+
+    def loops(self) -> list[dict]:
+        cfg = self.bot.config
+        return [{"player": d["player"], "runs": d.get("runs", 0), "times": cfg.abuse_loop_times,
+                 "every": cfg.abuse_loop_seconds, "started": d.get("started")} for d in self._saved_loops().values()]
+
+    def start_loop(self, player: str) -> bool:
+        """Starts repeating the loop commands for this player (if a loop is set up). True if one runs now."""
+        cfg = self.bot.config
+        if cfg.abuse_loop_seconds <= 0 or not cfg.abuse_loop_commands:
+            return False
+        key = player.lower()
+        loops = self._saved_loops()
+        loops[key] = {"player": player, "runs": 0, "started": int(time.time()), "message_id": None}
+        self._save_loops(loops)
+        self._spawn_loop(key)
+        return True
+
+    def _spawn_loop(self, key: str) -> None:
+        old = self._loop_tasks.pop(key, None)
+        if old is not None:
+            old.cancel()
+        self._loop_tasks[key] = asyncio.create_task(self._loop(key), name=f"abuse-loop-{key}")
+
+    async def _resume_loops(self) -> None:
+        waiter = getattr(self.bot, "wait_until_ready", None)
+        if waiter is not None:
+            try:
+                await waiter()
+            except RuntimeError:
+                pass
+        for key in self._saved_loops():
+            if key not in self._loop_tasks:
+                log.warning("Admin abuse: loop for %s goes on after the restart.", key)
+                self._spawn_loop(key)
+
+    async def _loop(self, key: str) -> None:
+        """Every ABUSE_LOOP_SECONDS: the loop commands – until staff stop it or ABUSE_LOOP_TIMES runs are done."""
+        while True:
+            cfg = self.bot.config
+            await asyncio.sleep(max(LOOP_MIN_SECONDS, cfg.abuse_loop_seconds or LOOP_MIN_SECONDS))
+            loops = self._saved_loops()
+            data = loops.get(key)
+            if data is None:
+                return                                       # stopped meanwhile
+            if cfg.abuse_loop_seconds <= 0 or not cfg.abuse_loop_commands:
+                self.stop_loop(key, "the loop was switched off in the settings")
+                return
+            results = await self._run_all(cfg.abuse_loop_commands, sanitize_player_name(data["player"]))
+            loops = self._saved_loops()
+            if key not in loops:
+                return
+            loops[key]["runs"] = int(loops[key].get("runs", 0)) + 1
+            self._save_loops(loops)
+            self._remember(data["player"], f"loop run {loops[key]['runs']}",
+                           " · ".join(f"{c} → {r}" for c, r in results))
+            if cfg.abuse_loop_times and loops[key]["runs"] >= cfg.abuse_loop_times:
+                self.stop_loop(key, f"done after {loops[key]['runs']} runs")
+                return
+
+    def stop_loop(self, player: str, by: str) -> bool:
+        key = player.lower()
+        loops = self._saved_loops()
+        data = loops.pop(key, None)
+        if data is None:
+            return False
+        self._save_loops(loops)
+        task = self._loop_tasks.pop(key, None)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+        text = f"🔁 Loop for **{safe_md(data['player'])}** stopped ({safe_md(by)}) after {data.get('runs', 0)} run(s)."
+        log.warning(text.replace("**", ""))
+        self.bot.audit(text)
+        self._remember(data["player"], "loop", f"stopped ({by})")
+        if data.get("message_id"):
+            asyncio.create_task(self._loop_message_done(data, by))
+        return True
+
+    async def _loop_message_done(self, data: dict, by: str) -> None:
+        channel = self.bot.get_channel(data.get("channel_id") or 0)
+        if channel is None:
+            return
+        try:
+            msg = await channel.fetch_message(data["message_id"])
+            await msg.edit(content=f"🔁 Loop for **{safe_md(data['player'])}** – ⏹ stopped ({safe_md(by)}).",
+                           view=None)
+        except discord.HTTPException:
+            pass
+
+    async def _post_loop_message(self, player: str, channel) -> None:
+        cfg = self.bot.config
+        times = f"{cfg.abuse_loop_times} times" if cfg.abuse_loop_times else "until stopped"
+        text = (f"🔁 Loop for **{safe_md(player)}**: every {cfg.abuse_loop_seconds}s "
+                + ", ".join(f"`{safe_md(t.format(name=sanitize_player_name(player)))}`"
+                            for t in cfg.abuse_loop_commands) + f" – {times}.")
+        try:
+            msg = await channel.send(text, view=LoopView(self), allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException as exc:
+            log.warning("Loop message failed: %s", exc)
+            return
+        loops = self._saved_loops()
+        if player.lower() in loops:
+            loops[player.lower()].update(message_id=msg.id, channel_id=msg.channel.id)
+            self._save_loops(loops)
+
+    def loop_by_message(self, message_id: int) -> str | None:
+        return next((k for k, d in self._saved_loops().items() if d.get("message_id") == message_id), None)
 
     @property
     def active(self) -> bool:
@@ -182,7 +312,9 @@ class AbuseGuard(commands.Cog):
                  for r in self.bot.db.abuse_cases(limit=10)]
         return {"enabled": cfg.abuse_protection, "active": self.active, "roles": roles,
                 "players": sorted(cfg.abuse_exempt_players), "items": list(cfg.abuse_items),
-                "approval_commands": list(cfg.abuse_approval_commands), "cases": cases, "recent": list(self.recent)}
+                "approval_commands": list(cfg.abuse_approval_commands), "cases": cases, "recent": list(self.recent),
+                "loops": self.loops(), "loop": {"every": cfg.abuse_loop_seconds, "times": cfg.abuse_loop_times,
+                                                "commands": list(cfg.abuse_loop_commands)}}
 
     def _note(self, player: str, text: str) -> None:
         """Admin log entry for a spawn that was NOT punished (once per player and spawn)."""
@@ -269,7 +401,8 @@ class AbuseGuard(commands.Cog):
                 t.format(name=name) for t in cfg.abuse_approval_commands)
         log.warning("Admin abuse: %s spawned %s – %s.", player, what, done)
         self.bot.audit(f"🚨 **{safe_md(player)}** spawned **{safe_md(what)}** without permission – {safe_md(done)}")
-        await self._alert(player, what, results, case_id)
+        looping = self.start_loop(player)
+        await self._alert(player, what, results, case_id, looping)
         multi = getattr(self.bot, "get_cog", lambda _: None)("MultiServer")
         if multi is not None:
             multi.broadcast_abuse(player, what)     # one protection for every server: admin goes there too
@@ -334,7 +467,8 @@ class AbuseGuard(commands.Cog):
         except discord.HTTPException as exc:
             log.debug("Case message not updated: %s", exc)
 
-    async def _alert(self, player: str, what: str, results: list[tuple[str, str]], case_id: int | None) -> None:
+    async def _alert(self, player: str, what: str, results: list[tuple[str, str]], case_id: int | None,
+                     looping: bool = False) -> None:
         cfg = self.bot.config
         channel_id = cfg.alert_channel_id or cfg.admin_log_channel_id
         channel = self.bot.get_channel(channel_id) if channel_id else None
@@ -356,6 +490,8 @@ class AbuseGuard(commands.Cog):
                 self.bot.db.set_abuse_message(case_id, msg.channel.id, msg.id)
         except discord.HTTPException as exc:
             log.warning("Abuse alert failed: %s", exc)
+        if looping:
+            await self._post_loop_message(player, channel)
 
 
 class CaseView(discord.ui.View):
@@ -385,6 +521,25 @@ class CaseView(discord.ui.View):
     @discord.ui.button(label="Reject", emoji="✖️", style=discord.ButtonStyle.secondary, custom_id="rce:abuse:reject")
     async def reject(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         await self._decide(interaction, False)
+
+
+class LoopView(discord.ui.View):
+    """Persistent ⏹ Stop loop button under the loop message – the loop is found via the message."""
+
+    def __init__(self, cog: "AbuseGuard") -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="Stop loop", emoji="⏹", style=discord.ButtonStyle.danger, custom_id="rce:abuse:loopstop")
+    async def stop(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if not is_admin(self.cog.bot, interaction.user):
+            await interaction.response.send_message("⛔ Only bot admins can stop this.", ephemeral=True)
+            return
+        key = self.cog.loop_by_message(interaction.message.id) if interaction.message else None
+        if key is None or not self.cog.stop_loop(key, f"by {interaction.user}"):
+            await interaction.response.send_message("This loop isn't running any more.", ephemeral=True)
+            return
+        await interaction.response.send_message("⏹ Loop stopped.", ephemeral=True)
 
 
 async def setup(bot: "RceBot") -> None:

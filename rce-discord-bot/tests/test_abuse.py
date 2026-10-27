@@ -22,7 +22,8 @@ def guard(tmp_path):
                           abuse_teleport_command="", abuse_kill_delay=0,
                           abuse_kill_command='global.killplayer "{name}"',
                           abuse_after_kill_commands=(), abuse_approval_commands=('entity.deleteby "{name}"',),
-                          abuse_on_respawn_commands=('global.sleep "{name}"',), guild_id=1, alert_channel_id=9,
+                          abuse_on_respawn_commands=('global.sleep "{name}"',), abuse_loop_commands=(),
+                          abuse_loop_seconds=0, abuse_loop_times=0, guild_id=1, alert_channel_id=9,
                           admin_log_channel_id=None, alert_role_ids=frozenset({42}))
 
     async def command(cmd, **kw):
@@ -287,3 +288,44 @@ def test_punished_again_when_they_do_it_again(guard):
     spawn(guard, "[ServerVar] giving RogueAdmin 3 x Rocket")
     assert 'global.killplayer "RogueAdmin"' in guard.sent
     assert len(guard.bot.db.abuse_cases()) == 2                         # second case for the deletion
+
+
+def test_the_punishment_can_loop_like_the_rcon_repeater(guard, monkeypatch):
+    """After the punishment the loop commands repeat – N times, or until staff press Stop (also after a restart)."""
+    import cogs.abuse as abuse_mod
+    from cogs.abuse import LoopView
+    monkeypatch.setattr(abuse_mod, "LOOP_MIN_SECONDS", 0)
+    guard.cfg.abuse_loop_commands = ('global.killplayer "{name}"', 'say "{name} no"')
+    guard.cfg.abuse_loop_seconds, guard.cfg.abuse_loop_times = 0.01, 3
+
+    async def run_three():
+        await guard.cog.on_rce_admin_action(lp.parse_line("[ServerVar] giving RogueAdmin 1 x C4"))
+        assert isinstance(guard.views[-1], LoopView)                     # the ⏹ Stop loop message
+        for _ in range(100):
+            if not guard.cog.loops():
+                break
+            await asyncio.sleep(0.02)
+    asyncio.run(run_three())
+    loops = [c for c in guard.sent if c == 'say "RogueAdmin no"']
+    assert len(loops) == 3 and guard.cog.loops() == []                   # stopped by itself after 3 runs
+    assert any("stopped (done after 3 runs)" in a for a in guard.audit)
+    # forever – until staff stop it; it goes on after a restart
+    guard.cfg.abuse_loop_times = 0
+    guard.sent.clear()
+
+    async def forever():
+        assert guard.cog.start_loop("BadGuy")
+        await asyncio.sleep(0.1)
+        assert guard.cog.loops()[0]["player"] == "BadGuy" and guard.cog.loops()[0]["runs"] >= 2
+        restarted = abuse_mod.AbuseGuard(guard.bot)                      # the bot restarts: the loop goes on
+        guard.cog._loop_tasks.pop("badguy").cancel()
+        await restarted._resume_loops()
+        before = len(guard.sent)
+        await asyncio.sleep(0.1)
+        assert len(guard.sent) > before
+        assert restarted.stop_loop("badguy", "by staff") and restarted.loops() == []
+        after = len(guard.sent)
+        await asyncio.sleep(0.1)
+        assert len(guard.sent) == after                                  # really stopped
+        assert not restarted.stop_loop("badguy", "again")
+    asyncio.run(forever())
