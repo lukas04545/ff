@@ -3217,9 +3217,11 @@ views.plugins = async (main) => {
   main.append(h("h1", { text: "Plugins" }),
     h("p", { class: "muted", text: "Extra features as plugins – switch them on/off and change their settings here. Everything takes effect right away, no restart needed." }));
   const list = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
-  main.append(list);
+  const everywhere = h("div");
+  main.append(everywhere, list);
   const opts = await api("/api/settings/discord-options").catch(() => ({ available: false }));
   const reload = async () => {
+    allPluginsCard().then((card) => everywhere.replaceChildren(...(card ? [card] : [])));
     try {
       const r = await api("/api/plugins");
       await loadMenu();
@@ -3232,6 +3234,66 @@ views.plugins = async (main) => {
   };
   reload();
 };
+
+// Several servers: every plugin on every server – switch each on/off per server, install yours on another server
+async function allPluginsCard() {
+  const servers = await api("/api/servers").then((d) => d.servers).catch(() => []);
+  if (servers.length < 2) return null;
+  const card = h("div", { class: "card" }, h("h2", { text: "🖥️ Plugins on all servers" }),
+    h("p", { class: "muted", text: "Each server has its own plugins, switched on and off on its own. Built-in plugins are on every server already. Yours (uploaded or made with the AI) can be installed on another server with 📥 Install: file, settings and pictures. It arrives switched off. 📤 Copy to … updates it there after you've changed it here." }));
+  const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  card.append(body);
+  const load = async () => {
+    let d;
+    try { d = await api("/api/allplugins"); } catch (e) { body.replaceChildren(h("div", { class: "banner bad", text: e.message })); return; }
+    const byId = new Map();
+    for (const s of d.servers) for (const p of s.plugins) if (!byId.has(p.id)) byId.set(p.id, p);
+    const on = (s, pid) => s.plugins.find((p) => p.id === pid);
+    const copy = async (pid, from, to, enable = false) => {
+      const names = to.map((t) => d.servers.find((s) => s.id === t)?.name || t).join(", ");
+      if (!confirm(`Install ${pid} from ${d.servers.find((s) => s.id === from).name} on ${names}? (its file, settings and pictures${enable ? "; switched on" : "; switched off there until you switch it on"})`)) return;
+      await act(() => api("/api/allplugins/copy", { method: "POST", body: { plugin: pid, from, to, settings: true, enable } }), `Installed on ${names}`).catch(() => {});
+      load();
+    };
+    const rows = [...byId.values()].sort((a, b) => (a.builtin - b.builtin) || a.name.localeCompare(b.name)).map((p) => {
+      const holders = d.servers.filter((s) => { const x = on(s, p.id); return x && !x.builtin; });
+      const cells = d.servers.map((s) => {
+        if (!s.ok) return h("td", { class: "muted", text: "–" });
+        const x = on(s, p.id);
+        if (!x) {
+          return h("td", {}, holders.length ? h("button", { class: "small", text: "📥 Install", title: `Copy it from ${holders[0].name}`, onclick: () => copy(p.id, holders[0].id, [s.id]) }) : h("span", { class: "muted", text: "not there" }));
+        }
+        const state = x.error ? h("span", { class: "pill bad", text: "error", title: x.error }) : x.enabled ? h("span", { class: "pill ok", text: "on" }) : h("span", { class: "pill", text: "off" });
+        return h("td", {}, h("span", { class: "row tight" }, state,
+          h("button", { class: "small", text: x.enabled ? "Switch off" : "Switch on", onclick: async () => {
+            await act(() => api(`/api/allplugins/${s.id}/${p.id}/toggle`, { method: "POST", body: { enabled: !x.enabled } }), `${p.name} ${x.enabled ? "off" : "on"} on ${s.name}`).catch(() => {});
+            load();
+          } })));
+      });
+      let copyTo = null;
+      if (holders.length) {
+        const others = d.servers.filter((s) => s.ok && s.id !== holders[0].id);
+        if (others.length) {
+          copyTo = h("select", { class: "small", title: "Copy (update) this plugin to another server" },
+            h("option", { value: "", text: "📤 Copy to …" }), others.map((s) => h("option", { value: s.id, text: s.name })));
+          copyTo.addEventListener("change", () => { const t = copyTo.value; copyTo.value = ""; if (t) copy(p.id, holders[0].id, [t]); });
+        }
+      }
+      return h("tr", {}, h("td", {}, h("strong", { text: `${p.icon || "🧩"} ${p.name}` }),
+        h("div", { class: "muted", style: "font-size:.8rem", text: p.builtin ? "built-in" : `yours · ${p.id}.py` + (holders.length ? ` · on ${holders.map((s) => s.name).join(", ")}` : "") }),
+        copyTo), ...cells);
+    });
+    const down = d.servers.filter((s) => !s.ok);
+    body.replaceChildren(
+      ...down.map((s) => h("div", { class: "banner warn", text: `${s.name}: ${s.error}` })),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", { text: "Plugin" }), d.servers.map((s) => h("th", { text: (s.id === "main" ? "🏠 " : "🛢️ ") + s.name })))),
+        h("tbody", {}, rows))),
+      h("div", { class: "row" }, h("button", { class: "small", text: "↻ Refresh", onclick: load })));
+  };
+  load();
+  return card;
+}
 
 // A plugin with its own tab in the menu (#p/<id>): its card (on/off, settings) – plus extras some plugins have
 function pinButton(p) {

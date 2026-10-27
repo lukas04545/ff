@@ -96,7 +96,7 @@ KNOCK_MIN = 8                     # WEB_PANEL_KNOCK shorter than this is off (to
 KNOCK_ROUNDS = 100_000            # hash rounds of WEB_PANEL_KNOCK: every long player search is checked against it
 REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, risky actions need no new confirmation
 # Risky actions (run code, change secrets or accounts): need a password confirmation in the last REAUTH_SECONDS
-REAUTH_PATHS = (("POST", "/api/plugins/upload"), ("POST", "/api/servers"), ("DELETE", "/api/servers"), ("PUT", "/api/settings"), ("POST", "/api/users"),
+REAUTH_PATHS = (("POST", "/api/plugins/upload"), ("POST", "/api/allplugins/copy"), ("POST", "/api/servers"), ("DELETE", "/api/servers"), ("PUT", "/api/settings"), ("POST", "/api/users"),
                 ("PUT", "/api/users"), ("DELETE", "/api/users"), ("POST", "/api/restart"), ("POST", "/api/update"),
                 ("POST", "/api/backups"), ("DELETE", "/api/plugins"), ("POST", "/api/2fa/disable"),
                 ("POST", "/api/webshop/giftcards"))
@@ -118,7 +118,7 @@ CSRF_HEADER = "X-Requested-With"
 ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
                        "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection",
-                       "/api/honeypot", "/api/themes")
+                       "/api/honeypot", "/api/themes", "/api/allplugins")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -506,6 +506,9 @@ class WebInterface:
         r.add_post("/api/webshop/giftcards", self.webshop_giftcards_create)
         r.add_post("/api/webshop/giftcards/{code}/toggle", self.webshop_giftcard_toggle)
         r.add_post("/api/webshop/orders/{order_id:\\d+}/retry", self.webshop_retry)
+        r.add_get("/api/allplugins", self.allplugins_list)                 # every server's plugins (main server)
+        r.add_post("/api/allplugins/{sid}/{pid}/toggle", self.allplugins_toggle)
+        r.add_post("/api/allplugins/copy", self.allplugins_copy)
         r.add_get("/api/plugins", self.plugins_list)
         r.add_get("/api/plugins/menu", self.plugins_menu)
         r.add_put("/api/plugins/menu", self.plugins_menu_save)
@@ -732,7 +735,7 @@ class WebInterface:
         if not sid or servers.is_child() or sid == servers.MAIN_ID:
             return None
         if not request.path.startswith("/api/") or request.path in MAIN_ONLY_API \
-                or request.path.startswith("/api/servers"):
+                or request.path.startswith(("/api/servers", "/api/allplugins")):
             return None                     # the server list and managing servers stay the main server's
         return next((s for s in servers.all_servers() if s["id"] == sid), None)
 
@@ -1280,6 +1283,129 @@ class WebInterface:
         info = await self._plugin_call(self._plugins().reload(pid))
         self._audit(f"plugin {pid} reloaded")
         return web.json_response({"plugin": info})
+
+    # ------------------------------------------------------------ Plugins on every server (main server's panel)
+
+    def _main_only(self) -> None:
+        if servers.is_child():
+            raise ApiError("This works on the main server's panel.")
+
+    async def _server_api(self, request: web.Request, sid: str, method: str, path: str, payload=None):
+        """Calls another server's own web interface on this PC as the logged-in owner (same login on every server)."""
+        target = next((s for s in servers.all_servers() if s["id"] == sid), None)
+        if target is None:
+            raise ApiError("No such server.", 404)
+        if self._proxy_session is None or self._proxy_session.closed:
+            self._proxy_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120),
+                                                        auto_decompress=False)
+        headers = {CSRF_HEADER: "rce-web", "Cookie": f"{SESSION_COOKIE}={request.cookies.get(SESSION_COOKIE, '')}"}
+        try:
+            async with self._proxy_session.request(method, f"http://127.0.0.1:{target['port']}{path}", json=payload,
+                                                   headers=headers) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status >= 400:
+                    raise ApiError(f"{target['name']}: {(data or {}).get('error') or f'HTTP {resp.status}'}",
+                                   resp.status if resp.status < 500 else 502)
+                return data
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            raise ApiError(f"{target['name']} isn't running right now.", 502) from None
+
+    async def _plugins_of(self, request: web.Request, sid: str) -> list[dict]:
+        if sid == servers.MAIN_ID:
+            manager = self._plugins()
+            manager.discover()
+            return manager.describe_all()
+        return (await self._server_api(request, sid, "GET", "/api/plugins"))["plugins"]
+
+    async def allplugins_list(self, request: web.Request) -> web.Response:
+        """Every plugin on every server: on/off per server – each server is managed on its own."""
+        self._main_only()
+        out = []
+        for s in servers.all_servers():
+            try:
+                plugins = await self._plugins_of(request, s["id"])
+                out.append({"id": s["id"], "name": s["name"], "ok": True, "plugins": [
+                    {k: p.get(k) for k in ("id", "name", "icon", "builtin", "overrides", "enabled", "running", "error",
+                                           "version", "description")} for p in plugins]})
+            except ApiError as exc:
+                out.append({"id": s["id"], "name": s["name"], "ok": False, "error": str(exc), "plugins": []})
+        return web.json_response({"servers": out})
+
+    async def allplugins_toggle(self, request: web.Request) -> web.Response:
+        self._main_only()
+        sid, pid = request.match_info["sid"], request.match_info["pid"]
+        enabled = bool((await self._json(request)).get("enabled"))
+        if sid == servers.MAIN_ID:
+            info = await self._plugin_call(self._plugins().set_enabled(pid, enabled))
+        else:
+            info = (await self._server_api(request, sid, "POST", f"/api/plugins/{pid}/toggle",
+                                           {"enabled": enabled}))["plugin"]
+        self._audit(f"plugin {pid} on {servers.server_name(sid)} switched {'on' if info['enabled'] else 'off'}")
+        return web.json_response({"plugin": info})
+
+    async def allplugins_copy(self, request: web.Request) -> web.Response:
+        """Installs one of your plugins (file, settings, pictures) from one server onto others – off until you
+        switch it on there (or with "enable")."""
+        import ast
+        import shutil
+        from plugin_manager import CORE_FEATURES, MAX_UPLOAD, PLUGIN_ID, files_dir_for, read_state, \
+            state_path_for, user_dir_for
+        self._main_only()
+        data = await self._json(request)
+        pid, source = self._text(data, "plugin", limit=40), self._text(data, "from", limit=40)
+        targets = [str(t) for t in data.get("to") or [] if str(t) != source]
+        known = {s["id"] for s in servers.all_servers()}
+        if not PLUGIN_ID.match(pid) or pid in CORE_FEATURES or source not in known or not targets \
+                or any(t not in known for t in targets):
+            raise ApiError("Pick a plugin, the server it comes from and where it should go.")
+        src_db = servers.database_file(source)
+        path = user_dir_for(src_db) / f"{pid}.py"
+        if not path.is_file():
+            raise ApiError("Only plugins you uploaded or made with the AI can be copied – the built-in ones are on "
+                           "every server already (just switch them on there).")
+        code = path.read_text(encoding="utf-8")
+        if len(code.encode("utf-8")) > MAX_UPLOAD:
+            raise ApiError("The plugin file is too big.")
+        try:
+            ast.parse(code, filename=path.name)
+        except SyntaxError as exc:
+            raise ApiError(f"{path.name} has a Python error in line {exc.lineno} – fix it first.") from None
+        settings = (read_state(state_path_for(src_db)).get("settings") or {}).get(pid) if data.get("settings") else None
+        files = files_dir_for(src_db) / pid
+        done = []
+        for target in targets:
+            dst_db = servers.database_file(target)
+            dest = user_dir_for(dst_db)
+            dest.mkdir(parents=True, exist_ok=True)
+            tmp = dest / f"{pid}.tmp"
+            tmp.write_text(code, encoding="utf-8")
+            os.replace(tmp, dest / f"{pid}.py")
+            if files.is_dir():
+                shutil.copytree(files, files_dir_for(dst_db) / pid, dirs_exist_ok=True)
+            # the server picks the file up (new: switched off; already there: reloaded with the new code)
+            if target == servers.MAIN_ID:
+                manager = self._plugins()
+                manager.discover()
+                if manager.running(pid) is not None:
+                    await self._plugin_call(manager.reload(pid))
+            else:
+                listed = await self._server_api(request, target, "GET", "/api/plugins")
+                if any(p["id"] == pid and p.get("running") for p in listed["plugins"]):
+                    await self._server_api(request, target, "POST", f"/api/plugins/{pid}/reload")
+            if isinstance(settings, dict) and settings:
+                if target == servers.MAIN_ID:
+                    await self._plugin_call(self._plugins().save_settings(pid, settings))
+                else:
+                    await self._server_api(request, target, "PUT", f"/api/plugins/{pid}/settings",
+                                           {"values": settings})
+            if data.get("enable"):
+                if target == servers.MAIN_ID:
+                    await self._plugin_call(self._plugins().set_enabled(pid, True))
+                else:
+                    await self._server_api(request, target, "POST", f"/api/plugins/{pid}/toggle", {"enabled": True})
+            done.append(servers.server_name(target))
+        self._audit(f"plugin {pid} copied from {servers.server_name(source)} to " + ", ".join(done))
+        return web.json_response({"ok": True, "copied_to": done})
 
     async def plugin_upload(self, request: web.Request) -> web.Response:
         data = await self._json(request)
