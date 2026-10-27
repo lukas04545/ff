@@ -762,3 +762,91 @@ def test_kits_for_one_server_or_several(shop, monkeypatch, tmp_path):
     assert CustomKits.other_servers_only(NS(bot=bot), "Ak Kit") == ["Two"]
     db.update_store_kit(ak["id"], servers="")                                  # back to: this server
     assert CustomKits.other_servers_only(NS(bot=bot), "Ak Kit") is None
+
+
+def test_website_shows_every_server_and_a_shop_per_server(shop, monkeypatch, tmp_path):
+    """Several servers: the home page shows each one; the store first asks whose shop – then only that server's kits;
+    an own kit built in the 2x shop is the 2x server's."""
+    import servers
+    from cogs.custom_kits import CustomKits
+    from plugin_api import Plugin
+    from plugin_manager import PluginManager
+    bot, db = shop.env.bot, shop.db
+    monkeypatch.setattr(Plugin, "_loops", lambda self: [])
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"WEB_PORT=8080\nGUILD_ID=1\nSERVER_DISPLAY_NAME=Kryvon 10x\n"
+                                   f"DATABASE_PATH={bot.config.database_path}\n", encoding="utf-8")
+    servers.create_server("Kryvon 2x", "1.2.3.4", "28016", "pw", "MTEx" + "a" * 66, "1")
+
+    async def status_of(sid):
+        return {"online": True, "players": 42, "max_players": 100, "queued": 0}
+    monkeypatch.setattr(servers, "status_of", status_of)
+    vip = db.add_store_kit("VIP 2x", "vip", 4.5, 0, None, source="ingame")
+    db.update_store_kit(vip, servers="kryvon-2x")
+    both = db.add_store_kit("Starter both", "Ak Kit", 2.0, 0, None)
+    db.update_store_kit(both, servers="main,kryvon-2x")
+
+    async def main():
+        from web.server import WebInterface
+        bot.plugins = PluginManager(bot)
+        await bot.plugins.load_all()
+        await bot.plugins.set_enabled("website", True)
+        web = WebInterface(bot, env_path=tmp_path / ".env", secret_path=tmp_path / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            home = await (await c.get("/")).text()
+            assert "Kryvon 10x" in home and "Kryvon 2x" in home and "42 / 100" in home      # a card per server
+            page = await (await c.get("/store")).text()
+            assert "Choose your server" in page and "Enter the Kryvon 2x shop" in page and "VIP 2x" not in page
+            r = await c.get("/store?server=kryvon-2x", allow_redirects=False)
+            assert r.status == 303 and "rce_shop=kryvon-2x" in r.headers["Set-Cookie"]
+            page = await (await c.get("/store")).text()
+            assert "Kryvon 2x shop" in page and "VIP 2x" in page and "Starter both" in page and "AK kit" not in page
+            await c.get("/store?server=main")
+            page = await (await c.get("/store")).text()
+            assert "Kryvon 10x shop" in page and "AK kit" in page and "Starter both" in page and "VIP 2x" not in page
+            await c.get("/store?server=")                                              # "Change server"
+            assert "Choose your server" in await (await c.get("/store")).text()
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    run(main())
+    # an own kit built in the 2x shop: copied there, not claimable on the 10x server
+    order_id = db.add_store_order(token="t1", kind="custom", title="Own kit", total=5, currency="EUR",
+                                  shop_server="kryvon-2x")
+    assert run(s_custom(shop.s, db.store_order(order_id), "Gamer7 kit")) == " (for Kryvon 2x)"
+    from storage import Storage
+    other = Storage(servers.database_file("kryvon-2x"))
+    assert other.custom_kit("Gamer7 kit") is not None
+    other.close()
+    assert CustomKits.other_servers_only(NS(bot=bot), "Gamer7 kit") == ["Kryvon 2x"]
+
+
+async def s_custom(shop_cog, order, kit):
+    shop_cog.bot.db.create_custom_kit(kit, None, "store")
+    shop_cog.bot.db.add_custom_kit_item(kit, "rifle.ak", 1)
+    return await shop_cog._custom_kit_for_shop(order, kit)
+
+
+def test_the_other_servers_ingame_kits_come_into_their_shop(shop, monkeypatch, tmp_path):
+    import servers
+    s, db = shop.s, shop.db
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"WEB_PORT=8080\nGUILD_ID=1\nDATABASE_PATH={shop.env.bot.config.database_path}\n")
+    servers.create_server("Two", "1.2.3.4", "28016", "pw", "MTEx" + "a" * 66, "1")
+
+    async def ask(sid, action, payload=None, timeout=10):
+        if action == "kits":
+            return {"kits": ["vip", "Raider"]}
+        return {"items": [{"short": "rifle.ak", "amount": 1}]} if action == "kitinfo" else None
+    monkeypatch.setattr(servers, "ask_server", ask)
+    assert run(s._sync_other_servers_kits(set())) == 2
+    rows = [r for r in db.store_kits() if r["source"] == "ingame"]
+    assert {(r["kit"], r["servers"]) for r in rows} == {("vip", "two"), ("Raider", "two")}
+    assert not any(r["enabled"] for r in rows) and run(s._sync_other_servers_kits(set())) == 0     # hidden, once
+    run(s._refresh_ingame_items())                                                             # contents from Two
+    assert s.kit_items(db.store_kit(rows[0]["id"])) == [("rifle.ak", 1)]
+    # this server's own "vip" is a different kit: still added for this server
+    s.remove_kit(rows[0]["id"])
+    assert "ingame:two:vip" in s._dismissed() and run(s._sync_other_servers_kits(s._dismissed())) == 0

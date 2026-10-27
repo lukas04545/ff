@@ -106,8 +106,8 @@ def save_registry(servers: list[dict]) -> None:
 
 
 def server_name(sid: str) -> str:
-    if sid == MAIN_ID:
-        return MAIN_NAME
+    if sid == MAIN_ID:      # its display name (Settings → Server display name), e.g. "Kryvon 10x"
+        return (read_env(env_path(MAIN_ID)).get("SERVER_DISPLAY_NAME") or "").strip()[:40] or MAIN_NAME
     return next((s.get("name") or sid for s in load_registry() if s["id"] == sid), sid)
 
 
@@ -538,6 +538,12 @@ async def ask_server(sid: str, action: str, payload: dict | None = None, timeout
                 return await resp.json(content_type=None)
     except (aiohttp.ClientError, OSError, ValueError, asyncio.TimeoutError):
         return None
+
+
+async def status_of(sid: str) -> dict | None:
+    """Live status of that server (online, players, max_players, queued) – None if it can't be reached."""
+    data = await ask_server(sid, "status", timeout=5)
+    return data if isinstance(data, dict) else None
 
 
 async def online_on(sid: str) -> list[str] | None:

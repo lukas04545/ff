@@ -382,7 +382,7 @@ class WebInterface:
         r.add_post("/admin/", self._admin)
         r.add_get("/api/honeypot", self.honeypot_list)
         r.add_post("/api/switch", self.switch_server)
-        r.add_post("/internal/{action:online|give}", self.internal)          # other servers of this bot (signed)
+        r.add_post("/internal/{action:online|give|status|kits|kitinfo}", self.internal)          # other servers of this bot (signed)
         r.add_get("/api/servers", self.servers_list)                     # several Rust servers (servers.py)
         r.add_post("/api/servers", self.servers_create)
         r.add_post("/api/servers/{sid}/{action:start|stop|restart}", self.servers_action)
@@ -738,12 +738,35 @@ class WebInterface:
             raise web.HTTPNotFound(text="Not found.")
         if self.bot is None:
             return web.json_response({"players": [], "result": "unreachable"})
-        if request.match_info["action"] == "online":
+        action = request.match_info["action"]
+        if action == "online":
             return web.json_response({"players": list(self.bot.online_players)})
+        if action == "status":                       # the player website shows every server
+            info = self.bot.server_info or {}
+            online = bool(self.bot.rcon.connected and info)
+            return web.json_response({"online": online,
+                                      "players": int(info.get("Players") or len(self.bot.online_players)) if online
+                                      else 0, "max_players": int(info.get("MaxPlayers") or 0) if online else 0,
+                                      "queued": int(info.get("Queued") or 0) if online else 0})
         try:
             data = json.loads(body or b"{}")
         except ValueError:
             raise web.HTTPBadRequest() from None
+        if action in ("kits", "kitinfo"):            # its in-game kits, for the main server's web store
+            from rce import kits as kitparse
+            from rce.rcon_client import RconError
+            kits_cog = self.bot.get_cog("Kits")
+            if kits_cog is None or not self.bot.rcon.connected:
+                return web.json_response({"kits": None, "items": None})
+            try:
+                if action == "kits":
+                    return web.json_response({"kits": list(await kits_cog.kit_names.get(max_wait=5))})
+                raw = await self.bot.rcon.command(f'kit info "{kitparse.clean_arg(str(data.get("kit") or ""))}"',
+                                                  timeout=4)
+            except RconError:
+                return web.json_response({"kits": None, "items": None})
+            return web.json_response({"items": [{"short": i.short_name, "amount": i.amount}
+                                                for i in kitparse.parse_kit_info(raw)]})
         from rce import kits as kitparse
         from utils import sanitize_player_name
         wanted = str(data.get("player") or "").lower()

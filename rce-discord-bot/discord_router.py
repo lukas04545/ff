@@ -147,7 +147,7 @@ def merged_payload(own: list[dict], others: dict[str, list[dict]], names: dict[s
         sids = list(dict.fromkeys(holders[key]))
         if len(sids) > 1:
             option = {"type": 3, "name": OPTION, "description": OPTION_HELP, "required": False,
-                      "choices": [{"name": names.get(s, servers.MAIN_NAME if s == servers.MAIN_ID else s)[:100],
+                      "choices": [{"name": names.get(s, servers.server_name(s) if s == servers.MAIN_ID else s)[:100],
                                    "value": s} for s in sids][:25]}
             for part in _invocables(cmd):
                 opts = part.setdefault("options", [])
