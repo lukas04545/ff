@@ -189,6 +189,7 @@ const ICONS = {
   makeplugin: '<path d="M4 20L15 9"/><path d="M15 3v3M18 6h3M19 10v2M17 4l2 2"/>',
   users2: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 6"/>',
   servers: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/>',
+  honeypot: '<path d="M7 8h10l1 3v7a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3v-7z"/><path d="M8 5h8v3H8zM9 14h6"/>',
   settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
 };
 const GROUP_ICON_NAMES = { Server: "home", Kits: "box", Community: "users", Plugins: "plugins", Admin: "shield" };
@@ -410,7 +411,7 @@ function route() {
   updateNavCounts();
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore", "protection", "servers"].includes(view) || view.startsWith("p/"))) {
+  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore", "protection", "servers", "honeypot"].includes(view) || view.startsWith("p/"))) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
@@ -608,7 +609,7 @@ views.users = async (main) => {
           h("li", {}, h("strong", { text: "Same home network: " }), "Settings → Web interface → Reachable from: “Also home network (0.0.0.0)”, restart the bot, then they open ", h("code", { text: "http://<your PC's IP>:" + (location.port || 80) }), "."),
           h("li", {}, h("strong", { text: "From anywhere (recommended): " }), "Settings → Web interface → “Reachable from the internet (Cloudflare tunnel)” → On, restart the bot. You get an encrypted https:// address (shown on the Overview and in the admin log channel) – nothing to open on your router."),
           h("li", {}, h("strong", { text: "Don't " }), "forward the port on your router: the web interface uses plain HTTP, passwords would travel unencrypted."))),
-      themesCard(), honeypotCard(fmt));
+      themesCard(), honeypotCard());
   }
   load();
 };
@@ -654,45 +655,140 @@ function themesCard() {
   return card;
 }
 
-// Who tried the fake /admin login (web/honeypot.py)
-function honeypotCard(fmt) {
-  const refHost = (u) => { try { return new URL(u, location.origin).host; } catch { return u; } };
-  const card = h("div", { class: "card" }, h("h2", { text: "🍯 Honeypot – who tried /admin" }));
-  const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
-  card.append(body);
-  const load = async () => {
-    const d = await api("/api/honeypot").catch(() => null);
-    if (!d) { body.replaceChildren(h("p", { class: "muted", text: "Not available." })); return; }
-    const intro = h("p", { class: "muted", text: d.enabled
-      ? "From outside, /admin shows a fake login page that never lets anyone in – your real panel is at its secret address. Every visit and login try is listed here (the last 500). Passwords typed there are never stored. A web page can't see MAC addresses; location comes from Cloudflare (country, city when available)."
-      : "The honeypot is off (Settings → Web interface → Honeypot at /admin) – /admin just answers “not found”." });
-    if (!d.entries.length) { body.replaceChildren(intro, h("p", { class: "muted", text: "Nobody yet." })); return; }
-    const rows = d.entries.map((e) => h("tr", {},
-      h("td", { class: "muted", text: fmt(e.time) }),
-      h("td", {}, h("code", { text: e.ip })),
-      h("td", { text: e.location }),
-      h("td", { title: e.agent || "", text: `${e.browser} · ${e.os}` }),
-      h("td", { class: "muted", text: e.language || "–" }),
-      h("td", {}, e.method === "POST"
-        ? h("span", { class: "pill warn", text: `login try${e.username ? ": " + e.username : ""}` })
-        : h("span", { class: "muted", text: "visit" })),
-      h("td", { class: "muted", title: e.referer || "", text: e.referer ? refHost(e.referer) : "–" })));
-    body.replaceChildren(intro,
-      h("p", {}, h("strong", { text: `${d.entries.length} entries` }), ` from ${d.ips} IP${d.ips === 1 ? "" : "s"}, ${d.logins} login tr${d.logins === 1 ? "y" : "ies"}.`),
-      h("div", { class: "table-wrap" }, h("table", {},
-        h("thead", {}, h("tr", {}, ["Time", "IP", "Location", "Browser · system", "Language", "What", "Came from"].map((t) => h("th", { text: t })))),
-        h("tbody", {}, rows))),
-      h("div", { class: "row" },
-        h("button", { class: "small", text: "Refresh", onclick: load }),
-        h("button", { class: "small danger", text: "Clear the list", onclick: async () => {
-          if (!confirm("Clear the honeypot list?")) return;
-          await act(() => api("/api/honeypot", { method: "DELETE" }), "Cleared").catch(() => {});
-          load();
-        } })));
-  };
-  load();
-  return card;
+// Users page: a pointer to the Honeypot page
+function honeypotCard() {
+  return h("div", { class: "card" }, h("h2", { text: "🍯 Honeypot – who tried /admin" }),
+    h("p", { class: "muted", text: "Everyone who opened the fake /admin login – IP, location, browser and every other detail – is on its own page." }),
+    h("a", { href: "#honeypot" }, h("button", { text: "🍯 Open the Honeypot page" })));
 }
+
+// Honeypot page: everyone who opened the fake /admin login and everything saved about them (web/honeypot.py)
+views.honeypot = async (main) => {
+  const fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "–";
+  const refHost = (u) => { try { return new URL(u, location.origin).host; } catch { return u; } };
+  const FIELDS = [["time", "Time"], ["server", "Server"], ["ip", "IP address"], ["location", "Location"], ["country", "Country code"],
+    ["browser", "Browser"], ["os", "System"], ["agent", "Full browser text (user agent)"], ["language", "Language"],
+    ["referer", "Came from (referer)"], ["method", "Request"], ["path", "Address opened"], ["via_tunnel", "Through the Cloudflare tunnel"],
+    ["username", "Username typed"], ["password_given", "Typed a password"]];
+  const show = (e, k) => {
+    const v = e[k];
+    if (k === "time") return fmt(v);
+    if (k === "method") return v === "POST" ? "Login try (POST)" : "Visit (GET)";
+    if (typeof v === "boolean") return v ? "yes" : "no";
+    return v === undefined || v === null || v === "" ? "–" : String(v);
+  };
+  main.append(h("h1", { text: "🍯 Honeypot" }));
+  const stats = h("div", { class: "grid" });
+  const intro = h("p", { class: "muted" });
+  const search = h("input", { type: "search", placeholder: "Filter: IP, place, browser, username …" });
+  const onlyLogins = h("input", { type: "checkbox" });
+  const groupBy = h("select", {}, h("option", { value: "list", text: "Every visit" }), h("option", { value: "ip", text: "Grouped by IP" }));
+  const out = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  let entries = [];
+
+  const stat = (label, value, tone = "") => h("div", { class: `stat ${tone}` }, h("div", { class: "label", text: label }), h("div", { class: "value", text: String(value) }));
+  const matches = (e) => {
+    if (onlyLogins.checked && e.method !== "POST") return false;
+    const q = search.value.trim().toLowerCase();
+    return !q || FIELDS.some(([k]) => String(e[k] ?? "").toLowerCase().includes(q));
+  };
+  const details = (e) => h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {},
+    FIELDS.filter(([k]) => k in e).map(([k, label]) => h("tr", {}, h("th", { text: label, style: "width:14rem" }),
+      h("td", {}, ["ip", "agent", "path"].includes(k) ? h("code", { text: show(e, k), style: "user-select:all;word-break:break-all" }) : show(e, k)))))));
+
+  const listTable = (list) => {
+    const body = h("tbody");
+    list.forEach((e) => {
+      const more = h("tr", { class: "hidden" }, h("td", { colspan: 8 }, details(e)));
+      const btn = h("button", { class: "small", text: "Details" });
+      btn.onclick = () => { more.classList.toggle("hidden"); btn.textContent = more.classList.contains("hidden") ? "Details" : "Hide"; };
+      body.append(h("tr", {},
+        h("td", { class: "muted", text: fmt(e.time) }),
+        h("td", {}, h("code", { text: e.ip })),
+        h("td", { text: e.location || "unknown" }),
+        h("td", { title: e.agent || "", text: `${e.browser} · ${e.os}` }),
+        h("td", { class: "muted", text: e.language || "–" }),
+        h("td", {}, e.method === "POST"
+          ? h("span", { class: "pill warn", text: `login try${e.username ? ": " + e.username : ""}` })
+          : h("span", { class: "muted", text: "visit" })),
+        h("td", { class: "muted", title: e.referer || "", text: e.referer ? refHost(e.referer) : "–" }),
+        h("td", {}, btn)), more);
+    });
+    return h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Time", "IP", "Location", "Browser · system", "Language", "What", "Came from", ""].map((t) => h("th", { text: t })))), body));
+  };
+
+  const ipTable = (list) => {
+    const by = new Map();
+    list.forEach((e) => {   // newest first, so the first one seen is the last visit
+      const g = by.get(e.ip) || { ip: e.ip, n: 0, logins: 0, first: e.time, last: e.time, places: new Set(), agents: new Set(), users: new Set() };
+      g.n++; if (e.method === "POST") g.logins++;
+      g.first = Math.min(g.first, e.time); g.last = Math.max(g.last, e.time);
+      if (e.location) g.places.add(e.location); g.agents.add(`${e.browser} · ${e.os}`); if (e.username) g.users.add(e.username);
+      by.set(e.ip, g);
+    });
+    const rows = [...by.values()].sort((a, b) => b.n - a.n).map((g) => h("tr", {},
+      h("td", {}, h("code", { text: g.ip })), h("td", { text: String(g.n) }),
+      h("td", {}, g.logins ? h("span", { class: "pill warn", text: String(g.logins) }) : "0"),
+      h("td", { class: "muted", text: fmt(g.first) }), h("td", { class: "muted", text: fmt(g.last) }),
+      h("td", { text: [...g.places].join(" / ") || "unknown" }), h("td", { text: [...g.agents].join(" / ") }),
+      h("td", { text: [...g.users].join(", ") || "–" }),
+      h("td", {}, h("button", { class: "small", text: "Show visits", onclick: () => { search.value = g.ip; groupBy.value = "list"; render(); } }))));
+    return h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["IP", "Visits", "Login tries", "First seen", "Last seen", "Locations", "Browsers", "Usernames tried", ""].map((t) => h("th", { text: t })))),
+      h("tbody", {}, rows)));
+  };
+
+  const csv = () => {
+    const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [FIELDS.map(([, l]) => cell(l)).join(",")].concat(entries.filter(matches).map((e) => FIELDS.map(([k]) => cell(k === "time" ? new Date(e.time * 1000).toISOString() : e[k])).join(",")));
+    const url = URL.createObjectURL(new Blob([lines.join("\r\n")], { type: "text/csv" }));
+    h("a", { href: url, download: `honeypot-${new Date().toISOString().slice(0, 10)}.csv` }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  function render() {
+    const list = entries.filter(matches);
+    out.replaceChildren(
+      h("p", { class: "muted", text: `${list.length} of ${entries.length} entr${entries.length === 1 ? "y" : "ies"} shown.` }),
+      !list.length ? h("p", { class: "muted", text: entries.length ? "Nothing matches the filter." : "Nobody yet." })
+        : groupBy.value === "ip" ? ipTable(list) : listTable(list));
+  }
+
+  async function load() {
+    const d = await api("/api/honeypot").catch(() => null);
+    if (!d) { out.replaceChildren(h("p", { class: "muted", text: "Not available." })); return; }
+    entries = d.entries;
+    intro.textContent = d.enabled
+      ? "From outside, /admin shows a fake login page that never lets anyone in – your real panel is at its secret address. Every visit and login try is saved here (the last 500, shared by all servers). Passwords typed there are never stored, only whether one was typed. A web page can't see MAC addresses; the location comes from Cloudflare (country, city when available) when the panel is reached through the tunnel."
+      : "The honeypot is off (Settings → Web interface → Honeypot at /admin) – /admin just answers “not found”. Older entries stay listed.";
+    const day = Date.now() / 1000 - 86400;
+    const countries = {};
+    entries.forEach((e) => { if (e.country) countries[e.country] = (countries[e.country] || 0) + 1; });
+    const top = Object.entries(countries).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([c, n]) => `${c} ${n}`).join(", ");
+    stats.replaceChildren(stat("Status", d.enabled ? "On" : "Off", d.enabled ? "ok" : "bad"), stat("Visits", entries.length, "accent"),
+      stat("Login tries", d.logins, d.logins ? "warn" : ""), stat("Different IPs", d.ips),
+      stat("Last 24 hours", entries.filter((e) => e.time > day).length), stat("Top countries", top || "–"),
+      stat("Last visit", entries.length ? fmt(entries[0].time) : "–"));
+    render();
+  }
+
+  search.addEventListener("input", render);
+  onlyLogins.addEventListener("change", render);
+  groupBy.addEventListener("change", render);
+  main.append(stats, h("div", { class: "card" }, h("h2", { text: "Who opened /admin" }), intro,
+    h("div", { class: "row" }, search, groupBy, h("label", { class: "row tight" }, onlyLogins, "Only login tries")),
+    h("div", { class: "row", style: "margin:.6rem 0" },
+      h("button", { class: "small", text: "Refresh", onclick: load }),
+      h("button", { class: "small", text: "⬇️ Download as CSV", onclick: csv }),
+      h("button", { class: "small danger", text: "Clear the list", onclick: async () => {
+        if (!confirm("Clear the honeypot list?")) return;
+        await act(() => api("/api/honeypot", { method: "DELETE" }), "Cleared").catch(() => {});
+        load();
+      } })),
+    out));
+  load();
+};
 
 // Two-factor login: a code from an authenticator app on top of the password
 function twoFactorCard() {

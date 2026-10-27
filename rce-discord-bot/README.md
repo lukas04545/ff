@@ -703,8 +703,12 @@ their own. Admins can't change it themselves. The new theme shows the next time 
   panel exists. Share the address only with your admins.
 - **Honeypot at `/admin`:** anyone outside the bot's PC who opens `/admin` gets a fake login page that never lets
   anyone in. Every visit and login try is logged with the time, IP, location (country and city from Cloudflare when
-  available), browser, operating system, language, the referring site and the username tried. You see it under
-  **👥 Users → 🍯 Honeypot**, and a short line goes to the admin log channel (once per IP every 6 hours, never a
+  available), browser, operating system, the full user agent, language, the referring site, which server's `/admin`
+  it was, whether it came through the tunnel and the username tried. The **🍯 Honeypot** page (Admin menu, owner
+  only) shows totals (visits, login tries, different IPs, last 24 hours, top countries), a filter, an "only login
+  tries" switch, every entry with a **Details** button listing everything saved, a **Grouped by IP** view (visits,
+  first and last seen, locations, browsers, usernames tried) and a **CSV download**. The last 500 entries are kept,
+  shared by all servers. A short line also goes to the admin log channel (once per IP every 6 hours, never a
   ping). Passwords typed into the fake form are never stored. A website can't see a visitor's MAC address, so it
   isn't logged. Turn it off under *Settings → Web interface → Honeypot at /admin*; `/admin` then just answers
   "not found".
