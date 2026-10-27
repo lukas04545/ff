@@ -107,6 +107,10 @@ class OfflineProtection(Plugin):
         Setting("team_sync_minutes", "Re-read all teams every … minutes", "int", 10, min=0, max=1440,
                 help="Runs relationshipmanager.teaminfoall (members and leader of every team) at start and then "
                      "every … minutes, so teams formed before the bot ran are known too. 0 = only the team logs."),
+        Setting("reapply_minutes", "Send every zone's status again every … minutes", "int", 10, min=0, max=1440,
+                help="Sends the red/green commands again for every zone – after a server restart or a lost command "
+                     "the in-game zone matches the panel again. Also done right after RCON reconnects. 0 = only "
+                     "when the status changes."),
         Setting("tell_leader", "Tell the leader in-game what happened", "bool", True),
         Setting("channel", "Discord channel for status changes (optional)", "channel", None),
     )
@@ -191,8 +195,13 @@ class OfflineProtection(Plugin):
         out = []
         for team_id, zone in sorted(self.zones().items()):
             team = self.bot.db.team_by_id(team_id)
-            out.append({"team": team_id, "name": zone["name"], "leader": zone["leader"],
-                        "members": list(team[1]) if team else [], "state": zone["state"] or "green",
+            members = list(team[1]) if team else []
+            online = {n.lower() for n in self.bot.online_players}
+            out.append({"team": team_id, "name": zone["name"], "leader": zone["leader"], "members": members,
+                        "online": [m for m in members if m.lower() in online], "state": zone["state"] or "green",
+                        "red_at": (zone["offline_since"] + self.setting("offline_minutes") * 60
+                                   if zone.get("offline_since") is not None and zone["state"] != "red" else None),
+                        "applied": zone.get("applied"),
                         "x": zone["x"], "y": zone["y"], "z": zone["z"], "placed": zone.get("placed"),
                         "offline_since": zone.get("offline_since"), "expires_at": self.expires_at(zone)})
         return out
@@ -385,7 +394,28 @@ class OfflineProtection(Plugin):
         if not await self._run(key, self._vars(zone)) and str(self.setting(key) or "").strip():
             return False
         zone["state"] = state
+        zone["applied"] = time.time()
         return True
+
+    async def _reapply(self, team_id: int) -> None:
+        """Sends the zone's current status again when it's due (reapply_minutes; at once after a reconnect)."""
+        every = self.setting("reapply_minutes")
+        zone = self.zone(team_id)
+        if not every or zone is None or zone["state"] not in ("red", "green"):
+            return
+        if time.time() - (zone.get("applied") or 0) < every * 60:
+            return
+        if await self._run(f"{zone['state']}_command", self._vars(zone)):
+            zone["applied"] = time.time()
+            self._save(team_id, zone)
+
+    @Plugin.listener()
+    async def on_rce_connection(self, connected: bool) -> None:
+        """RCON back (often after a server restart, which can reset the zones): send every status again."""
+        if connected:
+            for team_id, zone in self.zones().items():
+                zone["applied"] = 0
+                self._save(team_id, zone)
 
     async def _update(self, team_id: int, now: float | None = None, *, joined: str = "", left: str = "") -> None:
         """Sets the zone's status: green if a member is online, red once all were offline long enough."""
@@ -439,8 +469,11 @@ class OfflineProtection(Plugin):
         every = self.setting("team_sync_minutes")
         if every and (not getattr(self, "_last_sync", 0) or time.monotonic() - self._last_sync >= every * 60):
             await self.sync_teams()
+        if not self.bot.rcon.connected:
+            return                                           # no fresh player list and nothing can be sent
         for team_id in list(self.zones()):
             try:
                 await self._update(team_id)
+                await self._reapply(team_id)
             except Exception:
                 self.log.exception("Offline protection zone of team %s", team_id)
