@@ -260,15 +260,15 @@ def test_admin_is_a_honeypot_from_outside(bot):  # noqa: F811
         r = await c.post("/admin", data={"username": "root", "password": "hunter2!"}, headers=OUT)
         assert r.status == 401 and "Invalid username or password" in await r.text()
         assert "rce_session" not in r.headers.get("Set-Cookie", "")             # never lets anyone in
-        stored = (bot.config.database_path.parent / "web_honeypot.json").read_text()
-        assert "hunter2" not in stored                                         # passwords are never kept
+        pots_before = [t for t in told if "Honeypot" in t]
+        assert pots_before and not any("hunter2" in t for t in told)           # never in Discord
         await c.post("/api/login", json={"password": "secret123"}, headers=H)  # on this PC
         d = await (await c.get("/api/honeypot")).json()
         login, visit = d["entries"]
         assert visit["ip"] == "198.51.100.7" and visit["location"] == "Berlin, DE" and visit["method"] == "GET"
         assert visit["browser"] == "Chrome" and visit["os"] == "Windows 10/11" and visit["language"] == "de-DE"
         assert visit["server"] and visit["via_tunnel"] is True and visit["referer"] == "https://evil.example/list"
-        assert login["username"] == "root" and login["password_given"] is True and "password" not in login
+        assert login["username"] == "root" and login["password_given"] is True and login["password"] == "hunter2!"
         assert d["ips"] == 1 and d["logins"] == 1
         pots = [t for t in told if "Honeypot" in t]
         assert len(pots) == 2 and "198.51.100.7" in pots[0] and "Berlin" in pots[0] and "**root**" in pots[1]
@@ -310,3 +310,49 @@ def test_honeypot_log_is_shared_by_several_servers(tmp_path):
     assert [e["ip"] for e in b.entries()] == ["3.3.3.3", "2.2.2.2", "1.1.1.1"]
     b.clear()
     assert a.entries() == []
+
+
+def test_honeypot_is_rate_limited_and_never_saves_a_real_password(bot):  # noqa: F811
+    """Too many requests from one visitor: "too many attempts", nothing logged. A real panel password typed into
+    the fake form is not saved – only flagged, and the admin log warns (without the password)."""
+    holder, told = {}, []
+    OUT = {"CF-Connecting-IP": "198.51.100.8", "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0"}
+
+    async def scenario(c):
+        w = holder["web"]
+        bot.audit = told.append
+        r = await c.post("/admin", data={"username": "owner", "password": "secret123"}, headers=OUT)
+        assert r.status == 401                                                 # still never lets anyone in
+        for _ in range(4):
+            assert (await c.post("/admin", data={"username": "x", "password": "guess"}, headers=OUT)).status == 401
+        r = await c.post("/admin", data={"username": "x", "password": "guess"}, headers=OUT)
+        assert r.status == 429 and "Too many login attempts" in await r.text() and r.headers["Retry-After"]
+        for _ in range(5):
+            await c.get("/admin", headers=OUT)
+        assert (await c.get("/admin", headers=OUT)).status == 429             # visits are limited too
+        assert (await c.get("/admin", headers={**OUT, "CF-Connecting-IP": "198.51.100.9"})).status == 200
+        stored = (bot.config.database_path.parent / "web_honeypot.json").read_text()
+        assert "secret123" not in stored                                       # the real password: never saved
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        d = await (await c.get("/api/honeypot")).json()
+        assert len(d["entries"]) == 11 and d["blocked"] == 2 and d["limits"]["logins_per_ip"] == 5
+        real = d["entries"][-1]
+        assert real["real_password_of"] == "owner" and "password" not in real and real["password_given"] is True
+        assert d["entries"][-2]["password"] == "guess"
+        warn = [t for t in told if "real panel password" in t]
+        assert len(warn) == 1 and "owner" in warn[0] and "secret123" not in " ".join(told)
+        assert w._honeypot_blocked == 2
+
+    async def main():
+        from web.server import WebInterface
+        tmp = bot.config.database_path.parent
+        w = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        holder["web"] = w
+        c = TestClient(TestServer(w.app))
+        await c.start_server()
+        try:
+            await scenario(c)
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    asyncio.run(main())

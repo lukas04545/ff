@@ -1,7 +1,8 @@
 """Honeypot at /admin: from outside the bot's PC, /admin shows a fake login page (the real panel lives at its secret
 address, WEB_PANEL_PATH). Every visit and every login attempt there is noted: time, IP, country/city (from
 Cloudflare's visitor headers), browser, operating system, language, where the visitor came from and the username
-tried. Passwords typed into the fake form are never stored, only whether one was given.
+and password tried. The password is only shown on the owner's Honeypot page – never in the Discord log – and one
+that is a real panel password (an admin who went to /admin by mistake) is not saved, only flagged.
 
 A web page can't see a visitor's MAC address (it never leaves their own network), so it isn't in the log.
 """
@@ -105,9 +106,10 @@ class HoneypotLog:
                 pass
 
 
-def fake_login_page(error: bool = False) -> str:
+def fake_login_page(error: bool | str = False) -> str:
     """A plain, believable admin login – posts back to /admin, which never lets anyone in."""
-    message = '<p class="err">Invalid username or password.</p>' if error else ""
+    text = error if isinstance(error, str) else "Invalid username or password."
+    message = f'<p class="err">{text}</p>' if error else ""
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
 <title>Administration – Sign in</title><style>
