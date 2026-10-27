@@ -172,6 +172,30 @@ def take_server_option(data: dict) -> str | None:
     return walk(data.get("options") or [])
 
 
+# ------------------------------------------------------------ The bot's status line (the main server shows them all)
+
+def write_presence(sid: str, name: str, state: dict) -> None:
+    folder = servers.shared_data() / "presence"
+    folder.mkdir(parents=True, exist_ok=True)
+    tmp = folder / f"{sid}.tmp"
+    tmp.write_text(json.dumps({"name": name, "state": state, "at": time.time()}), encoding="utf-8")
+    tmp.replace(folder / f"{sid}.json")
+
+
+def read_presences(max_age: float) -> list[tuple[str, dict]]:
+    """(name, state) of every extra server on this bot; one that stopped reporting counts as offline."""
+    out = []
+    for sid in shared_bot_servers():
+        try:
+            data = json.loads((servers.shared_data() / "presence" / f"{sid}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        fresh = time.time() - float(data.get("at") or 0) < max_age
+        out.append((str(data.get("name") or servers.server_name(sid))[:40],
+                    data.get("state") if fresh and isinstance(data.get("state"), dict) else {"online": False}))
+    return out
+
+
 # ------------------------------------------------------------ The router
 
 class Router:

@@ -95,6 +95,9 @@ class Config:
 
     # Behaviour
     status_interval: int
+    bot_status_mode: str                 # several servers on one Discord bot: rotate / combined / main
+    bot_status_rotate: int               # seconds per server when rotating
+    bot_status_name: str                 # this server's name in the bot status ("" = its name on the Servers page)
     playerlist_interval: int
     chat_bridge_to_game: bool
     chat_show_server_messages: bool
@@ -322,6 +325,10 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         admin_log_channel_id=_int("ADMIN_LOG_CHANNEL_ID"),
         console_log_channel_id=_int("CONSOLE_LOG_CHANNEL_ID"),
         status_interval=max(30, _int("STATUS_INTERVAL", 60)),
+        bot_status_mode=(_get("BOT_STATUS_MODE", "rotate").strip().lower() or "rotate")
+        if _get("BOT_STATUS_MODE", "rotate").strip().lower() in ("rotate", "combined", "main", "") else "rotate",
+        bot_status_rotate=max(10, min(_int("BOT_STATUS_ROTATE", 15) or 15, 600)),
+        bot_status_name=_get("BOT_STATUS_NAME").strip()[:40],
         playerlist_interval=max(10, _int("PLAYERLIST_INTERVAL", 30)),
         chat_bridge_to_game=_bool("CHAT_BRIDGE_TO_GAME", True),
         chat_show_server_messages=_bool("CHAT_SHOW_SERVER_MESSAGES", False),

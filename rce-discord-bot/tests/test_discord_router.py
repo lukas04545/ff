@@ -170,3 +170,24 @@ def test_an_extra_server_on_the_main_bot_hands_its_commands_to_the_main(shared, 
     assert {"DISCORD_TOKEN", "GUILD_ID", "ABUSE_ITEMS"} <= locked_settings()
     monkeypatch.delenv(servers.ENV_SHARED_BOT)
     assert "DISCORD_TOKEN" not in locked_settings()
+
+
+def test_the_bot_status_shows_every_server(shared):
+    from cogs.status import presence_line
+    main = ("Main", {"online": True, "players": 12, "max": 100, "queued": 0})
+    two = ("2x Monthly", {"online": True, "players": 30, "max": 50, "queued": 4})
+    off = ("Vanilla", {"online": False})
+    assert presence_line([main], "rotate", 15) == ("12/100 players", True)                  # one server
+    assert presence_line([main, two], "main", 15) == ("12/100 players", True)
+    assert presence_line([main, two, off], "rotate", 15, now=0) == ("Main: 12/100 players", True)
+    assert presence_line([main, two, off], "rotate", 15, now=15) == ("2x Monthly: 30/50 players (+4 queued)", True)
+    assert presence_line([main, two, off], "rotate", 15, now=30) == ("Vanilla: Server offline", False)
+    assert presence_line([main, two, off], "combined", 15) == ("Main 12/100 · 2x Monthly 30/50 (+4) · Vanilla offline",
+                                                               True)
+    assert presence_line([("Main", {"online": False}), off], "combined", 15)[1] is False   # all down: red dot
+    assert len(presence_line([(n * 20, two[1]) for n in "abcdefg"], "combined", 15)[0]) == 128
+    # what the extra servers report to the main server
+    assert discord_router.read_presences(180) == [("Two", {"online": False})]              # not reported yet
+    discord_router.write_presence("two", "2x Monthly", two[1])
+    assert discord_router.read_presences(180) == [("2x Monthly", two[1])]
+    assert discord_router.read_presences(0) == [("2x Monthly", {"online": False})]        # stopped reporting

@@ -79,6 +79,15 @@ FIELDS: list[Field] = [
     Field("SERVER_DISPLAY_NAME", "Server display name", "behaviour",
           help="Empty = use the name from the server."),
     Field("STATUS_INTERVAL", "Update status every … seconds", "behaviour", "int", placeholder="60"),
+    Field("BOT_STATUS_MODE", "Bot status with several servers", "behaviour", choices=("rotate", "combined", "main"),
+          help="Only when extra servers use this Discord bot (Servers page). rotate (default) = the bot's status "
+               "line shows one server after the other (\"2x Monthly: 30/50 players\"); combined = all in one "
+               "line (\"Main 12/100 · 2x Monthly 30/50\"); main = only the main server. Set on the main server."),
+    Field("BOT_STATUS_ROTATE", "Bot status: show each server for … seconds", "behaviour", "int", placeholder="15",
+          help="When rotating (10–600). Set on the main server."),
+    Field("BOT_STATUS_NAME", "This server's name in the bot status", "behaviour", placeholder="e.g. 2x Monthly",
+          help="Short name shown in the bot's status line when several servers share the Discord bot. Empty = "
+               "\"Main\" for the main server, the name from the Servers page for the others."),
     Field("PLAYERLIST_INTERVAL", "Poll player list every … seconds", "behaviour", "int", placeholder="30"),
     Field("CHAT_BRIDGE_TO_GAME", "Send Discord messages into the game", "behaviour", "bool"),
     Field("CHAT_SHOW_SERVER_MESSAGES", "Show [CHAT SERVER] lines in Discord", "behaviour", "bool"),
