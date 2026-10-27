@@ -209,10 +209,12 @@ def test_extra_server_takes_the_shared_settings_from_the_main(bot, monkeypatch):
     run(bot, scenario)
 
 
-def test_other_panels_open_through_the_main_address(bot, monkeypatch):  # noqa: F811
-    """/switch/<id>: the main server passes that server's panel through – one address (domain) for every panel."""
+def test_the_panel_switches_to_another_server_in_place(bot, monkeypatch):  # noqa: F811
+    """The server drop-down: same address and page – the main server passes the panel's API requests on to the
+    picked server's web interface (here a stand-in) on this PC."""
     from aiohttp import web as aioweb
     from aiohttp.test_utils import TestServer
+    from envfile import update_env
     tmp = bot.config.database_path.parent
     monkeypatch.chdir(tmp)
     (tmp / ".env").write_text("WEB_PORT=8080\nGUILD_ID=1\n", encoding="utf-8")
@@ -221,9 +223,7 @@ def test_other_panels_open_through_the_main_address(bot, monkeypatch):  # noqa: 
     async def child_app(request):                      # stands in for the extra server's web interface
         seen.append({"path": request.path_qs, "host": request.host, "cf": request.headers.get("CF-Connecting-IP"),
                      "body": await request.text(), "method": request.method})
-        resp = aioweb.Response(text=f"child {request.path}", headers={"X-Child": "1"})
-        resp.set_cookie("rce_gate", "child-gate")
-        return resp
+        return aioweb.json_response({"from": "two", "path": request.path}, headers={"X-Child": "1"})
 
     async def scenario(c):
         child = aioweb.Application()
@@ -231,32 +231,48 @@ def test_other_panels_open_through_the_main_address(bot, monkeypatch):  # noqa: 
         child_server = TestServer(child)
         await child_server.start_server()
         servers.create_server("Two", "1.2.3.4", "28016", "pw", TOKEN_2)
-        update = {"WEB_PORT": str(child_server.port), "WEB_PANEL_PATH": "panel-two-secret"}
-        from envfile import update_env
-        update_env(servers.env_path("two"), update)
+        update_env(servers.env_path("two"), {"WEB_PORT": str(child_server.port)})
         OUT = {"CF-Connecting-IP": "203.0.113.5"}
-        assert (await c.get("/switch/two", headers=OUT, allow_redirects=False)).status == 404    # not logged in
-        await c.post("/api/login", json={"password": "secret123"}, headers=H)
-        r = await c.get("/switch/two", headers=OUT, allow_redirects=False)
-        assert r.status == 302 and r.headers["Location"] == "/panel-two-secret"
-        assert "rce_server=two" in r.headers["Set-Cookie"]
-        r = await c.get("/panel-two-secret", headers=OUT)
-        assert r.status == 200 and await r.text() == "child /panel-two-secret" and r.headers["X-Child"] == "1"
+        r = await c.post("/api/switch", json={"server": "two"}, headers={**H, **OUT})
+        assert r.status == 404                                                # strangers: no panel at all
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)   # (from outside: via the address)
+        assert (await c.post("/api/switch", json={"server": "nope"}, headers={**H, **OUT})).status == 404
+        r = await c.post("/api/switch", json={"server": "two"}, headers={**H, **OUT})
+        assert r.status == 200 and "rce_server=two" in r.headers["Set-Cookie"]
+        r = await c.get("/api/status", headers=OUT)                           # the panel's data: from Two
+        assert (await r.json()) == {"from": "two", "path": "/api/status"} and r.headers["X-Child"] == "1"
         assert seen[-1]["host"] == f"127.0.0.1:{child_server.port}" and seen[-1]["cf"] == "203.0.113.5"
         r = await c.post("/api/kits/give?x=1", json={"kit": "a"}, headers={**H, **OUT})
-        assert await r.text() == "child /api/kits/give" and seen[-1]["path"] == "/api/kits/give?x=1"
-        assert seen[-1]["method"] == "POST" and json.loads(seen[-1]["body"]) == {"kit": "a"}
-        assert (await c.get("/static/app.js", headers=OUT)).headers.get("X-Child") == "1"
+        assert seen[-1]["path"] == "/api/kits/give?x=1" and seen[-1]["method"] == "POST"
+        assert json.loads(seen[-1]["body"]) == {"kit": "a"}
         n = len(seen)
-        await c.get("/", headers=OUT)                                          # the player website stays the main's
+        d = await (await c.get("/api/servers", headers=OUT)).json()            # the list: always the main's
+        assert d["current"] == "two" and d["manage"] is False and len(seen) == n
+        r = await c.get("/admin", headers=OUT)                                 # the page itself: same address
+        assert r.status == 200 and len(seen) == n
+        await c.get("/", headers=OUT)                                          # the player website: the main's
         assert len(seen) == n
-        await c.get("/switch/main", headers=OUT, allow_redirects=False)        # back: the main's own panel
+        await c.post("/api/switch", json={"server": "main"}, headers={**H, **OUT})
         r = await c.get("/api/me", headers=OUT)
         assert r.status == 200 and (await r.json())["user"] == "owner" and len(seen) == n
-        await c.get("/switch/two", headers=OUT, allow_redirects=False)
-        await child_server.close()                                             # the other server stopped
+        await c.post("/api/switch", json={"server": "two"}, headers={**H, **OUT})
+        await child_server.close()                                             # Two stopped
         r = await c.get("/api/status", headers=OUT)
-        assert r.status == 502 and "Two" in (await r.json())["error"]
-        r = await c.get("/panel-two-secret", headers=OUT)
-        assert r.status == 502 and "/switch/main" in await r.text()
+        assert r.status == 502 and (await r.json())["server_down"] is True
+        await c.post("/api/logout", headers={**H, **OUT})                      # logging out: back to the main
+        assert "rce_server" not in {k for k, v in c.session.cookie_jar.filter_cookies(c.make_url("/")).items()}
     run(bot, scenario)
+
+
+def test_every_server_gets_the_same_password_hash(main_dir):
+    """A plain password typed into the main .env is hashed before the extra servers copy it (one login for all)."""
+    from web.users import verify_password
+    env = main_dir / ".env"
+    env.write_text(env.read_text().replace("WEB_PASSWORD=pbkdf2_sha256$1$aa$bb", "WEB_PASSWORD=hunter2hunter2"),
+                   encoding="utf-8")
+    servers.create_server("Two", "1.2.3.4", "28016", "pw", TOKEN_2)
+    servers.hash_main_password()
+    main_hash = read_env(env)["WEB_PASSWORD"]
+    assert main_hash.startswith("pbkdf2_sha256$") and verify_password("hunter2hunter2", main_hash)
+    servers.sync_env("two")
+    assert read_env(servers.env_path("two"))["WEB_PASSWORD"] == main_hash

@@ -155,6 +155,16 @@ def shared_values(child_env: dict) -> dict[str, str]:
     return out
 
 
+def hash_main_password() -> None:
+    """A plain WEB_PASSWORD in the main server's .env (typed in by hand) becomes its hash before the extra servers
+    copy it – every server must have the very same hash, or a login on one panel isn't valid on the others."""
+    from web.users import hash_password, is_hashed
+    path = env_path(MAIN_ID)
+    value = (read_env(path).get("WEB_PASSWORD") or "").strip()
+    if value and not is_hashed(value):
+        update_env(path, {"WEB_PASSWORD": hash_password(value)})
+
+
 def sync_env(sid: str) -> dict[str, str]:
     """Copies the shared settings into an extra server's .env. Returns what changed."""
     path = env_path(sid)

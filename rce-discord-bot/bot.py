@@ -416,6 +416,8 @@ def main() -> None:
     else:
         # The main server starts the extra servers (servers/<id>) and stops them when it stops
         servers.manager = servers.ServerManager()
+        if servers.load_registry():
+            servers.hash_main_password()
         servers.manager.start_all()
         atexit.register(servers.manager.stop_all)
     from web.server import discord_preflight, intent_warning, intents_fix_url, web_settings_from_env
