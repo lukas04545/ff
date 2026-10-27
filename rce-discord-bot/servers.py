@@ -36,12 +36,14 @@ BASE_DIR = Path(__file__).resolve().parent
 MAIN_ID = "main"
 MAIN_NAME = "Main server"
 ENV_HOME, ENV_ID, ENV_SHARED, ENV_PARENT = "RCE_HOME", "RCE_SERVER_ID", "RCE_SHARED_DATA", "RCE_PARENT_PID"
+ENV_SHARED_BOT = "RCE_SHARED_BOT"   # "1": this extra server uses the main server's Discord bot (discord_router.py)
 SERVERS_DIR = "servers"
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 # Admin abuse protection: one setup for every server (edited on the main server)
 SHARED_KEYS = tuple(f.key for f in FIELDS if f.group == "abuse")
 GUILD_SPECIFIC = frozenset(f.key for f in FIELDS if f.group == "abuse" and f.pick)   # roles/channels of one Discord
 LOGIN_KEYS = ("WEB_PASSWORD",)
+DISCORD_KEYS = ("DISCORD_TOKEN", "GUILD_ID")      # servers on the main server's Discord bot: taken from the main
 EXIT_FATAL = 3                       # bot.py: configuration error – waiting for the settings, no point restarting
 RESTART_DELAYS = (5, 15, 60, 300)    # seconds before restarting a crashed server (then every 5 minutes)
 
@@ -125,7 +127,14 @@ def describe(sid: str) -> dict:
     panel = (env.get("WEB_PANEL_PATH") or "").strip().strip("/")
     return {"id": sid, "name": server_name(sid), "main": sid == MAIN_ID, "port": port,
             "panel_path": f"/{panel}" if panel else "/admin", "public_url": _public_url(sid),
-            "rcon": f"{env.get('RCON_HOST', '')}:{env.get('RCON_PORT', '')}".strip(":")}
+            "rcon": f"{env.get('RCON_HOST', '')}:{env.get('RCON_PORT', '')}".strip(":"),
+            "discord": "main" if sid == MAIN_ID else discord_mode(sid)}
+
+
+def discord_mode(sid: str) -> str:
+    """"shared": the extra server uses the main server's Discord bot (pick the server in each command);
+    "own": it has a Discord bot of its own."""
+    return next((s.get("discord", "own") for s in load_registry() if s["id"] == sid), "own")
 
 
 def all_servers() -> list[dict]:
@@ -150,7 +159,11 @@ def sync_env(sid: str) -> dict[str, str]:
     """Copies the shared settings into an extra server's .env. Returns what changed."""
     path = env_path(sid)
     env = read_env(path)
-    changed = {k: v for k, v in shared_values(env).items() if env.get(k, "") != v}
+    wanted = shared_values(env)
+    if discord_mode(sid) == "shared":
+        main_env = read_env(env_path(MAIN_ID))
+        wanted.update({k: main_env.get(k, "") for k in DISCORD_KEYS})
+    changed = {k: v for k, v in wanted.items() if env.get(k, "") != v}
     if changed:
         update_env(path, changed)
     return changed
@@ -175,16 +188,21 @@ def create_server(name: str, rcon_host: str, rcon_port: str, rcon_password: str,
         raise ValueError("Enter the server's IP and RCON port.")
     if not rcon_password:
         raise ValueError("Enter the RCON password.")
-    if len(discord_token) < 50:
-        raise ValueError("Enter the Discord bot token of a second Discord bot (Developer Portal → New Application "
-                         "→ Bot → Reset Token).")
-    if guild_id and not guild_id.isdigit():
-        raise ValueError("The Discord server ID is digits only.")
     main_env = read_env(env_path(MAIN_ID))
-    taken_tokens = [main_env.get("DISCORD_TOKEN", "")] + [read_env(env_path(s["id"])).get("DISCORD_TOKEN", "")
-                                                          for s in load_registry()]
-    if discord_token in taken_tokens:
-        raise ValueError("That Discord bot already runs another server – each server needs its own Discord bot.")
+    shared = not discord_token                # no token: the main server's Discord bot (one bot for all servers)
+    if shared:
+        discord_token, guild_id = main_env.get("DISCORD_TOKEN", ""), (main_env.get("GUILD_ID") or "").strip()
+    else:
+        if len(discord_token) < 50:
+            raise ValueError("That doesn't look like a Discord bot token (Developer Portal → your application → Bot "
+                             "→ Reset Token) – or leave it empty to use the main server's Discord bot.")
+        if guild_id and not guild_id.isdigit():
+            raise ValueError("The Discord server ID is digits only.")
+        taken = [main_env.get("DISCORD_TOKEN", "")] + [read_env(env_path(s["id"])).get("DISCORD_TOKEN", "")
+                                                       for s in load_registry() if s.get("discord") != "shared"]
+        if discord_token in taken:
+            raise ValueError("That Discord bot already runs another server – leave the token empty to share the "
+                             "main server's bot, or use a bot of its own.")
     guild_id = guild_id or (main_env.get("GUILD_ID") or "").strip()      # empty: the same Discord as the main
     servers = load_registry()
     ids = {s["id"] for s in servers} | {MAIN_ID}
@@ -205,9 +223,10 @@ def create_server(name: str, rcon_host: str, rcon_port: str, rcon_password: str,
     if guild_id == (main_env.get("GUILD_ID") or "").strip():
         values["ADMIN_ROLE_IDS"] = main_env.get("ADMIN_ROLE_IDS", "")
     update_env(folder / ".env", values, template=BASE_DIR / ".env.example")
-    sync_env(sid)
-    servers.append({"id": sid, "name": name, "enabled": True, "created_at": int(time.time())})
+    servers.append({"id": sid, "name": name, "enabled": True, "created_at": int(time.time()),
+                    "discord": "shared" if shared else "own"})
     save_registry(servers)
+    sync_env(sid)
     log.info("Added server %s (%s) – folder %s, panel port %d", name, sid, folder, port)
     return describe(sid)
 
@@ -221,6 +240,18 @@ def remove_server(sid: str) -> None:
     folder = home(sid)
     if folder.exists():
         shutil.move(str(folder), str(folder.with_name(f"_removed-{sid}-{int(time.time())}")))
+
+
+def use_main_bot(sid: str) -> None:
+    """Switches an extra server to the main server's Discord bot (its own bot token is replaced)."""
+    servers = load_registry()
+    if not any(s["id"] == sid for s in servers):
+        raise ValueError("No such server.")
+    for s in servers:
+        if s["id"] == sid:
+            s["discord"] = "shared"
+    save_registry(servers)
+    sync_env(sid)
 
 
 def set_enabled(sid: str, enabled: bool) -> None:
@@ -306,6 +337,8 @@ def child_environment(sid: str) -> dict[str, str]:
     env.pop("RCE_LAUNCHER", None)
     env.update({ENV_HOME: str(home(sid).resolve()), ENV_ID: sid, ENV_SHARED: str((main_root() / "data").resolve()),
                 ENV_PARENT: str(os.getpid()), "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"})
+    if discord_mode(sid) == "shared":
+        env[ENV_SHARED_BOT] = "1"
     return env
 
 

@@ -187,6 +187,9 @@ class Status(commands.Cog):
                 text += f" (+{info['Queued']} queued)"
             activity = discord.Activity(type=discord.ActivityType.watching, name=text)
             status = discord.Status.online
+        import discord_router
+        if discord_router.uses_main_bot():
+            return                     # one Discord bot for several servers: its status shows the main server
         try:
             await self.bot.change_presence(activity=activity, status=status)
         except (discord.HTTPException, ConnectionError):
