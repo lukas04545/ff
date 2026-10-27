@@ -723,11 +723,9 @@ class WebInterface:
         if sid not in {s["id"] for s in servers.all_servers()}:
             raise ApiError("No such server.", 404)
         resp = web.json_response({"ok": True, "server": sid})
-        if sid == servers.MAIN_ID:
-            resp.del_cookie(SERVER_COOKIE, path="/")
-        else:
-            resp.set_cookie(SERVER_COOKIE, sid, httponly=True, samesite="Strict", secure=self._is_https(request),
-                            path="/")             # until the browser closes
+        # Set (never just deleted – some browsers keep a Secure cookie a plain delete doesn't match): "main" = this
+        # server's own panel. Until the browser closes.
+        resp.set_cookie(SERVER_COOKIE, sid, httponly=True, samesite="Lax", secure=self._is_https(request), path="/")
         return resp
 
     async def internal(self, request: web.Request) -> web.Response:
@@ -1545,6 +1543,13 @@ class WebInterface:
         tail = request.match_info.get("tail", "").strip("/")
         if tail and tail == self.ws.panel_path and request.method == "GET":
             return await self._panel(request)                 # the control panel's secret address
+        if tail and request.method == "GET" and not servers.is_child() and self._session_user(request) is not None \
+                and any(s["panel_path"] == f"/{tail}" for s in servers.all_servers() if not s["main"]):
+            # an extra server's panel address (an older version opened it here): the panel lives at one address now
+            resp = web.HTTPFound(self.panel_path)
+            resp.set_cookie(SERVER_COOKIE, servers.MAIN_ID, httponly=True, samesite="Lax",
+                            secure=self._is_https(request), path="/")
+            raise resp
         if tail.split("/", 1)[0] in ROOT_RESERVED:
             raise web.HTTPNotFound(text="Not found.")       # e.g. a wrong method on an API address
         self._public_limit(request)                          # every public page counts, also with the website off
@@ -1774,7 +1779,8 @@ class WebInterface:
         self._sudo.pop(request.cookies.get(SESSION_COOKIE, ""), None)
         resp = web.json_response({"ok": True})
         resp.del_cookie(SESSION_COOKIE)
-        resp.del_cookie(SERVER_COOKIE, path="/")          # the next login starts on the main server
+        resp.set_cookie(SERVER_COOKIE, servers.MAIN_ID, httponly=True, samesite="Lax",  # next login: the main server
+                        secure=self._is_https(request), path="/")
         return resp
 
     async def me(self, request: web.Request) -> web.Response:

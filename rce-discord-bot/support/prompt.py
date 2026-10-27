@@ -168,16 +168,27 @@ PROTECTION_ACTIONS = """- Offline protection zones (one per team: red = no raidi
     not_set_up / failed = call staff (escalate). Never place a zone for anyone else."""
 
 
+OTHER_SERVERS = """
+SEVERAL SERVERS
+This community runs more than one Rust server; this ticket is ONLY about "{server_name}". The other servers ({others})
+have their own kits, rules and staff tools. Everything you check, claim or file here applies to "{server_name}" only –
+never promise or give anything for another server. If the player means another server, tell them to open a new ticket
+and pick that server."""
+
+
 def build_system_prompt(*, server_name: str, topic: str, ingame_name: str | None,
                         status: str, knowledge: str, kit_tools: bool = False, giveaway_tools: bool = False,
-                        purchase_tools: bool = False, protection_tools: bool = False, keep_open: bool = False) -> str:
+                        purchase_tools: bool = False, protection_tools: bool = False, keep_open: bool = False,
+                        other_servers: list[str] | None = None) -> str:
     actions = NO_ACTIONS
     if kit_tools:
         actions = KIT_ACTIONS + ("\n" + GIVEAWAY_ACTIONS if giveaway_tools else "") + \
             ("\n" + PURCHASE_ACTIONS if purchase_tools else "") + \
             ("\n" + PROTECTION_ACTIONS if protection_tools else "")
+    others = OTHER_SERVERS.format(server_name=server_name or "this server", others=", ".join(other_servers)) \
+        if other_servers else ""
     return SYSTEM_TEMPLATE.format(
-        actions=actions,
+        actions=actions + others,
         server_name=server_name or "Rust Console Server",
         topic=topic,
         ingame_name=ingame_name or "not provided",

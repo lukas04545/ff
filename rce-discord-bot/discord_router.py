@@ -274,6 +274,10 @@ class Router:
             store = getattr(getattr(self.bot, "_connection", None), "_view_store", None)
             custom_id = (payload.get("data") or {}).get("custom_id")
             return self.sid if store is not None and custom_id in getattr(store, "_modals", {}) else None
+        custom_id = str((payload.get("data") or {}).get("custom_id") or "")
+        if custom_id.startswith("srv:"):                 # a button meant for one server ("srv:<id>:…")
+            wanted = custom_id.split(":")[1]
+            return wanted if wanted in participants() else servers.MAIN_ID
         if message and self._has_view_for(message.get("id")):
             return self.sid
         owner = self.store.owner("messages", message.get("id"))

@@ -252,15 +252,18 @@ def test_the_panel_switches_to_another_server_in_place(bot, monkeypatch):  # noq
         assert r.status == 200 and len(seen) == n
         await c.get("/", headers=OUT)                                          # the player website: the main's
         assert len(seen) == n
-        await c.post("/api/switch", json={"server": "main"}, headers={**H, **OUT})
+        r = await c.post("/api/switch", json={"server": "main"}, headers={**H, **OUT})
+        assert "rce_server=main" in r.headers["Set-Cookie"]                   # set, not just deleted
         r = await c.get("/api/me", headers=OUT)
         assert r.status == 200 and (await r.json())["user"] == "owner" and len(seen) == n
+        assert (await (await c.get("/api/servers", headers=OUT)).json())["current"] == "main"
         await c.post("/api/switch", json={"server": "two"}, headers={**H, **OUT})
         await child_server.close()                                             # Two stopped
         r = await c.get("/api/status", headers=OUT)
         assert r.status == 502 and (await r.json())["server_down"] is True
         await c.post("/api/logout", headers={**H, **OUT})                      # logging out: back to the main
-        assert "rce_server" not in {k for k, v in c.session.cookie_jar.filter_cookies(c.make_url("/")).items()}
+        jar = {k: v.value for k, v in c.session.cookie_jar.filter_cookies(c.make_url("/")).items()}
+        assert jar.get("rce_server") == "main"
     run(bot, scenario)
 
 
@@ -402,3 +405,20 @@ def test_servers_ask_each_other_signed(bot, monkeypatch):  # noqa: F811
                                                                   "CF-Connecting-IP": "203.0.113.9"})
         assert r.status == 404                                                      # never from outside
     run(bot, scenario, secret_path=tmp / "data" / "web_secret.key")
+
+
+def test_an_old_panel_address_goes_back_to_the_one_panel(bot, monkeypatch):  # noqa: F811
+    from envfile import update_env
+    tmp = bot.config.database_path.parent
+    monkeypatch.chdir(tmp)
+    (tmp / ".env").write_text("WEB_PORT=8080\nGUILD_ID=1\n", encoding="utf-8")
+
+    async def scenario(c):
+        servers.create_server("Two", "1.2.3.4", "28016", "pw", TOKEN_2)
+        update_env(servers.env_path("two"), {"WEB_PANEL_PATH": "panel-two-secret"})
+        assert (await c.get("/panel-two-secret", allow_redirects=False)).status != 302      # strangers: nothing
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        r = await c.get("/panel-two-secret", allow_redirects=False)
+        assert r.status == 302 and r.headers["Location"].startswith("/panel-") and "panel-two" not in r.headers["Location"]
+        assert "rce_server=main" in r.headers["Set-Cookie"]
+    run(bot, scenario)

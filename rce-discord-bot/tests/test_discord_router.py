@@ -191,3 +191,51 @@ def test_the_bot_status_shows_every_server(shared):
     discord_router.write_presence("two", "2x Monthly", two[1])
     assert discord_router.read_presences(180) == [("2x Monthly", two[1])]
     assert discord_router.read_presences(0) == [("2x Monthly", {"online": False})]        # stopped reporting
+
+
+def test_tickets_are_split_by_server(shared, monkeypatch):
+    """One Discord bot, several servers: "Open ticket" first asks which server; the button goes to that server's
+    bot, which opens the ticket as its own (its kits, its AI) – and the AI is told it's only about that server."""
+    from cogs.tickets import TicketServerButton, Tickets
+    from support.prompt import build_system_prompt
+    store = discord_router.RouteStore(shared / "data" / "discord_routes.db")
+    router = discord_router.Router(fake_bot(["status"], []), sid="main", store=store)
+    cog = Tickets.__new__(Tickets)
+    cog.bot = SimpleNamespace(router=router, config=SimpleNamespace(ticket_category_id=1))
+    assert cog.ticket_servers() == ["main", "two"] and cog.other_server_names() == ["Two"]
+    sent = {}
+
+    class Response:
+        async def send_message(self, text, view=None, ephemeral=False):
+            sent.update(text=text, view=view, ephemeral=ephemeral)
+    asyncio.run(cog.start_ticket_flow(SimpleNamespace(response=Response())))
+    ids = [item.custom_id for item in sent["view"].children]
+    assert sent["ephemeral"] and "Which server" in sent["text"] and ids == ["srv:main:ticket-open", "srv:two:ticket-open"]
+    assert [item.item.label for item in sent["view"].children] == ["Main server", "Two"]
+    assert TicketServerButton.__discord_ui_compiled_template__.fullmatch("srv:two:ticket-open")["sid"] == "two"
+    # the click goes to that server only
+    click = {"id": "9", "type": 3, "channel_id": "999", "message": {"id": "55", "channel_id": "999"},
+             "data": {"custom_id": "srv:two:ticket-open", "component_type": 2}}
+    assert router.interaction_owner(click) == "two"
+    assert discord_router.Router(fake_bot([], []), sid="two", store=store).interaction_owner(click) == "two"
+    # the AI knows it's only about its own server
+    text = build_system_prompt(server_name="Kryvon2x", topic="kit", ingame_name=None, status="", knowledge="",
+                               kit_tools=True, other_servers=["Main server"])
+    assert 'ONLY about "Kryvon2x"' in text and "(Main server)" in text
+    assert "SEVERAL SERVERS" not in build_system_prompt(server_name="X", topic="t", ingame_name=None, status="",
+                                                       knowledge="")
+    # an extra server's ticket channels are told apart by their name
+    monkeypatch.setenv(servers.ENV_ID, "two")
+    assert cog._server_prefix() == "two-"
+    store.close()
+
+
+def test_a_server_on_the_main_bot_gets_the_ticket_setup(shared):
+    """Ticket category, log, staff roles and AI key: from the main server while the extra server has none."""
+    (shared / ".env").write_text((shared / ".env").read_text() + "TICKET_CATEGORY_ID=77\nDEEPSEEK_API_KEY=sk-1\n"
+                                 "SUPPORT_ROLE_IDS=5\n", encoding="utf-8")
+    changed = servers.sync_env("two")
+    assert changed["TICKET_CATEGORY_ID"] == "77" and changed["DEEPSEEK_API_KEY"] == "sk-1"
+    update_env(servers.env_path("two"), {"TICKET_CATEGORY_ID": "88"})          # its own: kept
+    assert "TICKET_CATEGORY_ID" not in servers.sync_env("two")
+    assert read_env(servers.env_path("two"))["TICKET_CATEGORY_ID"] == "88"

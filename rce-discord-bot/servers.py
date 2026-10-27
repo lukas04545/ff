@@ -45,6 +45,9 @@ SHARED_KEYS = tuple(f.key for f in FIELDS if f.group == "abuse" and f.key != OWN
 GUILD_SPECIFIC = frozenset(f.key for f in FIELDS if f.group == "abuse" and f.pick)   # roles/channels of one Discord
 LOGIN_KEYS = ("WEB_PASSWORD",)
 DISCORD_KEYS = ("DISCORD_TOKEN", "GUILD_ID")      # servers on the main server's Discord bot: taken from the main
+# Servers on the main server's Discord bot: these come from the main server while they're empty here (the tickets
+# work right away – in the same ticket category, with the same staff and AI key – until the server sets its own)
+INHERIT_KEYS = ("DEEPSEEK_API_KEY", "TICKET_CATEGORY_ID", "TICKET_LOG_CHANNEL_ID", "SUPPORT_ROLE_IDS")
 EXIT_FATAL = 3                       # bot.py: configuration error – waiting for the settings, no point restarting
 RESTART_DELAYS = (5, 15, 60, 300)    # seconds before restarting a crashed server (then every 5 minutes)
 
@@ -185,6 +188,7 @@ def sync_env(sid: str) -> dict[str, str]:
     if discord_mode(sid) == "shared":
         main_env = read_env(env_path(MAIN_ID))
         wanted.update({k: main_env.get(k, "") for k in DISCORD_KEYS})
+        wanted.update({k: main_env[k] for k in INHERIT_KEYS if main_env.get(k) and not (env.get(k) or "").strip()})
     changed = {k: v for k, v in wanted.items() if env.get(k, "") != v}
     if changed:
         update_env(path, changed)
