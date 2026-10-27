@@ -444,3 +444,59 @@ def test_panel_shows_who_keeps_a_zone_green(zp):
     asyncio.run(zp.p.on_rce_player_leave("Mate"))
     z = zp.p.zone_list()[0]
     assert z["online"] == [] and z["red_at"] == zp.p.zone(5)["offline_since"] + 30 * 60
+
+
+def test_zone_size_by_team_size_and_vip(zp, monkeypatch):
+    """Size from the team size table, ×1.5 for VIP teams; a team that grows gets a bigger zone (deleted and created
+    again at the same spot, then its status again)."""
+    import types
+    configure(zp, size_by_team="1=20\n2=25\n3+=40", vip_players="Lead", team_sync_minutes=0, reapply_minutes=0)
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    assert "TEST_CREATE team_5 123.5 20.0 -456.25 38" in zp.said            # 2 members = 25, VIP leader ×1.5
+    assert zp.p.zone_list()[0]["radius"] == 38 and zp.p.zone_list()[0]["vip"] is True
+    zp.said.clear()
+    asyncio.run(zp.p.clock())
+    assert not any(c.startswith(("TEST_CREATE", "TEST_REMOVE")) for c in zp.said)   # same size: nothing sent
+    zp.db.team_event("join", "Third", 5, "Lead")                             # the team grows to 3
+    asyncio.run(zp.p.clock())
+    sent = [c for c in zp.said if c.startswith(("TEST_CREATE", "TEST_REMOVE", "TEST_GREEN"))]
+    assert sent == ["TEST_REMOVE team_5", "TEST_CREATE team_5 123.5 20.0 -456.25 60", "TEST_GREEN team_5"]
+    assert zp.p.zone(5)["radius"] == 60 and (zp.p.zone(5)["x"], zp.p.zone(5)["z"]) == (123.5, -456.25)
+    # VIP counts for the leader only (default) – a VIP member doesn't, unless "any member is VIP"
+    configure(zp, size_by_team="1=20\n2=25\n3+=40", vip_players="Mate", team_sync_minutes=0, reapply_minutes=0)
+    asyncio.run(zp.p.clock())
+    assert zp.p.zone(5)["radius"] == 40
+    configure(zp, size_by_team="1=20\n2=25\n3+=40", vip_players="Mate", vip_who="any member is VIP",
+              team_sync_minutes=0, reapply_minutes=0)
+    asyncio.run(zp.p.clock())
+    assert zp.p.zone(5)["radius"] == 60
+    # VIP by Discord role (linked account)
+    configure(zp, size_by_team="1=20\n2=25\n3+=40", vip_role=777, vip_percent=200, vip_players="", team_sync_minutes=0,
+              reapply_minutes=0)
+    zp.db.link_player(42, "Lead")
+    member = types.SimpleNamespace(roles=[types.SimpleNamespace(id=777)])
+    guild = types.SimpleNamespace(get_member=lambda uid: member if uid == 42 else None)
+    monkeypatch.setattr(type(zp.p), "guild", property(lambda self: guild))
+    asyncio.run(zp.p.clock())
+    assert zp.p.zone(5)["radius"] == 80 and zp.p.zone_list()[0]["vip"] is True
+    member.roles = []                                                        # VIP role gone: back to normal
+    asyncio.run(zp.p.clock())
+    assert zp.p.zone(5)["radius"] == 40
+
+
+def test_size_table_mistakes_are_reported_and_old_zones_keep_their_size(zp):
+    from plugins.offline_protection import parse_size_table
+    assert parse_size_table("1=20\n 3 - 4 : 30 \n5+=40\n") == ([(1, 1, 20), (3, 4, 30), (5, None, 40)], [])
+    assert parse_size_table("two=25\n2=0")[1] == ["two=25", "2=0"]
+    configure(zp, size_by_team="two=25")
+    assert "Zone size by team size" in zp.p.problems()[0]
+    configure(zp, team_sync_minutes=0, reapply_minutes=0)
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    old = zp.p.zone(5)
+    old.pop("radius")                                                        # a zone from before sizes existed
+    zp.p._save(5, old)
+    zp.said.clear()
+    asyncio.run(zp.p.clock())
+    assert zp.p.zone(5)["radius"] == 25 and not any(c.startswith("TEST_REMOVE") for c in zp.said)
