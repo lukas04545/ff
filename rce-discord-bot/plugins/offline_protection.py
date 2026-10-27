@@ -378,6 +378,15 @@ class OfflineProtection(Plugin):
         online.discard(left.lower())
         return any(m.lower() in online for m in members)
 
+    async def _switch(self, zone: dict, state: str) -> bool:
+        """Sends the red/green commands; the zone only counts as switched once they went through – with RCON down
+        the next check (every 20 s) tries again, so the base never stays raidable in-game while the panel says red."""
+        key = f"{state}_command"
+        if not await self._run(key, self._vars(zone)) and str(self.setting(key) or "").strip():
+            return False
+        zone["state"] = state
+        return True
+
     async def _update(self, team_id: int, now: float | None = None, *, joined: str = "", left: str = "") -> None:
         """Sets the zone's status: green if a member is online, red once all were offline long enough."""
         zone = self.zone(team_id)
@@ -391,9 +400,7 @@ class OfflineProtection(Plugin):
         zone["leader"] = team[0]["leader"] or zone["leader"]
         if self._online(team[1], joined, left):
             zone["offline_since"] = None
-            if zone["state"] != "green":
-                zone["state"] = "green"
-                await self._run("green_command", self._vars(zone))
+            if zone["state"] != "green" and await self._switch(zone, "green"):
                 await self._announce(f"🟢 Team **{self.md(zone['leader'])}** is online – zone "
                                      f"`{zone['name']}` green.")
         else:
@@ -407,10 +414,9 @@ class OfflineProtection(Plugin):
                                      f"nobody of the team was online for {self.setting('expire_hours')} hours.")
                 return
             if zone["state"] != "red" and now - zone["offline_since"] >= self.setting("offline_minutes") * 60:
-                zone["state"] = "red"
-                await self._run("red_command", self._vars(zone))
-                await self._announce(f"🔴 Team **{self.md(zone['leader'])}** has been offline for "
-                                     f"{self.setting('offline_minutes')} min – zone `{zone['name']}` red.")
+                if await self._switch(zone, "red"):
+                    await self._announce(f"🔴 Team **{self.md(zone['leader'])}** has been offline for "
+                                         f"{self.setting('offline_minutes')} min – zone `{zone['name']}` red.")
             elif not zone["state"]:
                 zone["state"] = "green"                       # just placed, timer running
         self._save(team_id, zone)

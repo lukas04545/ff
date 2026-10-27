@@ -365,3 +365,36 @@ def test_ticket_ai_places_the_zone_for_a_player_who_struggles(zp):
     assert "place_protection_zone" in prompt and "standing in the middle of their base" in prompt
     assert "place_protection_zone" not in build_system_prompt(server_name="S", topic="x", ingame_name=None,
                                                               status="", knowledge="", kit_tools=True)
+
+
+def test_red_and_green_are_sent_again_when_rcon_was_down(zp, monkeypatch):
+    """RCON down the moment the zone should turn red (or green): the bot must not think it's done – it tries
+    again on the next check, otherwise the base stays raidable in-game."""
+    from rce.rcon_client import RconError
+    configure(zp)
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    zp.bot.online_players = {"Stranger": {}}
+    asyncio.run(zp.p.on_rce_player_leave("Lead"))
+    start = zp.p.zone(5)["offline_since"]
+    down = {"on": True}
+
+    async def command(cmd, **kw):
+        if down["on"]:
+            raise RconError("not connected")
+        zp.said.append(cmd)
+        return ""
+    monkeypatch.setattr(zp.bot.rcon, "command", command)
+    zp.said.clear()
+    asyncio.run(zp.p._update(5, now=start + 31 * 60))
+    assert zp.p.zone(5)["state"] != "red" and zp.said == []                  # not sent – not marked red
+    down["on"] = False
+    asyncio.run(zp.p._update(5, now=start + 32 * 60))
+    assert zp.p.zone(5)["state"] == "red" and zp.said.count("TEST_RED team_5") == 1
+    down["on"] = True
+    asyncio.run(zp.p.on_rce_player_join("Mate"))
+    assert zp.p.zone(5)["state"] == "red"                                      # green failed: still red
+    down["on"] = False
+    zp.bot.online_players = {"Stranger": {}, "Mate": {}}
+    asyncio.run(zp.p._update(5))                                                # the next check
+    assert zp.p.zone(5)["state"] == "green" and zp.said[-1] == "TEST_GREEN team_5"
