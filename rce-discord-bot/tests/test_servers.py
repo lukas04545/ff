@@ -207,3 +207,56 @@ def test_extra_server_takes_the_shared_settings_from_the_main(bot, monkeypatch):
         updates = Updates(bot)
         assert updates.follower and (await updates.check_now()).status == "skipped"      # the main updates
     run(bot, scenario)
+
+
+def test_other_panels_open_through_the_main_address(bot, monkeypatch):  # noqa: F811
+    """/switch/<id>: the main server passes that server's panel through – one address (domain) for every panel."""
+    from aiohttp import web as aioweb
+    from aiohttp.test_utils import TestServer
+    tmp = bot.config.database_path.parent
+    monkeypatch.chdir(tmp)
+    (tmp / ".env").write_text("WEB_PORT=8080\nGUILD_ID=1\n", encoding="utf-8")
+    seen = []
+
+    async def child_app(request):                      # stands in for the extra server's web interface
+        seen.append({"path": request.path_qs, "host": request.host, "cf": request.headers.get("CF-Connecting-IP"),
+                     "body": await request.text(), "method": request.method})
+        resp = aioweb.Response(text=f"child {request.path}", headers={"X-Child": "1"})
+        resp.set_cookie("rce_gate", "child-gate")
+        return resp
+
+    async def scenario(c):
+        child = aioweb.Application()
+        child.router.add_route("*", "/{tail:.*}", child_app)
+        child_server = TestServer(child)
+        await child_server.start_server()
+        servers.create_server("Two", "1.2.3.4", "28016", "pw", TOKEN_2)
+        update = {"WEB_PORT": str(child_server.port), "WEB_PANEL_PATH": "panel-two-secret"}
+        from envfile import update_env
+        update_env(servers.env_path("two"), update)
+        OUT = {"CF-Connecting-IP": "203.0.113.5"}
+        assert (await c.get("/switch/two", headers=OUT, allow_redirects=False)).status == 404    # not logged in
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        r = await c.get("/switch/two", headers=OUT, allow_redirects=False)
+        assert r.status == 302 and r.headers["Location"] == "/panel-two-secret"
+        assert "rce_server=two" in r.headers["Set-Cookie"]
+        r = await c.get("/panel-two-secret", headers=OUT)
+        assert r.status == 200 and await r.text() == "child /panel-two-secret" and r.headers["X-Child"] == "1"
+        assert seen[-1]["host"] == f"127.0.0.1:{child_server.port}" and seen[-1]["cf"] == "203.0.113.5"
+        r = await c.post("/api/kits/give?x=1", json={"kit": "a"}, headers={**H, **OUT})
+        assert await r.text() == "child /api/kits/give" and seen[-1]["path"] == "/api/kits/give?x=1"
+        assert seen[-1]["method"] == "POST" and json.loads(seen[-1]["body"]) == {"kit": "a"}
+        assert (await c.get("/static/app.js", headers=OUT)).headers.get("X-Child") == "1"
+        n = len(seen)
+        await c.get("/", headers=OUT)                                          # the player website stays the main's
+        assert len(seen) == n
+        await c.get("/switch/main", headers=OUT, allow_redirects=False)        # back: the main's own panel
+        r = await c.get("/api/me", headers=OUT)
+        assert r.status == 200 and (await r.json())["user"] == "owner" and len(seen) == n
+        await c.get("/switch/two", headers=OUT, allow_redirects=False)
+        await child_server.close()                                             # the other server stopped
+        r = await c.get("/api/status", headers=OUT)
+        assert r.status == 502 and "Two" in (await r.json())["error"]
+        r = await c.get("/panel-two-secret", headers=OUT)
+        assert r.status == 502 and "/switch/main" in await r.text()
+    run(bot, scenario)

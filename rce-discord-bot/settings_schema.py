@@ -508,7 +508,8 @@ def validate(key: str, value: str) -> str | None:
         return f'"{f.label}" must start with https:// and contain {{shortname}} (or be "off").'
     if key == "WEB_PANEL_PATH" and (not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", value.strip("/"))
                                     or value.strip("/").lower() in ("admin", "api", "static", "store", "casino",
-                                                                    "account", "battlepass", "streams")):
+                                                                    "account", "battlepass", "streams",
+                                                                    "switch")):
         return f'"{f.label}" must be 8–64 letters, digits, - or _ (and not a page of the website).'
     if key == "WEB_PANEL_KNOCK" and len(value) < 8 and value.lower() != "off":
         return f'"{f.label}" must be at least 8 characters (or "off").'

@@ -1770,10 +1770,11 @@ async function copyKitsCard(kits) {
 
 // ------------------------------------------------------------------ Servers (several Rust servers, servers.py)
 
-// The address of another server's panel: same host on its port here at home, its public link from outside
+// The address of another server's panel: same host on its port here at home; from outside (your link / domain)
+// the same address – /switch/<id> lets the main server show that server's panel
 function serverUrl(s) {
   if (location.protocol === "http:") return `http://${location.hostname}:${s.port}${s.panel_path}`;
-  return s.public_url ? s.public_url + s.panel_path : null;
+  return `/switch/${encodeURIComponent(s.id)}`;
 }
 
 async function loadServerSwitch() {
