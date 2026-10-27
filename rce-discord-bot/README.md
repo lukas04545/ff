@@ -641,6 +641,12 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
   your own domain. Everything you see (overview, console, kits, players, settings …) is then that server's. The
   choice is kept until the browser closes or you log out. The Servers page always lists every server and marks the one
   shown now. If a server isn't running, the panel stays where it was and tells you.
+- **Plugins on every server:** each server has its own plugins, switched on and off on its own. *🧩 Plugins → 🖥️
+  Plugins on all servers* shows every plugin with a column per server: on/off with a button to switch it there,
+  and **📥 Install** where one of your own plugins (uploaded or made with the AI) isn't there yet. Install copies its
+  file, settings and pictures from the server that has it; it arrives switched off. **📤 Copy to …** updates it on
+  another server after you changed it. Built-in plugins are on every server already. The rest of the Plugins page is
+  the server you're viewing (drop-down).
 - **Copy kits across:** *Kits → 📋 Copy kits to another server* copies the bot's custom kits (items, description,
   claim cooldown) to another server. Claim roles come along when both use the same Discord. "Replace" overwrites
   kits with the same name there.

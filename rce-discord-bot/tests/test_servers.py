@@ -297,3 +297,69 @@ def test_an_extra_server_can_have_its_own_abuse_protection(main_dir, monkeypatch
     update_env(servers.env_path("two"), {"ABUSE_OWN_SETTINGS": "false"})              # back to the main's
     assert "ABUSE_ITEMS" in locked_settings()
     assert servers.sync_env("two")["ABUSE_ITEMS"] == "rocket,c4"
+
+
+def test_plugins_on_every_server(bot, monkeypatch):  # noqa: F811
+    """The Plugins page on the main server: every server's plugins, on/off per server, and installing one of yours
+    from one server onto another (file, settings, pictures)."""
+    from aiohttp import web as aioweb
+    from aiohttp.test_utils import TestServer
+    from envfile import update_env
+    from plugin_manager import PluginManager
+    tmp = bot.config.database_path.parent
+    monkeypatch.chdir(tmp)
+    (tmp / ".env").write_text(f"WEB_PORT=8080\nGUILD_ID=1\nDATABASE_PATH={tmp / 'bot.db'}\n", encoding="utf-8")
+    bot.plugins = PluginManager(bot)
+    mine = tmp / "plugins"
+    mine.mkdir(exist_ok=True)
+    (mine / "hello.py").write_text(
+        "from plugin_api import Plugin, Setting\n\nclass Hello(Plugin):\n    NAME = 'Hello'\n"
+        "    SETTINGS = [Setting('word', 'Word', default='hi')]\n", encoding="utf-8")
+    bot.plugins.discover()
+    bot.plugins.state.setdefault("settings", {})["hello"] = {"word": "yo"}
+    bot.plugins._save()
+    (tmp / "plugin_files" / "hello").mkdir(parents=True)
+    (tmp / "plugin_files" / "hello" / "logo").write_bytes(b"png")
+    calls = []
+
+    async def child_plugins(request):
+        calls.append((request.method, request.path, request.headers.get("Cookie", ""),
+                      await request.json() if request.can_read_body else None))
+        two_dir = servers.database_file("two").parent / "plugins"
+        if request.path == "/api/plugins":
+            have = (two_dir / "hello.py").is_file()
+            return aioweb.json_response({"plugins": [{"id": "hello", "name": "Hello", "builtin": False,
+                                                      "enabled": False, "running": False}] if have else []})
+        if request.path.endswith("/toggle"):
+            return aioweb.json_response({"plugin": {"id": "hello", "enabled": (await request.json())["enabled"]}})
+        return aioweb.json_response({"plugin": {"id": "hello"}})
+
+    async def scenario(c):
+        child = aioweb.Application()
+        child.router.add_route("*", "/{tail:.*}", child_plugins)
+        child_server = TestServer(child)
+        await child_server.start_server()
+        servers.create_server("Two", "1.2.3.4", "28016", "pw", TOKEN_2)
+        update_env(servers.env_path("two"), {"WEB_PORT": str(child_server.port)})
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        d = await (await c.get("/api/allplugins")).json()
+        main_list, two_list = d["servers"]
+        assert any(p["id"] == "hello" and not p["builtin"] for p in main_list["plugins"])
+        assert two_list["ok"] and two_list["plugins"] == []                       # not there yet
+        assert "rce_session=" in calls[-1][2]                                     # asked as the logged-in owner
+        r = await c.post("/api/allplugins/copy", json={"plugin": "bounties", "from": "main", "to": ["two"]},
+                         headers=H)
+        assert r.status == 400 and "built-in" in (await r.json())["error"]
+        r = await c.post("/api/allplugins/copy", json={"plugin": "hello", "from": "main", "to": ["two"],
+                                                       "settings": True}, headers=H)
+        assert r.status == 200 and (await r.json())["copied_to"] == ["Two"]
+        two = servers.home("two") / "data"
+        assert (two / "plugins" / "hello.py").read_text() == (mine / "hello.py").read_text()
+        assert (two / "plugin_files" / "hello" / "logo").read_bytes() == b"png"
+        assert ("PUT", "/api/plugins/hello/settings", calls[-1][2], {"values": {"word": "yo"}}) == calls[-1]
+        r = await c.post("/api/allplugins/two/hello/toggle", json={"enabled": True}, headers=H)
+        assert (await r.json())["plugin"]["enabled"] is True and calls[-1][1] == "/api/plugins/hello/toggle"
+        await child_server.close()
+        d = await (await c.get("/api/allplugins")).json()
+        assert d["servers"][1]["ok"] is False and "isn't running" in d["servers"][1]["error"]
+    run(bot, scenario)
