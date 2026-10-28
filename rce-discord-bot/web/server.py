@@ -533,7 +533,7 @@ class WebInterface:
         r.add_delete("/api/plugins/{pid}", self.plugin_delete)
         r.add_get("/api/protection", self.protection_get)
         r.add_get("/api/br", self.br_get)
-        r.add_post("/api/br/{action:test|shrink|stop|marker-test}", self.br_action)
+        r.add_post("/api/br/{action:test|shrink|stop|marker-test|clear-markers|forget-markers}", self.br_action)
         r.add_delete("/api/protection/zones/{team}", self.protection_delete_zone)
         r.add_get("/api/plugins/{pid}/file/{key}", self.plugin_file_get)
         r.add_post("/api/plugins/{pid}/file/{key}", self.plugin_file_upload)
@@ -1426,6 +1426,15 @@ class WebInterface:
         if plugin is None:
             raise ApiError("Switch battle royale on first.")
         action, user = request.match_info["action"], request.get("user", "?")
+        if action == "clear-markers":
+            result = await plugin.clear_markers()
+            self._audit(f"battle royale: cleared {result['count']} vending machine(s)")
+            return web.json_response({"ok": True, "message": f"Delete sent for {result['count']} vending machine(s).",
+                                      "marker_clear": result})
+        if action == "forget-markers":
+            count = plugin.forget_markers()
+            self._audit(f"battle royale: forgot {count} vending machine ID(s)")
+            return web.json_response({"ok": True, "message": f"Forgot {count} vending machine ID(s)."})
         if action == "marker-test":
             result = await plugin.test_marker()
             self._audit(f"battle royale marker test (ID {result['id'] or 'none'})")

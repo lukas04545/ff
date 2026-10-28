@@ -72,6 +72,7 @@ zones.editcustomzone "{zone}" color (0,170,255)"""
 DELETE_DEFAULT = 'zones.deletecustomzone "{zone}"'
 MARKER_DEFAULT = "entity.spawn vendingmachine.deployed {x},{y},{z}"
 MARKER_DELETE_DEFAULT = "entity.deleteentity {id}"
+MARKERS_KEPT = 2000            # vending machine IDs remembered for the "Clear vending machines" button
 MARKER_ID_DEFAULT = r"(?<![\d.])(\d{5,})(?![\d.])"       # a whole number of 5+ digits (not a coordinate)
 ITEMS_DEFAULT = "parachute 1\npistol.semiauto 1\nammo.pistol 40"
 
@@ -421,7 +422,8 @@ class BattleRoyale(Plugin):
                 "lobby_ends": g.get("lobby_ends"),
                 "players": [{"name": p["name"], "alive": p["alive"], "dropped": p["dropped"], "kills": p["kills"]}
                             for p in g["players"].values()],
-                "marker_test": getattr(self, "marker_test", None)}
+                "marker_test": getattr(self, "marker_test", None),
+                "known_markers": len(self.known_markers()), "marker_clear": getattr(self, "marker_clear", None)}
 
     async def drop(self, name: str) -> bool:
         """Gives the start kit, then – after the equip timer – teleports the player high above a random spot inside
@@ -537,7 +539,47 @@ class BattleRoyale(Plugin):
             reply = await self.bot.rcon.command(command)
         except RconError as exc:
             return command, f"error: {exc}", None
-        return command, reply or "", self._marker_id(reply or "")
+        marker = self._marker_id(reply or "")
+        if marker is not None:                                 # every machine is remembered until cleared
+            known = [m for m in self.data.get("spawned_markers", []) if m != marker] + [marker]
+            self.data.set("spawned_markers", known[-MARKERS_KEPT:])
+        return command, reply or "", marker
+
+    def known_markers(self) -> list[str]:
+        """Every vending machine ID the bot spawned and hasn't been told to forget."""
+        current = list(self.game.get("markers", []))
+        return list(dict.fromkeys(self.data.get("spawned_markers", []) + current))
+
+    async def clear_markers(self) -> dict:
+        """Panel button: sends the delete command for every vending machine the bot knows; returns the server's
+        replies (the first few) so a wrong delete command shows. The list is kept – the server's replies can't tell
+        for sure that a machine is gone; "forget" empties it."""
+        ids = self.known_markers()
+        replies = []
+        for marker in ids:
+            try:
+                command = str(self.setting("marker_delete_command")).format(id=marker)
+            except (KeyError, IndexError, ValueError):
+                return {"count": len(ids), "replies": [{"command": "", "reply": "bad placeholder in the delete command"}]}
+            try:
+                reply = await self.bot.rcon.command(command)
+            except RconError as exc:
+                reply = f"error: {exc}"
+            if len(replies) < 5:
+                replies.append({"command": command, "reply": reply or ""})
+        if self.game.get("markers"):
+            self.game["markers"] = []
+        self.data.set("markers", [])
+        self.audit(f"Battle royale: delete sent for {len(ids)} vending machine(s)")
+        result = {"count": len(ids), "replies": replies, "time": int(time.time())}
+        self.marker_clear = result
+        return result
+
+    def forget_markers(self) -> int:
+        count = len(self.known_markers())
+        self.data.set("spawned_markers", [])
+        self.marker_clear = None
+        return count
 
     async def _delete_markers(self, ids: list[str]) -> None:
         for marker in ids:

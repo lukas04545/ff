@@ -3520,6 +3520,15 @@ function brControls(r, reload) {
     h("tbody", {}, g.players.map((p) => h("tr", {}, h("td", { text: p.name }),
       h("td", {}, h("span", { class: `pill ${p.alive ? "ok" : "bad"}`, text: !p.alive ? "out" : p.dropped ? "alive" : "waiting to drop" })),
       h("td", { text: String(p.kills) })))))));
+  const cl = g.marker_clear;
+  card.append(h("h3", { text: "🧹 Clear vending machines" }),
+    h("p", { class: "muted", text: `The bot remembers every vending machine it spawned (${g.known_markers} now). "Clear" sends the delete command for all of them – and shows what the server answered, so you see if the delete command works. Machines from before this button existed can't be reached (their IDs weren't kept).` }),
+    h("div", { class: "row" },
+      h("button", { class: "danger", text: `🧹 Clear vending machines (${g.known_markers})`, disabled: !g.known_markers, onclick: press("clear-markers", "Delete sent", `Send the delete command for all ${g.known_markers} vending machines?`) }),
+      h("button", { class: "small", text: "Forget the list", disabled: !g.known_markers, onclick: press("forget-markers", "List emptied", "Forget all remembered vending machine IDs? Do this once they're really gone.") })));
+  if (cl) card.append(h("p", { class: "muted", text: `Last clear: delete sent for ${cl.count} machine(s). The server answered:` }),
+    h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, cl.replies.map((x) =>
+      h("tr", {}, h("td", {}, h("code", { text: x.command })), h("td", {}, h("code", { style: "white-space:pre-wrap;word-break:break-all", text: x.reply || "(nothing)" }))))))));
   const t = g.marker_test;
   card.append(h("h3", { text: "🏪 Vending machine marker test" }),
     h("p", { class: "muted", text: "Spawns one vending machine in the sky above the map centre, deletes it again and shows what the server answered. The ID must be found, and the delete must work – otherwise the machines can't be removed after each zone." }));

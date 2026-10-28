@@ -356,3 +356,38 @@ def test_battle_royale_panel_api(pb, monkeypatch):  # noqa: F811
             await c.close()
             await pb.bot.rcon.close()
     run(main())
+
+
+def test_clear_vending_machines_button(pb, monkeypatch):  # noqa: F811
+    from aiohttp.test_utils import TestClient, TestServer
+    _fake_server(pb, monkeypatch)
+    H = {"X-Requested-With": "rce-web"}
+
+    async def main():
+        from web.server import WebInterface
+        await pb.m.load_all()
+        await pb.m.set_enabled("battle_royale", True)
+        await pb.m.save_settings("battle_royale", {"marker_count": 4})
+        p = pb.m.running("battle_royale")
+        await p.start_test()
+        await p.shrink_now()
+        await p.end_round()                                    # deleted (maybe) – but remembered
+        assert len(p.known_markers()) == 8
+        w = WebInterface(pb.bot, env_path=pb.tmp / ".env", secret_path=pb.tmp / "web_secret.key")
+        c = TestClient(TestServer(w.app))
+        await c.start_server()
+        try:
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            assert (await (await c.get("/api/br")).json())["game"]["known_markers"] == 8
+            pb.said.clear()
+            r = await (await c.post("/api/br/clear-markers", json={}, headers=H)).json()
+            assert r["marker_clear"]["count"] == 8 and len(r["marker_clear"]["replies"]) == 5
+            assert [x for x in pb.said if x.startswith("entity.deleteentity")] == \
+                [f"entity.deleteentity {i}" for i in range(100001, 100009)]
+            assert (await (await c.get("/api/br")).json())["game"]["marker_clear"]["count"] == 8
+            r = await (await c.post("/api/br/forget-markers", json={}, headers=H)).json()
+            assert "8" in r["message"] and p.known_markers() == []
+        finally:
+            await c.close()
+            await pb.bot.rcon.close()
+    run(main())
