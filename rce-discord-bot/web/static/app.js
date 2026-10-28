@@ -3511,6 +3511,7 @@ function brControls(r, reload) {
     h("button", { class: "primary", text: "🧪 Start test round (no players)", disabled: g.state !== "idle", onclick: press("test", "Test round started") }),
     h("button", { text: "🔻 Shrink zone now", disabled: g.state !== "running", onclick: press("shrink", "Zone shrunk") }),
     h("button", { class: "danger", text: "⏹ Stop round", disabled: g.state === "idle", onclick: press("stop", "Round stopped", "Stop the round? Zones and vending machines are deleted.") }),
+    h("button", { class: "danger", text: "🗑 Delete all zones", onclick: press("delete-zones", "All zones deleted", "Delete every battle royale zone – also ones left over from earlier rounds? A running round is stopped.") }),
     h("button", { text: "🏪 Test a marker", onclick: async () => {
       const res = await act(() => api("/api/br/marker-test", { method: "POST", body: {} })).catch(() => null);
       if (res) reload();

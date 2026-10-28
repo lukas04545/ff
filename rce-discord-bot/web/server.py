@@ -533,7 +533,7 @@ class WebInterface:
         r.add_delete("/api/plugins/{pid}", self.plugin_delete)
         r.add_get("/api/protection", self.protection_get)
         r.add_get("/api/br", self.br_get)
-        r.add_post("/api/br/{action:test|shrink|stop|marker-test|clear-markers|forget-markers}", self.br_action)
+        r.add_post("/api/br/{action:test|shrink|stop|marker-test|clear-markers|forget-markers|delete-zones}", self.br_action)
         r.add_delete("/api/protection/zones/{team}", self.protection_delete_zone)
         r.add_get("/api/plugins/{pid}/file/{key}", self.plugin_file_get)
         r.add_post("/api/plugins/{pid}/file/{key}", self.plugin_file_upload)
@@ -1426,6 +1426,11 @@ class WebInterface:
         if plugin is None:
             raise ApiError("Switch battle royale on first.")
         action, user = request.match_info["action"], request.get("user", "?")
+        if action == "delete-zones":
+            count = await plugin.delete_all_zones()
+            self._audit(f"battle royale: deleted all zones ({user})")
+            return web.json_response({"ok": True, "message": f"Deleted all battle royale zones ({count} names tried).",
+                                      "game": plugin.panel_state()})
         if action == "clear-markers":
             result = await plugin.clear_markers()
             self._audit(f"battle royale: cleared {result['count']} vending machine(s)")

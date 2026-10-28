@@ -545,6 +545,24 @@ class BattleRoyale(Plugin):
             self.data.set("spawned_markers", known[-MARKERS_KEPT:])
         return command, reply or "", marker
 
+    def all_zone_names(self) -> list[str]:
+        """Every zone name this plugin may ever have made with the current prefix – also from older versions and
+        rounds the bot lost track of: rad_<i>/border (before the alternating names), rad0_<i>/rad1_<i>/border0/border1."""
+        prefix, n = self.setting("zone_prefix"), 120                # 120 = the most pieces the settings allow
+        names = [f"{prefix}{kind}_{i}" for kind in ("rad", "rad0", "rad1") for i in range(n)]
+        return names + [f"{prefix}border", f"{prefix}border0", f"{prefix}border1"]
+
+    async def delete_all_zones(self) -> int:
+        """Panel button: stops a running round and deletes every battle royale zone by name (deleting a name that
+        doesn't exist does nothing)."""
+        if self.game["state"] != "idle":
+            await self.end_round()
+        names = self.all_zone_names()
+        await self._delete_zones(names)
+        self.data.delete("zones")
+        self.audit(f"Battle royale: deleted all zones ({len(names)} names tried)")
+        return len(names)
+
     def known_markers(self) -> list[str]:
         """Every vending machine ID the bot spawned and hasn't been told to forget."""
         current = list(self.game.get("markers", []))
