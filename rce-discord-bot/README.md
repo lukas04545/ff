@@ -1074,8 +1074,25 @@ information – rules, how something works, prices, times – that isn't in the 
 and posted in the admin log, so the AI knows it in the next tickets. Nothing personal or case-specific (names,
 IDs, order numbers, refunds or other individual decisions), no admin commands, and never what only a player said.
 Check the section now and then on the web Knowledge base page and edit or delete entries freely. When the
-knowledge base reaches the AI's reading limit (12,000 characters) nothing more is added. Switch:
+knowledge base reaches its size limit (500,000 characters with RAG, 12,000 without) nothing more is added. To
+spot duplicates the AI gets the sections related to the ticket. Switch:
 **Settings → Tickets & AI → AI learns from staff answers** (`TICKET_AI_LEARN`).
+
+**Knowledge base as a RAG pipeline (retrieval):** the knowledge base isn't pasted whole into every AI answer any
+more. `support/rag.py` splits `support_knowledge.md` into **sections** – every `#` heading starts one, long
+sections are cut at paragraphs – and for each ticket answer (and AI chat message) picks the sections that match the
+conversation (the ticket description and the latest messages) with **BM25** search: headings count double,
+light stemming ("wipes" finds "wipe"), accents ignored and typo tolerance ("wipee" finds "wipe"). Only those
+sections – up to *Knowledge base text per AI answer* (`KNOWLEDGE_RAG_CHARS`, default 6,000 characters), plus the
+first section with the server's basics when there's room – go into the prompt, in the file's order. The ticket AI
+also gets a **`search_knowledge_base`** tool, so it can look up anything the first pick missed (in the knowledge
+base's own words); `/ticket ai-test` shows the searches and "x of y sections (RAG)". A knowledge base smaller than
+the budget is still sent whole, so small ones work exactly as before; a big one no longer gets cut off at 12,000
+characters (up to 500,000 now). Everything runs on your PC in plain Python – no extra packages, no embedding API.
+The web **Knowledge base** page shows how many sections it has and has a **test box**: type a question a player
+might ask and see which sections the AI would get. Tip: clear `#`/`##` headings per topic help the search most.
+Switch: **Settings → Tickets & AI → Knowledge base: send only the matching sections (RAG)** (`KNOWLEDGE_RAG`, on
+by default; off = the whole file, first 12,000 characters, like before).
 
 **Talk to the AI without pausing it – `/aiconfirm`:** staff can tell the ticket AI something with
 `/aiconfirm message:"Both purchases are verified, file the second kit"`. The bot posts it as

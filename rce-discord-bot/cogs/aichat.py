@@ -167,13 +167,14 @@ class AIChat(commands.Cog):
             parts.append("No automatic release time – a staff member decides when they are freed.")
         return " ".join(parts)
 
-    def _context(self) -> tuple[str, str]:
+    def _context(self, query: str = "") -> tuple[str, str]:
+        """Knowledge (with RAG only the sections matching `query`) and the live server status."""
         if not self.bot.config.ai_chat_knowledge:
             return "", ""
         tickets = self.bot.get_cog("Tickets")
         if tickets is None:
             return "", ""
-        return tickets._knowledge(), tickets._status_text()
+        return tickets.knowledge_for(query, tool=False)[0], tickets._status_text()
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -213,7 +214,7 @@ class AIChat(commands.Cog):
                 guard_rules = getattr(cfg, "ai_mod_guard_instructions", "") or cfg.ai_mod_instructions
                 prompt = guard_prompt(name, server, guard_rules, self._prisoner_note(message))
             else:
-                knowledge, status = self._context()
+                knowledge, status = self._context(" ".join(history[-3:] + [text]))
                 prompt = system_prompt(name, server, cfg.ai_chat_instructions, knowledge, status)
             messages = [{"role": "system", "content": prompt}]
             if history:

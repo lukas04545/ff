@@ -33,7 +33,7 @@ def chat(env, monkeypatch):
         calls.append(messages)
         return {"content": f"Arr, answer {len(calls)} @everyone", "tool_calls": []}
     env.tickets.ai = NS(enabled=True, chat=ai_chat)
-    env.tickets._knowledge = lambda: "Wipes every Thursday."
+    env.tickets.knowledge_for = lambda query, tool=True: ("Wipes every Thursday.", {"mode": "all", "used": 1, "total": 1})
     replies = []
 
     @asynccontextmanager

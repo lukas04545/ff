@@ -470,6 +470,7 @@ class WebInterface:
         r.add_get("/api/tickets/{ticket_id:\\d+}", self.ticket_detail)
         r.add_get("/api/leaderboard", self.leaderboard)
         r.add_get("/api/knowledge", self.get_knowledge)
+        r.add_get("/api/knowledge/search", self.search_knowledge)
         r.add_get("/api/prices", self.get_prices)
         r.add_put("/api/prices", self.put_prices)
         r.add_get("/api/store", self.store_status)
@@ -2866,15 +2867,38 @@ class WebInterface:
             raise ApiError("Unknown category.")
         return web.json_response({"rows": [dict(r) for r in self.bot.db.leaderboard(category, limit=50)]})
 
+    def _knowledge_rag(self) -> dict:
+        from support.rag import KnowledgeIndex
+        cfg = self.bot.config
+        tickets = self.bot.get_cog("Tickets")
+        path: Path = cfg.support_knowledge_file
+        index = tickets.knowledge_index() if tickets is not None else KnowledgeIndex(
+            path.read_text(encoding="utf-8") if path.exists() else "")
+        return {"enabled": cfg.knowledge_rag, "sections": len(index.chunks), "chars": len(index.text),
+                "budget": cfg.knowledge_rag_chars, "whole": len(index.text) <= cfg.knowledge_rag_chars,
+                "max": 500_000 if cfg.knowledge_rag else 12_000}
+
     async def get_knowledge(self, request: web.Request) -> web.Response:
         path: Path = self.bot.config.support_knowledge_file
         text = path.read_text(encoding="utf-8") if path.exists() else ""
-        return web.json_response({"path": str(path), "text": text})
+        return web.json_response({"path": str(path), "text": text, "rag": self._knowledge_rag()})
+
+    async def search_knowledge(self, request: web.Request) -> web.Response:
+        """Which sections an AI answer to this question would get (RAG test on the Knowledge base page)."""
+        tickets = self.bot.get_cog("Tickets")
+        if tickets is None:
+            raise ApiError("The ticket module isn't loaded.", 503)
+        query = request.query.get("q", "")[:500]
+        index = tickets.knowledge_index()
+        _, info = tickets.knowledge_for(query)
+        hits = index.search(query, 8)
+        return web.json_response({"info": info, "results": [
+            {"section": c.heading or "(top)", "text": c.text[:400], "score": round(s, 2)} for s, c in hits]})
 
     async def put_knowledge(self, request: web.Request) -> web.Response:
         text = str((await self._json(request)).get("text", ""))
-        if len(text) > 50000:
-            raise ApiError("Text too long (max. 50,000 characters).")
+        if len(text) > 500_000:
+            raise ApiError("Text too long (max. 500,000 characters).")
         path: Path = self.bot.config.support_knowledge_file
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")

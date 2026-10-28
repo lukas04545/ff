@@ -32,6 +32,7 @@ from support.deepseek import PLATFORM_KEYS_URL, PLATFORM_USAGE_URL, DeepSeekClie
 from support.giveaway_wins import GiveawayWin, match_kit, parse_win, prize_duration_minutes
 from support import learning, pricing
 from support.prompt import build_messages, build_system_prompt, parse_answer
+from support.rag import SEARCH_TOOL, KnowledgeIndex
 from utils import admin_only, format_duration, is_admin, safe_md, strip_rich_text
 
 if TYPE_CHECKING:
@@ -47,7 +48,8 @@ STAFF_OK_SECONDS = 1800       # after /aiconfirm the AI may file what the "one k
 DEBOUNCE_SECONDS = 3.0        # answer several quick messages in one go
 HISTORY_LIMIT = 40            # number of messages the AI gets as history
 STAFF_REPING_SECONDS = 600    # "Call staff" again only after 10 minutes
-KNOWLEDGE_MAX_CHARS = 12000
+KNOWLEDGE_MAX_CHARS = 12000      # without RAG: what the AI reads of the file
+KNOWLEDGE_RAG_MAX_CHARS = 500_000  # with RAG (only matching sections are sent): how big the file may grow
 DELETE_DELAY_SECONDS = 5
 RESOLVE_QUESTION = "❓ Is your issue resolved? If yes, I'll close this ticket."
 RESOLVED_REASON = "Resolved (confirmed by the player)"
@@ -371,16 +373,38 @@ class Tickets(commands.Cog):
     def _staff_roles(self, guild: discord.Guild) -> list[discord.Role]:
         return [r for rid in self.bot.config.support_role_ids if (r := guild.get_role(rid))]
 
-    def _knowledge(self) -> str:
+    def _knowledge_limit(self) -> int:
+        return KNOWLEDGE_RAG_MAX_CHARS if self.bot.config.knowledge_rag else KNOWLEDGE_MAX_CHARS
+
+    def knowledge_index(self) -> KnowledgeIndex:
+        """The knowledge file, split into searchable sections – built again when the file changes."""
         path: Path = self.bot.config.support_knowledge_file
         try:
             mtime = path.stat().st_mtime
         except OSError:
-            return ""
-        if self._knowledge_cache is None or self._knowledge_cache[0] != mtime:
-            text = path.read_text(encoding="utf-8")[:KNOWLEDGE_MAX_CHARS]
-            self._knowledge_cache = (mtime, text)
+            mtime = None
+        limit = self._knowledge_limit()
+        if self._knowledge_cache is None or self._knowledge_cache[0] != (mtime, limit):
+            text = path.read_text(encoding="utf-8")[:limit] if mtime is not None else ""
+            self._knowledge_cache = ((mtime, limit), KnowledgeIndex(text))
         return self._knowledge_cache[1]
+
+    def _knowledge(self) -> str:
+        return self.knowledge_index().text
+
+    def knowledge_for(self, query: str, *, tool: bool = True) -> tuple[str, dict]:
+        """The knowledge for one AI answer: with RAG the sections that match `query` (all of it if it's small),
+        without RAG the whole file. -> (text, {"mode": "all"|"rag", "used", "total"})."""
+        index = self.knowledge_index()
+        if not self.bot.config.knowledge_rag:
+            return index.text, {"mode": "all", "used": len(index.chunks), "total": len(index.chunks)}
+        return index.select(query, self.bot.config.knowledge_rag_chars, tool=tool)
+
+    @staticmethod
+    def _query_of(history: list[tuple[str, str]]) -> str:
+        """What the conversation is about: the ticket description and the latest messages count most."""
+        texts = [t for role, t in history if role == "user"]
+        return " ".join(texts[:1] + texts[-4:])[-3000:]
 
     def _status_text(self) -> str:
         info = self.bot.server_info
@@ -655,14 +679,19 @@ class Tickets(commands.Cog):
             return
 
         tools = self._ai_tools()
+        history = await self._history(channel, ticket)
+        knowledge, kb_info = self.knowledge_for(self._query_of(history))
+        kit_tools = bool(tools)
+        if kb_info["mode"] == "rag":
+            tools = tools + [SEARCH_TOOL]
         system = build_system_prompt(server_name=self._server_name(), topic=ticket["topic"],
                                      ingame_name=ticket["ingame_name"], status=self._status_text(),
-                                     knowledge=self._knowledge(), kit_tools=bool(tools),
+                                     knowledge=knowledge, kit_tools=kit_tools,
                                      other_servers=self.other_server_names(),
                                      giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools),
                 purchase_tools=any(t in PURCHASE_TOOLS for t in tools),
                 protection_tools=any(t in PROTECTION_TOOLS for t in tools), keep_open=bool(ticket["keep_open"]))
-        messages = build_messages(system, await self._history(channel, ticket))
+        messages = build_messages(system, history)
         try:
             async with channel.typing():
                 raw = None
@@ -817,6 +846,14 @@ class Tickets(commands.Cog):
         # Too many tool rounds – final answer without tools
         return (await self.ai.chat(messages, json_mode=False))["content"]
 
+    def _search_tool(self, args: dict) -> dict:
+        """search_knowledge_base: read-only, the same for real tickets and the dry run."""
+        query = str(args.get("query") or "")[:300]
+        found = self.knowledge_index().lookup(query) if query.strip() else []
+        return {"query": query, "results": found} if found else {
+            "query": query, "results": [], "note": "Nothing in the knowledge base matches – try other words, or "
+                                                   "call staff if it's a server-specific question."}
+
     async def _run_tool(self, call: dict, ticket, channel: discord.TextChannel) -> dict:
         fn = call.get("function") or {}
         name = fn.get("name")
@@ -824,6 +861,8 @@ class Tickets(commands.Cog):
             args = json.loads(fn.get("arguments") or "{}")
         except json.JSONDecodeError:
             args = {}
+        if name == "search_knowledge_base":
+            return self._search_tool(args)
         custom = self.bot.get_cog("CustomKits")
         member = await self._ticket_member(channel, ticket)
         if custom is None or member is None:
@@ -1184,14 +1223,16 @@ class Tickets(commands.Cog):
         """Asks the AI for new, general facts in the staff answers and adds them to the knowledge base."""
         path: Path = self.bot.config.support_knowledge_file
         try:
-            raw = await self.ai.chat_json(learning.build_messages(self._knowledge(), conversation,
+            related = self.knowledge_index().select(" ".join(t for _, t in conversation)[-4000:],
+                                                    KNOWLEDGE_MAX_CHARS, tool=False)[0]   # what it may already know
+            raw = await self.ai.chat_json(learning.build_messages(related, conversation,
                                                                   "the language of the knowledge base"),
                                           max_tokens=800, temperature=0.2)
         except DeepSeekError as exc:
             log.warning("Learning from ticket #%s failed: %s", ticket_id, exc)
             return []
         facts = learning.parse_facts(raw)
-        written = learning.append_facts(path, facts, ticket_id, max_chars=KNOWLEDGE_MAX_CHARS) if facts else []
+        written = learning.append_facts(path, facts, ticket_id, max_chars=self._knowledge_limit()) if facts else []
         if written:
             self._knowledge_cache = None
             self.bot.audit(f"📚 Knowledge base learned {len(written)} new fact(s) from ticket #{ticket_id}: "
@@ -1200,7 +1241,7 @@ class Tickets(commands.Cog):
             log.info("Ticket #%s: %s fact(s) added to the knowledge base", ticket_id, len(written))
         elif len(facts) > len(written):
             log.warning("Facts from ticket #%s not added: already known or the knowledge base is full (%s "
-                        "characters)", ticket_id, KNOWLEDGE_MAX_CHARS)
+                        "characters)", ticket_id, self._knowledge_limit())
         return written
 
     async def _transcript(self, channel: discord.TextChannel) -> str:
@@ -1401,8 +1442,12 @@ class Tickets(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         tools = self._ai_tools()
+        knowledge, kb_info = self.knowledge_for(question)
+        kit_tools = bool(tools)
+        if kb_info["mode"] == "rag":
+            tools = tools + [SEARCH_TOOL]
         system = build_system_prompt(server_name=self._server_name(), topic=question, ingame_name=None,
-                                     status=self._status_text(), knowledge=self._knowledge(), kit_tools=bool(tools),
+                                     status=self._status_text(), knowledge=knowledge, kit_tools=kit_tools,
                                      giveaway_tools=any(t in GIVEAWAY_TOOLS for t in tools),
                                      purchase_tools=any(t in PURCHASE_TOOLS for t in tools),
                                      protection_tools=any(t in PROTECTION_TOOLS for t in tools))
@@ -1425,9 +1470,14 @@ class Tickets(commands.Cog):
             await interaction.followup.send(f"⚠️ DeepSeek error: {exc}", ephemeral=True)
             return
         answer = parse_answer(raw)
-        knowledge = "loaded" if self._knowledge() else "⚠️ not found"
-        mode = (f"{len(tools)} tools, test mode – nothing was executed" if tools
-                else "no tools (enable *Ticket AI kit tools* in the settings)")
+        if not self._knowledge():
+            knowledge = "⚠️ not found"
+        elif kb_info["mode"] == "rag":
+            knowledge = f"{kb_info['used']} of {kb_info['total']} sections (RAG)"
+        else:
+            knowledge = f"whole ({kb_info['total']} sections)"
+        mode = (f"{len(tools)} tools, test mode – nothing was executed" if kit_tools
+                else "no kit tools (enable *Ticket AI kit tools* in the settings)")
         actions = "\n".join(f"• {u}" for u in used) or "none"
         text = (f"**Answer:**\n{answer.reply or '–'}\n\n**Call staff:** "
                 f"{'yes – ' + answer.reason if answer.escalate else 'no'}"
@@ -1456,6 +1506,11 @@ class Tickets(commands.Cog):
             args = {}
         note = {"test_mode": "This is an admin test – nothing was executed. Answer as if it had worked."}
         member, guild = interaction.user, interaction.guild
+        if name == "search_knowledge_base":
+            result = self._search_tool(args)
+            used.append(f"search_knowledge_base `{safe_md(result['query'][:60])}` – {len(result['results'])} "
+                        f"section(s)")
+            return result
         if name == "find_items":
             query = str(args.get("query") or "").strip()[:60]
             used.append(f"find_items `{safe_md(query)}`")

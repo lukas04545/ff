@@ -2346,6 +2346,25 @@ views.knowledge = async (main) => {
   const r = await act(() => api("/api/knowledge"));
   area.value = r.text;
   info.textContent = `File: ${r.path}`;
+  // RAG: how the file is split and which sections a question gets (support/rag.py)
+  const g = r.rag, q = h("input", { type: "search", placeholder: "Try a question a player might ask, e.g. when is the next wipe?" });
+  const out = h("div");
+  const ask = async () => {
+    if (!q.value.trim()) { out.replaceChildren(); return; }
+    const s = await api(`/api/knowledge/search?q=${encodeURIComponent(q.value)}`).catch((e) => ({ error: e.message }));
+    if (s.error) { out.replaceChildren(h("p", { class: "error", text: s.error })); return; }
+    out.replaceChildren(
+      h("p", { class: "muted", text: s.info.mode === "rag" ? `The AI would get ${s.info.used} of ${s.info.total} sections (best matches below, plus the first section when there's room).` : `The whole knowledge base fits – the AI gets all ${s.info.total} sections. Best matches:` }),
+      s.results.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Section", "Score", "Text"].map((t) => h("th", { text: t })))),
+        h("tbody", {}, s.results.map((x) => h("tr", {}, h("td", {}, h("strong", { text: x.section })), h("td", { class: "muted", text: String(x.score) }), h("td", { class: "muted", style: "white-space:pre-wrap", text: x.text }))))))
+        : h("p", { class: "muted", text: "Nothing matches – the AI would say it doesn't know and call staff." }));
+  };
+  q.addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
+  main.append(h("div", { class: "card" }, h("h2", { text: "🔎 How the AI reads it (RAG)" }),
+    h("p", { class: "muted", text: !g.enabled
+      ? `RAG is off (Settings → Tickets & AI): every answer gets the whole file (up to ${g.max.toLocaleString()} characters).`
+      : `${g.sections} sections, ${g.chars.toLocaleString()} characters. ${g.whole ? `Small enough to send whole (budget ${g.budget.toLocaleString()}) – it is split as soon as it grows past that.` : `Each AI answer gets only the sections that match the conversation (up to ${g.budget.toLocaleString()} characters) and can search the rest itself.`} Use # headings – every heading starts a section, so clear headings help the AI find things. Max. ${g.max.toLocaleString()} characters.` }),
+    h("div", { class: "row" }, q, h("button", { text: "Test", onclick: ask })), out));
 };
 
 // ------------------------------------------------------------------ Shop (points)
