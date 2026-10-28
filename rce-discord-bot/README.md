@@ -1360,15 +1360,19 @@ the last one alive wins.
 - **Zone:** the safe circle starts at *Start zone radius* around *Start zone centre* – 0 (default) = the **whole
   island**: the circle reaches the map's farthest corner, so the radiation ring starts outside the map. Drops land on
   the map, away from its outer *Keep drops away from the map edge* % (default 12 – the sea around the island). Just
-  outside it the bot places a ring of overlapping **radiation boxes** – square, *Box height* tall (default 600 m,
-  centred on *Height of the zone centres*, default y 100), turned to face the centre so the radiation starts right at
-  the circle's edge and nobody gets past on a hill or in the air (`zones.createcustomzone "br_rad_0" (x,y,z) <rotation>
-  Box (<width>,600,<width>) 1 1 <radiation> 1 1`, orange ring and "RADIATION" message) – plus a blue border without
-  radiation. *Radiation strength* (default 50 – the guide's example uses 52) sets how fast it hurts; *Radiation zone
-  shape* can switch to spheres. Every *Zone shrinks every*
+  outside it the bot fills **everything** with tall **radiation boxes**: 40 boxes around the circle, each starting
+  exactly at the zone edge and reaching outward past the map's farthest corner, wide enough to overlap all the way out
+  – so there's no spot outside the zone without radiation, however far out a player runs. *Box height* (default
+  600 m, centred on *Height of the zone centres*, default y 100) covers hills and the air
+  (`zones.createcustomzone "br_rad0_0" (x,y,z) <rotation> Box (<width>,600,<depth>) 1 1 <radiation> 1 1`, orange ring
+  and "RADIATION" message) – plus a blue border without radiation. When the zone changes, the **new boxes are made
+  first and the old ones deleted after** (the names alternate between `rad0`/`rad1`), so there's never a moment
+  without radiation. *Radiation strength* (default 50 – the guide's example uses 52) sets how fast it hurts. **Check
+  once in a test round** that the orange boxes start exactly at the zone edge and point straight outward – if they
+  cut into the safe zone, set *Box turn* to reversed. *Radiation zone shape* can switch to spheres (a thinner ring). Every *Zone shrinks every*
   minutes (warned *Warn before shrinking* seconds before) the circle shrinks to *New zone size* % around a new centre
-  inside the old circle, down to *Smallest zone*; the guide has no command to resize a zone, so the ring is deleted and
-  created again. *Radiation pieces at most* (default 40) caps the commands per shrink – big zones use bigger boxes.
+  inside the old circle, down to *Smallest zone*; the guide has no command to resize a zone, so the boxes are made
+  again (new first, then the old ones deleted). *Radiation pieces at most* (default 40) is the number of boxes.
 - **Vending machines mark the border:** with *Vending machines on the zone border* on (default) the bot puts
   *Vending machines around the border* (default 16) high in the sky (*Vending machine height*, default y 200) on the
   edge of the safe circle – they show on the map, so everyone sees where the zone is. Spawned with
@@ -1383,7 +1387,7 @@ the last one alive wins.
   zone now** (that button also works in real rounds); **⏹ Stop round** deletes everything; **🏪 Test a marker** spawns
   one vending machine above the map centre, deletes it again and shows the server's replies (the ID it found, the
   delete command's answer) – the plugin's settings are on the same page.
-- **Far outside:** players farther out than the radiation ring (one box width beyond the circle) are
+- **Far outside:** players farther out than the radiation (with boxes: beyond the map edge, e.g. in the sea) are
   read with `server.printpos` every *Check positions every* seconds, warned in-game and killed after *Kill players
   beyond the radiation after* seconds (0 = never).
 - **Out and winner:** any death of a dropped player counts (PvP, radiation, fall, suicide, the bot's kill) and leaving

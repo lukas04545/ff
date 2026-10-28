@@ -58,9 +58,9 @@ def test_a_whole_round(pb, monkeypatch):  # noqa: F811
     pb.said.clear()
     run(p.start_round())
     zones = [c for c in pb.said if c.startswith("zones.createcustomzone")]
-    rad = [c for c in zones if '"br_rad_' in c]
+    rad = [c for c in zones if '"br_rad0_' in c]
     assert rad and all(" Box (" in c and ",600," in c and c.endswith(" 1 1 50 1 1") for c in rad)   # tall boxes
-    assert any('"br_border"' in c and " 1 1 0 1 1" in c for c in zones)
+    assert any('"br_border0"' in c and " 1 1 0 1 1" in c for c in zones)
     assert [c for c in pb.said if c.startswith("global.killplayer")] == [
         'global.killplayer "Ann"', 'global.killplayer "Bob"', 'global.killplayer "Cid"']
     # the start kill doesn't count – nobody has dropped yet
@@ -80,8 +80,10 @@ def test_a_whole_round(pb, monkeypatch):  # noqa: F811
     pb.said.clear()
     run(p.shrink())
     assert p.game["radius"] < old_radius
-    assert any(c.startswith('zones.deletecustomzone "br_rad_0"') for c in pb.said)
-    assert any(c.startswith('zones.createcustomzone "br_rad_0"') for c in pb.said)
+    created = pb.said.index(next(c for c in pb.said if c.startswith('zones.createcustomzone "br_rad1_0"')))
+    deleted = pb.said.index('zones.deletecustomzone "br_rad0_0"')
+    assert created < deleted                                   # the new zone first, the old one after
+    assert p.game["zones"][0] == "br_rad1_0" and p.data.get("zones") == p.game["zones"]
     # far outside: warned, then killed and out
     async def far_away(name):
         return (99999.0, 50.0, 99999.0) if name == "Cid" else (p.game["cx"], 50.0, p.game["cz"])
@@ -97,7 +99,7 @@ def test_a_whole_round(pb, monkeypatch):  # noqa: F811
     run(p.on_rce_kill(KillEvent("Bob", KillerType.PLAYER, "Ann", KillerType.PLAYER)))
     assert p.game["state"] == "idle"
     assert pb.db.wallet(1)["points"] == 550 and pb.db.wallet(2)["points"] == 0
-    assert any(c.startswith('zones.deletecustomzone "br_border"') for c in pb.said)
+    assert any(c.startswith('zones.deletecustomzone "br_border1"') for c in pb.said)
     assert any("Ann wins the battle royale" in c for c in pb.said)
     assert p.data.get("zones") is None and p.status()["Rounds played"] == 1
 
@@ -140,26 +142,34 @@ def test_round_starts_with_the_whole_map_safe(pb):  # noqa: F811
     run(p.end_round())
 
 
-def test_radiation_boxes_ring_the_circle_tall_and_without_gaps():
-    w, boxes = ring_boxes(30, -20, 1500, 120, 40)
-    assert len(boxes) <= 40
+def _in_box(px, pz, x, z, rot, width, depth):
+    """Yaw rot: the box's local forward (sin, cos) points out from the centre – depth along it, width across."""
+    t = math.radians(rot)
+    fx, fz, rx, rz = math.sin(t), math.cos(t), math.cos(t), -math.sin(t)
+    dx, dz = px - x, pz - z
+    return abs(dx * fx + dz * fz) <= depth / 2 + 0.01 and abs(dx * rx + dz * rz) <= width / 2 + 0.01
 
-    def inside(px, pz, x, z, rot):                             # yaw rot: local forward (sin, cos) faces the centre
-        t = math.radians(rot)
-        fx, fz, rx, rz = math.sin(t), math.cos(t), math.cos(t), -math.sin(t)
-        dx, dz = px - x, pz - z
-        return abs(dx * fx + dz * fz) <= w / 2 + 0.01 and abs(dx * rx + dz * rz) <= w / 2 + 0.01
-    for x, z, rot in boxes:                                    # inner face on the circle
-        assert abs(math.hypot(x - 30, z + 20) - (1500 + w / 2)) < 1
-    for i in range(720):                                       # just outside the circle: always radiation
-        a = math.radians(i / 2)
-        for d in (0.02, 0.5, 0.95):
-            px, pz = 30 + (1500 + d * w) * math.cos(a), -20 + (1500 + d * w) * math.sin(a)
-            assert any(inside(px, pz, *b) for b in boxes), (i, d)
-    for i in range(360):                                       # inside the circle: never
-        a = math.radians(i)
-        px, pz = 30 + 1490 * math.cos(a), -20 + 1490 * math.sin(a)
-        assert not any(inside(px, pz, *b) for b in boxes)
+
+def test_radiation_boxes_fill_everything_outside_the_zone_up_to_the_map_edge():
+    for cx, cz, r in ((30, -20, 1500), (900, -600, 200), (-1500, 1400, 40), (0, 0, 3246)):
+        w, depth, boxes = ring_boxes(cx, cz, r, 120, 40, 4500)
+        assert len(boxes) == 40
+        for x, z, rot in boxes:                                # inner face on the circle
+            assert abs(math.hypot(x - cx, z - cz) - (r + depth / 2)) < 1
+        for i in range(720):                                   # outside the circle, to beyond the map: radiation
+            a = math.radians(i / 2)
+            for d in (0.005 * r + 1, 5, 50, 300, 1000, 2500, 4000):
+                px, pz = cx + (r + d) * math.cos(a), cz + (r + d) * math.sin(a)
+                if max(abs(px), abs(pz)) > 2250 + 100:         # beyond the map + margin: not needed
+                    continue
+                assert any(_in_box(px, pz, *b, w, depth) for b in boxes), (cx, cz, r, i, d)
+        for i in range(360):                                   # inside the circle: never
+            a = math.radians(i)
+            px, pz = cx + 0.99 * r * math.cos(a), cz + 0.99 * r * math.sin(a)
+            assert not any(_in_box(px, pz, *b, w, depth) for b in boxes)
+    _, _, normal = ring_boxes(0, 0, 500, 120, 40, 4500)
+    _, _, turned = ring_boxes(0, 0, 500, 120, 40, 4500, reverse=True)
+    assert [b[2] for b in normal] != [b[2] for b in turned] and normal[0][:2] == turned[0][:2]
 
 
 def test_sphere_shape_and_old_saved_command_still_work(pb):  # noqa: F811
@@ -182,7 +192,7 @@ def test_sphere_shape_and_old_saved_command_still_work(pb):  # noqa: F811
     p.join("Bob")
     pb.said.clear()
     run(p.start_round())
-    assert any(" 0 Sphere " in c and c.endswith(" 1 1 80 1 1") for c in pb.said if '"br_rad_' in c)
+    assert any(" 0 Sphere " in c and c.endswith(" 1 1 80 1 1") for c in pb.said if '"br_rad' in c)
     run(p.end_round())
 
 
@@ -274,7 +284,7 @@ def test_test_round_markers_shrink_and_stop(pb, monkeypatch):  # noqa: F811
         pb.said.clear()
         await p.end_round()
         assert [c for c in pb.said if c.startswith("entity.deleteentity")] == [f"entity.deleteentity {i}" for i in second]
-        assert any(c.startswith('zones.deletecustomzone "br_rad_0"') for c in pb.said)
+        assert any(c.startswith('zones.deletecustomzone "br_rad1_0"') for c in pb.said)
         assert p.data.get("markers") is None and p.game["state"] == "idle"
         assert not (await p.shrink_now())[0]
     run(main())

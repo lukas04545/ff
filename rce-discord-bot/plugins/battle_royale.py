@@ -6,8 +6,10 @@ A round:
   2. When the lobby closes, every player is killed once (optional, on by default) so they respawn with an empty
      inventory – their old gear stays in a bag where they died. As soon as one respawns the bot teleports them high
      above a random spot inside the zone and gives the start kit.
-  3. The zone: a ring of tall radiation boxes (or spheres) just outside the safe circle (zones.createcustomzone … Box
-     (width,height,length) … radiation <strength>) plus a visible border. Every few minutes (warned beforehand) it shrinks: the ring is deleted and created again, smaller,
+  3. The zone: tall radiation boxes (or spheres) all around the safe circle (zones.createcustomzone … Box
+     (width,height,length) … radiation <strength>) that reach from its edge to beyond the map's corners – there's no
+     spot outside the zone without radiation – plus a visible border. When the zone changes the new boxes are made
+     first and the old ones deleted after, so there's never a moment without radiation. Every few minutes (warned beforehand) it shrinks: the ring is deleted and created again, smaller,
      around a new centre inside the old circle. The guide has no command to resize a zone, so it's always delete +
      create. Players far outside – beyond the radiation ring – are warned and then killed (they read their position
      with server.printpos every few seconds).
@@ -100,20 +102,25 @@ def next_circle(cx: float, cz: float, radius: float, percent: int, min_radius: i
     return round(cx + dist * math.cos(angle), 1), round(cz + dist * math.sin(angle), 1), round(new, 1)
 
 
-def ring_boxes(cx: float, cz: float, radius: float, min_width: int, max_boxes: int
-               ) -> tuple[int, list[tuple[float, float, float]]]:
-    """Square radiation boxes around the safe circle: (box width, [(x, z, rotation)]). Each box's inner face lies on
-    the circle (turned to face the centre), so the radiation starts right where the zone ends and reaches one box
-    width beyond it; neighbours overlap."""
-    max_boxes = max(8, max_boxes)
-    w = max(float(max(min_width, 1)), 2 * math.pi * radius / (SPACING * max_boxes - math.pi))
-    count = max(6, min(max_boxes, math.ceil(2 * math.pi * (radius + w / 2) / (SPACING * w))))
+def ring_boxes(cx: float, cz: float, radius: float, min_width: int, max_boxes: int, map_size: int = 0, *,
+               reverse: bool = False) -> tuple[int, int, list[tuple[float, float, float]]]:
+    """Radiation boxes around the safe circle that fill everything outside it up to beyond the map's farthest corner:
+    (width along the circle, depth outward, [(x, z, rotation)]). Each box's inner face lies on the circle (turned to
+    face the centre) – a box never reaches into the safe circle, however big – and it reaches outward past the map
+    edge, so there's no spot outside the zone without radiation. They're wide enough to overlap all the way out.
+    reverse: the other turning direction (if the server turns zones the other way round)."""
+    n = max(12, max_boxes)
+    half = map_size / 2
+    reach = max((math.hypot(x - cx, z - cz) for x in (-half, half) for z in (-half, half)), default=0.0) + 150
+    depth = max(float(max(min_width, 1)), reach - radius)
+    width = max(float(max(min_width, 1)), 2 * (radius + depth) * math.tan(math.pi / n) * 1.1)
     out = []
-    for i in range(count):
-        a = 2 * math.pi * i / count
-        x, z = cx + (radius + w / 2) * math.cos(a), cz + (radius + w / 2) * math.sin(a)
-        out.append((round(x, 1), round(z, 1), round((90 - math.degrees(a)) % 360, 1)))   # yaw: face the centre
-    return round(w), out
+    for i in range(n):
+        a = 2 * math.pi * i / n
+        x, z = cx + (radius + depth / 2) * math.cos(a), cz + (radius + depth / 2) * math.sin(a)
+        rot = (math.degrees(a) - 90) % 360 if reverse else (90 - math.degrees(a)) % 360   # yaw: face the centre
+        out.append((round(x, 1), round(z, 1), round(rot, 1)))
+    return round(width), round(depth), out
 
 
 def random_spot(cx: float, cz: float, radius: float, rng: random.Random) -> tuple[float, float]:
@@ -196,6 +203,9 @@ class BattleRoyale(Plugin):
         Setting("radiation", "Radiation strength", "int", 50, min=1, max=1000,
                 help="The radiation value of the zones (the guide's example uses 52). Higher = faster damage – try a "
                      "round and adjust."),
+        Setting("box_turn", "Box turn", "choice", "normal", choices=("normal", "reversed"),
+                help="Which way the boxes are turned. In a test round the orange boxes must start exactly at the "
+                     "zone edge and point straight outward – if they cut into the safe zone, switch to reversed."),
         Setting("ring_min_sphere", "Radiation pieces: size at least (metres)", "int", 120, min=20, max=2000,
                 help="Box width / sphere radius. The ring is made of overlapping pieces; bigger zones use bigger "
                      "pieces."),
@@ -470,7 +480,9 @@ class BattleRoyale(Plugin):
     async def _build_zone(self) -> None:
         """(Re)creates the radiation ring and the border around the current circle."""
         g = self.game
-        await self._delete_zones(g.get("zones", []))
+        old = list(g.get("zones", []))                          # deleted only after the new zone stands
+        gen = 1 - g.get("gen", 1)                               # names alternate: the old set keeps existing meanwhile
+        g["gen"] = gen
         prefix, y = self.setting("zone_prefix"), self.setting("zone_y")
         template = str(self.setting("ring_command") or "")
         if template.strip() == OLD_RING_DEFAULT.strip():       # saved before boxes existed: the new default
@@ -483,20 +495,23 @@ class BattleRoyale(Plugin):
             pieces = [(x, z, 0, "Sphere", size) for x, z in centres]
             band = 2 * size
         else:
-            width, boxes = ring_boxes(g["cx"], g["cz"], g["radius"], self.setting("ring_min_sphere"),
-                                      self.setting("ring_max_spheres"))
-            pieces = [(x, z, rot, "Box", f"({width},{self.setting('box_height')},{width})") for x, z, rot in boxes]
-            size, band = width, width
+            width, depth, boxes = ring_boxes(g["cx"], g["cz"], g["radius"], self.setting("ring_min_sphere"),
+                                             self.setting("ring_max_spheres"), self.setting("map_size"),
+                                             reverse=self.setting("box_turn") == "reversed")
+            pieces = [(x, z, rot, "Box", f"({width},{self.setting('box_height')},{depth})") for x, z, rot in boxes]
+            size, band = width, depth
+        self.data.set("zones", old + [f"{prefix}rad{gen}_{i}" for i in range(len(pieces))] + [f"{prefix}border{gen}"])
         for i, (x, z, rot, shape, dims) in enumerate(pieces):
-            zone = f"{prefix}rad_{i}"
+            zone = f"{prefix}rad{gen}_{i}"
             await self._run(template, zone=zone, x=x, z=z, rotation=rot, shape=shape, size=dims,
                             radius=size if shape == "Sphere" else round(size / 2), width=size, **common)
             zones.append(zone)
         if self.setting("show_border"):
-            zone = f"{prefix}border"
+            zone = f"{prefix}border{gen}"
             await self._run(self.setting("border_command"), zone=zone, x=g["cx"], y=y, z=g["cz"],
                             radius=round(g["radius"]))
             zones.append(zone)
+        await self._delete_zones(old)                          # the new zone stands: now the old one goes
         g["zones"], g["band"] = zones, band
         self.data.set("zones", zones)                          # for the cleanup after a restart
         await self._place_markers()
