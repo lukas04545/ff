@@ -146,9 +146,9 @@ class BattleRoyale(Plugin):
                    "parachute and a pistol, a ring of radiation shrinks the zone, the last one alive wins.")
     DEFAULT_ENABLED = False
     SETTINGS = (
-        Setting("map_size", "Map size (metres)", "int", 3000, min=500, max=8000,
-                help="Your map's world size (G-Portal: 1000–3000; the world goes from −size/2 to +size/2). Used "
-                     "for the start zone and the drop spots."),
+        Setting("map_size", "Map size (metres)", "int", 4500, min=500, max=8000,
+                help="Your server's world size (the world goes from −size/2 to +size/2). Used for the start zone "
+                     "and the drop spots."),
         Setting("centre", "Start zone centre (x,z)", "text", "",
                 help="Empty = the middle of the map (0,0). E.g. 250,-400."),
         Setting("start_radius", "Start zone radius (metres)", "int", 0, min=0, max=12000,
