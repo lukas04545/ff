@@ -133,6 +133,14 @@ FIELDS: list[Field] = [
                "work, prices, times …) is added to the knowledge base under \"Learned from tickets\" – nothing "
                "personal or case-specific, and never what players said. Each entry is posted in the admin log; "
                "edit or delete it on the Knowledge base page."),
+    Field("KNOWLEDGE_RAG", "Knowledge base: send only the matching sections (RAG)", "tickets", "bool",
+          help="On (default): the knowledge base is split into sections (by its # headings and paragraphs) and every "
+               "AI answer gets only the sections that match the conversation, plus a tool to search the rest – a big "
+               "knowledge base no longer gets cut off, answers stay focused. A knowledge base smaller than the "
+               "budget below is sent whole. Off: the whole file (first 12,000 characters) goes into every answer."),
+    Field("KNOWLEDGE_RAG_CHARS", "Knowledge base text per AI answer (characters)", "tickets", "int",
+          help="How much of the knowledge base one AI answer gets with RAG (1,000–50,000, default 6,000). More = "
+               "more context but slower and more expensive answers."),
     Field("KIT_APPROVER_ROLE_IDS", "Roles that approve kit purchases", "tickets", "ids", pick="role",
           help="When a player says they bought a kit, the approve request in the ticket pings these roles and only "
                "they (and bot admins) can press Approve / Reject. They also get access to that ticket. "
