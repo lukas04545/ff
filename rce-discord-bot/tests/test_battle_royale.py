@@ -44,7 +44,7 @@ def test_a_whole_round(pb, monkeypatch):  # noqa: F811
     run(pb.m.load_all())
     run(pb.m.set_enabled("battle_royale", True))
     run(pb.m.save_settings("battle_royale", {"win_points": 500, "kill_points": 50, "far_kill_seconds": 15,
-                                             "shrink_minutes": 3, "warn_seconds": 30}))
+                                             "shrink_minutes": 3, "warn_seconds": 30, "equip_seconds": 0}))
     p = pb.m.running("battle_royale")
     p.rng = random.Random(3)
     pb.bot.online_players = {"Ann": {}, "Bob": {}, "Cid": {}, "Visitor": {}}
@@ -184,3 +184,49 @@ def test_sphere_shape_and_old_saved_command_still_work(pb):  # noqa: F811
     run(p.start_round())
     assert any(" 0 Sphere " in c and c.endswith(" 1 1 80 1 1") for c in pb.said if '"br_rad_' in c)
     run(p.end_round())
+
+
+def test_kit_first_then_15_seconds_to_put_the_parachute_on(pb, monkeypatch):  # noqa: F811
+    import plugins.battle_royale as br
+    slept = []
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(seconds):
+        slept.append(seconds)
+        await real_sleep(0)
+    monkeypatch.setattr(br.asyncio, "sleep", fast_sleep)
+
+    async def main():
+        await pb.m.load_all()
+        await pb.m.set_enabled("battle_royale", True)
+        await pb.m.save_settings("battle_royale", {"kit": "BR start"})
+        p = pb.m.running("battle_royale")
+        pb.bot.online_players = {"Ann": {}, "Bob": {}}
+        p.open_lobby(30)
+        p.join("Ann")
+        p.join("Bob")
+        await p.start_round()
+        pb.said.clear()
+        await p.on_rce_respawn(RespawnEvent("Ann", "Xbox"))
+        assert pb.said[0] == 'kit givetoplayer "BR start" "Ann"'                # the kit comes first
+        assert any("put your parachute on" in c and "15 seconds" in c for c in pb.said)
+        assert not any(c.startswith("global.teleportpos") for c in pb.said)     # not yet
+        assert not p.game["players"]["ann"]["dropped"]
+        await p._waiting["ann"]
+        assert slept == [10, 5] and any("5 seconds" in c for c in pb.said)
+        assert sum(c.startswith('global.teleportpos') and c.endswith('"Ann"') for c in pb.said) == 1
+        assert p.game["players"]["ann"]["dropped"] and "ann" not in p._waiting
+        # respawning again while waiting starts over (new kit), only one teleport in the end
+        pb.said.clear()
+        slept.clear()
+        await p.on_rce_respawn(RespawnEvent("Bob", "Xbox"))
+        first = p._waiting["bob"]
+        await p.on_rce_respawn(RespawnEvent("Bob", "Xbox"))
+        assert first.cancelled() or first.cancelling()
+        await p._waiting["bob"]
+        assert pb.said.count('kit givetoplayer "BR start" "Bob"') == 2
+        assert sum(c.startswith('global.teleportpos') and c.endswith('"Bob"') for c in pb.said) == 1
+        # the round ends while someone waits: no teleport afterwards
+        await p.end_round()
+        assert p._waiting == {}
+    run(main())

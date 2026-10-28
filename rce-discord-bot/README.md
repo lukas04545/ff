@@ -1349,8 +1349,10 @@ the last one alive wins.
   alive (with kills) and the zone. `/br stop` ends a round and deletes its zones.
 - **Start:** with *Kill players at the start* on (default) everyone is killed once (`global.killplayer`), so they
   respawn with an empty inventory – their gear stays in a bag where they died (the lobby announcement warns them). The
-  moment one respawns the bot teleports them to *Drop height* (default y 250) above a random spot inside the zone
-  (`global.teleportpos`) and gives the start kit.
+  moment one respawns the bot gives the start kit and tells them in-game to **put the parachute on** – after *Time to
+  put the parachute on before the drop* (default **15 seconds**, a 5-second warning before) it teleports them to *Drop
+  height* (default y 250) above a random spot inside the zone (`global.teleportpos`). Respawning again while waiting
+  starts the timer over with a fresh kit; 0 seconds = teleport straight away.
 - **Parachute already on:** pick an **in-game kit** as *Start kit* with the parachute in the **Wear** container (and
   the pistol in the Belt) – a kit puts items straight into their slots. Without a kit the *Start items* (default
   `parachute 1`, `pistol.semiauto 1`, `ammo.pistol 40`) are given with `inventory.giveto` and land in the inventory.

@@ -24,6 +24,7 @@ ended on start and its zones are deleted.
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import random
 import re
@@ -156,6 +157,10 @@ class BattleRoyale(Plugin):
                      "safe and the radiation ring begins outside it."),
         Setting("drop_margin", "Keep drops away from the map edge (%)", "int", 12, min=0, max=45,
                 help="Players land on the map but not in this outer share of it – the sea around the island."),
+        Setting("equip_seconds", "Time to put the parachute on before the drop (seconds)", "int", 15, min=0,
+                max=120, help="After respawning players get the start kit first and this long to put the parachute "
+                              "on (in-game message + a 5-second warning), then they're teleported into the air. "
+                              "0 = straight away."),
         Setting("drop_height", "Drop height (y)", "int", 250, min=50, max=1500,
                 help="How high players appear above the map. 200–300 gives time to open the parachute."),
         Setting("kit", "Start kit (in-game kit – parachute in Wear)", "kit", "",
@@ -216,6 +221,7 @@ class BattleRoyale(Plugin):
         super().__init__(*args, **kwargs)
         self.rng = random.Random()
         self.game: dict = self._idle()
+        self._waiting: dict[str, asyncio.Task] = {}             # player (lower) -> the drop after the equip timer
 
     @staticmethod
     def _idle() -> dict:
@@ -343,22 +349,54 @@ class BattleRoyale(Plugin):
         return f"Round started with {len(players)} players."
 
     async def drop(self, name: str) -> bool:
-        """Teleports the player high above a random spot inside the zone and gives the start kit."""
-        p = self.game["players"].get(name.lower())
+        """Gives the start kit, then – after the equip timer – teleports the player high above a random spot inside
+        the zone."""
+        key = name.lower()
+        p = self.game["players"].get(key)
         if p is None or p["dropped"] or not p["alive"]:
             return False
-        g = self.game
-        x, z = drop_spot(g["cx"], g["cz"], g["radius"] * 0.9, self.setting("map_size"), self.setting("drop_margin"),
-                         self.rng)
+        old = self._waiting.pop(key, None)
+        if old is not None:                                    # died while waiting: start over with a new kit
+            old.cancel()
+        p["killed_at"] = None                                  # respawned: no longer waiting for that
         safe = sanitize_player_name(p["name"])
-        await self._run(self.setting("teleport_command"), x=x, y=self.setting("drop_height"), z=z, name=safe)
         if self.setting("kit"):
             await self.give_kit(p["name"], self.setting("kit"))
         else:
             for item, amount in parse_items(self.setting("items")):
                 await self._run(self.bot.config.item_give_template, name=safe, item=item, amount=amount)
-        p["dropped"], p["dropped_at"] = True, time.time()
+        wait = self.setting("equip_seconds")
+        if not wait:
+            await self._teleport(p)
+            return True
+        await self.say(f"{p['name']}: put your parachute on – you drop into the zone in {wait} seconds!")
+        self._waiting[key] = asyncio.create_task(self._drop_later(key, wait, self.game.get("started")),
+                                                 name=f"br-drop-{key}")
         return True
+
+    async def _drop_later(self, key: str, wait: int, round_started) -> None:
+        try:
+            if wait > 5:
+                await asyncio.sleep(wait - 5)
+                p = self.game["players"].get(key)
+                if p is not None and p["alive"] and not p["dropped"]:
+                    await self.say(f"{p['name']}: dropping in 5 seconds – parachute on!")
+                wait = 5
+            await asyncio.sleep(wait)
+            p = self.game["players"].get(key)
+            if self.game.get("started") == round_started and p is not None and p["alive"] and not p["dropped"]:
+                await self._teleport(p)
+        finally:
+            if self._waiting.get(key) is asyncio.current_task():
+                self._waiting.pop(key, None)
+
+    async def _teleport(self, p: dict) -> None:
+        g = self.game
+        x, z = drop_spot(g["cx"], g["cz"], g["radius"] * 0.9, self.setting("map_size"), self.setting("drop_margin"),
+                         self.rng)
+        await self._run(self.setting("teleport_command"), x=x, y=self.setting("drop_height"), z=z,
+                        name=sanitize_player_name(p["name"]))
+        p["dropped"], p["dropped_at"] = True, time.time()
 
     async def _delete_zones(self, names: list[str]) -> None:
         for zone in names:
@@ -447,6 +485,9 @@ class BattleRoyale(Plugin):
         await self.end_round()
 
     async def end_round(self) -> None:
+        for task in self._waiting.values():
+            task.cancel()
+        self._waiting.clear()
         await self._delete_zones(self.game.get("zones", []))
         self.data.delete("zones")
         self.game = self._idle()
