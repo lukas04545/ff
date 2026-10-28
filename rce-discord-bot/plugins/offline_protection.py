@@ -12,6 +12,10 @@ Size: the zone radius, or – with "Zone size by team size" – a size per numbe
 list). The guide has no command to change a zone's size, so a zone whose size changes is deleted and created again at
 the same spot with the documented commands, then gets its red/green status again.
 
+Leaving the team (optional, "Delete the zone when a member leaves the team"): the moment anyone leaves the team (the
+team log line, or – if that was missed – the next team list no longer has him) the zone is deleted; the leader can
+place a new one.
+
 Expiry: a zone whose team nobody has been online for "Delete the zone after … hours" is deleted from the server (the
 remove command) – abandoned bases don't stay protected forever. The leader can place a new one when the team is back.
 
@@ -121,6 +125,9 @@ class OfflineProtection(Plugin):
                 help="One name per line – these count as VIP too (no Discord role needed)."),
         Setting("vip_who", "VIP size when …", "choice", VIP_LEADER, choices=(VIP_LEADER, VIP_ANY),
                 help="Whose VIP status counts for the team's zone."),
+        Setting("delete_on_leave", "Delete the zone when a member leaves the team", "bool", False,
+                help="On: as soon as anyone leaves the team (or is kicked), its zone is deleted – the leader has to "
+                     "place a new one. Stops players from protecting a base and then splitting up."),
         Setting("zone_prefix", "Zone name prefix ({zone})", "text", "team_",
                 help="Zone names are this + the team ID, e.g. team_123."),
         Setting("position_command", "Command that returns a player's position", "text", POSITION_DEFAULT,
@@ -407,7 +414,7 @@ class OfflineProtection(Plugin):
         x, y, z = position
         zone = {"team": team_id, "name": f"{self.setting('zone_prefix')}{team_id}", "leader": leader,
                 "x": x, "y": y, "z": z, "state": "", "offline_since": None, "placed": int(time.time()),
-                "radius": self.wanted_radius(leader, members)}
+                "radius": self.wanted_radius(leader, members), "members": sorted(members)}
         if not await self._run("create_command", self._vars(zone)):
             return "failed", "the zone couldn't be created – tell an admin."
         self._save(team_id, zone)
@@ -528,6 +535,12 @@ class OfflineProtection(Plugin):
         if team is None or not team[1]:                     # the team is gone: its zone goes too
             await self.remove_zone(team_id, "the team doesn't exist any more")
             return
+        current = {m.lower() for m in team[1]}
+        gone = [m for m in zone.get("members") or [] if m.lower() not in current]
+        if gone and self.setting("delete_on_leave"):         # a log line was missed: the team list tells
+            await self._delete_for_leaving(team_id, gone[0], team[0]["leader"] or zone["leader"])
+            return
+        zone["members"] = sorted(team[1])                    # who was in the team (joins just add)
         zone["leader"] = team[0]["leader"] or zone["leader"]
         if self._online(team[1], joined, left):
             zone["offline_since"] = None
@@ -551,6 +564,22 @@ class OfflineProtection(Plugin):
             elif not zone["state"]:
                 zone["state"] = "green"                       # just placed, timer running
         self._save(team_id, zone)
+
+    async def _delete_for_leaving(self, team_id: int, player: str, leader: str) -> None:
+        zone = self.zone(team_id)
+        if zone is None or not await self.remove_zone(team_id, f"{player} left the team"):
+            return
+        await self._announce(f"🚪 **{self.md(player)}** left team **{self.md(zone['leader'])}** – zone "
+                             f"`{zone['name']}` deleted.")
+        if leader and leader.lower() != player.lower():
+            await self._tell(leader, f"{player} left your team – your protection zone was deleted. Place it again "
+                                     "with \"Can I build here?\" + \"Yes\".")
+
+    @Plugin.listener()
+    async def on_rce_team(self, ev) -> None:
+        """Team log line: someone left – with "Delete the zone when a member leaves" on, the zone goes at once."""
+        if getattr(ev, "kind", "") == "leave" and self.setting("delete_on_leave") and self.zone(ev.team_id):
+            await self._delete_for_leaving(int(ev.team_id), ev.player, ev.other or "")
 
     @Plugin.listener()
     async def on_rce_player_join(self, name: str) -> None:
