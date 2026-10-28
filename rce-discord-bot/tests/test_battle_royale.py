@@ -136,7 +136,7 @@ def test_round_starts_with_the_whole_map_safe(pb):  # noqa: F811
     p.join("Ann")
     p.join("Bob")
     run(p.start_round())
-    assert p.game["radius"] == whole_map_radius(0, 0, 3000)
+    assert p.game["radius"] == whole_map_radius(0, 0, 4500)
     run(p.end_round())
 
 
