@@ -6,8 +6,8 @@ A round:
   2. When the lobby closes, every player is killed once (optional, on by default) so they respawn with an empty
      inventory – their old gear stays in a bag where they died. As soon as one respawns the bot teleports them high
      above a random spot inside the zone and gives the start kit.
-  3. The zone: a ring of radiation spheres just outside the safe circle (zones.createcustomzone … radiation 1) plus a
-     visible border. Every few minutes (warned beforehand) it shrinks: the ring is deleted and created again, smaller,
+  3. The zone: a ring of tall radiation boxes (or spheres) just outside the safe circle (zones.createcustomzone … Box
+     (width,height,length) … radiation <strength>) plus a visible border. Every few minutes (warned beforehand) it shrinks: the ring is deleted and created again, smaller,
      around a new centre inside the old circle. The guide has no command to resize a zone, so it's always delete +
      create. Players far outside – beyond the radiation ring – are warned and then killed (they read their position
      with server.printpos every few seconds).
@@ -40,10 +40,17 @@ from utils import admin_only, player_choices, sanitize_player_name
 COLOUR = discord.Colour(0xE67E22)
 NUMBER = r"(-?\d+(?:\.\d+)?)"
 POSITION = re.compile(r"\(\s*" + NUMBER + r"\s*,\s*" + NUMBER + r"\s*,\s*" + NUMBER + r"\s*\)")
-SPACING = 0.8                  # ring spheres: centre distance as a share of their radius (they overlap)
+SPACING = 0.8                  # ring pieces: centre distance as a share of their size (they overlap)
 RESPAWN_WAIT = 90              # seconds a killed player has to respawn before he's out
 
-RING_DEFAULT = """zones.createcustomzone "{zone}" ({x},{y},{z}) 0 Sphere {radius} 1 1 1 1 1
+OLD_RING_DEFAULT = """zones.createcustomzone "{zone}" ({x},{y},{z}) 0 Sphere {radius} 1 1 1 1 1
+zones.editcustomzone "{zone}" showarea 1
+zones.editcustomzone "{zone}" color (255,90,0)
+zones.editcustomzone "{zone}" showchatmessage 1
+zones.editcustomzone "{zone}" entermessage "RADIATION – get back into the zone!" """
+# Guide: zones.createcustomzone "Name" (x,y,z) rotation Sphere|Box size pvp npc_damage radiation building_damage building
+# – a Box's size is (width,height,length), e.g. "Test" (500,35,90) 45 Box (225,150,150) 1 0 52 1 0
+RING_DEFAULT = """zones.createcustomzone "{zone}" ({x},{y},{z}) {rotation} {shape} {size} 1 1 {radiation} 1 1
 zones.editcustomzone "{zone}" showarea 1
 zones.editcustomzone "{zone}" color (255,90,0)
 zones.editcustomzone "{zone}" showchatmessage 1
@@ -79,6 +86,22 @@ def next_circle(cx: float, cz: float, radius: float, percent: int, min_radius: i
     room = radius - new
     angle, dist = rng.uniform(0, 2 * math.pi), room * math.sqrt(rng.random())
     return round(cx + dist * math.cos(angle), 1), round(cz + dist * math.sin(angle), 1), round(new, 1)
+
+
+def ring_boxes(cx: float, cz: float, radius: float, min_width: int, max_boxes: int
+               ) -> tuple[int, list[tuple[float, float, float]]]:
+    """Square radiation boxes around the safe circle: (box width, [(x, z, rotation)]). Each box's inner face lies on
+    the circle (turned to face the centre), so the radiation starts right where the zone ends and reaches one box
+    width beyond it; neighbours overlap."""
+    max_boxes = max(8, max_boxes)
+    w = max(float(max(min_width, 1)), 2 * math.pi * radius / (SPACING * max_boxes - math.pi))
+    count = max(6, min(max_boxes, math.ceil(2 * math.pi * (radius + w / 2) / (SPACING * w))))
+    out = []
+    for i in range(count):
+        a = 2 * math.pi * i / count
+        x, z = cx + (radius + w / 2) * math.cos(a), cz + (radius + w / 2) * math.sin(a)
+        out.append((round(x, 1), round(z, 1), round((90 - math.degrees(a)) % 360, 1)))   # yaw: face the centre
+    return round(w), out
 
 
 def random_spot(cx: float, cz: float, radius: float, rng: random.Random) -> tuple[float, float]:
@@ -123,8 +146,9 @@ class BattleRoyale(Plugin):
                    "parachute and a pistol, a ring of radiation shrinks the zone, the last one alive wins.")
     DEFAULT_ENABLED = False
     SETTINGS = (
-        Setting("map_size", "Map size (metres)", "int", 3500, min=500, max=8000,
-                help="Your map's size (the world goes from −size/2 to +size/2). Used for the start zone."),
+        Setting("map_size", "Map size (metres)", "int", 3000, min=500, max=8000,
+                help="Your map's world size (G-Portal: 1000–3000; the world goes from −size/2 to +size/2). Used "
+                     "for the start zone and the drop spots."),
         Setting("centre", "Start zone centre (x,z)", "text", "",
                 help="Empty = the middle of the map (0,0). E.g. 250,-400."),
         Setting("start_radius", "Start zone radius (metres)", "int", 0, min=0, max=12000,
@@ -148,12 +172,22 @@ class BattleRoyale(Plugin):
         Setting("shrink_percent", "New zone size (% of the old)", "int", 60, min=10, max=95),
         Setting("min_radius", "Smallest zone (metres)", "int", 40, min=5, max=2000),
         Setting("warn_seconds", "Warn before shrinking (seconds)", "int", 45, min=0, max=600),
-        Setting("ring_min_sphere", "Radiation sphere radius at least (metres)", "int", 120, min=20, max=2000,
-                help="The radiation ring is made of overlapping spheres; bigger zones use bigger spheres."),
-        Setting("ring_max_spheres", "Radiation spheres at most", "int", 40, min=8, max=120,
-                help="More spheres = a smoother edge but more commands each time the zone shrinks."),
-        Setting("zone_y", "Height of the zone centres (y)", "int", 30, min=-200, max=500,
-                help="About ground level, so the spheres cover the ground."),
+        Setting("ring_shape", "Radiation zone shape", "choice", "Box", choices=("Box", "Sphere"),
+                help="Box (default): tall boxes – the radiation reaches from below the ground up to Box height, so "
+                     "nobody gets past on a hill or in the air. Sphere: round zones (only as high as they are wide)."),
+        Setting("box_height", "Box height (metres)", "int", 600, min=50, max=3000,
+                help="How tall the radiation boxes are, centred on the zone height below."),
+        Setting("radiation", "Radiation strength", "int", 50, min=1, max=1000,
+                help="The radiation value of the zones (the guide's example uses 52). Higher = faster damage – try a "
+                     "round and adjust."),
+        Setting("ring_min_sphere", "Radiation pieces: size at least (metres)", "int", 120, min=20, max=2000,
+                help="Box width / sphere radius. The ring is made of overlapping pieces; bigger zones use bigger "
+                     "pieces."),
+        Setting("ring_max_spheres", "Radiation pieces at most", "int", 40, min=8, max=120,
+                help="More pieces = a smoother edge but more commands each time the zone shrinks."),
+        Setting("zone_y", "Height of the zone centres (y)", "int", 100, min=-500, max=1000,
+                help="The middle of the boxes (Box height reaches half of it up and down from here) – keep it "
+                     "around ground level so they cover the whole island."),
         Setting("show_border", "Show the zone border", "bool", True,
                 help="A zone without radiation the size of the safe circle, with a visible ring (blue)."),
         Setting("far_kill_seconds", "Kill players beyond the radiation after (seconds)", "int", 15, min=0,
@@ -164,9 +198,10 @@ class BattleRoyale(Plugin):
         Setting("kill_points", "Points per kill", "int", 0, min=0, max=10_000_000),
         Setting("win_kit", "Kit for the winner", "kit", "", help="Optional."),
         Setting("zone_prefix", "Zone name prefix", "text", "br_"),
-        Setting("ring_command", "Command(s): radiation sphere", "textarea", RING_DEFAULT,
-                help="Placeholders {zone} {x} {y} {z} {radius}. Default: zones.createcustomzone with radiation 1 "
-                     "(PvP 1, NPC damage 1, radiation 1, building damage 1, building 1)."),
+        Setting("ring_command", "Command(s): radiation zone", "textarea", RING_DEFAULT,
+                help="Placeholders {zone} {x} {y} {z} {rotation} {shape} {size} – Box: (width,height,length), Sphere: "
+                     "the radius – {radius} {width} {height} {radiation}. Default: zones.createcustomzone with PvP 1, "
+                     "NPC damage 1, radiation {radiation}, building damage 1, building 1."),
         Setting("border_command", "Command(s): zone border", "textarea", BORDER_DEFAULT),
         Setting("delete_command", "Command: delete a zone", "text", DELETE_DEFAULT),
         Setting("teleport_command", "Command: teleport", "text", 'global.teleportpos ({x},{y},{z}) "{name}"'),
@@ -334,19 +369,32 @@ class BattleRoyale(Plugin):
         g = self.game
         await self._delete_zones(g.get("zones", []))
         prefix, y = self.setting("zone_prefix"), self.setting("zone_y")
-        sphere, centres = ring_spheres(g["cx"], g["cz"], g["radius"], self.setting("ring_min_sphere"),
-                                       self.setting("ring_max_spheres"))
+        template = str(self.setting("ring_command") or "")
+        if template.strip() == OLD_RING_DEFAULT.strip():       # saved before boxes existed: the new default
+            template = RING_DEFAULT
+        common = {"y": y, "radiation": self.setting("radiation"), "height": self.setting("box_height")}
         zones = []
-        for i, (x, z) in enumerate(centres):
+        if self.setting("ring_shape") == "Sphere":
+            size, centres = ring_spheres(g["cx"], g["cz"], g["radius"], self.setting("ring_min_sphere"),
+                                         self.setting("ring_max_spheres"))
+            pieces = [(x, z, 0, "Sphere", size) for x, z in centres]
+            band = 2 * size
+        else:
+            width, boxes = ring_boxes(g["cx"], g["cz"], g["radius"], self.setting("ring_min_sphere"),
+                                      self.setting("ring_max_spheres"))
+            pieces = [(x, z, rot, "Box", f"({width},{self.setting('box_height')},{width})") for x, z, rot in boxes]
+            size, band = width, width
+        for i, (x, z, rot, shape, dims) in enumerate(pieces):
             zone = f"{prefix}rad_{i}"
-            await self._run(self.setting("ring_command"), zone=zone, x=x, y=y, z=z, radius=sphere)
+            await self._run(template, zone=zone, x=x, z=z, rotation=rot, shape=shape, size=dims,
+                            radius=size if shape == "Sphere" else round(size / 2), width=size, **common)
             zones.append(zone)
         if self.setting("show_border"):
             zone = f"{prefix}border"
             await self._run(self.setting("border_command"), zone=zone, x=g["cx"], y=y, z=g["cz"],
                             radius=round(g["radius"]))
             zones.append(zone)
-        g["zones"], g["sphere"] = zones, sphere
+        g["zones"], g["band"] = zones, band
         self.data.set("zones", zones)                          # for the cleanup after a restart
 
     async def shrink(self) -> None:
@@ -360,7 +408,7 @@ class BattleRoyale(Plugin):
 
     def _far(self, x: float, z: float) -> bool:
         g = self.game
-        return math.hypot(x - g["cx"], z - g["cz"]) > g["radius"] + 2 * g.get("sphere", 0)
+        return math.hypot(x - g["cx"], z - g["cz"]) > g["radius"] + g.get("band", 0)
 
     async def eliminate(self, name: str, why: str, killer: str | None = None) -> None:
         g = self.game

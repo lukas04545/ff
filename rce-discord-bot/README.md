@@ -1358,19 +1358,23 @@ the last one alive wins.
 - **Zone:** the safe circle starts at *Start zone radius* around *Start zone centre* – 0 (default) = the **whole
   island**: the circle reaches the map's farthest corner, so the radiation ring starts outside the map. Drops land on
   the map, away from its outer *Keep drops away from the map edge* % (default 12 – the sea around the island). Just
-  outside it the bot places a ring of overlapping **radiation spheres** (`zones.createcustomzone … Sphere <r> 1 1 1 1 1`
-  – radiation 1, orange ring and "RADIATION" message), plus a blue border without radiation. Every *Zone shrinks every*
+  outside it the bot places a ring of overlapping **radiation boxes** – square, *Box height* tall (default 600 m,
+  centred on *Height of the zone centres*, default y 100), turned to face the centre so the radiation starts right at
+  the circle's edge and nobody gets past on a hill or in the air (`zones.createcustomzone "br_rad_0" (x,y,z) <rotation>
+  Box (<width>,600,<width>) 1 1 <radiation> 1 1`, orange ring and "RADIATION" message) – plus a blue border without
+  radiation. *Radiation strength* (default 50 – the guide's example uses 52) sets how fast it hurts; *Radiation zone
+  shape* can switch to spheres. Every *Zone shrinks every*
   minutes (warned *Warn before shrinking* seconds before) the circle shrinks to *New zone size* % around a new centre
   inside the old circle, down to *Smallest zone*; the guide has no command to resize a zone, so the ring is deleted and
-  created again. *Radiation spheres at most* (default 40) caps the commands per shrink – big zones use bigger spheres.
-- **Far outside:** players farther out than the radiation ring (it reaches two sphere radii beyond the circle) are
+  created again. *Radiation pieces at most* (default 40) caps the commands per shrink – big zones use bigger boxes.
+- **Far outside:** players farther out than the radiation ring (one box width beyond the circle) are
   read with `server.printpos` every *Check positions every* seconds, warned in-game and killed after *Kill players
   beyond the radiation after* seconds (0 = never).
 - **Out and winner:** any death of a dropped player counts (PvP, radiation, fall, suicide, the bot's kill) and leaving
   the server; "X left" is announced in-game. The last one alive wins – announced in-game and in the channel, with
   optional *Points for the winner*, *Points per kill* and *Kit for the winner*. Its zones are deleted; a round cut off
   by a bot restart is ended at the next start and its zones deleted.
-- Every command is a setting. How strong a custom zone's radiation is depends on the server; try a round first. Best
+- Every command is a setting. Try a round first and adjust *Radiation strength*; if the boxes look turned sideways in-game, tell us. Best
   run on a quiet server or your second server – the radiation ring hits everything in it, also bases.
 
 ### 🛡️ Offline protection zones
