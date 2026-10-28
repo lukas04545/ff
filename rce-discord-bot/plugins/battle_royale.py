@@ -87,6 +87,24 @@ def random_spot(cx: float, cz: float, radius: float, rng: random.Random) -> tupl
     return round(cx + dist * math.cos(angle), 1), round(cz + dist * math.sin(angle), 1)
 
 
+def whole_map_radius(cx: float, cz: float, map_size: int) -> float:
+    """A circle around (cx, cz) that holds the whole map – out to its farthest corner (plus 2 %)."""
+    half = map_size / 2
+    far = max(math.hypot(x - cx, z - cz) for x in (-half, half) for z in (-half, half))
+    return round(far * 1.02, 1)
+
+
+def drop_spot(cx: float, cz: float, radius: float, map_size: int, margin_percent: int,
+              rng: random.Random) -> tuple[float, float]:
+    """A random spot inside the zone and on the map – away from the map's edge (the sea around the island)."""
+    limit = map_size / 2 * (1 - margin_percent / 100)
+    for _ in range(200):
+        x, z = random_spot(cx, cz, radius, rng)
+        if abs(x) <= limit and abs(z) <= limit:
+            return x, z
+    return round(max(-limit, min(limit, cx)), 1), round(max(-limit, min(limit, cz)), 1)
+
+
 def parse_items(text: str) -> list[tuple[str, int]]:
     out = []
     for line in str(text or "").splitlines():
@@ -109,8 +127,11 @@ class BattleRoyale(Plugin):
                 help="Your map's size (the world goes from −size/2 to +size/2). Used for the start zone."),
         Setting("centre", "Start zone centre (x,z)", "text", "",
                 help="Empty = the middle of the map (0,0). E.g. 250,-400."),
-        Setting("start_radius", "Start zone radius (metres)", "int", 0, min=0, max=8000,
-                help="0 = 45% of the map size."),
+        Setting("start_radius", "Start zone radius (metres)", "int", 0, min=0, max=12000,
+                help="0 = the whole island: the circle reaches the map's farthest corner, so the whole map starts "
+                     "safe and the radiation ring begins outside it."),
+        Setting("drop_margin", "Keep drops away from the map edge (%)", "int", 12, min=0, max=45,
+                help="Players land on the map but not in this outer share of it – the sea around the island."),
         Setting("drop_height", "Drop height (y)", "int", 250, min=50, max=1500,
                 help="How high players appear above the map. 200–300 gives time to open the parachute."),
         Setting("kit", "Start kit (in-game kit – parachute in Wear)", "kit", "",
@@ -269,7 +290,7 @@ class BattleRoyale(Plugin):
             await self._announce(msg)
             return msg
         cx, cz = self._centre_setting() or (0.0, 0.0)
-        radius = float(self.setting("start_radius") or self.setting("map_size") * 0.45)
+        radius = float(self.setting("start_radius") or whole_map_radius(cx, cz, self.setting("map_size")))
         g.update(state="running", cx=cx, cz=cz, radius=radius, started=time.time(),
                  next_shrink=time.time() + self.setting("shrink_minutes") * 60, warned=False, last_check=0.0)
         await self._build_zone()
@@ -292,7 +313,8 @@ class BattleRoyale(Plugin):
         if p is None or p["dropped"] or not p["alive"]:
             return False
         g = self.game
-        x, z = random_spot(g["cx"], g["cz"], g["radius"] * 0.9, self.rng)
+        x, z = drop_spot(g["cx"], g["cz"], g["radius"] * 0.9, self.setting("map_size"), self.setting("drop_margin"),
+                         self.rng)
         safe = sanitize_player_name(p["name"])
         await self._run(self.setting("teleport_command"), x=x, y=self.setting("drop_height"), z=z, name=safe)
         if self.setting("kit"):
