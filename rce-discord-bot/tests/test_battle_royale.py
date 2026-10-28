@@ -5,7 +5,7 @@ import math
 import random
 import time
 
-from plugins.battle_royale import drop_spot, next_circle, parse_items, ring_spheres, whole_map_radius
+from plugins.battle_royale import ring_boxes, drop_spot, next_circle, parse_items, ring_spheres, whole_map_radius
 from rce.log_parser import KillEvent, KillerType, RespawnEvent
 from tests.test_plugins import pb  # noqa: F401
 
@@ -58,7 +58,9 @@ def test_a_whole_round(pb, monkeypatch):  # noqa: F811
     pb.said.clear()
     run(p.start_round())
     zones = [c for c in pb.said if c.startswith("zones.createcustomzone")]
-    assert any(" 1 1 1 1 1" in c for c in zones) and any('"br_border"' in c and " 1 1 0 1 1" in c for c in zones)
+    rad = [c for c in zones if '"br_rad_' in c]
+    assert rad and all(" Box (" in c and ",600," in c and c.endswith(" 1 1 50 1 1") for c in rad)   # tall boxes
+    assert any('"br_border"' in c and " 1 1 0 1 1" in c for c in zones)
     assert [c for c in pb.said if c.startswith("global.killplayer")] == [
         'global.killplayer "Ann"', 'global.killplayer "Bob"', 'global.killplayer "Cid"']
     # the start kill doesn't count – nobody has dropped yet
@@ -134,5 +136,51 @@ def test_round_starts_with_the_whole_map_safe(pb):  # noqa: F811
     p.join("Ann")
     p.join("Bob")
     run(p.start_round())
-    assert p.game["radius"] == whole_map_radius(0, 0, 3500)
+    assert p.game["radius"] == whole_map_radius(0, 0, 3000)
+    run(p.end_round())
+
+
+def test_radiation_boxes_ring_the_circle_tall_and_without_gaps():
+    w, boxes = ring_boxes(30, -20, 1500, 120, 40)
+    assert len(boxes) <= 40
+
+    def inside(px, pz, x, z, rot):                             # yaw rot: local forward (sin, cos) faces the centre
+        t = math.radians(rot)
+        fx, fz, rx, rz = math.sin(t), math.cos(t), math.cos(t), -math.sin(t)
+        dx, dz = px - x, pz - z
+        return abs(dx * fx + dz * fz) <= w / 2 + 0.01 and abs(dx * rx + dz * rz) <= w / 2 + 0.01
+    for x, z, rot in boxes:                                    # inner face on the circle
+        assert abs(math.hypot(x - 30, z + 20) - (1500 + w / 2)) < 1
+    for i in range(720):                                       # just outside the circle: always radiation
+        a = math.radians(i / 2)
+        for d in (0.02, 0.5, 0.95):
+            px, pz = 30 + (1500 + d * w) * math.cos(a), -20 + (1500 + d * w) * math.sin(a)
+            assert any(inside(px, pz, *b) for b in boxes), (i, d)
+    for i in range(360):                                       # inside the circle: never
+        a = math.radians(i)
+        px, pz = 30 + 1490 * math.cos(a), -20 + 1490 * math.sin(a)
+        assert not any(inside(px, pz, *b) for b in boxes)
+
+
+def test_sphere_shape_and_old_saved_command_still_work(pb):  # noqa: F811
+    from plugins.battle_royale import OLD_RING_DEFAULT
+    run(pb.m.load_all())
+    run(pb.m.set_enabled("battle_royale", True))
+    run(pb.m.save_settings("battle_royale", {"ring_command": OLD_RING_DEFAULT, "radiation": 80}))
+    p = pb.m.running("battle_royale")
+    pb.bot.online_players = {"Ann": {}, "Bob": {}}
+    p.open_lobby(30)
+    p.join("Ann")
+    p.join("Bob")
+    pb.said.clear()
+    run(p.start_round())
+    assert any(" Box (" in c and c.endswith(" 1 1 80 1 1") for c in pb.said)   # old default -> boxes now
+    run(p.end_round())
+    run(pb.m.save_settings("battle_royale", {"ring_shape": "Sphere"}))
+    p.open_lobby(30)
+    p.join("Ann")
+    p.join("Bob")
+    pb.said.clear()
+    run(p.start_round())
+    assert any(" 0 Sphere " in c and c.endswith(" 1 1 80 1 1") for c in pb.said if '"br_rad_' in c)
     run(p.end_round())
