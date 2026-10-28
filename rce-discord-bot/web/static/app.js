@@ -185,6 +185,7 @@ const ICONS = {
   knowledge: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7"/>',
   stats: '<path d="M4 20V11M10 20V4M16 20v-7M2 20h20"/>',
   community: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M18 3l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/>',
+  br: '<path d="M4 10a8 8 0 0 1 16 0z"/><path d="M4 10l8 8 8-8M12 10v8"/><circle cx="12" cy="20" r="1.5"/>',
   protection: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v5l3 2"/>',
   plugins: '<path d="M10 3h4v3a2 2 0 1 0 4 0V3h3v7h-3a2 2 0 1 0 0 4h3v7h-7v-3a2 2 0 1 0-4 0v3H3v-7h3a2 2 0 1 0 0-4H3V3z"/>',
   makeplugin: '<path d="M4 20L15 9"/><path d="M15 3v3M18 6h3M19 10v2M17 4l2 2"/>',
@@ -412,7 +413,7 @@ function route() {
   updateNavCounts();
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore", "protection", "servers", "honeypot"].includes(view) || view.startsWith("p/"))) {
+  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore", "protection", "servers", "honeypot", "br"].includes(view) || view.startsWith("p/"))) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
@@ -3474,6 +3475,60 @@ views.protection = async (main) => {
   };
   reload();
 };
+
+// Battle royale: test round without players, shrink now, stop, vending machine marker test (plugins/battle_royale.py)
+views.br = async (main) => {
+  main.append(h("h1", { text: "Battle royale" }),
+    h("p", { class: "muted", text: "Rounds start on Discord with /br start (players join with /br join). Here you can test the zone without players, shrink it by hand and check the vending machine markers." }));
+  const box = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  main.append(box);
+  const opts = await api("/api/settings/discord-options").catch(() => ({ available: false }));
+  const reload = async () => {
+    try {
+      const r = await api("/api/br");
+      box.replaceChildren(brControls(r, reload), pluginCard({ ...r.plugin, name: "Battle royale" }, opts, r.kits, reload, { tab: true }));
+    } catch (e) { box.replaceChildren(h("div", { class: "banner bad", text: e.message })); }
+  };
+  reload();
+};
+
+function brControls(r, reload) {
+  const card = h("div", { class: "card" }, h("h2", { text: "🪂 Round" }));
+  if (!r.plugin.running || !r.game) { card.append(h("p", { class: "muted", text: "Switch battle royale on (settings below) to use these buttons." })); return card; }
+  const g = r.game, now = r.now;
+  const press = (action, label, confirmText) => async () => {
+    if (confirmText && !confirm(confirmText)) return;
+    await act(() => api(`/api/br/${action}`, { method: "POST", body: {} }), label).catch(() => null);
+    reload();
+  };
+  const stateText = g.state === "idle" ? "No round running."
+    : g.state === "lobby" ? `Lobby open – closes in ${fmtDuration(Math.max(0, g.lobby_ends - now))}, ${g.players.length} joined.`
+    : `${g.test ? "🧪 Test round" : "Round running"} – zone ${Math.round(g.zone.radius)} m around ${Math.round(g.zone.x)}, ${Math.round(g.zone.z)} · ${g.zone.zones} zones · ${g.zone.markers} vending machines`
+      + (g.test ? " · shrinks only with the button" : g.next_shrink ? ` · next shrink in ${fmtDuration(Math.max(0, g.next_shrink - now))}` : "");
+  card.append(h("p", {}, h("span", { class: `pill ${g.state === "idle" ? "" : "ok"}`, text: g.state === "idle" ? "idle" : g.test ? "test" : g.state }), " ", stateText));
+  if (g.markers_broken) card.append(h("div", { class: "banner warn", text: `Vending machines stopped this round – the server's reply had no ID, so they couldn't be deleted again. Check with "Test a marker" below. Last try: ${g.markers_broken}` }));
+  card.append(h("div", { class: "row" },
+    h("button", { class: "primary", text: "🧪 Start test round (no players)", disabled: g.state !== "idle", onclick: press("test", "Test round started") }),
+    h("button", { text: "🔻 Shrink zone now", disabled: g.state !== "running", onclick: press("shrink", "Zone shrunk") }),
+    h("button", { class: "danger", text: "⏹ Stop round", disabled: g.state === "idle", onclick: press("stop", "Round stopped", "Stop the round? Zones and vending machines are deleted.") }),
+    h("button", { text: "🏪 Test a marker", onclick: async () => {
+      const res = await act(() => api("/api/br/marker-test", { method: "POST", body: {} })).catch(() => null);
+      if (res) reload();
+    } })));
+  if (g.players.length) card.append(h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, ["Player", "Status", "Kills"].map((t) => h("th", { text: t })))),
+    h("tbody", {}, g.players.map((p) => h("tr", {}, h("td", { text: p.name }),
+      h("td", {}, h("span", { class: `pill ${p.alive ? "ok" : "bad"}`, text: !p.alive ? "out" : p.dropped ? "alive" : "waiting to drop" })),
+      h("td", { text: String(p.kills) })))))));
+  const t = g.marker_test;
+  card.append(h("h3", { text: "🏪 Vending machine marker test" }),
+    h("p", { class: "muted", text: "Spawns one vending machine in the sky above the map centre, deletes it again and shows what the server answered. The ID must be found, and the delete must work – otherwise the machines can't be removed after each zone." }));
+  if (t) card.append(h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {},
+    [["Spawn command", t.spawn_command], ["Server's reply", t.spawn_reply || "(nothing)"], ["ID found", t.id || "❌ none – adjust the ID pattern or the spawn command"],
+     ["Delete command", t.delete_command || "–"], ["Server's reply", t.delete_reply || (t.id ? "(nothing)" : "–")]].map(([k, v]) =>
+      h("tr", {}, h("th", { text: k, style: "width:12rem" }), h("td", {}, h("code", { style: "white-space:pre-wrap;word-break:break-all", text: String(v) }))))))));
+  return card;
+}
 
 function protectionZones(r, reload) {
   const card = h("div", { class: "card" }, h("h2", { text: `🗺️ Zones (${r.zones.length})` }));

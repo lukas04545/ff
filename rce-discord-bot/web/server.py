@@ -122,7 +122,7 @@ CSRF_HEADER = "X-Requested-With"
 # First path segments that are never a page of the player website (it lives at the site root)
 ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play", "internal"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
-                       "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection",
+                       "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection", "/api/br",
                        "/api/honeypot", "/api/themes", "/api/allplugins")
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
@@ -532,6 +532,8 @@ class WebInterface:
         r.add_post("/api/plugins/{pid}/reload", self.plugin_reload)
         r.add_delete("/api/plugins/{pid}", self.plugin_delete)
         r.add_get("/api/protection", self.protection_get)
+        r.add_get("/api/br", self.br_get)
+        r.add_post("/api/br/{action:test|shrink|stop|marker-test}", self.br_action)
         r.add_delete("/api/protection/zones/{team}", self.protection_delete_zone)
         r.add_get("/api/plugins/{pid}/file/{key}", self.plugin_file_get)
         r.add_post("/api/plugins/{pid}/file/{key}", self.plugin_file_upload)
@@ -1408,6 +1410,39 @@ class WebInterface:
         return web.json_response({"plugin": manager.describe("offline_protection"),
                                   "zones": plugin.zone_list() if plugin is not None else [],
                                   "kits": [k["name"] for k in self.bot.db.custom_kits()], "now": time.time()})
+
+    # Battle royale page: state, test round, shrink now, stop, marker test (plugins/battle_royale.py)
+    async def br_get(self, request: web.Request) -> web.Response:
+        manager = self._plugins()
+        if "battle_royale" not in manager.infos:
+            raise ApiError("Battle royale isn't installed.", 404)
+        plugin = manager.running("battle_royale")
+        return web.json_response({"plugin": manager.describe("battle_royale"),
+                                  "game": plugin.panel_state() if plugin is not None else None,
+                                  "kits": [k["name"] for k in self.bot.db.custom_kits()], "now": time.time()})
+
+    async def br_action(self, request: web.Request) -> web.Response:
+        plugin = self._plugins().running("battle_royale")
+        if plugin is None:
+            raise ApiError("Switch battle royale on first.")
+        action, user = request.match_info["action"], request.get("user", "?")
+        if action == "marker-test":
+            result = await plugin.test_marker()
+            self._audit(f"battle royale marker test (ID {result['id'] or 'none'})")
+            return web.json_response({"ok": True, "marker_test": result})
+        if action == "stop":
+            if plugin.game["state"] == "idle":
+                raise ApiError("No round running.")
+            await plugin.end_round()
+            ok, msg = True, "Round stopped – zones and vending machines deleted."
+        elif action == "test":
+            ok, msg = await plugin.start_test()
+        else:
+            ok, msg = await plugin.shrink_now()
+        if not ok:
+            raise ApiError(msg)
+        self._audit(f"battle royale: {action} ({user})")
+        return web.json_response({"ok": True, "message": msg, "game": plugin.panel_state()})
 
     async def protection_delete_zone(self, request: web.Request) -> web.Response:
         plugin = self._plugins().running("offline_protection")

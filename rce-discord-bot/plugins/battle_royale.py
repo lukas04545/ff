@@ -14,6 +14,14 @@ A round:
   4. Every death of a dropped player counts (killfeed, suicide, radiation, the bot's kill) and so does leaving the
      server. The last one alive wins: announcement and optional points / kit.
 
+Markers: vending machines in the sky along the zone border (entity.spawn vendingmachine.deployed x,y,z – they show on
+the map). The bot reads each machine's ID from the server's reply and deletes the old ones (by that ID) every time the
+zone changes and when the round ends. If a reply has no ID the bot stops placing markers for that round, so nothing
+it can't delete piles up. The panel's "Test a marker" button shows the server's replies to check the commands.
+
+Test mode (panel, Server → Battle royale): a round without players – zone, radiation and markers only, shrinking only
+when you press "Shrink zone now", no winner. Stop deletes everything.
+
 Parachute already worn: give the start kit as an in-game kit (Kits page / kit manager) with the parachute in the
 "Wear" container. Without a kit the items below are given with inventory.giveto – they land in the inventory and the
 player has to put the parachute on.
@@ -60,6 +68,9 @@ BORDER_DEFAULT = """zones.createcustomzone "{zone}" ({x},{y},{z}) 0 Sphere {radi
 zones.editcustomzone "{zone}" showarea 1
 zones.editcustomzone "{zone}" color (0,170,255)"""
 DELETE_DEFAULT = 'zones.deletecustomzone "{zone}"'
+MARKER_DEFAULT = "entity.spawn vendingmachine.deployed {x},{y},{z}"
+MARKER_DELETE_DEFAULT = "entity.deleteentity {id}"
+MARKER_ID_DEFAULT = r"(?<![\d.])(\d{5,})(?![\d.])"       # a whole number of 5+ digits (not a coordinate)
 ITEMS_DEFAULT = "parachute 1\npistol.semiauto 1\nammo.pistol 40"
 
 
@@ -193,6 +204,18 @@ class BattleRoyale(Plugin):
         Setting("zone_y", "Height of the zone centres (y)", "int", 100, min=-500, max=1000,
                 help="The middle of the boxes (Box height reaches half of it up and down from here) – keep it "
                      "around ground level so they cover the whole island."),
+        Setting("markers", "Vending machines on the zone border (in the sky)", "bool", True,
+                help="Marks the zone edge with vending machines high up (they show on the map). Old ones are deleted "
+                     "every time the zone changes and at the end of the round. Check the commands once with "
+                     "\"Test a marker\" (Server → Battle royale)."),
+        Setting("marker_count", "Vending machines around the border", "int", 16, min=3, max=64),
+        Setting("marker_height", "Vending machine height (y)", "int", 200, min=0, max=1500),
+        Setting("marker_command", "Command: spawn a vending machine", "text", MARKER_DEFAULT,
+                help="{x} {y} {z}. Guide (Entity spawning): entity.spawn <entity> <x,y,z>."),
+        Setting("marker_id_pattern", "The machine's ID in the server's reply (regular expression)", "text",
+                MARKER_ID_DEFAULT, help="The first group is the ID. Default: the first whole number with 5+ digits."),
+        Setting("marker_delete_command", "Command: delete a vending machine", "text", MARKER_DELETE_DEFAULT,
+                help="{id} = the ID from the spawn reply."),
         Setting("show_border", "Show the zone border", "bool", True,
                 help="A zone without radiation the size of the safe circle, with a visible ring (blue)."),
         Setting("far_kill_seconds", "Kill players beyond the radiation after (seconds)", "int", 15, min=0,
@@ -230,6 +253,11 @@ class BattleRoyale(Plugin):
     # ------------------------------------------------------------ Setup
 
     async def on_load(self) -> None:
+        self.marker_test: dict | None = None
+        markers = self.data.get("markers", [])
+        if markers:
+            await self._delete_markers(markers)
+            self.data.delete("markers")
         left = self.data.get("zones", [])
         if left:                                                # a round was cut off by a restart
             await self._delete_zones(left)
@@ -249,7 +277,8 @@ class BattleRoyale(Plugin):
     def status(self) -> dict:
         g = self.game
         alive = [p for p in g["players"].values() if p["alive"]]
-        return {"Round": g["state"], "Players": len(g["players"]), "Alive": len(alive),
+        state = "test round" if g.get("test") else g["state"]
+        return {"Round": state, "Players": len(g["players"]), "Alive": len(alive),
                 "Zone radius": round(g.get("radius", 0)) if g["state"] == "running" else "–",
                 "Rounds played": self.data.get("rounds", 0)}
 
@@ -348,6 +377,42 @@ class BattleRoyale(Plugin):
         self.audit(f"Battle royale started with {len(players)} players")
         return f"Round started with {len(players)} players."
 
+    async def start_test(self) -> tuple[bool, str]:
+        """Panel: a round without players – zone, radiation and markers only; shrinks only with shrink_now()."""
+        if self.game["state"] != "idle":
+            return False, f"A round is already {self.game['state']} – stop it first."
+        cx, cz = self._centre_setting() or (0.0, 0.0)
+        radius = float(self.setting("start_radius") or whole_map_radius(cx, cz, self.setting("map_size")))
+        self.game = {"state": "running", "test": True, "players": {}, "cx": cx, "cz": cz, "radius": radius,
+                     "started": time.time(), "next_shrink": None, "warned": False, "last_check": 0.0}
+        await self._build_zone()
+        self.audit("Battle royale test round started (no players)")
+        return True, f"Test round running – zone {round(radius)} m. Shrink it with the button, stop it when done."
+
+    async def shrink_now(self) -> tuple[bool, str]:
+        g = self.game
+        if g["state"] != "running":
+            return False, "No round running."
+        if g["radius"] <= self.setting("min_radius"):
+            return False, f"The zone is already at its smallest ({self.setting('min_radius')} m)."
+        await self.shrink()
+        if not g.get("test"):
+            g["next_shrink"], g["warned"] = time.time() + self.setting("shrink_minutes") * 60, False
+        return True, f"Zone shrank to {round(g['radius'])} m."
+
+    def panel_state(self) -> dict:
+        """For the panel's Battle royale page."""
+        g = self.game
+        return {"state": g["state"], "test": bool(g.get("test")),
+                "zone": {"x": g.get("cx"), "z": g.get("cz"), "radius": g.get("radius"), "band": g.get("band"),
+                         "zones": len(g.get("zones", [])), "markers": len(g.get("markers", []))}
+                if g["state"] == "running" else None,
+                "markers_broken": g.get("markers_broken"), "next_shrink": g.get("next_shrink"),
+                "lobby_ends": g.get("lobby_ends"),
+                "players": [{"name": p["name"], "alive": p["alive"], "dropped": p["dropped"], "kills": p["kills"]}
+                            for p in g["players"].values()],
+                "marker_test": getattr(self, "marker_test", None)}
+
     async def drop(self, name: str) -> bool:
         """Gives the start kit, then – after the equip timer – teleports the player high above a random spot inside
         the zone."""
@@ -434,12 +499,82 @@ class BattleRoyale(Plugin):
             zones.append(zone)
         g["zones"], g["band"] = zones, band
         self.data.set("zones", zones)                          # for the cleanup after a restart
+        await self._place_markers()
+
+    # ------------------------------------------------------------ Vending machine markers
+
+    def _marker_id(self, reply: str) -> str | None:
+        try:
+            m = re.search(str(self.setting("marker_id_pattern") or MARKER_ID_DEFAULT), reply or "")
+        except re.error:
+            return None
+        if m is None:
+            return None
+        return m.group(1) if m.groups() else m.group(0)
+
+    async def _spawn_marker(self, x: float, y: float, z: float) -> tuple[str, str, str | None]:
+        """(command, the server's reply, ID or None)."""
+        try:
+            command = str(self.setting("marker_command")).format(x=x, y=y, z=z)
+        except (KeyError, IndexError, ValueError):
+            return "", "bad placeholder in the spawn command", None
+        try:
+            reply = await self.bot.rcon.command(command)
+        except RconError as exc:
+            return command, f"error: {exc}", None
+        return command, reply or "", self._marker_id(reply or "")
+
+    async def _delete_markers(self, ids: list[str]) -> None:
+        for marker in ids:
+            await self._run(self.setting("marker_delete_command"), id=marker)
+
+    async def _place_markers(self) -> None:
+        """Deletes the last border's vending machines and puts new ones around the current one, high up."""
+        g = self.game
+        await self._delete_markers(g.get("markers", []))
+        g["markers"] = []
+        self.data.set("markers", [])
+        if not self.setting("markers") or g.get("markers_broken"):
+            return
+        n, y = self.setting("marker_count"), self.setting("marker_height")
+        for i in range(n):
+            a = 2 * math.pi * i / n
+            x, z = round(g["cx"] + g["radius"] * math.cos(a), 1), round(g["cz"] + g["radius"] * math.sin(a), 1)
+            command, reply, marker = await self._spawn_marker(x, y, z)
+            if marker is None:                                 # can't delete what we can't name: stop placing
+                g["markers_broken"] = f"{command} → {reply[:200] or '(no reply)'}"
+                self.log.warning("Battle royale markers stopped – no ID in the reply to %r: %r", command, reply)
+                self.audit("Battle royale: vending machine markers stopped – the server's reply had no ID (check "
+                           "with \"Test a marker\" on the Battle royale page)")
+                break
+            g["markers"].append(marker)
+        self.data.set("markers", g["markers"])                  # for the cleanup after a restart
+
+    async def test_marker(self) -> dict:
+        """Panel button: spawns one vending machine in the sky above the map centre, deletes it again and returns
+        the server's replies – to check the commands before a round."""
+        cx, cz = self._centre_setting() or (0.0, 0.0)
+        command, reply, marker = await self._spawn_marker(cx, self.setting("marker_height"), cz)
+        result = {"spawn_command": command, "spawn_reply": reply, "id": marker, "delete_command": "",
+                  "delete_reply": "", "time": int(time.time())}
+        if marker is not None:
+            try:
+                result["delete_command"] = str(self.setting("marker_delete_command")).format(id=marker)
+                result["delete_reply"] = await self.bot.rcon.command(result["delete_command"]) or ""
+            except (KeyError, IndexError, ValueError):
+                result["delete_reply"] = "bad placeholder in the delete command"
+            except RconError as exc:
+                result["delete_reply"] = f"error: {exc}"
+        self.marker_test = result
+        return result
 
     async def shrink(self) -> None:
         g = self.game
         g["cx"], g["cz"], g["radius"] = next_circle(g["cx"], g["cz"], g["radius"], self.setting("shrink_percent"),
                                                     self.setting("min_radius"), self.rng)
         await self._build_zone()
+        if g.get("test"):                                      # test round: no announcements
+            return
         alive = sum(1 for p in g["players"].values() if p["alive"])
         await self._announce(f"The zone shrank to {round(g['radius'])} m around {round(g['cx'])}, {round(g['cz'])}. "
                              f"{alive} alive.", embed=False)
@@ -467,7 +602,7 @@ class BattleRoyale(Plugin):
     async def _check_winner(self) -> None:
         g = self.game
         alive = [p for p in g["players"].values() if p["alive"]]
-        if g["state"] != "running" or len(alive) > 1:
+        if g["state"] != "running" or len(alive) > 1 or g.get("test"):
             return
         if alive:
             win = alive[0]
@@ -490,6 +625,8 @@ class BattleRoyale(Plugin):
         self._waiting.clear()
         await self._delete_zones(self.game.get("zones", []))
         self.data.delete("zones")
+        await self._delete_markers(self.game.get("markers", []))
+        self.data.delete("markers")
         self.game = self._idle()
 
     # ------------------------------------------------------------ Clock
@@ -508,6 +645,8 @@ class BattleRoyale(Plugin):
                 await self._announce(f"{p['name']} didn't respawn in time – out.", embed=False)
         await self._check_winner()
         if self.game["state"] != "running":
+            return
+        if g.get("test"):                                      # test round: shrinks only with the button
             return
         warn = self.setting("warn_seconds")
         if warn and not g["warned"] and now >= g["next_shrink"] - warn and g["radius"] > self.setting("min_radius"):

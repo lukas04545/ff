@@ -230,3 +230,119 @@ def test_kit_first_then_15_seconds_to_put_the_parachute_on(pb, monkeypatch):  # 
         await p.end_round()
         assert p._waiting == {}
     run(main())
+
+
+def _fake_server(pb, monkeypatch, *, with_id=True):
+    counter = [100000]
+
+    async def command(cmd, **kw):
+        pb.said.append(cmd)
+        if cmd.startswith("entity.spawn"):
+            counter[0] += 1
+            return f"Spawned vendingmachine.deployed at (12.5, 200.0, -1234.5) [{counter[0]}]" if with_id else "Spawned"
+        return ""
+    monkeypatch.setattr(pb.bot.rcon, "command", command)
+
+
+def test_test_round_markers_shrink_and_stop(pb, monkeypatch):  # noqa: F811
+    _fake_server(pb, monkeypatch)
+
+    async def main():
+        await pb.m.load_all()
+        await pb.m.set_enabled("battle_royale", True)
+        await pb.m.save_settings("battle_royale", {"marker_count": 8})
+        p = pb.m.running("battle_royale")
+        ok, msg = await p.start_test()
+        assert ok and p.game["test"] and p.game["players"] == {}
+        spawns = [c for c in pb.said if c.startswith("entity.spawn vendingmachine.deployed")]
+        assert len(spawns) == 8 and all(c.split()[-1].split(",")[1] == "200" for c in spawns)   # in the sky
+        first = list(p.game["markers"])
+        assert len(first) == 8 and p.data.get("markers") == first
+        assert not (await p.start_test())[0]                   # one round at a time
+        # no players: the round doesn't end by itself and never shrinks on its own
+        await p._check_winner()
+        p.game["started"] -= 99999
+        await p.clock()
+        assert p.game["state"] == "running" and p.game["radius"] == whole_map_radius(0, 0, 4500)
+        assert not any("[Battle royale]" in c for c in pb.said)            # no announcements in a test round
+        pb.said.clear()
+        ok, _ = await p.shrink_now()
+        assert ok and p.game["radius"] < whole_map_radius(0, 0, 4500)
+        assert [c for c in pb.said if c.startswith("entity.deleteentity")] == [f"entity.deleteentity {i}" for i in first]
+        assert len([c for c in pb.said if c.startswith("entity.spawn")]) == 8 and p.game["markers"] != first
+        second = list(p.game["markers"])
+        pb.said.clear()
+        await p.end_round()
+        assert [c for c in pb.said if c.startswith("entity.deleteentity")] == [f"entity.deleteentity {i}" for i in second]
+        assert any(c.startswith('zones.deletecustomzone "br_rad_0"') for c in pb.said)
+        assert p.data.get("markers") is None and p.game["state"] == "idle"
+        assert not (await p.shrink_now())[0]
+    run(main())
+
+
+def test_markers_stop_without_an_id_and_are_cleaned_after_a_restart(pb, monkeypatch):  # noqa: F811
+    _fake_server(pb, monkeypatch, with_id=False)
+
+    async def main():
+        await pb.m.load_all()
+        await pb.m.set_enabled("battle_royale", True)
+        p = pb.m.running("battle_royale")
+        await p.start_test()
+        assert len([c for c in pb.said if c.startswith("entity.spawn")]) == 1     # stopped after the first
+        assert p.game["markers_broken"] and p.game["markers"] == []
+        pb.said.clear()
+        await p.shrink_now()
+        assert not any(c.startswith("entity.spawn") for c in pb.said)            # not again this round
+        await p.end_round()
+        p.data.set("markers", ["555555", "666666"])           # left by a round cut off by a restart
+        pb.said.clear()
+        await p.on_load()
+        assert pb.said == ["entity.deleteentity 555555", "entity.deleteentity 666666"]
+    run(main())
+
+
+def test_marker_test_button_shows_the_replies(pb, monkeypatch):  # noqa: F811
+    _fake_server(pb, monkeypatch)
+
+    async def main():
+        await pb.m.load_all()
+        await pb.m.set_enabled("battle_royale", True)
+        p = pb.m.running("battle_royale")
+        r = await p.test_marker()
+        assert r["spawn_command"] == "entity.spawn vendingmachine.deployed 0.0,200,0.0"
+        assert r["id"] == "100001" and r["delete_command"] == "entity.deleteentity 100001"   # not a coordinate
+        assert p.panel_state()["marker_test"] == r
+    run(main())
+
+
+def test_battle_royale_panel_api(pb, monkeypatch):  # noqa: F811
+    from aiohttp.test_utils import TestClient, TestServer
+    _fake_server(pb, monkeypatch)
+    H = {"X-Requested-With": "rce-web"}
+
+    async def main():
+        from web.server import WebInterface
+        await pb.m.load_all()
+        w = WebInterface(pb.bot, env_path=pb.tmp / ".env", secret_path=pb.tmp / "web_secret.key")
+        c = TestClient(TestServer(w.app))
+        await c.start_server()
+        try:
+            assert (await c.get("/api/br")).status == 401
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            d = await (await c.get("/api/br")).json()
+            assert d["game"] is None and d["plugin"]["id"] == "battle_royale"
+            assert (await c.post("/api/br/test", json={}, headers=H)).status == 400       # switched off
+            await pb.m.set_enabled("battle_royale", True)
+            r = await c.post("/api/br/test", json={}, headers=H)
+            assert r.status == 200 and (await r.json())["game"]["test"]
+            r = await c.post("/api/br/shrink", json={}, headers=H)
+            assert r.status == 200 and "shrank" in (await r.json())["message"]
+            r = await c.post("/api/br/marker-test", json={}, headers=H)
+            assert (await r.json())["marker_test"]["id"]
+            r = await c.post("/api/br/stop", json={}, headers=H)
+            assert r.status == 200 and (await (await c.get("/api/br")).json())["game"]["state"] == "idle"
+            assert (await c.post("/api/br/stop", json={}, headers=H)).status == 400
+        finally:
+            await c.close()
+            await pb.bot.rcon.close()
+    run(main())
