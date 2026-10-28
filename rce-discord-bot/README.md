@@ -1355,7 +1355,9 @@ the last one alive wins.
   the pistol in the Belt) – a kit puts items straight into their slots. Without a kit the *Start items* (default
   `parachute 1`, `pistol.semiauto 1`, `ammo.pistol 40`) are given with `inventory.giveto` and land in the inventory.
   Test once in-game that your server accepts the parachute in a Wear kit.
-- **Zone:** the safe circle starts at *Start zone radius* (default 45 % of *Map size*) around *Start zone centre*. Just
+- **Zone:** the safe circle starts at *Start zone radius* around *Start zone centre* – 0 (default) = the **whole
+  island**: the circle reaches the map's farthest corner, so the radiation ring starts outside the map. Drops land on
+  the map, away from its outer *Keep drops away from the map edge* % (default 12 – the sea around the island). Just
   outside it the bot places a ring of overlapping **radiation spheres** (`zones.createcustomzone … Sphere <r> 1 1 1 1 1`
   – radiation 1, orange ring and "RADIATION" message), plus a blue border without radiation. Every *Zone shrinks every*
   minutes (warned *Warn before shrinking* seconds before) the circle shrinks to *New zone size* % around a new centre

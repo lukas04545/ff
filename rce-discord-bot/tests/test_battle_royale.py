@@ -5,7 +5,7 @@ import math
 import random
 import time
 
-from plugins.battle_royale import next_circle, parse_items, ring_spheres
+from plugins.battle_royale import drop_spot, next_circle, parse_items, ring_spheres, whole_map_radius
 from rce.log_parser import KillEvent, KillerType, RespawnEvent
 from tests.test_plugins import pb  # noqa: F401
 
@@ -113,3 +113,26 @@ def test_too_few_players_and_cleanup_after_restart(pb):  # noqa: F811
     run(p.on_load())
     assert pb.said == ['zones.deletecustomzone "br_rad_0"', 'zones.deletecustomzone "br_border"']
     assert p.data.get("zones") is None
+
+
+def test_start_zone_is_the_whole_island_and_drops_stay_on_the_map():
+    for cx, cz in ((0, 0), (400, -900)):
+        r = whole_map_radius(cx, cz, 3500)
+        assert all(math.hypot(x - cx, z - cz) < r for x in (-1750, 1750) for z in (-1750, 1750))   # every corner
+    rng = random.Random(5)
+    for _ in range(500):
+        x, z = drop_spot(0, 0, 2500, 3500, 12, rng)
+        assert abs(x) <= 1540 and abs(z) <= 1540
+
+
+def test_round_starts_with_the_whole_map_safe(pb):  # noqa: F811
+    run(pb.m.load_all())
+    run(pb.m.set_enabled("battle_royale", True))
+    p = pb.m.running("battle_royale")
+    pb.bot.online_players = {"Ann": {}, "Bob": {}}
+    p.open_lobby(30)
+    p.join("Ann")
+    p.join("Bob")
+    run(p.start_round())
+    assert p.game["radius"] == whole_map_radius(0, 0, 3500)
+    run(p.end_round())
