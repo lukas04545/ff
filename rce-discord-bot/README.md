@@ -1384,7 +1384,9 @@ the last one alive wins.
 - **Control panel – Server → 🪂 Battle royale** (owner): the round's state (zone size and centre, zones, vending
   machines, next shrink, players and kills) and buttons: **🧪 Start test round (no players)** – zone, radiation and
   vending machines only, no kills or drops, no winner, no in-game announcements, shrinks only when you press **🔻 Shrink
-  zone now** (that button also works in real rounds); **⏹ Stop round** deletes everything; **🏪 Test a marker** spawns
+  zone now** (that button also works in real rounds); **⏹ Stop round** deletes everything; **🗑 Delete all zones** stops a running round and deletes every battle
+  royale zone by name – also ones left over from earlier rounds or older versions (`br_rad_*`, `br_rad0_*`, `br_rad1_*`,
+  `br_border*`); **🏪 Test a marker** spawns
   one vending machine above the map centre, deletes it again and shows the server's replies (the ID it found, the
   delete command's answer) – the plugin's settings are on the same page. **🧹 Clear vending machines** sends the delete command for every
   vending machine the bot has spawned (it remembers their IDs, up to 2,000) and shows the server's answers – so once

@@ -391,3 +391,32 @@ def test_clear_vending_machines_button(pb, monkeypatch):  # noqa: F811
             await c.close()
             await pb.bot.rcon.close()
     run(main())
+
+
+def test_delete_all_zones_button(pb, monkeypatch):  # noqa: F811
+    from aiohttp.test_utils import TestClient, TestServer
+    _fake_server(pb, monkeypatch)
+    H = {"X-Requested-With": "rce-web"}
+
+    async def main():
+        from web.server import WebInterface
+        await pb.m.load_all()
+        await pb.m.set_enabled("battle_royale", True)
+        p = pb.m.running("battle_royale")
+        await p.start_test()
+        w = WebInterface(pb.bot, env_path=pb.tmp / ".env", secret_path=pb.tmp / "web_secret.key")
+        c = TestClient(TestServer(w.app))
+        await c.start_server()
+        try:
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            pb.said.clear()
+            r = await (await c.post("/api/br/delete-zones", json={}, headers=H)).json()
+            assert r["ok"] and r["game"]["state"] == "idle"              # the running round was stopped
+            deleted = {x for x in pb.said if x.startswith("zones.deletecustomzone")}
+            for name in ("br_rad_0", "br_rad_119", "br_rad0_39", "br_rad1_7", "br_border", "br_border0", "br_border1"):
+                assert f'zones.deletecustomzone "{name}"' in deleted   # old names and leftovers too
+            assert p.data.get("zones") is None
+        finally:
+            await c.close()
+            await pb.bot.rcon.close()
+    run(main())
