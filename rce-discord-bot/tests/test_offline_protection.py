@@ -500,3 +500,33 @@ def test_size_table_mistakes_are_reported_and_old_zones_keep_their_size(zp):
     zp.said.clear()
     asyncio.run(zp.p.clock())
     assert zp.p.zone(5)["radius"] == 25 and not any(c.startswith("TEST_REMOVE") for c in zp.said)
+
+
+def test_zone_deleted_when_a_member_leaves_the_team(zp):
+    """Option on: someone leaving the team deletes the zone – from the team log line, or from the team list if the
+    line was missed. Joining doesn't. Option off (default): leaving changes nothing."""
+    from rce.log_parser import TeamEvent
+    configure(zp, team_sync_minutes=0, reapply_minutes=0)
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    asyncio.run(zp.p.on_rce_team(TeamEvent("leave", "Mate", 5, "Lead")))
+    assert zp.p.zone(5) is not None                                       # off by default
+    zp.db.team_event("join", "Mate", 5, "Lead")
+    configure(zp, team_sync_minutes=0, reapply_minutes=0, delete_on_leave=True)
+    asyncio.run(zp.p.clock())
+    zp.db.team_event("join", "Newbie", 5, "Lead")                         # joining: zone stays
+    asyncio.run(zp.p.clock())
+    assert zp.p.zone(5) is not None and "Newbie" in zp.p.zone(5)["members"]
+    zp.said.clear()
+    asyncio.run(zp.p.on_rce_team(TeamEvent("leave", "Mate", 5, "Lead")))
+    assert zp.p.zone(5) is None and "TEST_REMOVE team_5" in zp.said
+    assert any("Mate left your team" in c for c in zp.said)                # the leader is told in-game
+    # a missed log line: the team list no longer has him
+    zp.db.team_event("join", "Mate", 5, "Lead")
+    chat(zp.p, "Lead", ASK)
+    chat(zp.p, "Lead", YES)
+    assert zp.p.zone(5) is not None
+    zp.db.team_event("leave", "Newbie", 5)
+    zp.said.clear()
+    asyncio.run(zp.p.clock())
+    assert zp.p.zone(5) is None and "TEST_REMOVE team_5" in zp.said
