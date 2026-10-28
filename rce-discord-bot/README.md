@@ -1369,6 +1369,20 @@ the last one alive wins.
   minutes (warned *Warn before shrinking* seconds before) the circle shrinks to *New zone size* % around a new centre
   inside the old circle, down to *Smallest zone*; the guide has no command to resize a zone, so the ring is deleted and
   created again. *Radiation pieces at most* (default 40) caps the commands per shrink – big zones use bigger boxes.
+- **Vending machines mark the border:** with *Vending machines on the zone border* on (default) the bot puts
+  *Vending machines around the border* (default 16) high in the sky (*Vending machine height*, default y 200) on the
+  edge of the safe circle – they show on the map, so everyone sees where the zone is. Spawned with
+  `entity.spawn vendingmachine.deployed x,y,z` (guide: Entity spawning); the bot reads each machine's ID from the
+  server's reply and deletes the old ones (`entity.deleteentity <id>`) every time the zone changes and when the round
+  ends (also after a bot restart). If a reply has no ID the bot stops placing machines for that round, so nothing it
+  can't delete piles up. All three (spawn command, ID pattern, delete command) are settings – check them once with
+  **Test a marker** (below).
+- **Control panel – Server → 🪂 Battle royale** (owner): the round's state (zone size and centre, zones, vending
+  machines, next shrink, players and kills) and buttons: **🧪 Start test round (no players)** – zone, radiation and
+  vending machines only, no kills or drops, no winner, no in-game announcements, shrinks only when you press **🔻 Shrink
+  zone now** (that button also works in real rounds); **⏹ Stop round** deletes everything; **🏪 Test a marker** spawns
+  one vending machine above the map centre, deletes it again and shows the server's replies (the ID it found, the
+  delete command's answer) – the plugin's settings are on the same page.
 - **Far outside:** players farther out than the radiation ring (one box width beyond the circle) are
   read with `server.printpos` every *Check positions every* seconds, warned in-game and killed after *Kill players
   beyond the radiation after* seconds (0 = never).
