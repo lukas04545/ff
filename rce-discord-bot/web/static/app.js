@@ -174,6 +174,7 @@ const ICONS = {
   overview: '<path d="M12 14l4-4"/><path d="M3.5 18a9 9 0 1 1 17 0"/><circle cx="12" cy="14" r="1"/>',
   console: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
   botlog: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h7"/>',
+  system: '<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
   kits: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
   kitdb: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
   kitbuilder: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>',
@@ -3501,6 +3502,75 @@ function protectionZones(r, reload) {
       } }))))))));
   return card;
 }
+
+// ------------------------------------------------------------------ System: CPU and memory of the bot's PC (web/system_stats.py)
+
+const fmtBytes = (b) => b == null ? "–" : b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${Math.round(b / 1024 ** 2)} MB`;
+
+// Percent over the last minutes: one or two lines (0–100 %), the newest value at the right
+function percentChart(points, lines) {
+  const W = 640, H = 170, L = 34, R = 8, T = 10, B = 22;
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img" });
+  const x = (i) => L + (points.length < 2 ? 0 : i * (W - L - R) / (points.length - 1));
+  const y = (v) => T + (H - T - B) * (1 - v / 100);
+  for (const v of [0, 25, 50, 75, 100]) {
+    root.append(svg("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid" }),
+      svg("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end", "font-size": 11, fill: "currentColor", opacity: .6 }, document.createTextNode(`${v}%`)));
+  }
+  if (points.length) {
+    const ago = Math.round((points[points.length - 1].time - points[0].time) / 60);
+    root.append(svg("text", { x: L, y: H - 4, "font-size": 11, fill: "currentColor", opacity: .6 }, document.createTextNode(ago ? `${ago} min ago` : "")),
+      svg("text", { x: W - R, y: H - 4, "text-anchor": "end", "font-size": 11, fill: "currentColor", opacity: .6 }, document.createTextNode("now")));
+  }
+  for (const { key, color, fill } of lines) {
+    const pts = points.map((p, i) => [x(i), p[key]]).filter(([, v]) => v != null);
+    if (!pts.length) continue;
+    const d = pts.map(([px, v], i) => `${i ? "L" : "M"}${px.toFixed(1)} ${y(Math.min(100, v)).toFixed(1)}`).join(" ");
+    if (fill) root.append(svg("path", { d: `${d} L${pts[pts.length - 1][0].toFixed(1)} ${y(0)} L${pts[0][0].toFixed(1)} ${y(0)} Z`, fill: color, opacity: .15 }));
+    root.append(svg("path", { d, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round" }));
+  }
+  return h("div", { class: "chart" }, root);
+}
+
+views.system = (main) => {
+  main.append(h("h1", { text: "System" }),
+    h("p", { class: "muted", text: "CPU and memory of the PC the bot runs on, updated every few seconds. The charts show the last 10 minutes (kept while the bot runs)." }));
+  const stats = h("div", { class: "grid" });
+  const cpuCard = h("div", { class: "card" }, h("h2", { text: "CPU" }));
+  const memCard = h("div", { class: "card" }, h("h2", { text: "Memory" }));
+  const procCard = h("div", { class: "card" }, h("h2", { text: "Bot processes" }));
+  const info = h("p", { class: "muted" });
+  main.append(stats, h("div", { class: "two-col" }, cpuCard, memCard), procCard, info);
+  const stat = (label, value, tone = "", sub = "") => h("div", { class: `stat ${tone}` }, h("div", { class: "label", text: label }),
+    h("div", { class: "value", text: value }), sub ? h("div", { class: "muted", style: "font-size:.8rem;margin-top:.2rem", text: sub }) : null);
+  const tone = (pct) => pct == null ? "" : pct >= 90 ? "bad" : pct >= 70 ? "warn" : "ok";
+  const legend = (items) => h("div", { class: "row", style: "font-size:.85rem;margin-top:.4rem" }, items.map(([color, text]) =>
+    h("span", { class: "row tight" }, h("span", { style: `display:inline-block;width:.8rem;height:.25rem;border-radius:2px;background:${color}` }), text)));
+  const load = async () => {
+    let d;
+    try { d = await api("/api/system"); } catch (e) { stats.replaceChildren(h("p", { class: "error", text: e.message })); return; }
+    if (!d.supported) { stats.replaceChildren(h("div", { class: "banner warn", text: `CPU and memory can't be read on ${d.os} – only Linux and Windows are supported.` })); }
+    const l = d.latest || {}, memPct = l.mem_total ? 100 * l.mem_used / l.mem_total : null;
+    const hist = d.history.map((p) => ({ ...p, mem: p.mem_total ? 100 * p.mem_used / p.mem_total : null, botmem: p.mem_total && p.bot_mem ? 100 * p.bot_mem / p.mem_total : null }));
+    const diskPct = d.disk ? 100 * d.disk.used / d.disk.total : null;
+    const upH = d.uptime != null ? fmtDuration(d.uptime) : "–";
+    stats.replaceChildren(
+      stat("CPU", l.cpu != null ? `${l.cpu}%` : "…", tone(l.cpu), `${d.cores || "?"} cores${d.load ? ` · load ${d.load.join(" / ")}` : ""}`),
+      stat("Memory", memPct != null ? `${memPct.toFixed(0)}%` : "–", tone(memPct), l.mem_total ? `${fmtBytes(l.mem_used)} of ${fmtBytes(l.mem_total)}` : ""),
+      stat("This bot", fmtBytes(l.bot_mem), "accent", l.bot_cpu != null ? `${l.bot_cpu}% CPU` : ""),
+      stat("Disk (bot data)", diskPct != null ? `${diskPct.toFixed(0)}%` : "–", tone(diskPct), d.disk ? `${fmtBytes(d.disk.free)} free` : ""),
+      stat("PC running for", upH));
+    cpuCard.replaceChildren(h("h2", { text: "CPU" }), percentChart(hist, [{ key: "cpu", color: "var(--accent)", fill: true }, { key: "bot_cpu", color: "var(--warn)" }]),
+      legend([["var(--accent)", "whole PC"], ["var(--warn)", "this bot"]]));
+    memCard.replaceChildren(h("h2", { text: "Memory" }), percentChart(hist, [{ key: "mem", color: "var(--ok)", fill: true }, { key: "botmem", color: "var(--warn)" }]),
+      legend([["var(--ok)", "whole PC"], ["var(--warn)", "this bot"]]));
+    procCard.replaceChildren(h("h2", { text: "Bot processes" }), h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Server", "Process ID", "Memory"].map((t) => h("th", { text: t })))),
+      h("tbody", {}, d.processes.map((p) => h("tr", {}, h("td", { text: p.name }), h("td", { class: "muted", text: p.pid ?? "not running" }), h("td", { text: fmtBytes(p.memory) })))))));
+    info.textContent = `${d.os} (${d.machine}) · Python ${d.python}`;
+  };
+  every(5000, load);
+};
 
 views.makeplugin = async (main) => {
   main.append(h("h1", { text: "Create a plugin" }),

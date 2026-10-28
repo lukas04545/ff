@@ -464,6 +464,7 @@ itself (`/`) is the 🌍 Player website (when that plugin is on – otherwise it
 | 🏆 Stats | Leaderboard (kills, deaths, K/D, playtime), platform, last seen; **team leaderboard** |
 | 🎉 Community | **Wipe** (next date, repeat, wipe done), **scheduled messages**, timed roles, giveaways (end early, reroll), **edit rules**, overview of the community settings |
 | 📚 Knowledge base | Edit `support_knowledge.md` right in the browser (applies immediately) |
+| 🖥️ System | CPU and memory of the PC the bot runs on (whole PC and the bot itself, charts of the last 10 minutes), disk space, uptime and the memory of every server's bot process – Linux and Windows, nothing to install |
 | 🧾 Bot log | The bot's last 500 log lines |
 | ⚙️ Settings | **All settings** from the `.env` as a form: channels and roles as dropdowns (once the bot is connected), **Test RCON**, **Check bot token** (incl. intent status and invite link). **Saved settings apply right away** – only the bot token, Discord server, database file, web interface address/port and a newly needed privileged intent need **Restart bot now** (the page says which) |
 

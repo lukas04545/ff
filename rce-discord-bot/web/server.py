@@ -47,6 +47,7 @@ from web.ratelimit import RateLimiter
 from web.totp import TwoFactorStore, matching_step, new_secret, otpauth_uri
 from web import honeypot
 from web.honeypot import HoneypotLog
+from web.system_stats import SystemMonitor
 from web.panel_themes import THEMES, ThemeStore
 from web.users import OWNER, UserError, UserStore, hash_password, is_hashed, same_secret, verify_password
 from cogs.economy import SHOP_KINDS
@@ -74,7 +75,8 @@ SESSION_COOKIE = "rce_session"
 PUBLIC_LINK_FILE = "PUBLIC_LINK.txt"  # current public address (Cloudflare tunnel), next to start.bat
 SESSION_TTL = 12 * 3600
 SERVER_COOKIE = "rce_server"      # which server the panel shows (its server drop-down, several servers)
-MAIN_ONLY_API = frozenset({"/api/switch", "/api/login", "/api/logout"})   # never passed on to the other server
+MAIN_ONLY_API = frozenset({"/api/switch", "/api/login", "/api/logout",   # never passed on to the other server
+                           "/api/system"})                     # one PC: the main bot sees every server's process
 HOP_HEADERS = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
                          "transfer-encoding", "upgrade", "host"})
 GATE_COOKIE = "rce_gate"          # set when the panel is opened at its secret address: the panel's files/API answer
@@ -330,6 +332,7 @@ class WebInterface:
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
         self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
         self.honeypot = HoneypotLog(secret_path.parent / "web_honeypot.json")
+        self.system = SystemMonitor()                            # CPU / memory for the System page
         self.themes = ThemeStore(secret_path.parent / "web_themes.json")
         self._proxy_session: aiohttp.ClientSession | None = None   # other servers' panels through this address
         self._honeypot_told: dict[str, float] = {}               # ip:kind -> last admin log line (no flooding)
@@ -388,6 +391,7 @@ class WebInterface:
         r.add_post("/admin", self._admin)                           # the honeypot's fake login form
         r.add_post("/admin/", self._admin)
         r.add_get("/api/honeypot", self.honeypot_list)
+        r.add_get("/api/system", self.system_info)
         r.add_post("/api/switch", self.switch_server)
         r.add_post("/internal/{action:online|give|status|kits|kitinfo}", self.internal)          # other servers of this bot (signed)
         r.add_get("/api/servers", self.servers_list)                     # several Rust servers (servers.py)
@@ -553,6 +557,7 @@ class WebInterface:
             log.error("Web interface could not open port %s (%s) – choose a different WEB_PORT.", ws.port, exc)
             return False
         self._start_tunnel()  # may create WEB_PASSWORD, so before the login hints below
+        self.system.start()
         shown_host = "localhost" if ws.host in ("127.0.0.1", "0.0.0.0", "") else ws.host
         url = f"http://{shown_host}:{ws.port}"
         login_url = f"{url}/auth?token={self.login_token}"
@@ -653,6 +658,7 @@ class WebInterface:
         return None
 
     async def stop(self) -> None:
+        self.system.stop()
         if self._warm_task is not None:
             self._warm_task.cancel()
         await self.item_images.close()
@@ -927,6 +933,16 @@ class WebInterface:
         return web.Response(text=honeypot.fake_login_page(error=request.method == "POST"), content_type="text/html",
                             status=401 if request.method == "POST" else 200,
                             headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+    async def system_info(self, request: web.Request) -> web.Response:
+        """System page: CPU, memory, disk of this PC and the memory of the bot's processes (every server)."""
+        procs: dict[str, int | None] = {f"{servers.server_name(servers.server_id())} (this bot)": os.getpid()}
+        manager = getattr(servers, "manager", None)
+        if manager is not None and not servers.is_child():
+            for sid, proc in sorted(manager.procs.items()):
+                procs[servers.server_name(sid)] = proc.info().get("pid")
+        disk = self.bot.config.database_path.parent if self.bot is not None else Path(".")
+        return web.json_response(self.system.snapshot(procs, disk if disk.exists() else Path(".")))
 
     async def honeypot_list(self, request: web.Request) -> web.Response:
         entries = self.honeypot.entries()
