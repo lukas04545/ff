@@ -161,3 +161,14 @@ def test_add_items_checkout(acc):
     items = {i["shortname"]: i["amount"] for i in db.custom_kit_items("Team Kit")}
     assert items["ammo.rifle"] == 500 and items["rifle.ak"] == 1       # added on top of what was there
     assert db.store_order_by("token", r["token"])["status"] == "delivered"
+
+
+def test_login_codes_limited_per_player_not_only_per_ip(acc):
+    """Many IPs can't flood one player's Discord DMs with login codes."""
+    from cogs.player_accounts import AccountError
+    for n in range(3):
+        run(acc.a.send_code("gamer7", ip=f"198.51.100.{n}"))
+    sent = len(acc.dms)
+    with pytest.raises(AccountError, match="sent several times"):
+        run(acc.a.send_code("gamer7", ip="198.51.100.200"))
+    assert len(acc.dms) == sent
