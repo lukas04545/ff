@@ -1338,6 +1338,39 @@ Orders. Wrong keys: 5 tries per 15 minutes per visitor. Empty = off (default).
    shows a "Test mode" note). For real payments switch to `live` with your **live** Client ID/Secret.
 3. Optional: `STORE_CURRENCY` (default: the price list's currency), `STORE_GIFTCARD_VALUES`, `STORE_CHANNEL_ID`.
 
+### 🪂 Battle royale
+
+Plugin **Battle royale** (Plugins page, off until you switch it on). Rounds of battle royale on your server: players
+drop from the sky at random spots inside the zone with a parachute and a pistol, a **ring of radiation** closes in,
+the last one alive wins.
+
+- **Lobby:** an admin runs `/br start [seconds]`, players join on Discord with `/br join` (linked with
+  `/customkit link` and online in-game); admins can `/br add` / `/br remove` players. `/br status` shows the lobby, who's
+  alive (with kills) and the zone. `/br stop` ends a round and deletes its zones.
+- **Start:** with *Kill players at the start* on (default) everyone is killed once (`global.killplayer`), so they
+  respawn with an empty inventory – their gear stays in a bag where they died (the lobby announcement warns them). The
+  moment one respawns the bot teleports them to *Drop height* (default y 250) above a random spot inside the zone
+  (`global.teleportpos`) and gives the start kit.
+- **Parachute already on:** pick an **in-game kit** as *Start kit* with the parachute in the **Wear** container (and
+  the pistol in the Belt) – a kit puts items straight into their slots. Without a kit the *Start items* (default
+  `parachute 1`, `pistol.semiauto 1`, `ammo.pistol 40`) are given with `inventory.giveto` and land in the inventory.
+  Test once in-game that your server accepts the parachute in a Wear kit.
+- **Zone:** the safe circle starts at *Start zone radius* (default 45 % of *Map size*) around *Start zone centre*. Just
+  outside it the bot places a ring of overlapping **radiation spheres** (`zones.createcustomzone … Sphere <r> 1 1 1 1 1`
+  – radiation 1, orange ring and "RADIATION" message), plus a blue border without radiation. Every *Zone shrinks every*
+  minutes (warned *Warn before shrinking* seconds before) the circle shrinks to *New zone size* % around a new centre
+  inside the old circle, down to *Smallest zone*; the guide has no command to resize a zone, so the ring is deleted and
+  created again. *Radiation spheres at most* (default 40) caps the commands per shrink – big zones use bigger spheres.
+- **Far outside:** players farther out than the radiation ring (it reaches two sphere radii beyond the circle) are
+  read with `server.printpos` every *Check positions every* seconds, warned in-game and killed after *Kill players
+  beyond the radiation after* seconds (0 = never).
+- **Out and winner:** any death of a dropped player counts (PvP, radiation, fall, suicide, the bot's kill) and leaving
+  the server; "X left" is announced in-game. The last one alive wins – announced in-game and in the channel, with
+  optional *Points for the winner*, *Points per kill* and *Kit for the winner*. Its zones are deleted; a round cut off
+  by a bot restart is ended at the next start and its zones deleted.
+- Every command is a setting. How strong a custom zone's radiation is depends on the server; try a round first. Best
+  run on a quiet server or your second server – the radiation ring hits everything in it, also bases.
+
 ### 🛡️ Offline protection zones
 
 Switched on and set up in the control panel under **Server → 🛡️ Offline protection** (off until you switch it on).
