@@ -1386,7 +1386,9 @@ the last one alive wins.
   vending machines only, no kills or drops, no winner, no in-game announcements, shrinks only when you press **🔻 Shrink
   zone now** (that button also works in real rounds); **⏹ Stop round** deletes everything; **🏪 Test a marker** spawns
   one vending machine above the map centre, deletes it again and shows the server's replies (the ID it found, the
-  delete command's answer) – the plugin's settings are on the same page.
+  delete command's answer) – the plugin's settings are on the same page. **🧹 Clear vending machines** sends the delete command for every
+  vending machine the bot has spawned (it remembers their IDs, up to 2,000) and shows the server's answers – so once
+  the delete command is right, one press clears them all; **Forget the list** empties it when they're really gone.
 - **Far outside:** players farther out than the radiation (with boxes: beyond the map edge, e.g. in the sea) are
   read with `server.printpos` every *Check positions every* seconds, warned in-game and killed after *Kill players
   beyond the radiation after* seconds (0 = never).
