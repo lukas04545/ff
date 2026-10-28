@@ -45,6 +45,7 @@ class PlayerAccounts(commands.Cog):
         self.bot = bot
         self._codes: dict[str, dict] = {}                 # player name (lower) -> {code, user_id, name, expires, tries}
         self._code_requests = RateLimiter(5, 900)         # codes requested per visitor IP
+        self._codes_per_player = RateLimiter(3, 900)      # codes DMed per player (many IPs can't flood his DMs)
         self._logins = RateLimiter(10, 900)               # verify attempts per visitor IP
 
     async def cog_load(self) -> None:
@@ -78,6 +79,9 @@ class PlayerAccounts(commands.Cog):
             raise AccountError(f"{player} isn't linked to a Discord account yet. Join our Discord and link it with "
                                "/customkit link first.")
         name = self.bot.db.linked_player(user_id) or player
+        if self._codes_per_player.hit(str(user_id)) is not None:
+            raise AccountError("A code was sent several times already – check your Discord DMs or wait a few "
+                               "minutes.")
         try:
             user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
         except discord.HTTPException:

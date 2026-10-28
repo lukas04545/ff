@@ -483,7 +483,14 @@ Everything you do in the web interface is posted to the admin log channel in Dis
 **Security:** Password login (max. 5 attempts per minute, locked for 15 minutes after 15 wrong passwords),
 sessions expire after 12 hours,
 protection against other websites (CSRF), all player and console texts are displayed as plain
-text only. However, the web interface has **no HTTPS** – **never expose it to the internet via
+text only. Forms of the player website (store, account, casino, battle pass …) are only accepted from the site
+itself: a POST whose `Origin` is another site, whose `Sec-Fetch-Site` isn't same-origin (this decides when the
+`Origin` is `null` – privacy mode on the site itself is fine, a sandboxed frame of another site is not), or whose
+`Referer` is another site is refused. Website login codes are limited per IP (5 per 15 minutes)
+**and** per player (3 per 15 minutes), so nobody can flood a player's Discord DMs from many addresses. An automated
+test (`tests/test_web_forms_fuzz.py`) crawls every page and form of the website – logged out and logged in – sends
+hostile input into every field, URL parameter and database name, and fails on any unescaped HTML (XSS), crash,
+open redirect or form accepted from another site. However, the web interface has **no HTTPS** – **never expose it to the internet via
 port forwarding on your router**. For access on the go, use a VPN such as Tailscale or WireGuard
 into your home network instead.
 

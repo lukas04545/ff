@@ -252,8 +252,12 @@ def test_casino_pages(casino_env):
             assert "fetch(" in await js.text()
             r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "https://evil.example"})
             assert r.status == 403
-            r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "null"})     # privacy mode
-            assert r.status == 200
+            r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "null", "Sec-Fetch-Site": "same-origin"})
+            assert r.status == 200                                                           # privacy mode
+            r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "null", "Sec-Fetch-Site": "cross-site"})
+            assert r.status == 403                                                           # sandboxed frame elsewhere
+            r = await c.post("/casino/slots", data={"bet": "100"}, headers={"Origin": "null"})
+            assert r.status == 403
             r = await c.post("/casino/roulette", data={"bet": "100", "kind": "number", "number": "40"})
             assert "Pick a number from 0 to 36" in await r.text()
             r = await c.post("/casino/dice", data={"bet": "50", "target": "50"})

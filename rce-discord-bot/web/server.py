@@ -997,14 +997,33 @@ class WebInterface:
                 raise web.HTTPForbidden(text="Unknown host.")
         return await handler(request)
 
+    @staticmethod
+    def _same_site_form(request: web.Request) -> bool:
+        """A form POST comes from this website itself. Browsers name the sender: Origin, else (no Origin, or "null"
+        – privacy settings send that on the site's own forms, a sandboxed frame of another site too) Sec-Fetch-Site,
+        else the Referer. Without any of them it's no browser (curl, a script) – those carry no visitor's cookies,
+        so there's nothing to forge."""
+        host = (request.host or "").lower()
+        origin = request.headers.get("Origin")
+        if origin is not None and origin != "null":
+            return (urlparse(origin).netloc or "").lower() == host
+        fetch_site = request.headers.get("Sec-Fetch-Site")      # set by the browser itself, pages can't fake it
+        if fetch_site is not None:
+            return fetch_site in ("same-origin", "none")
+        referer = request.headers.get("Referer")
+        if referer:
+            return (urlparse(referer).netloc or "").lower() == host
+        return origin is None                                    # "null" and nothing else to go by: refused
+
     @web.middleware
     async def _origin_middleware(self, request: web.Request, handler):
         """Forms of the player website (store, account, casino, battle pass …) may only be sent from the site
-        itself: a POST naming another origin is refused (webhooks under /hooks/ excepted)."""
-        if request.method == "POST" and not request.path.startswith(("/api/", "/hooks/")):
-            origin = request.headers.get("Origin")
-            if origin and origin != "null" and (urlparse(origin).netloc or "").lower() != (request.host or "").lower():
-                raise web.HTTPForbidden(text="Forms can only be sent from this website.")
+        itself (CSRF): a POST from another site is refused (webhooks under /hooks/, the signed /internal/ calls of
+        the other servers, the panel API – own header check – and the honeypot's fake login, which never lets anyone
+        in and should log attempts from anywhere, excepted)."""
+        if request.method == "POST" and not request.path.startswith(("/api/", "/hooks/", "/internal/")) \
+                and request.path.rstrip("/") != "/admin" and not self._same_site_form(request):
+            raise web.HTTPForbidden(text="Forms can only be sent from this website.")
         return await handler(request)
 
     @web.middleware
