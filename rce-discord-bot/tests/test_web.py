@@ -101,6 +101,16 @@ def test_custom_kits_autokits_knowledge(bot):
         await c.put("/api/custom-kits/Event/disabled", json={"disabled": False}, headers=H)
         assert (await (await c.get("/api/kits")).json())["custom"][0]["disabled"] == 0
         assert (await c.put("/api/custom-kits/Nope/disabled", json={"disabled": True}, headers=H)).status == 404
+        # All custom kits at once
+        assert (await c.post("/api/custom-kits", json={"name": "Second"}, headers=H)).status == 200
+        r = await (await c.put("/api/custom-kits-disabled", json={"disabled": True}, headers=H)).json()
+        assert r["changed"] == 2 and r["total"] == 2
+        assert all(k["disabled"] == 1 for k in (await (await c.get("/api/kits")).json())["custom"])
+        r = await (await c.put("/api/custom-kits-disabled", json={"disabled": True}, headers=H)).json()
+        assert r["changed"] == 0                                         # already off
+        r = await (await c.put("/api/custom-kits-disabled", json={"disabled": False}, headers=H)).json()
+        assert r["changed"] == 2
+        assert all(k["disabled"] == 0 for k in (await (await c.get("/api/kits")).json())["custom"])
         assert (await c.put("/api/custom-kits/Event/claim", json={"role_ids": [], "cooldown": "soon"},
                             headers=H)).status == 400
         assert (await c.put("/api/custom-kits/Event/claim", json={"role_ids": ["x"], "cooldown": "0"},

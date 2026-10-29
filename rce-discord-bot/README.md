@@ -950,6 +950,8 @@ Each member links their in-game player once; after that `/customkit claim` alway
   keeps its items, roles and cooldown but nobody can claim it – `/customkit claim` answers that it's switched
   off, it disappears from the claim lists, auto-give and the ticket AI skip it, and autokit rules don't give it.
   Admins can still give it by hand. **▶ Turn on** makes it claimable again; the kit shows "⏸ off" while it's off.
+  **All at once:** above the kit list, **⏸ Turn all off (keep, not claimable)** and **▶ Turn all on** switch
+  every custom kit of this server; a badge shows how many are off.
 - Every link and claim appears in the admin log; claims also in the kit history.
 
 **Differences from in-game kits (limitations of `inventory.giveto`)**
