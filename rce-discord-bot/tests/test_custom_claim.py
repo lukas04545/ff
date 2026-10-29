@@ -273,3 +273,35 @@ def test_admin_link_web_endpoint(cog):
             await c.close()
             await cog.bot.rcon.close()
     asyncio.run(main())
+
+
+def test_switched_off_kit_is_kept_but_not_claimable(cog):
+    db = cog.bot.db
+    db.set_custom_kit_roles("VIP", [55])
+    db.set_custom_kit_cooldown("VIP", 0)
+    db.link_player(7, "GamerTag42")
+    member = FakeInteraction(7, [55])
+    db.set_custom_kit_disabled("VIP", True)
+    assert "switched off" in _claim(cog, member) and cog.sent == []          # nothing given
+    row = db.custom_kit("VIP")
+    assert row is not None and len(db.custom_kit_items("VIP")) == 2          # kept with its items
+    assert not cog.can_claim(member.user, row) and cog.has_claim_role(member.user, row)
+    assert cog.kit_overview(member.user)["claimable_kits"] == []                       # hidden from "my kits" / the AI
+    assert "can't claim" in _claim(cog, FakeInteraction(8, [99]))           # no role: the normal answer
+    db.set_custom_kit_disabled("VIP", False)
+    assert "sent to **GamerTag42**" in _claim(cog, member)                   # on again: claimable
+
+
+def test_switched_off_custom_kit_is_not_given_by_autokit_rules(cog):
+    from cogs.kits import Kits
+    db = cog.bot.db
+    asyncio.run(cog.bot.add_cog(cog))
+    kits = Kits(cog.bot)
+    rule_id = db.add_kit_rule("VIP", "respawn", None, 0, 0, "admin", kit_type="custom")
+    rule = next(r for r in db.kit_rules() if r["id"] == rule_id)
+    db.set_custom_kit_disabled("VIP", True)
+    asyncio.run(kits._try_claim(rule, "GamerTag42", "chat"))
+    assert cog.sent == [] and db.kit_claim_state(rule_id, "GamerTag42")[0] == 0     # not given, not counted
+    db.set_custom_kit_disabled("VIP", False)
+    asyncio.run(kits._try_claim(rule, "GamerTag42", "chat"))
+    assert 'inventory.giveto "GamerTag42" "rifle.ak" 1' in cog.sent

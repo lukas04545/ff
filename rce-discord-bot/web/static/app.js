@@ -2150,6 +2150,7 @@ function customKitsCard(data, reload, opts) {
     const el = h("details", { class: "card ck-kit" },
       h("summary", {},
         h("strong", { text: kit.name }),
+        kit.disabled ? h("span", { class: "pill bad", text: "⏸ off – not claimable" }) : null,
         h("span", { class: "pill", text: `${kit.items.length} item${kit.items.length === 1 ? "" : "s"}` }),
         roles ? h("span", { class: "pill ok", text: `🙋 ${roles} role${roles === 1 ? "" : "s"} · ${minutesToDuration(kit.cooldown_minutes) || "no cooldown"}` }) : null,
         kit.description ? h("span", { class: "muted ck-desc", text: kit.description }) : null),
@@ -2165,7 +2166,13 @@ function customKitsCard(data, reload, opts) {
         if (r && !r.known_item) toast("Unknown shortname – please test it on yourself once.");
         reload();
       } }, item, amount, h("button", { text: "+ Item" }),
-        h("button", { class: "small danger", type: "button", style: "margin-left:auto", text: "Delete kit", onclick: async () => {
+        h("button", { class: "small", type: "button", style: "margin-left:auto",
+          text: kit.disabled ? "▶ Turn on (claimable again)" : "⏸ Turn off (keep, not claimable)", onclick: async () => {
+          await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}/disabled`, { method: "PUT", body: { disabled: !kit.disabled } }),
+            kit.disabled ? `${kit.name} is claimable again` : `${kit.name} switched off`);
+          reload();
+        } }),
+        h("button", { class: "small danger", type: "button", text: "Delete kit", onclick: async () => {
           if (!confirm(`Delete custom kit ${kit.name} along with its autokits?`)) return;
           await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}`, { method: "DELETE" }), "Deleted");
           reload();

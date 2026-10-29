@@ -946,6 +946,10 @@ Each member links their in-game player once; after that `/customkit claim` alway
 - The autocomplete of `/customkit claim` only shows kits the member's roles allow.
 - Web interface: Kits → custom kit → "🙋 Claim by role" (role checkboxes + cooldown), and the
   "🔗 Linked players" list with an Unlink button.
+- **Switch a kit off without deleting it:** Kits → custom kit → **⏸ Turn off (keep, not claimable)**. The kit
+  keeps its items, roles and cooldown but nobody can claim it – `/customkit claim` answers that it's switched
+  off, it disappears from the claim lists, auto-give and the ticket AI skip it, and autokit rules don't give it.
+  Admins can still give it by hand. **▶ Turn on** makes it claimable again; the kit shows "⏸ off" while it's off.
 - Every link and claim appears in the admin log; claims also in the kit history.
 
 **Differences from in-game kits (limitations of `inventory.giveto`)**

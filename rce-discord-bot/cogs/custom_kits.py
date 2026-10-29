@@ -654,10 +654,19 @@ class CustomKits(commands.Cog):
                     return [servers.server_name(s) for s in ids]
         return None
 
-    def can_claim(self, member: discord.abc.User, row) -> bool:
-        """May this member claim the kit themselves? (has one of the kit's claim roles)"""
+    @staticmethod
+    def is_disabled(row) -> bool:
+        """Switched off in the control panel: the kit is kept but can't be claimed."""
+        return bool(row["disabled"]) if "disabled" in row.keys() else False
+
+    def has_claim_role(self, member: discord.abc.User, row) -> bool:
+        """Has one of the kit's claim roles (whether or not the kit is switched on)."""
         allowed = set(self.bot.db.claim_roles(row))
         return bool(allowed) and any(r.id in allowed for r in getattr(member, "roles", []))
+
+    def can_claim(self, member: discord.abc.User, row) -> bool:
+        """May this member claim the kit themselves? (has one of the kit's claim roles, and the kit is on)"""
+        return not self.is_disabled(row) and self.has_claim_role(member, row)
 
     def _access_text(self, guild: discord.Guild | None, row) -> str:
         roles = self.bot.db.claim_roles(row)
@@ -1190,6 +1199,9 @@ class CustomKits(commands.Cog):
         """Claims a custom kit for this member – same rules for everyone (role, linked player, online, cooldown).
         The kit only ever goes to the player linked to this Discord account."""
         row = self._resolve(kit)
+        if row is not None and self.is_disabled(row) and self.has_claim_role(member, row):
+            return ClaimOutcome(False, "disabled", f"⏸️ **{safe_md(row['name'])}** is switched off right now – it "
+                                                   "can't be claimed until an admin turns it back on.", row["name"])
         if row is None or not self.can_claim(member, row):
             ingame = next((r for r in self.ingame_access(member)
                            if r["kit"].lower() == kitparse.clean_arg(kit).lower()), None)

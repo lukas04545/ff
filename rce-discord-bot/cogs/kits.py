@@ -543,6 +543,10 @@ class Kits(commands.Cog):
                 source)
             return
 
+        if rule["kit_type"] == "custom":                       # a switched-off custom kit isn't given automatically
+            row = self.bot.db.custom_kit(kit)
+            if row is not None and "disabled" in row.keys() and row["disabled"]:
+                return
         # Record first, then send: prevents double claims from log lines in quick succession
         claim_id = self.bot.db.record_kit_claim(rule["id"], kit, player, source)
         if source == "respawn" and self.bot.config.autokit_delay:
