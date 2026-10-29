@@ -697,7 +697,7 @@ def test_racing_through_the_plugin_and_the_website(casino_env):
             page = await (await c.get("/casino")).text()
             assert "Horse racing" in page and 'href="/casino/race"' in page
             page = await (await c.get("/casino/race")).text()
-            assert page.count('class="lane') == 6 and "Oil Rig Ollie" in page and "pays 11.88×" in page
+            assert page.count('class="lane') == 6 and "Oil Rig Ollie" in page and "11.88×" in page and "8 % win chance" in page
             r = await c.post("/casino/race", data={"bet": "50", "horse": "2"})
             text = await r.text()
             assert r.status == 200 and "@keyframes hr0" in text and "@keyframes hr5" in text and "wins!" in text

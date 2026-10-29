@@ -373,6 +373,7 @@ HORSES = (
     ("Oil Rig Ollie", "#ff8fab", 8),
 )
 assert sum(h[2] for h in HORSES) == 100
+HORSE_COATS = ("#6b3a1f", "#8a4b22", "#2b2b2f", "#b9b4ac", "#c99a4b", "#4a2a17")   # bay, chestnut, black, grey, …
 
 
 def horse_pays(horse: int) -> Fraction:
