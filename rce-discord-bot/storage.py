@@ -765,6 +765,13 @@ class Storage:
         self._db.commit()
         return cur.rowcount > 0
 
+    def set_all_custom_kits_disabled(self, disabled: bool) -> int:
+        """Switches every custom kit off (or on). Returns how many kits changed."""
+        cur = self._db.execute("UPDATE custom_kits SET disabled = ? WHERE disabled != ?",
+                               (int(bool(disabled)), int(bool(disabled))))
+        self._db.commit()
+        return cur.rowcount
+
     def set_custom_kit_roles(self, kit: str, role_ids: list[int]) -> bool:
         value = ",".join(str(r) for r in dict.fromkeys(role_ids))
         cur = self._db.execute("UPDATE custom_kits SET claim_role_ids = ? WHERE name = ?", (value, kit))

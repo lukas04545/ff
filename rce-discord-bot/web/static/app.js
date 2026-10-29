@@ -2137,9 +2137,21 @@ function customKitsCard(data, reload, opts) {
   };
   const setAll = (open) => { for (const [el] of kitEls) if (!el.hidden) el.open = open; };
   if (data.custom.length) {
+    const off = data.custom.filter((k) => k.disabled).length;
+    const switchAll = (disabled) => async () => {
+      if (!confirm(disabled ? `Switch off all ${data.custom.length} custom kits? They're kept (items, roles, cooldowns) but nobody can claim them until you turn them on again.`
+        : `Turn all ${data.custom.length} custom kits back on (claimable again)?`)) return;
+      const r = await act(() => api("/api/custom-kits-disabled", { method: "PUT", body: { disabled } }));
+      if (r) toast(disabled ? `${r.changed} custom kit${r.changed === 1 ? "" : "s"} switched off` : `${r.changed} custom kit${r.changed === 1 ? "" : "s"} claimable again`);
+      reload();
+    };
     card.append(h("div", { class: "row ck-toolbar" }, search, shown,
       h("button", { class: "small", type: "button", text: "Expand all", onclick: () => setAll(true) }),
-      h("button", { class: "small", type: "button", text: "Collapse all", onclick: () => setAll(false) })));
+      h("button", { class: "small", type: "button", text: "Collapse all", onclick: () => setAll(false) })),
+      h("div", { class: "row", style: "margin:.25rem 0 .75rem" },
+        h("span", { class: off ? "pill bad" : "pill ok", text: off ? `⏸ ${off} of ${data.custom.length} off` : "▶ all claimable" }),
+        h("button", { class: "small", type: "button", text: "⏸ Turn all off (keep, not claimable)", disabled: off === data.custom.length, onclick: switchAll(true) }),
+        h("button", { class: "small", type: "button", text: "▶ Turn all on", disabled: off === 0, onclick: switchAll(false) })));
     search.addEventListener("input", applyFilter);
   }
 

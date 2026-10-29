@@ -453,6 +453,7 @@ class WebInterface:
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
         r.add_put("/api/custom-kits/{name}/claim", self.custom_kit_claim_settings)
         r.add_put("/api/custom-kits/{name}/disabled", self.custom_kit_disabled)
+        r.add_put("/api/custom-kits-disabled", self.custom_kits_disabled_all)       # every custom kit at once
         r.add_get("/api/kit-db", self.kit_db)
         r.add_get("/api/kit-roles", self.kit_roles)
         r.add_put("/api/kit-roles", self.kit_roles_update)
@@ -2795,6 +2796,15 @@ class WebInterface:
         self.bot.db.set_custom_kit_disabled(kit["name"], disabled)
         self._audit(f"Custom kit **{kit['name']}** {'switched off (not claimable)' if disabled else 'switched back on'}")
         return web.json_response({"ok": True, "disabled": disabled})
+
+    async def custom_kits_disabled_all(self, request: web.Request) -> web.Response:
+        """Switch every custom kit off (kept, not claimable) or every one back on."""
+        disabled = bool((await self._json(request)).get("disabled"))
+        changed = self.bot.db.set_all_custom_kits_disabled(disabled)
+        total = len(self.bot.db.custom_kits())
+        self._audit(f"All custom kits {'switched off (not claimable)' if disabled else 'switched back on'} "
+                    f"({changed} of {total} changed)")
+        return web.json_response({"ok": True, "disabled": disabled, "changed": changed, "total": total})
 
     async def link_player(self, request: web.Request) -> web.Response:
         """Admin links a member to a player (also offline). member: Discord user ID, @name or display name."""
