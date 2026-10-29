@@ -10,6 +10,7 @@ Pure game logic, no database: every function gets the bet and a random source an
     Blackjack  ≈ 99.5 %  (real rules: 6 decks, dealer stands on soft 17 and peeks, blackjack pays 3:2, double on
                           any two cards and after a split, one split, split aces get one card)
     Plinko     97.5 %    (every risk and row count – paytables below)
+    Racing     95 %      (each horse: win chance X % pays 95/X × – the favourite pays less, a longshot more)
 
 Points are whole numbers, so a payout like 28.5 is rounded fairly: 28, plus 1 more with a 50 % chance – on average
 exactly the paytable, the RTP isn't shaved by rounding.
@@ -357,3 +358,66 @@ def fmt_multiplier(cents: int) -> str:
     """1000.00 -> "1000", 0.3 -> "0.3", 1.25 -> "1.25"."""
     whole, part = divmod(cents, 100)
     return str(whole) if not part else f"{whole}.{part:02d}".rstrip("0")
+
+
+# ------------------------------------------------------------ Horse racing
+
+# (name, colour, win chance in %). The chances add up to 100; a winner pays 95 / chance × the bet, so every horse
+# returns exactly 95 % – the favourite pays little, a longshot a lot.
+HORSES = (
+    ("Scrap Runner", "#e5341c", 30),
+    ("Hazmat Hank", "#f2c14e", 22),
+    ("Bradley", "#3a86ff", 17),
+    ("Cargo Queen", "#8ac926", 13),
+    ("Bean Can", "#c77dff", 10),
+    ("Oil Rig Ollie", "#ff8fab", 8),
+)
+assert sum(h[2] for h in HORSES) == 100
+
+
+def horse_pays(horse: int) -> Fraction:
+    """× bet (incl. the bet) when this horse wins."""
+    return Fraction(95, HORSES[horse][2])
+
+
+@dataclass
+class Race:
+    order: list[int]          # horse indexes, winner first
+    payout: int
+
+
+def run_race(bet: int, horse: int, rng: random.Random = RNG) -> Race:
+    """The whole finishing order: the winner by the horses' chances, then the rest the same way."""
+    if not 0 <= horse < len(HORSES):
+        raise ValueError("Pick a horse.")
+    left = list(range(len(HORSES)))
+    order = []
+    while left:
+        roll = rng.randrange(sum(HORSES[h][2] for h in left))
+        for h in left:
+            roll -= HORSES[h][2]
+            if roll < 0:
+                order.append(h)
+                left.remove(h)
+                break
+    payout = fair(bet * 95, HORSES[horse][2], rng) if order[0] == horse else 0
+    return Race(order, payout)
+
+
+def race_paths(order: list[int], rng: random.Random, steps: int = 10) -> dict[int, dict]:
+    """How the race looks (not the result – that's `order`): for every horse its finishing time (the winner = 1.0,
+    the others a little later, in finishing order) and its progress 0..1 at `steps` points on the way, with an
+    uneven pace so the lead can change. Progress only reaches 1 at the finishing time, so they cross the line in
+    exactly the drawn order."""
+    out, finish = {}, 1.0
+    for rank, horse in enumerate(order):
+        if rank:
+            finish += rng.uniform(0.018, 0.06)
+        speeds = [rng.uniform(0.6, 1.45) for _ in range(steps)]
+        total = sum(speeds)
+        points, done = [(0.0, 0.0)], 0.0
+        for k, v in enumerate(speeds, start=1):
+            done += v / total
+            points.append((finish * k / steps, 1.0 if k == steps else done))
+        out[horse] = {"finish": finish, "points": points}
+    return out

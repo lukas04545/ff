@@ -585,7 +585,8 @@ def test_quick_games_on_discord(casino_env, monkeypatch):
         return None
     monkeypatch.setattr(cm.asyncio, "sleep", no_sleep)
     for game, choice, word in (("slots", (), "bet 10 points"), ("coinflip", ("tails",), "on **Tails**"),
-                               ("dice", (30,), "30 % chance (pays 3.17×)"), ("roulette", ("red", None), "on **Red**")):
+                               ("dice", (30,), "30 % chance (pays 3.17×)"), ("roulette", ("red", None), "on **Red**"),
+                               ("race", (2,), "on **3. Bradley** (pays 5.59×)")):
         before, paid_before = casino.balance(7), (casino.data.get(f"stats:{game}") or {}).get("paid", 0)
         o = _fake_interaction()
         asyncio.run(casino.discord_quick(o.it, game, 10, *choice))
@@ -633,3 +634,82 @@ def test_blackjack_on_discord_with_buttons(casino_env, monkeypatch):
     o4 = _fake_interaction()
     asyncio.run(view.children[0].callback(o4.it))                               # old button: refused
     assert "no hand running" in o4.ephemeral[0]
+
+
+
+# ------------------------------------------------------------ Horse racing
+
+def test_racing_rtp_is_exactly_95_percent_on_every_horse():
+    assert sum(chance for _, _, chance in g.HORSES) == 100
+    for i, (_, _, chance) in enumerate(g.HORSES):
+        assert Fraction(chance, 100) * g.horse_pays(i) == Fraction(95, 100)        # every horse: 95 %
+    for bet, i in ((100, 0), (7, 5), (1000, 3)):                                  # fair rounding: exact on average
+        chance = g.HORSES[i][2]
+        assert sum(g.fair(bet * 95, chance, Fixed(k)) for k in range(chance)) == bet * 95
+    with pytest.raises(ValueError):
+        g.run_race(10, 6)
+
+
+def test_race_winners_follow_the_chances_and_the_order_is_complete():
+    rng = random.Random(42)
+    wins = [0] * len(g.HORSES)
+    n = 60_000
+    for _ in range(n):
+        race = g.run_race(100, 0, rng)
+        assert sorted(race.order) == list(range(len(g.HORSES)))                   # every horse finishes once
+        assert (race.payout > 0) == (race.order[0] == 0)
+        wins[race.order[0]] += 1
+    for i, (_, _, chance) in enumerate(g.HORSES):
+        assert abs(wins[i] / n - chance / 100) < 0.01, (i, wins[i] / n)
+
+
+def test_race_paths_cross_the_line_in_the_drawn_order():
+    for seed in range(50):
+        rng = random.Random(seed)
+        order = list(range(len(g.HORSES)))
+        rng.shuffle(order)
+        paths = g.race_paths(order, rng)
+        finishes = [paths[h]["finish"] for h in order]
+        assert finishes == sorted(finishes) and len(set(finishes)) == len(finishes) and finishes[0] == 1.0
+        for h, path in paths.items():
+            pts = path["points"]
+            assert pts[0] == (0.0, 0.0) and pts[-1] == (path["finish"], 1.0)
+            assert all(b[1] >= a[1] and b[0] > a[0] for a, b in zip(pts, pts[1:]))   # only forward
+            assert all(p < 1.0 for _, p in pts[:-1])                                   # at the line only at the end
+
+
+def test_racing_through_the_plugin_and_the_website(casino_env):
+    casino = casino_env.m.running("casino")
+    race = casino.play_race(7, 100, 4)
+    assert casino.balance(7) == 1000 - 100 + race.payout
+    with pytest.raises(g.GameError, match="Pick a horse"):
+        casino.play_race(7, 100, 9)
+    assert casino.balance(7) == 1000 - 100 + race.payout                           # nothing taken for a bad pick
+
+    async def main():
+        from web.server import WebInterface
+        web = WebInterface(casino_env.bot, env_path=casino_env.tmp / ".env",
+                           secret_path=casino_env.tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            c.session.cookie_jar.update_cookies({"rce_player": "tok"})
+            page = await (await c.get("/casino")).text()
+            assert "Horse racing" in page and 'href="/casino/race"' in page
+            page = await (await c.get("/casino/race")).text()
+            assert page.count('class="lane') == 6 and "Oil Rig Ollie" in page and "pays 11.88×" in page
+            r = await c.post("/casino/race", data={"bet": "50", "horse": "2"})
+            text = await r.text()
+            assert r.status == 200 and "@keyframes hr0" in text and "@keyframes hr5" in text and "wins!" in text
+            assert 'class="lane mine"' in text and text.count('class="place reveal') == 6
+            # the race's keyframes are inside the game card – casino.js swaps in only the card (no page reload)
+            assert text.index('<div class="casino">') < text.index("@keyframes hr0")
+            assert 'value="2" checked' in text                                         # the same horse again
+            r = await c.post("/casino/race", data={"bet": "50", "horse": "x"})
+            assert "Pick a horse" in await r.text()
+            await casino_env.m.save_settings("casino", {"race": False})
+            assert (await c.get("/casino/race")).status == 404
+        finally:
+            await c.close()
+            await casino_env.bot.rcon.close()
+    asyncio.run(main())

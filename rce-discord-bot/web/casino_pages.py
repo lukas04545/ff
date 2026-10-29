@@ -573,8 +573,85 @@ async def plinko_handle(site, casino, request, base: str, uid: int, parts: list[
                        before=before)
 
 
+# ------------------------------------------------------------ Horse racing
+
+RACE_SECONDS = 7.0           # the winner crosses the line after this long
+RACE_CSS = """
+.track{margin:6px 0 12px;padding:8px 10px;border-radius:12px;background:linear-gradient(#1f3a24,#13261a);
+box-shadow:inset 0 0 0 2px rgba(247,147,30,.3)}
+.lane{display:flex;align-items:center;gap:8px;height:40px;border-bottom:1px dashed rgba(255,255,255,.12);position:relative}
+.lane:last-child{border-bottom:0}.lane.mine{background:rgba(247,193,78,.12);border-radius:6px}
+.lane .no{flex:none;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+font-weight:800;font-size:.8rem;color:#fff;text-shadow:0 1px 2px #000}
+.run{position:relative;flex:1;height:36px;border-right:4px solid transparent;
+border-image:repeating-linear-gradient(#fff 0 6px,#111 6px 12px) 4}
+.runner{position:absolute;left:0;top:0;width:calc(100% - 34px);height:100%;will-change:transform}
+.hz{display:inline-block;font-size:1.7rem;line-height:36px;transform:scaleX(-1)}
+.hz.go{animation:gallop .3s ease-in-out var(--n,1)}
+@keyframes gallop{50%{transform:scaleX(-1) translateY(-4px) rotate(4deg)}}
+.lane .place{position:absolute;left:50%;transform:translateX(-50%);font-family:var(--head);font-size:1.05rem;
+color:#e8e8e8;text-shadow:0 1px 3px #000;pointer-events:none}.lane .place.first{color:var(--gold);font-size:1.3rem}
+.horses{display:grid;gap:6px;margin:6px 0 10px}
+.horses label{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;
+cursor:pointer}.horses label:has(input:checked){border-color:var(--orange);background:rgba(247,147,30,.08)}
+.horses .dot{width:14px;height:14px;border-radius:50%;flex:none}.horses .odds{margin-left:auto;color:var(--muted);
+font-size:.9rem;white-space:nowrap}
+.finish-order{margin:4px 0 0;padding-left:1.4em}
+"""
+
+
+def race_page(site, casino, base, uid, *, bet=None, horse=0, race=None, error="", before=None) -> web.Response:
+    horse = horse if isinstance(horse, int) and 0 <= horse < len(g.HORSES) else 0
+    ordinal = ("1st", "2nd", "3rd", "4th", "5th", "6th")
+    keyframes, lanes = "", []
+    t = 0.0
+    if race:
+        paths = g.race_paths(race.order, FX)
+        total = RACE_SECONDS * max(p["finish"] for p in paths.values())
+        t = total + 0.2
+        places = {h: n for n, h in enumerate(race.order)}
+    for i, (name, colour, _) in enumerate(g.HORSES):
+        runner, place = '<div class="runner"><span class="hz">🏇</span></div>', ""
+        if race:
+            path = paths[i]
+            steps = "".join(f"{100 * tt * RACE_SECONDS / total:.2f}%{{transform:translateX({100 * pp:.2f}%)}}"
+                            for tt, pp in path["points"])
+            keyframes += f"@keyframes hr{i}{{{steps}100%{{transform:translateX(100%)}}}}"
+            finish = path["finish"] * RACE_SECONDS
+            runner = (f'<div class="runner" style="animation:hr{i} {total:.2f}s linear both">'
+                      f'<span class="hz go" style="--n:{max(1, int(finish / 0.3))}">🏇</span></div>')
+            rank = places[i]
+            place = (f'<span class="place reveal{" first" if rank == 0 else ""}" style="--t:{finish:.2f}s">'
+                     f'{ordinal[rank]}</span>')
+        lanes.append(f'<div class="lane{" mine" if race and i == horse else ""}">'
+                     f'<span class="no" style="background:{colour}">{i + 1}</span>'
+                     f'<div class="run">{runner}</div>{place}</div>')
+    track = f'<div class="track">{"".join(lanes)}</div>'
+    shown = ""
+    if race:
+        order = "".join(f'<li>{esc(g.HORSES[h][0])} <span class="muted">#{h + 1}</span>'
+                        f"{' ← yours' if h == horse else ''}</li>" for h in race.order)
+        shown = (f'<div class="result reveal">{esc(g.HORSES[race.order[0]][0])} wins!</div>'
+                 + _outcome(casino, race.payout, bet)
+                 + f'<ol class="finish-order reveal">{order}</ol>')
+    picks = "".join(
+        f'<label><input type="radio" name="horse" value="{i}"{" checked" if i == horse else ""}>'
+        f'<span class="dot" style="background:{colour}"></span><strong>{i + 1}. {esc(name)}</strong>'
+        f'<span class="odds">{chance} % · pays {g.fmt_multiplier(round(float(g.horse_pays(i)) * 100))}×</span></label>'
+        for i, (name, colour, chance) in enumerate(g.HORSES))
+    body = (_balance(casino, uid, base, before=before, t=t) + notice(error, "bad")
+            + f'<div class="card" style="--t:{t:.2f}s">{f"<style>{keyframes}</style>" if keyframes else ""}'
+              f'{track}{shown}'
+              f'<form method="post" action="{base}/casino/race"><div class="horses">{picks}</div>'
+              f'{_bet_field(casino, bet)}{_button("🏇 Start the race", bool(race))}</form>'
+              '<p class="muted">Pick a horse: the favourite wins most often but pays less, a longshot pays more. Every '
+              'horse pays 95 ÷ its win chance × your bet – return to player 95 %.</p></div>')
+    # the race's own keyframes sit in the card: casino.js swaps in only the card when playing without a reload
+    return _page(site, base, "Horse racing", body, css=RACE_CSS)
+
+
 PAGES = {"slots": slots_page, "coinflip": coinflip_page, "dice": dice_page, "roulette": roulette_page,
-         "blackjack": blackjack_page}
+         "blackjack": blackjack_page, "race": race_page}
 
 
 # ------------------------------------------------------------ Routing
@@ -627,6 +704,10 @@ async def handle(site, casino, request, base: str, path: str) -> web.Response:
             roll, payout = casino.play_dice(uid, bet or 0, target)
             return dice_page(site, casino, base, uid, bet=bet, target=target, roll=roll, payout=payout,
                              before=before)
+        if sub == "race":
+            horse = _int(form.get("horse"), -1)
+            race = casino.play_race(uid, bet or 0, horse)
+            return race_page(site, casino, base, uid, bet=bet, horse=horse, race=race, before=before)
         if sub == "roulette":
             kind, number = str(form.get("kind", "")), _int(form.get("number"))
             pocket, payout = casino.play_roulette(uid, bet or 0, kind, number)
@@ -642,4 +723,6 @@ async def handle(site, casino, request, base: str, path: str) -> web.Response:
         kwargs = {"bet": bet, "error": str(exc)}
         if sub == "dice":
             kwargs["target"] = _int(form.get("target"), 50)
+        if sub == "race":
+            kwargs["horse"] = _int(form.get("horse"), 0)
         return PAGES[sub](site, casino, base, uid, **kwargs)

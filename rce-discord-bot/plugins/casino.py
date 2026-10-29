@@ -1,12 +1,12 @@
 """Casino: players gamble their points on the player website (/casino) – slots, coin flip, dice, roulette,
-blackjack, Plinko, and Texas Hold'em poker tables where players play against each other. Play money only: points are
+blackjack, Plinko, horse racing, and Texas Hold'em poker tables where players play against each other. Play money only: points are
 earned in-game and can't be bought or cashed out.
 
 Every game but poker can also be played on Discord, in an embed with an animated picture (support/casino_images.py,
-support/plinko_image.py): /slots, /coinflip, /dice, /roulette, /plinko – the result shows once the animation has
-ended – and /blackjack with Hit/Stand/Double/Split buttons. Same games, odds and points as the website.
+support/plinko_image.py): /slots, /coinflip, /dice, /roulette, /race, /plinko – the result shows once the animation
+has ended – and /blackjack with Hit/Stand/Double/Split buttons. Same games, odds and points as the website.
 
-Slots, coin flip and dice return 95 % of the bets on average, roulette is a real European wheel (97.3 %) and
+Slots, coin flip, dice and horse racing return 95 % of the bets on average, roulette is a real European wheel (97.3 %) and
 blackjack is played with real casino rules (≈ 99.5 %). Plinko returns 97.5 % on every risk and row count. The games themselves are in support/casino_games.py, the
 pages in web/casino_pages.py. Players log in with the website's player login (/account).
 """
@@ -34,6 +34,7 @@ GAMES = {           # id -> (name, icon, line shown under it)
     "roulette": ("Roulette", "🎡", "Return to player 97.3 %"),
     "blackjack": ("Blackjack", "🃏", "Return to player ≈ 99.5 %"),
     "plinko": ("Plinko", "🔻", "Return to player 97.5 %"),
+    "race": ("Horse racing", "🏇", "Return to player 95 %"),
     "poker": ("Poker", "♠️", "Texas Hold'em against other players"),
 }
 DEFAULT_TABLES = "Low stakes | 5 | 10 | 200 | 2000\nHigh stakes | 50 | 100 | 2000 | 20000"
@@ -45,8 +46,12 @@ RISK_CHOICES = [app_commands.Choice(name=r.title(), value=r) for r in games.PLIN
 ROULETTE_CHOICES = [app_commands.Choice(name=f"{label} (pays {pay}×)", value=kind)
                     for kind, (label, pay) in games.ROULETTE_BETS.items()]
 COIN_CHOICES = [app_commands.Choice(name="Heads", value="heads"), app_commands.Choice(name="Tails", value="tails")]
+HORSE_CHOICES = [app_commands.Choice(name=f"{i + 1}. {name} – {chance} % chance, pays "
+                                          f"{games.fmt_multiplier(round(float(games.horse_pays(i)) * 100))}×",
+                                     value=i)
+                 for i, (name, _, chance) in enumerate(games.HORSES)]
 AGAIN = {"plinko": ("Drop again", "🔻"), "slots": ("Spin again", "🎰"), "coinflip": ("Flip again", "🪙"),
-         "dice": ("Roll again", "🎲"), "roulette": ("Spin again", "🎡")}
+         "dice": ("Roll again", "🎲"), "roulette": ("Spin again", "🎡"), "race": ("Race again", "🏇")}
 
 
 class PlayAgain(discord.ui.View):
@@ -108,7 +113,7 @@ class BlackjackView(discord.ui.View):
 class Casino(Plugin):
     NAME = "Casino"
     ICON = "🎰"
-    DESCRIPTION = ("Players gamble their points on the player website: slots, coin flip and dice (95 % RTP), "
+    DESCRIPTION = ("Players gamble their points on the player website: slots, coin flip, dice and horse racing (95 % RTP), "
                    "European roulette (97.3 %), blackjack with real rules (≈ 99.5 %), Plinko (97.5 %) and poker tables. Play money only – points "
                    "can't be bought or cashed out. Needs the Player website and player login.")
     SETTINGS = (
@@ -119,7 +124,7 @@ class Casino(Plugin):
                 help="Points a player may lose in total per day (UTC). 0 = no limit. (Poker buy-ins don't count.)"),
         *(Setting(gid, f"{icon} {name}", "bool", True) for gid, (name, icon, _) in GAMES.items()),
         Setting("discord_games", "Casino games on Discord", "bool", True,
-                help="/slots, /coinflip, /dice, /roulette and /blackjack on Discord – embeds with an animated picture "
+                help="/slots, /coinflip, /dice, /roulette, /race and /blackjack on Discord – embeds with an animated picture "
                      "(blackjack with buttons). Same games, odds, bets and limits as the website."),
         Setting("plinko_discord", "🔻 Plinko on Discord (/plinko)", "bool", True,
                 help="Players can also drop Plinko balls on Discord with /plinko – an animated board in an embed."),
@@ -419,6 +424,14 @@ class Casino(Plugin):
         self._pay("roulette", user_id, payout)
         return pocket, payout
 
+    def play_race(self, user_id: int, bet: int, horse: int) -> games.Race:
+        if not isinstance(horse, int) or not 0 <= horse < len(games.HORSES):
+            raise GameError("Pick a horse.")
+        self._take("race", user_id, bet)
+        race = games.run_race(bet, horse)
+        self._pay("race", user_id, race.payout)
+        return race
+
     def play_plinko(self, user_id: int, bet: int, risk: str, rows: int, balls: int = 1) -> list[dict]:
         """Drops `balls` balls of `bet` points each; the server decides every path."""
         if risk not in games.PLINKO_RISKS:
@@ -516,7 +529,8 @@ class Casino(Plugin):
         embed = discord.Embed(title=f"{icon} {name}", colour=discord.Colour(0x2F4553), description=who)
         if body is None:
             embed.description += "\n\n" + {"slots": "Spinning …", "coinflip": "Flipping …", "dice": "Rolling …",
-                                            "roulette": "No more bets – the wheel is spinning …"}.get(game, "…")
+                                            "roulette": "No more bets – the wheel is spinning …",
+                                            "race": "And they're off! …"}.get(game, "…")
         else:
             line, colour = self._outcome_line(payout, staked)
             embed.description += f"\n\n{body}\n\n{line}"
@@ -556,6 +570,14 @@ class Casino(Plugin):
                                on: str, number: app_commands.Range[int, 0, 36] | None = None):
         await self.discord_quick(interaction, "roulette", bet, on, number)
 
+    @app_commands.command(name="race", description="Bet on a horse – the favourite pays less, a longshot more (95 % RTP).")
+    @app_commands.guild_only()
+    @app_commands.describe(bet="Points to bet", horse="Your horse")
+    @app_commands.choices(horse=HORSE_CHOICES)
+    async def race_command(self, interaction: discord.Interaction, bet: app_commands.Range[int, 1, 100_000_000],
+                           horse: int):
+        await self.discord_quick(interaction, "race", bet, horse)
+
     async def discord_quick(self, interaction: discord.Interaction, game: str, bet: int, *choice) -> None:
         """Slots, coin flip, dice, roulette on Discord: bet settled first, then the animation, then the result."""
         from support import casino_images as pics
@@ -591,6 +613,17 @@ class Casino(Plugin):
                 head = f"{self.fmt_points(bet)} on **{label}**"
                 colour = games.roulette_colour(pocket)
                 body = f"**{pocket} {colour.title()}** {'🟢' if colour == 'green' else '🔴' if colour == 'red' else '⚫'}"
+            elif game == "race":
+                horse = choice[0]
+                race = self.play_race(uid, bet, horse)
+                payout = race.payout
+                render = (pics.race_gif, race.order, horse, payout > 0)
+                name = games.HORSES[horse][0]
+                pays = games.fmt_multiplier(round(float(games.horse_pays(horse)) * 100))
+                head = f"{self.fmt_points(bet)} on **{horse + 1}. {name}** (pays {pays}×)"
+                medals = ("🥇", "🥈", "🥉")
+                body = "\n".join(f"{medals[n] if n < 3 else f'{n + 1}.'} {h + 1}. {games.HORSES[h][0]}"
+                                  + (" ← yours" if h == horse else "") for n, h in enumerate(race.order))
             else:
                 raise GameError("Unknown game.")
         except GameError as exc:
