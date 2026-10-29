@@ -452,6 +452,7 @@ class WebInterface:
         r.add_post("/api/custom-kits/import", self.import_custom_kits)
         r.add_delete("/api/custom-kits/{name}", self.delete_custom_kit)
         r.add_put("/api/custom-kits/{name}/claim", self.custom_kit_claim_settings)
+        r.add_put("/api/custom-kits/{name}/disabled", self.custom_kit_disabled)
         r.add_get("/api/kit-db", self.kit_db)
         r.add_get("/api/kit-roles", self.kit_roles)
         r.add_put("/api/kit-roles", self.kit_roles_update)
@@ -2784,6 +2785,16 @@ class WebInterface:
         self._audit(f"Custom kit **{kit['name']}** – claim roles: {len(role_ids)}, "
                     f"cooldown {format_minutes(minutes)}")
         return web.json_response({"ok": True, "cooldown_minutes": minutes})
+
+    async def custom_kit_disabled(self, request: web.Request) -> web.Response:
+        """Switch a custom kit off (kept, but nobody can claim it) or back on."""
+        kit = self.bot.db.custom_kit(request.match_info["name"])
+        if kit is None:
+            raise ApiError("Custom kit not found.", 404)
+        disabled = bool((await self._json(request)).get("disabled"))
+        self.bot.db.set_custom_kit_disabled(kit["name"], disabled)
+        self._audit(f"Custom kit **{kit['name']}** {'switched off (not claimable)' if disabled else 'switched back on'}")
+        return web.json_response({"ok": True, "disabled": disabled})
 
     async def link_player(self, request: web.Request) -> web.Response:
         """Admin links a member to a player (also offline). member: Discord user ID, @name or display name."""

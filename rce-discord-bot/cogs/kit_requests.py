@@ -222,7 +222,7 @@ class KitRequests(commands.Cog):
                     "message": "There is no custom kit with that name – ask which one they bought."}
         kit = row["name"]
         custom = self.bot.get_cog("CustomKits")
-        if custom is not None and custom.can_claim(member, row) and not days:
+        if custom is not None and custom.has_claim_role(member, row) and not days:
             return {"ok": False, "result": "already_has_access", "kit": kit,
                     "message": "They already have access – they can claim it with /customkit claim."}
         if staff_ok:

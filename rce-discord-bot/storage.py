@@ -465,6 +465,9 @@ class Storage:
         if "cooldown_minutes" not in columns:
             self._db.execute(f"ALTER TABLE custom_kits ADD COLUMN cooldown_minutes INTEGER NOT NULL "
                              f"DEFAULT {DEFAULT_CLAIM_COOLDOWN}")
+        if "disabled" not in columns:
+            # Switched off: the kit stays (items, roles, cooldown) but nobody can claim it
+            self._db.execute("ALTER TABLE custom_kits ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
         pk = [row["name"] for row in self._db.execute("PRAGMA table_info(giveaway_redemptions)") if row["pk"]]
         if pk == ["message_id"]:
             # Older layout allowed only one redemption per giveaway (wrong with several winners)
@@ -754,6 +757,11 @@ class Storage:
 
     def set_custom_kit_cooldown(self, kit: str, minutes: int) -> bool:
         cur = self._db.execute("UPDATE custom_kits SET cooldown_minutes = ? WHERE name = ?", (minutes, kit))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def set_custom_kit_disabled(self, kit: str, disabled: bool) -> bool:
+        cur = self._db.execute("UPDATE custom_kits SET disabled = ? WHERE name = ?", (int(bool(disabled)), kit))
         self._db.commit()
         return cur.rowcount > 0
 
