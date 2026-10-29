@@ -575,70 +575,204 @@ async def plinko_handle(site, casino, request, base: str, uid: int, parts: list[
 
 # ------------------------------------------------------------ Horse racing
 
-RACE_SECONDS = 7.0           # the winner crosses the line after this long
+RACE_SECONDS = 7.0           # the winner crosses the line this long after the gates open
+COUNTDOWN = 2.4              # "3 – 2 – 1 – GO!" before the gates open
+STRIDE = 0.36                # one gallop stride (legs, body bob, dust)
+COATS = g.HORSE_COATS
+ORDINAL = ("1st", "2nd", "3rd", "4th", "5th", "6th")
+
 RACE_CSS = """
-.track{margin:6px 0 12px;padding:8px 10px;border-radius:12px;background:linear-gradient(#1f3a24,#13261a);
-box-shadow:inset 0 0 0 2px rgba(247,147,30,.3)}
-.lane{display:flex;align-items:center;gap:8px;height:40px;border-bottom:1px dashed rgba(255,255,255,.12);position:relative}
-.lane:last-child{border-bottom:0}.lane.mine{background:rgba(247,193,78,.12);border-radius:6px}
-.lane .no{flex:none;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-font-weight:800;font-size:.8rem;color:#fff;text-shadow:0 1px 2px #000}
-.run{position:relative;flex:1;height:36px;border-right:4px solid transparent;
-border-image:repeating-linear-gradient(#fff 0 6px,#111 6px 12px) 4}
-.runner{position:absolute;left:0;top:0;width:calc(100% - 34px);height:100%;will-change:transform}
-.hz{display:inline-block;font-size:1.7rem;line-height:36px;transform:scaleX(-1)}
-.hz.go{animation:gallop .3s ease-in-out var(--n,1)}
-@keyframes gallop{50%{transform:scaleX(-1) translateY(-4px) rotate(4deg)}}
-.lane .place{position:absolute;left:50%;transform:translateX(-50%);font-family:var(--head);font-size:1.05rem;
-color:#e8e8e8;text-shadow:0 1px 3px #000;pointer-events:none}.lane .place.first{color:var(--gold);font-size:1.3rem}
-.horses{display:grid;gap:6px;margin:6px 0 10px}
-.horses label{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;
-cursor:pointer}.horses label:has(input:checked){border-color:var(--orange);background:rgba(247,147,30,.08)}
-.horses .dot{width:14px;height:14px;border-radius:50%;flex:none}.horses .odds{margin-left:auto;color:var(--muted);
-font-size:.9rem;white-space:nowrap}
-.finish-order{margin:4px 0 0;padding-left:1.4em}
+.rc-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 0 8px;flex-wrap:wrap}
+.rc-title{font-family:var(--head);letter-spacing:.12em;text-transform:uppercase;color:var(--gold);font-size:1.05rem}
+.ticker{position:relative;height:24px;min-width:220px;flex:1;text-align:right;overflow:hidden;font-family:var(--head);
+letter-spacing:.06em;text-transform:uppercase;font-size:.95rem;color:#fff}
+.ticker span{position:absolute;right:0;top:0;opacity:0;white-space:nowrap;
+animation:tick var(--b,1s) linear var(--a,0s) both}
+.ticker span.stay{animation:reveal .45s cubic-bezier(.2,.9,.3,1.3) var(--a,0s) both;color:var(--gold)}
+@keyframes tick{0%{opacity:0;transform:translateY(6px)}12%,85%{opacity:1;transform:none}100%{opacity:0}}
+.track{position:relative;margin:0 0 14px;border-radius:14px;overflow:hidden;padding:14px 0 10px;
+background:repeating-linear-gradient(90deg,#2f6b34 0 46px,#2a6130 46px 92px);
+box-shadow:inset 0 0 0 3px rgba(255,255,255,.08),0 10px 30px rgba(0,0,0,.45)}
+.track::before,.track::after{content:"";position:absolute;left:0;right:0;height:8px;z-index:4;
+background:repeating-linear-gradient(90deg,#f4f4f4 0 26px,#cfcfcf 26px 30px);box-shadow:0 2px 4px rgba(0,0,0,.5)}
+.track::before{top:0}.track::after{bottom:0}
+.marks{position:absolute;inset:0 58px 0 74px;pointer-events:none;z-index:1}
+.marks i{position:absolute;top:10px;bottom:10px;border-left:2px dashed rgba(255,255,255,.18)}
+.marks i b{position:absolute;top:-2px;left:4px;font:700 .62rem var(--head);color:rgba(255,255,255,.45)}
+.finish{position:absolute;top:8px;bottom:8px;right:44px;width:14px;z-index:2;
+background:repeating-conic-gradient(#fff 0 25%,#111 0 50%) 0 0/14px 14px;box-shadow:0 0 12px rgba(255,255,255,.35)}
+.finish b{position:absolute;top:-1px;right:18px;font:800 .62rem var(--head);letter-spacing:.15em;color:#fff;
+writing-mode:vertical-rl;text-shadow:0 1px 2px #000}
+.gate{position:absolute;top:8px;bottom:8px;left:62px;width:10px;z-index:5;border-radius:3px;
+background:repeating-linear-gradient(#e5341c 0 10px,#fff 10px 20px);box-shadow:0 0 8px rgba(0,0,0,.6);
+transform-origin:top;animation:gate .5s ease-in var(--g,0s) both}
+@keyframes gate{to{transform:translateY(-110%);opacity:0}}
+.lane{position:relative;display:flex;align-items:center;height:52px;padding:0 10px;z-index:3}
+.lane+.lane{border-top:1px solid rgba(255,255,255,.14)}
+.lane.mine{background:linear-gradient(90deg,rgba(247,193,78,.28),rgba(247,193,78,.06) 60%,transparent)}
+.lane.mine::after{content:"YOU";position:absolute;left:10px;width:30px;bottom:1px;text-align:center;
+font:800 .55rem var(--head);letter-spacing:.1em;color:var(--gold)}
+.lane .no{flex:none;width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+font:800 .95rem var(--head);color:#fff;text-shadow:0 1px 2px #000;box-shadow:inset 0 -3px 0 rgba(0,0,0,.25),
+0 2px 4px rgba(0,0,0,.4);margin-right:26px}
+.run{position:relative;flex:1;height:100%;margin-right:44px}
+.runner{position:absolute;left:0;bottom:2px;width:calc(100% - 74px);height:48px;will-change:transform}
+.horse{width:74px;height:48px;overflow:visible;filter:drop-shadow(0 3px 2px rgba(0,0,0,.45))}
+.horse .leg{transform-box:fill-box;transform-origin:50% 0}
+.horse.go .body{animation:bob var(--s) ease-in-out var(--d) var(--n)}
+.horse.go .lf{animation:gal var(--s) linear var(--d) var(--n)}
+.horse.go .lb{animation:gal var(--s) linear calc(var(--d) - var(--s) * .5) var(--n)}
+.horse.go .hf{animation:gal var(--s) linear calc(var(--d) - var(--s) * .25) var(--n)}
+.horse.go .hb{animation:gal var(--s) linear calc(var(--d) - var(--s) * .75) var(--n)}
+@keyframes gal{0%{transform:rotate(-34deg)}50%{transform:rotate(30deg)}100%{transform:rotate(-34deg)}}
+@keyframes bob{50%{transform:translateY(-3px)}}
+.dust{position:absolute;left:-6px;bottom:2px;width:22px;height:12px;border-radius:50%;opacity:0;
+background:radial-gradient(circle,rgba(214,190,150,.85),rgba(214,190,150,0) 70%);
+animation:puff var(--s) ease-out var(--d) var(--n)}
+@keyframes puff{0%{opacity:.9;transform:scale(.4) translateX(0)}100%{opacity:0;transform:scale(1.6) translateX(-18px)}}
+.lane .place{position:absolute;right:136px;top:50%;margin-top:-13px;font:800 .95rem var(--head);padding:3px 9px;
+border-radius:999px;background:rgba(0,0,0,.55);color:#eee;letter-spacing:.06em}
+.lane .place.p1{background:linear-gradient(#ffe48a,#d39b17);color:#3a2500}
+.lane .place.p2{background:linear-gradient(#f2f2f2,#a9a9a9);color:#222}
+.lane .place.p3{background:linear-gradient(#f0b07a,#a0581e);color:#2b1300}
+.count{position:absolute;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.count span{position:absolute;font:900 4.2rem var(--head);color:#fff;text-shadow:0 0 22px rgba(229,52,28,.9),0 4px 0 #000;
+opacity:0;animation:cd .6s cubic-bezier(.2,.9,.3,1.2) var(--a) both}
+.count span.go{color:var(--gold)}
+@keyframes cd{0%{opacity:0;transform:scale(2.2)}25%{opacity:1;transform:scale(1)}80%{opacity:1}100%{opacity:0;transform:scale(.8)}}
+.winner{display:flex;align-items:center;justify-content:center;gap:14px;margin:4px 0 6px}
+.winner .silk{width:56px;height:56px}.winner .w-name{font:800 1.6rem var(--head);letter-spacing:.06em;
+text-transform:uppercase;color:var(--gold);text-shadow:0 0 18px rgba(247,193,78,.55)}
+.podium{display:grid;grid-template-columns:1fr 1fr 1fr;align-items:end;gap:10px;max-width:440px;margin:6px auto 4px}
+.podium>div{text-align:center}.podium .step{border-radius:8px 8px 0 0;display:flex;align-items:flex-start;
+justify-content:center;padding-top:6px;font:900 1.4rem var(--head);color:#2a1a00;box-shadow:inset 0 -6px 0 rgba(0,0,0,.18)}
+.podium .s1 .step{height:76px;background:linear-gradient(#ffe48a,#d39b17)}
+.podium .s2 .step{height:54px;background:linear-gradient(#f2f2f2,#9d9d9d)}
+.podium .s3 .step{height:40px;background:linear-gradient(#f0b07a,#a0581e)}
+.podium .silk{width:40px;height:40px;display:block;margin:0 auto 2px}
+.podium .pn{font-size:.85rem;margin-bottom:4px}.podium .mine .pn{color:var(--gold);font-weight:800}
+.rest{text-align:center;color:var(--muted);font-size:.85rem;margin:4px 0 8px}
+.horses{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin:6px 0 12px}
+.horses label{position:relative;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:4px 10px;
+padding:9px 11px;border:1px solid var(--line);border-radius:10px;cursor:pointer;background:rgba(255,255,255,.02);
+transition:transform .15s,border-color .15s,background .15s}
+.horses label:hover{transform:translateY(-2px);border-color:rgba(247,147,30,.6)}
+.horses input{position:absolute;opacity:0;pointer-events:none}
+.horses label:has(input:checked){border-color:var(--orange);background:rgba(247,147,30,.12);
+box-shadow:0 0 0 1px var(--orange),0 6px 18px rgba(229,52,28,.25)}
+.horses .silk{width:38px;height:38px;grid-row:span 2}
+.horses .hn{font-weight:800}.horses .pay{font:800 1.15rem var(--head);color:var(--gold);grid-row:span 2}
+.horses .meta{display:block}
+.horses .bar{display:block;height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;margin:3px 0 2px}
+.horses .bar i{display:block;height:6px;min-width:6px;background:linear-gradient(90deg,var(--orange),var(--gold))}
+.horses .ch{display:block;font-size:.75rem;color:var(--muted)}
+@media (max-width:560px){.lane .no{margin-right:8px}.marks{left:46px}.gate{left:44px}.lane .place{right:104px}
+.horse{width:56px;height:36px}.runner{width:calc(100% - 56px);height:36px;bottom:8px}
+.ticker{flex-basis:100%;min-width:0;text-align:left}.ticker span{right:auto;left:0}}
 """
+
+
+def _horse_svg(silk: str, coat: str, number: int, *, running: bool = False, vars_: str = "") -> str:
+    """A galloping horse with its jockey in racing silks (facing right). Legs, body bob and dust are CSS."""
+    dark = "#1c120c"
+    cls = "horse go" if running else "horse"
+    style = f' style="{vars_}"' if vars_ else ""
+    leg = (lambda c, x, y: f'<path class="leg {c}" d="M{x} {y} l1 9 -1 8" stroke="{coat}" stroke-width="3.4" '
+                           f'stroke-linecap="round" fill="none"/><circle class="leg {c}" cx="{x}" cy="{y + 17}" r="0"/>')
+    return (f'<svg class="{cls}" viewBox="0 0 80 52"{style} aria-hidden="true">'
+            f'<g class="legs">{leg("hb", 22, 28)}{leg("lb", 50, 28)}</g>'
+            f'<g class="body">'
+            f'<path d="M16 22 C6 22 4 32 2 40 C8 34 10 30 16 28Z" fill="{dark}"/>'                       # tail
+            f'<ellipse cx="34" cy="26" rx="20" ry="9.5" fill="{coat}"/>'                                    # barrel
+            f'<path d="M46 22 L58 8 L64 9 L56 28Z" fill="{coat}"/>'                                         # neck
+            f'<path d="M57 6 L72 12 L73 17 L67 18 L58 13Z" fill="{coat}"/>'                                 # head
+            f'<path d="M58 7 L60 2 L62 7Z" fill="{coat}"/>'                                                # ear
+            f'<path d="M47 21 L58 7 L56 6 L45 19Z" fill="{dark}"/>'                                        # mane
+            f'<circle cx="66" cy="11.5" r="1.1" fill="#000"/>'
+            f'<rect x="27" y="17" width="15" height="11" rx="2" fill="{silk}"/>'                           # saddle cloth
+            f'<text x="34.5" y="25.5" font-size="8" font-weight="800" text-anchor="middle" fill="#fff" '
+            f'style="paint-order:stroke" stroke="#000" stroke-width="1.2">{number}</text>'
+            f'<path d="M30 17 L38 4 L46 7 L41 18Z" fill="{silk}"/>'                                         # jockey body
+            f'<path d="M41 9 L52 12" stroke="{silk}" stroke-width="3" stroke-linecap="round"/>'              # arm
+            f'<circle cx="44" cy="3.5" r="4.2" fill="#f1c9a5"/>'                                           # face
+            f'<path d="M39.6 3 A4.6 4.6 0 0 1 48.6 2.4 L49.5 3.6 Z" fill="{silk}"/>'                      # cap
+            f'</g><g class="legs">{leg("hf", 26, 30)}{leg("lf", 46, 30)}</g></svg>')
+
+
+def _silk_svg(silk: str, number: int) -> str:
+    """The jockey's silks – a little badge with the cap and the number."""
+    return (f'<svg class="silk" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="19" fill="{silk}" '
+            f'stroke="rgba(0,0,0,.35)" stroke-width="2"/><path d="M8 17 A12 12 0 0 1 32 17 L34 20 L6 20Z" '
+            f'fill="rgba(255,255,255,.28)"/><text x="20" y="31" font-size="13" font-weight="900" text-anchor="middle" '
+            f'fill="#fff" style="paint-order:stroke" stroke="#000" stroke-width="2">{number}</text></svg>')
 
 
 def race_page(site, casino, base, uid, *, bet=None, horse=0, race=None, error="", before=None) -> web.Response:
     horse = horse if isinstance(horse, int) and 0 <= horse < len(g.HORSES) else 0
-    ordinal = ("1st", "2nd", "3rd", "4th", "5th", "6th")
     keyframes, lanes = "", []
     t = 0.0
     if race:
         paths = g.race_paths(race.order, FX)
         total = RACE_SECONDS * max(p["finish"] for p in paths.values())
-        t = total + 0.2
+        t = COUNTDOWN + total + 0.3
         places = {h: n for n, h in enumerate(race.order)}
-    for i, (name, colour, _) in enumerate(g.HORSES):
-        runner, place = '<div class="runner"><span class="hz">🏇</span></div>', ""
+    for i, (name, silk, _) in enumerate(g.HORSES):
+        coat = COATS[i % len(COATS)]
+        runner = f'<div class="runner">{_horse_svg(silk, coat, i + 1)}</div>'
+        place = ""
         if race:
             path = paths[i]
             steps = "".join(f"{100 * tt * RACE_SECONDS / total:.2f}%{{transform:translateX({100 * pp:.2f}%)}}"
                             for tt, pp in path["points"])
             keyframes += f"@keyframes hr{i}{{{steps}100%{{transform:translateX(100%)}}}}"
             finish = path["finish"] * RACE_SECONDS
-            runner = (f'<div class="runner" style="animation:hr{i} {total:.2f}s linear both">'
-                      f'<span class="hz go" style="--n:{max(1, int(finish / 0.3))}">🏇</span></div>')
+            strides = max(1, int(finish / STRIDE))
+            css_vars = f"--s:{STRIDE}s;--d:{COUNTDOWN}s;--n:{strides}"
+            runner = (f'<div class="runner" style="animation:hr{i} {total:.2f}s linear {COUNTDOWN}s both;{css_vars}">'
+                      f'<span class="dust"></span>{_horse_svg(silk, coat, i + 1, running=True, vars_=css_vars)}</div>')
             rank = places[i]
-            place = (f'<span class="place reveal{" first" if rank == 0 else ""}" style="--t:{finish:.2f}s">'
-                     f'{ordinal[rank]}</span>')
+            place = (f'<span class="place reveal p{rank + 1}" style="--t:{COUNTDOWN + finish:.2f}s">'
+                     f'{ORDINAL[rank]}</span>')
         lanes.append(f'<div class="lane{" mine" if race and i == horse else ""}">'
-                     f'<span class="no" style="background:{colour}">{i + 1}</span>'
+                     f'<span class="no" style="background:{silk}">{i + 1}</span>'
                      f'<div class="run">{runner}</div>{place}</div>')
-    track = f'<div class="track">{"".join(lanes)}</div>'
+    marks = "".join(f'<i style="left:{p}%"><b>{label}</b></i>' for p, label in ((25, "¼"), (50, "½"), (75, "¾")))
+    count, ticker = "", ""
+    if race:
+        count = ('<div class="count">'
+                 + "".join(f'<span style="--a:{k * 0.6:.1f}s">{n}</span>' for k, n in enumerate(("3", "2", "1")))
+                 + f'<span class="go" style="--a:{COUNTDOWN - 0.6:.1f}s">GO!</span></div>')
+        win = g.HORSES[race.order[0]][0]
+        lines = ((COUNTDOWN, 1.8, "And they're off!"), (COUNTDOWN + total * 0.35, 1.8, "Neck and neck …"),
+                 (COUNTDOWN + total * 0.62, 1.6, "Into the final stretch!"),
+                 (COUNTDOWN + RACE_SECONDS * 0.86, 1.0, "Photo finish …"))
+        ticker = "".join(f'<span style="--a:{a:.2f}s;--b:{b:.2f}s">{esc(text)}</span>' for a, b, text in lines)
+        ticker += f'<span class="stay" style="--a:{COUNTDOWN + RACE_SECONDS:.2f}s">🏆 {esc(win)} wins!</span>'
+    gate = f'<div class="gate" style="--g:{COUNTDOWN if race else 999}s"></div>'
+    track = (f'<div class="rc-head"><span class="rc-title">🏇 Rust Downs · 6 runners</span>'
+             f'<span class="ticker">{ticker or "Pick your horse below"}</span></div>'
+             f'<div class="track"><div class="marks">{marks}</div><div class="finish"><b>FINISH</b></div>{gate}'
+             f'{count}{"".join(lanes)}</div>')
     shown = ""
     if race:
-        order = "".join(f'<li>{esc(g.HORSES[h][0])} <span class="muted">#{h + 1}</span>'
-                        f"{' ← yours' if h == horse else ''}</li>" for h in race.order)
-        shown = (f'<div class="result reveal">{esc(g.HORSES[race.order[0]][0])} wins!</div>'
+        w = race.order[0]
+        podium = "".join(
+            f'<div class="s{rank + 1}{" mine" if h == horse else ""}">{_silk_svg(g.HORSES[h][1], h + 1)}'
+            f'<div class="pn">{esc(g.HORSES[h][0])}</div><div class="step">{rank + 1}</div></div>'
+            for rank, h in ((1, race.order[1]), (0, race.order[0]), (2, race.order[2])))
+        rest = " · ".join(f'{ORDINAL[n]} {esc(g.HORSES[h][0])}{" (you)" if h == horse else ""}'
+                          for n, h in enumerate(race.order) if n >= 3)
+        shown = (f'<div class="winner reveal">{_silk_svg(g.HORSES[w][1], w + 1)}'
+                 f'<span class="w-name">{esc(g.HORSES[w][0])} wins!</span></div>'
                  + _outcome(casino, race.payout, bet)
-                 + f'<ol class="finish-order reveal">{order}</ol>')
+                 + f'<div class="podium reveal">{podium}</div><div class="rest reveal">{rest}</div>')
     picks = "".join(
         f'<label><input type="radio" name="horse" value="{i}"{" checked" if i == horse else ""}>'
-        f'<span class="dot" style="background:{colour}"></span><strong>{i + 1}. {esc(name)}</strong>'
-        f'<span class="odds">{chance} % · pays {g.fmt_multiplier(round(float(g.horse_pays(i)) * 100))}×</span></label>'
-        for i, (name, colour, chance) in enumerate(g.HORSES))
+        f'{_silk_svg(silk, i + 1)}<span class="hn">{esc(name)}</span>'
+        f'<span class="pay">{g.fmt_multiplier(round(float(g.horse_pays(i)) * 100))}×</span>'
+        f'<span class="meta"><span class="bar"><i style="width:{chance * 100 // 30}%"></i></span>'
+        f'<span class="ch">{chance} % win chance</span></span></label>'
+        for i, (name, silk, chance) in enumerate(g.HORSES))
     body = (_balance(casino, uid, base, before=before, t=t) + notice(error, "bad")
             + f'<div class="card" style="--t:{t:.2f}s">{f"<style>{keyframes}</style>" if keyframes else ""}'
               f'{track}{shown}'

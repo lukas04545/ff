@@ -414,85 +414,160 @@ def blackjack_png(state: dict, player_name: str = "You") -> bytes:
 
 # ------------------------------------------------------------ Horse racing (the horses cross the line in the drawn order)
 
-RACE_MS = 5200                     # the winner crosses the line after this long
+COUNT_MS = 1600                    # 3 – 2 – 1 – GO before the gates open
+RACE_MS = 5600                     # the winner crosses the line this long after the gates open
 RACE_FRAME_MS = 50                 # a longer animation: fewer frames keep the GIF small
+STRIDE_MS = 360
+TURF, TURF_2, RAIL, SKIN = (47, 107, 52), (42, 97, 48), (244, 244, 244), (241, 201, 165)
+MEDALS = ((255, 214, 90), (220, 220, 220), (214, 140, 80))
+ORDINAL = ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th")
 
 
 def _hex(colour: str) -> tuple[int, int, int]:
     return tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
 
 
-def _horse(d: ImageDraw.ImageDraw, x: float, y: float, colour, phase: float, number: int) -> None:
-    """A galloping horse with its jockey, nose at x (the race position), standing on y."""
-    u = SS
-    body, dark = (120, 72, 40), (70, 40, 20)
-    swing = math.sin(phase) * 7 * u
-    for lx, sw in ((-30, swing), (-20, -swing), (-6, -swing), (4, swing)):     # legs
-        hx = x + lx * u - 6 * u
-        d.line((hx, y - 14 * u, hx + sw, y), fill=dark, width=3 * u)
-    d.ellipse((x - 46 * u, y - 26 * u, x - 4 * u, y - 10 * u), fill=body)      # body
-    d.polygon([(x - 10 * u, y - 24 * u), (x + 2 * u, y - 34 * u), (x + 8 * u, y - 30 * u),
-               (x - 2 * u, y - 18 * u)], fill=body)                           # neck and head
-    d.line((x - 46 * u, y - 22 * u, x - 56 * u, y - 14 * u + swing / 3), fill=dark, width=3 * u)   # tail
-    d.rectangle((x - 30 * u, y - 26 * u, x - 18 * u, y - 16 * u), fill=colour)  # saddle cloth
-    d.ellipse((x - 30 * u, y - 44 * u, x - 18 * u, y - 32 * u), fill=colour)   # jockey
-    text(d, (x - 24 * u, y - 21 * u), str(number), 8, fill=WHITE)
+def _rot(px: float, py: float, ox: float, oy: float, deg: float) -> tuple[float, float]:
+    a = math.radians(deg)
+    dx, dy = px - ox, py - oy
+    return ox + dx * math.cos(a) - dy * math.sin(a), oy + dx * math.sin(a) + dy * math.cos(a)
+
+
+def _horse(d: ImageDraw.ImageDraw, x: float, y: float, coat, silk, number: int, phase: float | None, k: float) -> None:
+    """Horse and jockey in racing silks, facing right – the same figure as on the website. (x, y) = the nose tip on
+    the ground line; k = scale (pixels per unit of the 80×52 drawing); phase = stride 0..1, None = standing."""
+    ox, oy = x - 73 * k, y - 50 * k                       # the drawing's (0, 0)
+    P = lambda px, py: (ox + px * k, oy + py * k)         # noqa: E731
+    dark = (28, 18, 12)
+    bob = -3 * k * math.sin(phase * 2 * math.pi) ** 2 if phase is not None else 0
+
+    def leg(hx, hy, offset):
+        swing = 0 if phase is None else (-34 + 64 * abs(((phase + offset) % 1) * 2 - 1))
+        hip = P(hx, hy)
+        knee = _rot(hip[0] + 1 * k, hip[1] + 9 * k, hip[0], hip[1], swing)
+        hoof = _rot(hip[0], hip[1] + 17 * k, hip[0], hip[1], swing)
+        d.line((hip, knee, hoof), fill=coat, width=max(2, round(3.4 * k)), joint="curve")
+        d.ellipse((hoof[0] - 1.6 * k, hoof[1] - 1.2 * k, hoof[0] + 1.6 * k, hoof[1] + 1.2 * k), fill=dark)
+    leg(22, 28 + bob / k, 0.5)
+    leg(50, 28 + bob / k, 0.0)
+    B = lambda px, py: (ox + px * k, oy + py * k + bob)   # noqa: E731
+    d.polygon([B(16, 22), B(6, 23), B(3, 33), B(2, 40), B(9, 33), B(16, 28)], fill=dark)               # tail
+    d.ellipse((*B(14, 16.5), *B(54, 35.5)), fill=coat)                                                   # barrel
+    d.polygon([B(46, 22), B(58, 8), B(64, 9), B(56, 28)], fill=coat)                                     # neck
+    d.polygon([B(57, 6), B(72, 12), B(73, 17), B(67, 18), B(58, 13)], fill=coat)                        # head
+    d.polygon([B(58, 7), B(60, 2), B(62, 7)], fill=coat)                                                 # ear
+    d.polygon([B(47, 21), B(58, 7), B(56, 6), B(45, 19)], fill=dark)                                     # mane
+    d.ellipse((*B(64.9, 10.4), *B(67.1, 12.6)), fill=(0, 0, 0))                                          # eye
+    d.rounded_rectangle((*B(27, 17), *B(42, 28)), radius=2 * k, fill=silk)                               # saddle cloth
+    text(d, B(34.5, 22.6), str(number), max(6, round(7 * k / SS)), fill=WHITE, stroke=1)
+    d.polygon([B(30, 17), B(38, 4), B(46, 7), B(41, 18)], fill=silk)                                     # jockey
+    d.line((B(41, 9), B(52, 12)), fill=silk, width=max(2, round(3 * k)))                                # arm
+    d.ellipse((*B(39.8, -0.7), *B(48.2, 7.7)), fill=SKIN)                                                # face
+    d.pieslice((*B(39.4, -1.4), *B(48.8, 8)), 180, 360, fill=silk)                                       # cap
+    d.polygon([B(47, 3.2), B(51, 3.6), B(48, 2.2)], fill=silk)                                           # cap peak
 
 
 def race_gif(order: list[int], pick: int, won: bool) -> tuple[bytes, float]:
-    """The race: lanes, start and checkered finish line; the horses follow g.race_paths, so they cross the line in
-    exactly the order the server drew. The player's lane is framed; the result shows at the end."""
+    """The race like on the website: turf, rails, starting gate, a 3-2-1 countdown, galloping horses in silks with
+    dust, the places in each lane and the winner on top. The horses follow g.race_paths, so they cross the line in
+    exactly the order the server drew. The player's lane is framed."""
     lanes = len(g.HORSES)
-    lane_h = 44 * SS
-    top = 46 * SS
-    w, h = 640 * SS, top + lanes * lane_h + 16 * SS
-    x0, x1 = 120 * SS, w - 40 * SS
-    base = background(w, h)
+    lane_h, top = 52 * SS, 58 * SS
+    w, h = 680 * SS, top + lanes * lane_h + 12 * SS
+    x_gate, x_fin = 92 * SS, w - 48 * SS
+    k = 0.92 * SS                                              # horse size
+    base = Image.new("RGB", (w, h), BG_BOTTOM)
     d = ImageDraw.Draw(base)
-    for i, (name, colour, chance) in enumerate(g.HORSES):
+    for y in range(0, top, 4 * SS):                            # header
+        d.rectangle((0, y, w, y + 4 * SS), fill=_mix(BG_TOP, BG_BOTTOM, y / top))
+    ty, by = top - 6 * SS, h - 6 * SS
+    for i, x in enumerate(range(0, w, 46 * SS)):               # mowing stripes
+        d.rectangle((x, ty, x + 46 * SS, by), fill=TURF if i % 2 == 0 else TURF_2)
+    for y in (ty, by - 4 * SS):                                # rails with posts
+        d.rectangle((0, y, w, y + 5 * SS), fill=RAIL)
+        for x in range(0, w, 30 * SS):
+            d.rectangle((x, y, x + 3 * SS, y + 5 * SS), fill=(200, 200, 200))
+    for frac, label in ((0.25, "1/4"), (0.5, "1/2"), (0.75, "3/4")):   # distance marks
+        mx = x_gate + (x_fin - x_gate) * frac
+        for yy in range(ty + 8 * SS, by - 8 * SS, 8 * SS):
+            d.line((mx, yy, mx, yy + 4 * SS), fill=_mix(TURF, WHITE, 0.3), width=SS)
+        text(d, (mx + 10 * SS, ty + 12 * SS), label, 8, fill=_mix(TURF, WHITE, 0.55))
+    for i, (name, colour, _) in enumerate(g.HORSES):
         y = top + i * lane_h
-        d.rectangle((0, y, w, y + lane_h), fill=(28, 52, 34) if i % 2 else (34, 62, 40))
+        if i:
+            d.line((0, y, w, y), fill=_mix(TURF, WHITE, 0.18), width=SS)
         if i == pick:
-            d.rectangle((2 * SS, y + 2 * SS, w - 3 * SS, y + lane_h - 3 * SS), outline=GOLD, width=2 * SS)
-        d.ellipse((8 * SS, y + 10 * SS, 32 * SS, y + 34 * SS), fill=_hex(colour))
-        text(d, (20 * SS, y + 22 * SS), str(i + 1), 12, fill=WHITE)
-        text(d, (38 * SS, y + 22 * SS), name[:14], 10, fill=WHITE, anchor="lm")
-    d.line((x0, top, x0, h - 16 * SS), fill=(230, 230, 230), width=2 * SS)                    # start
-    for k in range(0, (h - 16 * SS - top) // (6 * SS)):                                        # checkered finish
+            d.rectangle((3 * SS, y + 2 * SS, w - 4 * SS, y + lane_h - 2 * SS), outline=GOLD, width=2 * SS)
+        d.rounded_rectangle((10 * SS, y + 12 * SS, 38 * SS, y + 40 * SS), radius=5 * SS, fill=_hex(colour))
+        text(d, (24 * SS, y + 26 * SS), str(i + 1), 13, fill=WHITE, stroke=1)
+        if i == pick:
+            text(d, (24 * SS, y + 47 * SS), "YOU", 7, fill=GOLD)
+    sq = 7 * SS                                                # checkered finish line
+    for row, yy in enumerate(range(ty + 5 * SS, by - 4 * SS, sq)):
         for col in range(2):
-            if (k + col) % 2 == 0:
-                fy = top + k * 6 * SS
-                d.rectangle((x1 + col * 6 * SS, fy, x1 + col * 6 * SS + 6 * SS, fy + 6 * SS), fill=WHITE)
+            fill = WHITE if (row + col) % 2 == 0 else INK
+            d.rectangle((x_fin + col * sq, yy, x_fin + col * sq + sq, min(yy + sq, by - 4 * SS)), fill=fill)
     paths = g.race_paths(order, FX)
-    end = int(RACE_MS * max(p["finish"] for p in paths.values())) + 500
-    phases = {i: FX.uniform(0, 6.28) for i in range(lanes)}
     places = {horse: rank for rank, horse in enumerate(order)}
-    ordinal = ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th")
+    end = COUNT_MS + int(RACE_MS * max(p["finish"] for p in paths.values())) + 700
+    dust_phase = {i: FX.random() for i in range(lanes)}
     frames = []
+    win = order[0]
     for now in list(range(0, end, RACE_FRAME_MS)) + [end]:
         img = base.copy()
         d = ImageDraw.Draw(img)
+        t_race = (now - COUNT_MS) / RACE_MS
+        if now < COUNT_MS + 250:                               # the starting gate, lifted at GO
+            lift = max(0.0, (now - COUNT_MS) / 250)
+            gy = ty + 5 * SS - (by - ty) * lift
+            for n, yy in enumerate(range(int(gy), int(gy + (by - ty) - 9 * SS), 10 * SS)):
+                d.rectangle((x_gate - 6 * SS, yy, x_gate + 4 * SS, yy + 10 * SS),
+                            fill=(229, 52, 28) if n % 2 == 0 else WHITE)
         for horse, path in paths.items():
-            t = now / RACE_MS
-            pts = path["points"]
-            prog = 1.0
-            for (ta, pa), (tb, pb) in zip(pts, pts[1:]):
-                if t <= tb:
-                    prog = pa + (pb - pa) * ((t - ta) / (tb - ta) if tb > ta else 1)
-                    break
-            x = x0 + 60 * SS + (x1 - x0 - 60 * SS) * min(prog, 1.0)
-            running = prog < 1.0
-            _horse(d, x, top + horse * lane_h + 40 * SS, _hex(g.HORSES[horse][1]),
-                   phases[horse] + (now / 70 if running else 0), horse + 1)
-            if not running:                                      # over the line: its place in the lane
+            prog = 0.0
+            if t_race > 0:
+                prog = 1.0
+                pts = path["points"]
+                for (ta, pa), (tb, pb) in zip(pts, pts[1:]):
+                    if t_race <= tb:
+                        prog = pa + (pb - pa) * ((t_race - ta) / (tb - ta) if tb > ta else 1)
+                        break
+            running = 0 < prog < 1.0
+            nose = x_gate + 70 * k + (x_fin - x_gate - 72 * k) * min(prog, 1.0)
+            ground = top + horse * lane_h + lane_h - 5 * SS
+            if running:                                        # dust behind the hooves
+                f = ((now / STRIDE_MS) + dust_phase[horse]) % 1
+                r = (4 + 9 * f) * SS
+                cx, cy = nose - 72 * k - 14 * f * SS, ground - 2 * SS
+                d.ellipse((cx - r, cy - r * 0.55, cx + r, cy + r * 0.55),
+                          fill=_mix((214, 190, 150), TURF, 0.35 + 0.6 * f))
+            phase = ((now / STRIDE_MS) + horse * 0.17) % 1 if running else None
+            _horse(d, nose, ground, _hex(g.HORSE_COATS[horse % len(g.HORSE_COATS)]), _hex(g.HORSES[horse][1]),
+                   horse + 1, phase, k)
+            if prog >= 1.0:                                    # over the line: its place, in front of the horse
                 rank = places[horse]
-                text(d, ((x0 + x1) / 2, top + horse * lane_h + 22 * SS), ordinal[rank], 16 if rank == 0 else 13,
-                     fill=GOLD if rank == 0 else (225, 225, 225), stroke=1)
-        if now >= RACE_MS:                                       # the winner is over the line
-            win = order[0]
-            text(d, (w / 2, 22 * SS), f"{win + 1}. {g.HORSES[win][0]} wins!", 18, fill=WIN if won else LOSE,
-                 stroke=1)
-        else:
-            text(d, (w / 2, 22 * SS), "HORSE RACING", 18, fill=GOLD, stroke=1)
+                bx, cy = nose - 102 * k, top + horse * lane_h + lane_h / 2
+                fill = MEDALS[rank] if rank < 3 else (25, 30, 35)
+                d.rounded_rectangle((bx - 22 * SS, cy - 11 * SS, bx + 22 * SS, cy + 11 * SS), radius=11 * SS, fill=fill)
+                text(d, (bx, cy), ORDINAL[rank], 11, fill=INK if rank < 3 else WHITE)
+        if now < COUNT_MS:                                     # 3 – 2 – 1 – GO!
+            step = now // (COUNT_MS // 4)
+            word = ("3", "2", "1", "GO!")[min(step, 3)]
+            within = (now % (COUNT_MS // 4)) / (COUNT_MS // 4)
+            size = int(54 - 18 * min(1.0, within * 3))
+            text(d, (w / 2, top + lanes * lane_h / 2), word, size, fill=GOLD if word == "GO!" else WHITE, stroke=2)
+            text(d, (w / 2, 28 * SS), "RUST DOWNS  ·  GET READY", 15, fill=GOLD, stroke=1)
+        elif t_race < 1.0:
+            line = ("AND THEY'RE OFF!" if t_race < 0.3 else "NECK AND NECK ..." if t_race < 0.62
+                    else "INTO THE FINAL STRETCH!" if t_race < 0.86 else "PHOTO FINISH ...")
+            text(d, (w / 2, 28 * SS), line, 16, fill=WHITE, stroke=1)
+        else:                                                  # the winner, with its silks
+            name = f"{g.HORSES[win][0].upper()} WINS!"
+            tw = d.textlength(name, font=_font(18 * SS))
+            sx = w / 2 - tw / 2 - 20 * SS
+            d.ellipse((sx - 13 * SS, 15 * SS, sx + 13 * SS, 41 * SS), fill=_hex(g.HORSES[win][1]),
+                      outline=GOLD, width=2 * SS)
+            text(d, (sx, 28 * SS), str(win + 1), 12, fill=WHITE, stroke=1)
+            text(d, (w / 2 + 10 * SS, 28 * SS), name, 18, fill=WIN if won else GOLD, stroke=1)
         frames.append(img.reduce(SS))
-    return to_gif(frames, frame_ms=RACE_FRAME_MS), RACE_MS / 1000
+    return to_gif(frames, frame_ms=RACE_FRAME_MS), (COUNT_MS + RACE_MS) / 1000
