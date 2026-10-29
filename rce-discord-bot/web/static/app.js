@@ -2038,8 +2038,17 @@ function claimSettings(kit, opts, reload) {
 function linkedPlayersCard(data, reload) {
   const rows = data.linked || [];
   return h("div", { class: "card" }, h("h2", { text: `🔗 Linked players (${rows.length})` }),
-    h("p", { class: "muted", text: "Members link themselves with /customkit link (dropdown of online players; optional quick chat check in Settings → Kits). Custom kit claims only go to the linked player." }),
+    h("p", { class: "muted", text: "Members link themselves with /customkit link (dropdown of online players; optional quick chat check in Settings → Kits). Links are shared across all your servers. Custom kit claims only go to the linked player." }),
     adminLinkForm(reload),
+    rows.length ? h("div", { class: "row", style: "margin:0 0 .75rem" },
+      h("button", { class: "small", text: "📝 Set nicknames to in-game names", onclick: async (ev) => {
+        if (!confirm("Set the Discord nickname of every linked member to their in-game name? (The bot needs \"Manage Nicknames\"; the server owner and members above the bot's role can't be changed.)")) return;
+        ev.target.disabled = true;
+        const r = await act(() => api("/api/linked-players/sync-nicknames", { method: "POST", body: {} })).catch(() => null);
+        ev.target.disabled = false;
+        if (r) toast(`Nicknames: ${r.changed} changed, ${r.already} already set${r["no-permission"] ? `, ${r["no-permission"]} not allowed (owner / higher role)` : ""}${r["not-in-server"] ? `, ${r["not-in-server"]} not in the server` : ""}${r.error ? `, ${r.error} failed` : ""} of ${r.total}.`, r["no-permission"] || r.error);
+      } }),
+      h("span", { class: "muted", style: "font-size:.85rem", text: "Applies to everyone already linked. New links set the nickname automatically (Settings → Kits)." })) : null,
     rows.length ? h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, ["In-game player", "Discord", "Linked", ""].map((t) => h("th", { text: t })))),
       h("tbody", {}, rows.map((r) => h("tr", {},

@@ -140,6 +140,7 @@ class Config:
     knowledge_rag_chars: int    # knowledge base text per AI answer with RAG (a smaller file is sent whole)
     kit_approver_role_ids: frozenset[int]   # may approve bought kits (empty = support roles)
     link_verify_quickchat: bool  # /customkit link: also prove ownership with two quick chats in-game
+    link_set_nickname: bool      # on link: set the member's Discord nickname to their in-game name
 
     # Community (welcome, auto role, Discord logs, rules, giveaways)
     welcome_channel_id: int | None
@@ -372,6 +373,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         knowledge_rag_chars=max(1000, min(_int("KNOWLEDGE_RAG_CHARS", 6000), 50000)),
         kit_approver_role_ids=_id_set("KIT_APPROVER_ROLE_IDS"),
         link_verify_quickchat=_bool("LINK_VERIFY_QUICKCHAT", False),
+        link_set_nickname=_bool("LINK_SET_NICKNAME", True),
         welcome_channel_id=_int("WELCOME_CHANNEL_ID"),
         welcome_message=_get("WELCOME_MESSAGE",
                              "Welcome {member} to **{server}**! Please read the rules{rules} – have fun!"),

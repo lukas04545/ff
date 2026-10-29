@@ -110,6 +110,11 @@ FIELDS: list[Field] = [
           help="Off (default): members pick their online player from a dropdown in Discord and are linked right "
                "away – nothing proves the player is theirs. On: after picking, they must send two quick chat "
                "phrases in-game (emote wheel) to prove it."),
+    Field("LINK_SET_NICKNAME", "Linking: set the Discord nickname to the in-game name", "kits", "bool",
+          help="On (default): when a member links (on any server), the bot sets their Discord nickname to their "
+               "in-game name. The bot needs \"Manage Nicknames\" and a role above the member; the server owner's "
+               "nickname can't be changed. Use the button in Kits → Linked players to apply it to everyone already "
+               "linked."),
     # Tickets
     Field("TICKET_CATEGORY_ID", "Ticket category", "tickets", "id", pick="category",
           help="Empty = tickets off."),

@@ -931,6 +931,14 @@ Each member links their in-game player once; after that `/customkit claim` alway
   with quick chat in-game** (`LINK_VERIFY_QUICKCHAT`, Settings → Kits): after picking, they send two requested
   quick chat phrases in-game within 5 minutes. Linked players of the abuse-protection *allowed roles* may spawn
   rockets/C4 – keep the *allowed in-game names* list for that if you leave the check off.
+- **Links are shared across all your servers.** Linking on one Rust server counts on every other server of
+  the bot (they share one `linked_players.db` in the main server's `data/`). A single-server bot keeps them in
+  its database as before.
+- **Nickname = in-game name.** When a member links (on any server), the bot sets their Discord nickname to
+  their in-game name (**Linking: set the Discord nickname to the in-game name**, `LINK_SET_NICKNAME`, on by
+  default; the bot needs "Manage Nicknames" and a role above the member – the server owner's nickname can't be
+  changed). To apply it to everyone already linked, use **📝 Set nicknames to in-game names** on the web
+  interface (Kits → 🔗 Linked players).
 - The **cooldown counts per player** (per kit). Linking the same player to another Discord account
   doesn't reset it. A changed cooldown applies immediately, also to earlier claims.
 - New kits start with **no claim roles** (admins only) and a **24 h** cooldown.

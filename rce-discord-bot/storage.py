@@ -51,7 +51,7 @@ class _Rollback(Exception):
 
 
 class Storage:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, links_path: Path | None = None) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         # Small, fast writes – synchronous SQLite is plenty for a single server.
         self._db = sqlite3.connect(path)
@@ -526,6 +526,41 @@ class Storage:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN shop_server TEXT")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
+        self._open_links(links_path, path)
+
+    # ------------------------------------------------------------ Shared links (all Rust servers of this bot)
+
+    def _open_links(self, links_path: "Path | None", main_path: Path) -> None:
+        """Linked Discord-account <-> in-game-player pairs can live in their own SQLite file in the shared data
+        folder, so a link made on one Rust server (servers.py) counts on all of them. Without a shared path (a
+        stand-alone copy, or tests) they stay in the main database as before."""
+        self._links = self._db                                   # default: the main database
+        if links_path is None or links_path == main_path:
+            return
+        links_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(links_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = WAL")                # several server processes read/write it
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS linked_players (
+                   user_id INTEGER PRIMARY KEY,
+                   player TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                   linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )""")
+        conn.commit()
+        self._links = conn
+        # One-time merge: copy this server's own links (from the main database) into the shared store, keeping
+        # whatever is already there. Every server does this once, so the shared store ends up with the union.
+        try:
+            rows = self._db.execute("SELECT user_id, player, linked_at FROM linked_players").fetchall()
+        except sqlite3.Error:
+            rows = []
+        if rows:
+            self._links.executemany(
+                "INSERT OR IGNORE INTO linked_players (user_id, player, linked_at) VALUES (?, ?, ?)",
+                [(r["user_id"], r["player"], r["linked_at"]) for r in rows])
+            self._links.commit()
 
     def _ensure(self, name: str) -> None:
         self._db.execute("INSERT OR IGNORE INTO players (name) VALUES (?)", (name,))
@@ -842,11 +877,11 @@ class Storage:
     # ------------------------------------------------------------ Linked players
 
     def linked_player(self, user_id: int) -> str | None:
-        row = self._db.execute("SELECT player FROM linked_players WHERE user_id = ?", (user_id,)).fetchone()
+        row = self._links.execute("SELECT player FROM linked_players WHERE user_id = ?", (user_id,)).fetchone()
         return row["player"] if row else None
 
     def player_owner(self, player: str) -> int | None:
-        row = self._db.execute("SELECT user_id FROM linked_players WHERE player = ?", (player,)).fetchone()
+        row = self._links.execute("SELECT user_id FROM linked_players WHERE player = ?", (player,)).fetchone()
         return int(row["user_id"]) if row else None
 
     def link_player(self, user_id: int, player: str) -> bool:
@@ -854,18 +889,18 @@ class Storage:
         owner = self.player_owner(player)
         if owner is not None and owner != user_id:
             return False
-        self._db.execute("INSERT OR REPLACE INTO linked_players (user_id, player) VALUES (?, ?)", (user_id, player))
-        self._db.commit()
+        self._links.execute("INSERT OR REPLACE INTO linked_players (user_id, player) VALUES (?, ?)", (user_id, player))
+        self._links.commit()
         return True
 
     def unlink_player(self, user_id: int) -> str | None:
         player = self.linked_player(user_id)
-        self._db.execute("DELETE FROM linked_players WHERE user_id = ?", (user_id,))
-        self._db.commit()
+        self._links.execute("DELETE FROM linked_players WHERE user_id = ?", (user_id,))
+        self._links.commit()
         return player
 
     def linked_players(self) -> list[sqlite3.Row]:
-        return self._db.execute("SELECT * FROM linked_players ORDER BY player").fetchall()
+        return self._links.execute("SELECT * FROM linked_players ORDER BY player").fetchall()
 
     # ------------------------------------------------------------ Tickets
 
@@ -1905,4 +1940,6 @@ class Storage:
                                 "status = 'approved' AND addon = 0 LIMIT 1", (user_id, kit)).fetchone() is not None
 
     def close(self) -> None:
+        if self._links is not self._db:
+            self._links.close()
         self._db.close()
