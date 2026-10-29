@@ -73,7 +73,13 @@ class RceBot(commands.Bot):
         self.config = config
         self.intent_warning = intent_warning
         self.intent_fix_url = intent_fix_url
-        self.db = Storage(config.database_path)
+        # Links shared across all Rust servers of this bot: a separate SQLite file in the shared data folder. Only
+        # when several servers actually run (a child, or the main server with a registry) – a single server keeps
+        # its links in the main database as before.
+        import servers
+        multi = bool(os.environ.get(servers.ENV_SHARED)) or (not servers.is_child() and bool(servers.load_registry()))
+        links_path = (servers.shared_data() / "linked_players.db") if multi else None
+        self.db = Storage(config.database_path, links_path=links_path)
         self.rcon = RconClient(config.rcon_host, config.rcon_port, config.rcon_password)
 
         # Live state, maintained by cogs/status.py

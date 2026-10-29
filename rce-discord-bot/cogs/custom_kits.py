@@ -204,6 +204,46 @@ class CustomKits(commands.Cog):
         cfg = self.bot.config
         return self.bot.get_guild(cfg.guild_id) if cfg.guild_id else (self.bot.guilds[0] if self.bot.guilds else None)
 
+    # ------------------------------------------------------------ Nickname = in-game name
+
+    async def set_member_nickname(self, user_id: int, player: str, *, guild: discord.Guild | None = None,
+                                  respect_setting: bool = True) -> str:
+        """Sets a member's Discord nickname to their in-game name. Returns a short status:
+        off / no-guild / not-in-server / already / changed / no-permission / error."""
+        if respect_setting and not self.bot.config.link_set_nickname:
+            return "off"
+        guild = guild or self._guild()
+        if guild is None:
+            return "no-guild"
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except discord.HTTPException:
+                return "not-in-server"
+        wanted = sanitize_player_name(player)[:32]              # Discord nicknames are at most 32 characters
+        if not wanted or (member.nick or "") == wanted:
+            return "already"
+        try:
+            await member.edit(nick=wanted, reason="Linked to in-game player")
+            return "changed"
+        except discord.Forbidden:
+            return "no-permission"                             # owner, higher role, or missing Manage Nicknames
+        except discord.HTTPException:
+            return "error"
+
+    async def sync_all_nicknames(self) -> dict:
+        """The button for the past: set every linked member's nickname to their in-game name. Returns counts."""
+        guild = self._guild()
+        if guild is None:
+            return {"error": "The bot can't see the Discord server right now."}
+        counts = {"total": 0, "changed": 0, "already": 0, "not-in-server": 0, "no-permission": 0, "error": 0}
+        for row in self.bot.db.linked_players():
+            counts["total"] += 1
+            status = await self.set_member_nickname(row["user_id"], row["player"], guild=guild, respect_setting=False)
+            counts[status] = counts.get(status, 0) + 1
+        return counts
+
     def _assignable(self, guild: discord.Guild) -> list[discord.Role]:
         """Roles a kit may use: not @everyone, not a bot/booster role, below the bot's own role."""
         top = guild.me.top_role if getattr(guild, "me", None) else None
@@ -934,6 +974,7 @@ class CustomKits(commands.Cog):
         else:
             text = (f"✅ Verified! Your Discord account is now linked to **{safe_md(ev.player)}**. "
                     "You can claim kits with `/customkit claim`.")
+            await self.set_member_nickname(pending.user_id, ev.player, guild=pending.interaction.guild)
             feed = self.bot.feed(self.bot.config.admin_log_channel_id)
             if feed:
                 feed.add_line(f"🔗 <@{pending.user_id}> linked to in-game player **{safe_md(ev.player)}**")
@@ -999,6 +1040,7 @@ class CustomKits(commands.Cog):
             if not self.bot.db.link_player(interaction.user.id, online):
                 await reply(f"⛔ **{safe_md(online)}** was linked to another Discord account in the meantime.")
                 return
+            await self.set_member_nickname(interaction.user.id, online, guild=interaction.guild)
             feed = self.bot.feed(self.bot.config.admin_log_channel_id)
             if feed:
                 feed.add_line(f"🔗 <@{interaction.user.id}> linked to in-game player **{safe_md(online)}**")
@@ -1075,6 +1117,7 @@ class CustomKits(commands.Cog):
             await interaction.response.send_message(f"⛔ {exc}", ephemeral=True,
                                                     allowed_mentions=discord.AllowedMentions.none())
             return
+        await self.set_member_nickname(member.id, name, guild=interaction.guild)
         seen = bool(self.bot.db.player(name))
         moved = f" (moved from <@{previous}>)" if previous else ""
         self._audit(interaction, f"linked {member.mention} to **{safe_md(name)}**{moved}")

@@ -461,6 +461,7 @@ class WebInterface:
         r.add_post("/api/kit-roles/apply", self.kit_roles_apply)
         r.add_post("/api/kit-roles/undo", self.kit_roles_undo)
         r.add_post("/api/linked-players", self.link_player)
+        r.add_post("/api/linked-players/sync-nicknames", self.sync_nicknames)
         r.add_delete("/api/linked-players/{user_id:\\d+}", self.unlink_player)
         r.add_post("/api/custom-kits/{name}/items", self.add_custom_item)
         r.add_delete("/api/custom-kits/{name}/items/{item_id:\\d+}", self.remove_custom_item)
@@ -2807,10 +2808,22 @@ class WebInterface:
             name, previous = cog.admin_link(user_id, str(body.get("player", "")), force=bool(body.get("force")))
         except ValueError as exc:
             raise ApiError(str(exc)) from None
+        nick = await cog.set_member_nickname(user_id, name)
         moved = f" (moved from Discord user {previous})" if previous else ""
         self._audit(f"Linked Discord user {user_id} to **{name}**{moved}")
         return web.json_response({"ok": True, "player": name, "user_id": str(user_id),
-                                  "seen": bool(self.bot.db.player(name))})
+                                  "seen": bool(self.bot.db.player(name)), "nickname": nick})
+
+    async def sync_nicknames(self, request: web.Request) -> web.Response:
+        """Set every linked member's Discord nickname to their in-game name (the "for the past" button)."""
+        cog = self.bot.get_cog("CustomKits") if self.bot is not None else None
+        if cog is None:
+            raise ApiError("The bot isn't ready yet.", 503)
+        counts = await cog.sync_all_nicknames()
+        if "error" in counts:
+            raise ApiError(counts["error"])
+        self._audit(f"Set nicknames for linked players ({counts['changed']}/{counts['total']} changed)")
+        return web.json_response({"ok": True, **counts})
 
     async def unlink_player(self, request: web.Request) -> web.Response:
         player = self.bot.db.unlink_player(int(request.match_info["user_id"]))
