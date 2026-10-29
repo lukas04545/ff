@@ -1,4 +1,4 @@
-"""Pictures of the casino games for Discord (plugins/casino.py: /slots, /coinflip, /dice, /roulette, /blackjack).
+"""Pictures of the casino games for Discord (plugins/casino.py: /slots, /coinflip, /dice, /roulette, /race, /blackjack).
 
 Same idea as the Plinko board (support/plinko_image.py): the server has already decided the result, the picture only
 shows it – an animated GIF (plays once, stays on the result) for the quick games and a still picture of the table for
@@ -41,7 +41,7 @@ def background(w: int, h: int, top=BG_TOP, bottom=BG_BOTTOM) -> Image.Image:
     return img
 
 
-def to_gif(frames: list[Image.Image], hold_ms: int = HOLD_MS) -> bytes:
+def to_gif(frames: list[Image.Image], hold_ms: int = HOLD_MS, frame_ms: int = FRAME_MS) -> bytes:
     """Frames (already at final size) -> GIF that plays once and stays on the last frame."""
     sample = Image.new("RGB", (frames[0].width, frames[0].height * 2))
     sample.paste(frames[len(frames) // 2], (0, 0))
@@ -50,7 +50,7 @@ def to_gif(frames: list[Image.Image], hold_ms: int = HOLD_MS) -> bytes:
     first, *rest = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
     out = io.BytesIO()
     first.save(out, format="GIF", save_all=True, append_images=rest, optimize=False, disposal=1,
-               duration=[FRAME_MS] * (len(frames) - 1) + [hold_ms])
+               duration=[frame_ms] * (len(frames) - 1) + [hold_ms])
     return out.getvalue()
 
 
@@ -410,3 +410,89 @@ def blackjack_png(state: dict, player_name: str = "You") -> bytes:
             word = {"win": "WIN", "blackjack": "BLACKJACK!", "push": "PUSH", "lose": "LOSE", "bust": "BUST"}[result]
             text(d, (x + 2 * SS, 322 * SS), word, 18, fill=colour, anchor="la", stroke=1)
     return to_png(img.reduce(SS))
+
+
+# ------------------------------------------------------------ Horse racing (the horses cross the line in the drawn order)
+
+RACE_MS = 5200                     # the winner crosses the line after this long
+RACE_FRAME_MS = 50                 # a longer animation: fewer frames keep the GIF small
+
+
+def _hex(colour: str) -> tuple[int, int, int]:
+    return tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _horse(d: ImageDraw.ImageDraw, x: float, y: float, colour, phase: float, number: int) -> None:
+    """A galloping horse with its jockey, nose at x (the race position), standing on y."""
+    u = SS
+    body, dark = (120, 72, 40), (70, 40, 20)
+    swing = math.sin(phase) * 7 * u
+    for lx, sw in ((-30, swing), (-20, -swing), (-6, -swing), (4, swing)):     # legs
+        hx = x + lx * u - 6 * u
+        d.line((hx, y - 14 * u, hx + sw, y), fill=dark, width=3 * u)
+    d.ellipse((x - 46 * u, y - 26 * u, x - 4 * u, y - 10 * u), fill=body)      # body
+    d.polygon([(x - 10 * u, y - 24 * u), (x + 2 * u, y - 34 * u), (x + 8 * u, y - 30 * u),
+               (x - 2 * u, y - 18 * u)], fill=body)                           # neck and head
+    d.line((x - 46 * u, y - 22 * u, x - 56 * u, y - 14 * u + swing / 3), fill=dark, width=3 * u)   # tail
+    d.rectangle((x - 30 * u, y - 26 * u, x - 18 * u, y - 16 * u), fill=colour)  # saddle cloth
+    d.ellipse((x - 30 * u, y - 44 * u, x - 18 * u, y - 32 * u), fill=colour)   # jockey
+    text(d, (x - 24 * u, y - 21 * u), str(number), 8, fill=WHITE)
+
+
+def race_gif(order: list[int], pick: int, won: bool) -> tuple[bytes, float]:
+    """The race: lanes, start and checkered finish line; the horses follow g.race_paths, so they cross the line in
+    exactly the order the server drew. The player's lane is framed; the result shows at the end."""
+    lanes = len(g.HORSES)
+    lane_h = 44 * SS
+    top = 46 * SS
+    w, h = 640 * SS, top + lanes * lane_h + 16 * SS
+    x0, x1 = 120 * SS, w - 40 * SS
+    base = background(w, h)
+    d = ImageDraw.Draw(base)
+    for i, (name, colour, chance) in enumerate(g.HORSES):
+        y = top + i * lane_h
+        d.rectangle((0, y, w, y + lane_h), fill=(28, 52, 34) if i % 2 else (34, 62, 40))
+        if i == pick:
+            d.rectangle((2 * SS, y + 2 * SS, w - 3 * SS, y + lane_h - 3 * SS), outline=GOLD, width=2 * SS)
+        d.ellipse((8 * SS, y + 10 * SS, 32 * SS, y + 34 * SS), fill=_hex(colour))
+        text(d, (20 * SS, y + 22 * SS), str(i + 1), 12, fill=WHITE)
+        text(d, (38 * SS, y + 22 * SS), name[:14], 10, fill=WHITE, anchor="lm")
+    d.line((x0, top, x0, h - 16 * SS), fill=(230, 230, 230), width=2 * SS)                    # start
+    for k in range(0, (h - 16 * SS - top) // (6 * SS)):                                        # checkered finish
+        for col in range(2):
+            if (k + col) % 2 == 0:
+                fy = top + k * 6 * SS
+                d.rectangle((x1 + col * 6 * SS, fy, x1 + col * 6 * SS + 6 * SS, fy + 6 * SS), fill=WHITE)
+    paths = g.race_paths(order, FX)
+    end = int(RACE_MS * max(p["finish"] for p in paths.values())) + 500
+    phases = {i: FX.uniform(0, 6.28) for i in range(lanes)}
+    places = {horse: rank for rank, horse in enumerate(order)}
+    ordinal = ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th")
+    frames = []
+    for now in list(range(0, end, RACE_FRAME_MS)) + [end]:
+        img = base.copy()
+        d = ImageDraw.Draw(img)
+        for horse, path in paths.items():
+            t = now / RACE_MS
+            pts = path["points"]
+            prog = 1.0
+            for (ta, pa), (tb, pb) in zip(pts, pts[1:]):
+                if t <= tb:
+                    prog = pa + (pb - pa) * ((t - ta) / (tb - ta) if tb > ta else 1)
+                    break
+            x = x0 + 60 * SS + (x1 - x0 - 60 * SS) * min(prog, 1.0)
+            running = prog < 1.0
+            _horse(d, x, top + horse * lane_h + 40 * SS, _hex(g.HORSES[horse][1]),
+                   phases[horse] + (now / 70 if running else 0), horse + 1)
+            if not running:                                      # over the line: its place in the lane
+                rank = places[horse]
+                text(d, ((x0 + x1) / 2, top + horse * lane_h + 22 * SS), ordinal[rank], 16 if rank == 0 else 13,
+                     fill=GOLD if rank == 0 else (225, 225, 225), stroke=1)
+        if now >= RACE_MS:                                       # the winner is over the line
+            win = order[0]
+            text(d, (w / 2, 22 * SS), f"{win + 1}. {g.HORSES[win][0]} wins!", 18, fill=WIN if won else LOSE,
+                 stroke=1)
+        else:
+            text(d, (w / 2, 22 * SS), "HORSE RACING", 18, fill=GOLD, stroke=1)
+        frames.append(img.reduce(SS))
+    return to_gif(frames, frame_ms=RACE_FRAME_MS), RACE_MS / 1000
