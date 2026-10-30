@@ -210,7 +210,10 @@ def _kit_picture(shop, row) -> str:
     items = shop.kit_items_full(row)
     if not items:
         return ""
-    src = f'/img/kits/{row["id"]}.png?v={cache_key(items, row["name"], "")}'
+    manager = getattr(shop.bot, "plugins", None)
+    site = manager.running("website") if manager is not None else None
+    logo_key = site.picture_version() if site is not None else ""
+    src = f'/img/kits/{row["id"]}.png?v={cache_key(items, row["name"], shop.bot.config.server_display_name or "", logo_key)}'
     return (f'<a class="kitpic" href="{src}" target="_blank" rel="noopener"><img src="{src}" alt="{esc(row["name"])} '
             f'– kit contents" loading="lazy" decoding="async" width="900" height="1090"></a>'
             f'<a class="kitdl" href="{src}&amp;dl=1" download>⬇ Download picture</a>')

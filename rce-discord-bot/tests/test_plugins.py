@@ -326,7 +326,7 @@ def test_item_pictures_are_cached(pb, monkeypatch):
 
     async def fake_download(self, shortname):
         calls.append(shortname)
-        if shortname == "rifle.ak":
+        if shortname == "zzfake.item":
             self.folder.mkdir(parents=True, exist_ok=True)
             self._path(shortname).write_bytes(png)
             return png
@@ -341,14 +341,14 @@ def test_item_pictures_are_cached(pb, monkeypatch):
         c = TestClient(TestServer(web.app))
         await c.start_server()
         try:
-            r = await c.get("/img/items/rifle.ak.png")                             # public, no login needed
+            r = await c.get("/img/items/zzfake.item.png")                          # public, no login needed
             assert r.status == 200 and r.content_type == "image/png" and await r.read() == png
             assert "max-age" in r.headers["Cache-Control"]
-            await c.get("/img/items/rifle.ak.png")
-            assert calls == ["rifle.ak"]                                         # downloaded once, then cached
+            await c.get("/img/items/zzfake.item.png")
+            assert calls == ["zzfake.item"]                                         # downloaded once, then cached
             assert (await c.get("/img/items/nothing.png")).status == 404
             assert (await c.get("/img/items/nothing.png")).status == 404
-            assert calls == ["rifle.ak", "nothing"]                              # missing ones aren't retried
+            assert calls == ["zzfake.item", "nothing"]                              # missing ones aren't retried
             r = await c.get("/img/items/nothing.png?ph=1")                        # website: placeholder tile
             assert r.content_type == "image/svg+xml" and "nothing" in await r.text()
             assert (await c.get("/img/items/..%2F..%2Fsecret.png")).status == 404

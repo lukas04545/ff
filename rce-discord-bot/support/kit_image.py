@@ -77,12 +77,12 @@ def layout(items: list[tuple]) -> dict[str, list[tuple[str, int] | None]]:
     return slots
 
 
-def cache_key(items: list[tuple], title: str, footer: str) -> str:
-    raw = repr([tuple(map(str, i)) for i in items]) + "|" + title + "|" + footer
+def cache_key(items: list[tuple], title: str, footer: str, logo_key: str = "") -> str:
+    raw = repr([tuple(map(str, i)) for i in items]) + "|" + title + "|" + footer + "|" + logo_key
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
-def _background(w: int, h: int) -> Image.Image:
+def _background(w: int, h: int, logo: bytes | None = None) -> Image.Image:
     img = Image.new("RGB", (w, h), BG_BOTTOM)
     d = ImageDraw.Draw(img)
     for y in range(h):
@@ -91,7 +91,18 @@ def _background(w: int, h: int) -> Image.Image:
     glow = Image.new("L", (w, h), 0)                         # soft light in the middle, darker edges
     ImageDraw.Draw(glow).ellipse((-w * 0.2, -h * 0.1, w * 1.2, h * 1.05), fill=60)
     glow = glow.filter(ImageFilter.GaussianBlur(min(w, h) // 5))
-    return Image.composite(Image.new("RGB", (w, h), (60, 70, 74)), img, glow)
+    img = Image.composite(Image.new("RGB", (w, h), (60, 70, 74)), img, glow)
+    if logo:                                                 # the server logo, big and faint, behind the slots
+        try:
+            mark = Image.open(io.BytesIO(logo)).convert("RGBA")
+        except Exception:
+            return img
+        side = int(min(w, h) * 0.78)
+        mark.thumbnail((side, side), Image.LANCZOS)
+        alpha = mark.getchannel("A").point(lambda a: int(a * 0.11))   # very faint
+        mark.putalpha(alpha)
+        img.paste(mark, ((w - mark.width) // 2, (h - mark.height) // 2), mark)
+    return img
 
 
 def _item_picture(data: bytes | None, size: int) -> Image.Image | None:
@@ -114,7 +125,9 @@ def _text(d: ImageDraw.ImageDraw, xy, value: str, size: int, *, anchor: str, fil
 def _name_label(d: ImageDraw.ImageDraw, label: str, box) -> None:
     """No picture for the item: its name, on up to two lines, as big as fits the tile."""
     width = (box[2] - box[0]) * 0.86
-    words, lines = label.split(), []
+    # a long dotted shortname (e.g. "wall.external.high.stone") has no spaces, so also break it on its dots
+    words = label.replace(".", ". ").split()
+    lines = []
     for size in (16, 14, 12, 11):
         font = _font(size)
         lines, line = [], ""
@@ -134,8 +147,10 @@ def _name_label(d: ImageDraw.ImageDraw, label: str, box) -> None:
         _text(d, (cx, cy + (n - (len(lines) - 1) / 2) * (size + 3)), text, size, anchor="mm", stroke=2)
 
 
-def render(items: list[tuple], pictures: dict[str, bytes | None], *, title: str = "", footer: str = "") -> bytes:
-    """The kit picture as PNG. pictures: shortname -> image bytes (None = no picture: the name is written)."""
+def render(items: list[tuple], pictures: dict[str, bytes | None], *, title: str = "", footer: str = "",
+           logo: bytes | None = None) -> bytes:
+    """The kit picture as PNG. pictures: shortname -> image bytes (None = no picture: the name is written).
+    logo: the server logo, drawn big and faint in the background."""
     slots = layout(items)
     cols = {"Wear": 7, "Main": 6, "Belt": 6}
     rows = {"Wear": 1, "Main": max(1, math.ceil(len(slots["Main"]) / 6)), "Belt": 1}
@@ -143,7 +158,7 @@ def render(items: list[tuple], pictures: dict[str, bytes | None], *, title: str 
     head_h = 46
     title_h = 64 if title else 6
     h = title_h + sum(head_h + rows[c] * (tile[c] + GAP) for c in SIZES) + (40 if footer else 14)
-    img = _background(W, int(h))
+    img = _background(W, int(h), logo)
     d = ImageDraw.Draw(img)
     if title:
         _text(d, (W / 2, 36), title.upper(), 34, anchor="mm", stroke=4)
@@ -178,18 +193,18 @@ def render(items: list[tuple], pictures: dict[str, bytes | None], *, title: str 
 
 
 async def kit_picture(items: list[tuple], images, cache_dir: Path, *, title: str = "", footer: str = "",
-                      wait: float = 8.0) -> bytes:
+                      logo: bytes | None = None, logo_key: str = "", wait: float = 8.0) -> bytes:
     """Renders (or takes from the cache) the picture of a kit. images: the web interface's ItemImages (it downloads
     missing item pictures – up to `wait` seconds for each new one)."""
     import asyncio
-    key = cache_key(items, title, footer)
+    key = cache_key(items, title, footer, logo_key)
     path = cache_dir / f"{key}.png"
     if path.exists():
         return path.read_bytes()
     shorts = list(dict.fromkeys(str(i[0]) for i in items))
     found = await asyncio.gather(*(images.get(s, wait=wait) for s in shorts), return_exceptions=True)
     pictures = {s: (f[0] if isinstance(f, tuple) else None) for s, f in zip(shorts, found)}
-    data = await asyncio.to_thread(render, items, pictures, title=title, footer=footer)
+    data = await asyncio.to_thread(render, items, pictures, title=title, footer=footer, logo=logo)
     if all(pictures.values()):                               # only cache complete pictures
         cache_dir.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)

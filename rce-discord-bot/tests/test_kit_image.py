@@ -110,3 +110,33 @@ def test_panel_downloads_and_store_picture(shop, monkeypatch):  # noqa: F811
             await c.close()
             await bot.rcon.close()
     asyncio.run(main())
+
+
+def test_every_catalogue_item_has_a_bundled_picture():
+    from web.item_images import BUNDLED_DIR
+    from rce import items as itemlist
+    missing = [s for s in itemlist.COMMON_ITEMS
+               if not (BUNDLED_DIR / (s.replace(" ", "_") + ".webp")).exists()]
+    assert missing == [], f"{len(missing)} items without a bundled picture: {missing[:10]}"
+    assert len(list(BUNDLED_DIR.glob("*.webp"))) >= len(itemlist.COMMON_ITEMS)
+
+
+def test_bundled_pictures_are_used_without_downloading(tmp_path, monkeypatch):
+    from web.item_images import ItemImages
+    images = ItemImages(tmp_path)                       # empty data dir
+    monkeypatch.setattr(images, "_download", lambda *a, **k: (_ for _ in ()).throw(AssertionError("downloaded!")))
+    got = asyncio.run(images.get("rifle.ak"))
+    assert got and got[0][:4] == b"RIFF" and got[1] == "image/webp"        # the bundled WebP, no download
+
+
+def test_logo_changes_the_picture_and_the_cache_key():
+    from rce import items as itemlist
+    logo = io.BytesIO()
+    Image.new("RGBA", (200, 200), (247, 90, 30, 255)).save(logo, "PNG")
+    logo = logo.getvalue()
+    items = [("rifle.ak", 1)]
+    pics = {"rifle.ak": _png()}
+    with_logo = kit_image.render(items, pics, title="K", logo=logo)
+    without = kit_image.render(items, pics, title="K")
+    assert with_logo != without and Image.open(io.BytesIO(with_logo)).format == "PNG"
+    assert kit_image.cache_key(items, "K", "", "v1") != kit_image.cache_key(items, "K", "", "v2")

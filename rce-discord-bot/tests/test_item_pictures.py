@@ -46,16 +46,16 @@ def test_refusing_source_is_not_no_picture(tmp_path, monkeypatch):
         monkeypatch.setattr(ii, "FALLBACK_URLS", (base + "gone/{shortname}.png",))
         images = ii.ItemImages(tmp_path, base + "refuse/{shortname}.png")
         try:
-            assert await images.get("wood") is None
+            assert await images.get("zzfake.item") is None
             host = f"{srv.host}:{srv.port}"
             assert images.sources[host]["errors"] >= 1 and images.sources[host]["last_error"] == "HTTP 403"
             # refused -> retried after a few minutes, not after a day
-            assert images.known_missing("wood")
-            assert images._missing["wood"] < ii.time.time() - ii.MISSING_RETRY + ii.SOURCE_TROUBLE_RETRY + 5
+            assert images.known_missing("zzfake.item")
+            assert images._missing["zzfake.item"] < ii.time.time() - ii.MISSING_RETRY + ii.SOURCE_TROUBLE_RETRY + 5
             images.url_template = base + "ok/{shortname}.png"
             images._missing.clear()
-            data, kind = await images.get("wood")
-            assert kind == "image/png" and images.cached("wood") == data
+            data, kind = await images.get("zzfake.item")
+            assert kind == "image/png" and images.cached("zzfake.item") == data
             assert await images.get("nopic") is None and images.known_missing("nopic")     # really no picture
         finally:
             await images.close()
@@ -68,11 +68,11 @@ def test_slow_download_continues_in_background(tmp_path):
         srv = await source(slow=0.5)
         images = ii.ItemImages(tmp_path, str(srv.make_url("/")) + "ok/{shortname}.png")
         try:
-            assert await images.get("stones", wait=0.05) is None                  # the page doesn't wait long …
-            assert "stones" in images._jobs
+            assert await images.get("zzfake.slow", wait=0.05) is None                  # the page doesn't wait long …
+            assert "zzfake.slow" in images._jobs
             await asyncio.sleep(0.8)
-            assert images.cached("stones") is not None                            # … the next request has it
-            assert (await images.get("stones", wait=0.05))[1] == "image/png"
+            assert images.cached("zzfake.slow") is not None                            # … the next request has it
+            assert (await images.get("zzfake.slow", wait=0.05))[1] == "image/png"
         finally:
             await images.close()
             await srv.close()
