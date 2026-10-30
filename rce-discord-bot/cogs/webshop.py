@@ -401,7 +401,8 @@ class WebShop(commands.Cog):
                 raw = await self.bot.rcon.command(f'kit info "{kitparse.clean_arg(row["kit"])}"', timeout=4)
             except RconError:
                 return
-            items = [{"short": i.short_name, "amount": i.amount} for i in kitparse.parse_kit_info(raw)]
+            items = [{"short": i.short_name, "amount": i.amount, "container": getattr(i, "container", "")}
+                     for i in kitparse.parse_kit_info(raw)]
             if items:
                 self.bot.db.update_store_kit(row["id"], items=json.dumps(items))
 
@@ -411,6 +412,16 @@ class WebShop(commands.Cog):
             try:
                 return [(i["short"], int(i["amount"])) for i in json.loads(row["items"] or "[]")]
             except (ValueError, KeyError, TypeError):
+                return []
+        return [(i["shortname"], i["amount"]) for i in self.bot.db.custom_kit_items(row["kit"])]
+
+    def kit_items_full(self, row) -> list[tuple]:
+        """(shortname, amount[, container]) – for the kit picture (in-game kits know their container)."""
+        if row["source"] == "ingame":
+            try:
+                return [(i["short"], int(i["amount"]), i.get("container") or "")
+                        for i in json.loads(row["items"] or "[]")]
+            except (ValueError, KeyError, TypeError, AttributeError):
                 return []
         return [(i["shortname"], i["amount"]) for i in self.bot.db.custom_kit_items(row["kit"])]
 

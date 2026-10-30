@@ -1217,6 +1217,38 @@ function kbParseCommands(text) {
   return out;
 }
 
+// Picture of a kit like the in-game inventory screen (support/kit_image.py): big preview + download
+async function showKitPicture(path, body, name) {
+  const opts = { credentials: "same-origin", headers: { "X-Requested-With": "rce-web" } };
+  if (body) Object.assign(opts, { method: "POST", body: JSON.stringify(body), headers: { ...opts.headers, "Content-Type": "application/json" } });
+  toast("Drawing the kit picture …");
+  let res;
+  try { res = await fetch(path, opts); } catch { toast("No connection to the bot", true); return; }
+  if (!res.ok) {
+    let msg = "Couldn't make the picture";
+    try { msg = (await res.json()).error || msg; } catch { /* not JSON */ }
+    toast(msg, true);
+    return;
+  }
+  const blob = await res.blob();
+  const url = await new Promise((done) => {          // a data: URL – the panel only allows pictures from itself or data:
+    const reader = new FileReader();
+    reader.onload = () => done(reader.result);
+    reader.onerror = () => done(null);
+    reader.readAsDataURL(blob);
+  });
+  if (!url) { toast("Couldn't show the picture", true); return; }
+  const file = `${String(name || "kit").replace(/[^\w .-]+/g, "").trim() || "kit"}.png`;
+  const close = () => overlay.remove();
+  const overlay = h("div", { class: "kp-overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+    h("div", { class: "kp-box" },
+      h("img", { src: url, alt: `${name} – kit contents` }),
+      h("div", { class: "row", style: "justify-content:center;margin-top:.6rem" },
+        h("a", { href: url, download: file }, h("button", { class: "primary", text: "⬇ Download picture" })),
+        h("button", { text: "Close", onclick: close }))));
+  document.body.append(overlay);
+}
+
 views.kitbuilder = async (main) => {
   let m, kitData;
   try { [m, kitData] = await Promise.all([loadMeta(), api("/api/kits")]); }
@@ -1486,6 +1518,10 @@ views.kitbuilder = async (main) => {
       if (!check()) return;
       const r = await act(() => api("/api/kit-builder/custom", { method: "POST", body: { ...payload(), replace: replace.checked } })).catch(() => null);
       if (r) toast(`Custom kit ${r.kit} ${r.created ? "created" : "saved"} (${r.added} items)`);
+    } }),
+    h("button", { text: "🖼 Kit picture", title: "A picture of the kit like the in-game inventory – to download or post", onclick: () => {
+      if (!filled().length) { toast("The kit is empty", true); return; }
+      showKitPicture("/api/kit-image", { name: kitName.value.trim() || "Kit", slots: filled() }, kitName.value.trim() || "Kit");
     } }),
     h("label", { class: "row muted", style: "gap:.3rem" }, replace, "replace existing custom kit items"),
     h("button", { class: "danger", style: "margin-left:auto", text: "Clear all", onclick: () => {
@@ -1823,7 +1859,9 @@ views.kits = async (main) => {
     h("div", { class: "card" }, h("h2", { text: "🎒 In-game kits (server)" }),
       data.ingame.length ? h("div", { class: "row" }, data.ingame.map((k) => h("button", { class: "small", text: k, onclick: async () => {
         const info = await act(() => api(`/api/kits/ingame/${encodeURIComponent(k)}`));
-        ingameInfo.replaceChildren(h("h2", { text: k }),
+        ingameInfo.replaceChildren(h("div", { class: "row" }, h("h2", { text: k }),
+          info.items.length ? h("button", { class: "small", text: "🖼 Picture",
+            onclick: () => showKitPicture(`/api/kits/ingame/${encodeURIComponent(k)}/image.png`, null, k) }) : null),
           info.items.length ? h("table", {}, h("tbody", {}, info.items.map((i) => h("tr", {},
             h("td", {}, h("span", { class: "item-cell" }, itemPic(i.short_name, "📦", "item-pic"), i.short_name)), h("td", { text: "× " + i.amount }), h("td", { class: "muted", text: i.container }),
             h("td", { class: "muted", text: i.item_id !== null ? "ID " + i.item_id : "" }))))) : h("pre", { class: "transcript", text: info.raw || "No items." }));
@@ -2184,6 +2222,8 @@ function customKitsCard(data, reload, opts) {
             kit.disabled ? `${kit.name} is claimable again` : `${kit.name} switched off`);
           reload();
         } }),
+        h("button", { class: "small", type: "button", text: "🖼 Picture", disabled: !kit.items.length,
+          onclick: () => showKitPicture(`/api/custom-kits/${encodeURIComponent(kit.name)}/image.png`, null, kit.name) }),
         h("button", { class: "small danger", type: "button", text: "Delete kit", onclick: async () => {
           if (!confirm(`Delete custom kit ${kit.name} along with its autokits?`)) return;
           await act(() => api(`/api/custom-kits/${encodeURIComponent(kit.name)}`, { method: "DELETE" }), "Deleted");
