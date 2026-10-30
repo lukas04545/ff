@@ -2495,8 +2495,23 @@ class WebInterface:
             self.item_images.url_template = template
             images = self.item_images
         footer = (self.bot.config.server_display_name or "") if self.bot is not None else ""
+        logo, logo_key = self._server_logo()
         cache = (self.bot.config.database_path.parent if self.bot else Path("data")) / "kit_images"
-        return await kit_image.kit_picture(items, images, cache, title=title, footer=footer)
+        return await kit_image.kit_picture(items, images, cache, title=title, footer=footer,
+                                           logo=logo, logo_key=logo_key)
+
+    def _server_logo(self) -> tuple[bytes | None, str]:
+        """The server logo for the kit picture's background: the website's logo (uploaded or bundled), else none.
+        Returns (bytes, a key that changes when the logo changes)."""
+        manager = getattr(self.bot, "plugins", None) if self.bot is not None else None
+        site = manager.running("website") if manager is not None else None
+        if site is None:
+            return None, ""
+        try:
+            data, _kind = site.picture("logo")
+            return data, site.picture_version()
+        except Exception:
+            return None, ""
 
     @staticmethod
     def _png(data: bytes, filename: str, *, download: bool = True, cache: str = "no-store") -> web.Response:

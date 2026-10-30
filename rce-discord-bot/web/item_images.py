@@ -21,6 +21,10 @@ from web.ratelimit import RateLimiter
 
 log = logging.getLogger("rce.items.images")
 
+# Pictures shipped with the bot (assets/item_images/<shortname>.webp): every catalogue item has one, so items show
+# up without any download. A downloaded or own picture in data/item_images/ always wins over the bundled one.
+BUNDLED_DIR = Path(__file__).resolve().parent.parent / "assets" / "item_images"
+
 try:                                    # optional: without Pillow the original pictures are sent
     from PIL import Image
 except ImportError:                     # pragma: no cover
@@ -99,11 +103,22 @@ class ItemImages:
     def _path(self, shortname: str) -> Path:
         return self.folder / (shortname.replace(" ", "_") + ".img")
 
+    @staticmethod
+    def _bundled_path(shortname: str) -> Path:
+        return BUNDLED_DIR / (shortname.replace(" ", "_") + ".webp")
+
+    def _source_path(self, shortname: str) -> Path:
+        """The file a picture comes from: the download/own one, else the bundled one (for the thumbnail's age)."""
+        own = self._path(shortname)
+        return own if own.exists() else self._bundled_path(shortname)
+
     def cached(self, shortname: str) -> bytes | None:
-        try:
-            return self._path(shortname).read_bytes()
-        except OSError:
-            return None
+        for path in (self._path(shortname), self._bundled_path(shortname)):   # own/downloaded wins over bundled
+            try:
+                return path.read_bytes()
+            except OSError:
+                continue
+        return None
 
     def known_missing(self, shortname: str) -> bool:
         """True if every source recently said there's no picture (not just a hiccup)."""
@@ -142,7 +157,7 @@ class ItemImages:
         "the original is already small" – then None."""
         if Image is None:
             return None
-        original = self._path(shortname)
+        original = self._source_path(shortname)
         path = self.folder / "thumbs" / f"{original.stem}.{size}.webp"
         try:
             if path.stat().st_mtime >= original.stat().st_mtime:
