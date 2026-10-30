@@ -21,6 +21,9 @@ PAYPAL_HOSTS = "https://www.paypal.com https://www.sandbox.paypal.com"
 STORE_CSS = """
 .store-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;margin-bottom:14px}
 .store-grid .card{margin:0;display:flex;flex-direction:column}.store-grid form{margin-top:auto}
+.kitpic{display:block;margin:10px 0 2px;border-radius:8px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.5);
+transition:transform .15s}.kitpic:hover{transform:scale(1.015)}.kitpic img{display:block;width:100%;height:auto}
+.kitdl{font-size:.82rem;color:var(--muted);margin:2px 0 6px;align-self:flex-end}
 .field{display:flex;flex-direction:column;gap:4px;margin:10px 0 0}.field span{font-size:.82rem;color:var(--muted)}
 .field input,.field select{padding:10px 12px;border:1px solid var(--line);background:rgba(0,0,0,.45);color:var(--text);
 font:inherit;outline:none}.field input:focus,.field select:focus{border-color:var(--orange)}
@@ -201,6 +204,18 @@ def chooser_page(site, shop, base: str, live: dict[str, dict]) -> str:
     return wrap(site, shop, base, "store", "Store", body)
 
 
+def _kit_picture(shop, row) -> str:
+    """The kit's picture (like the in-game inventory screen, support/kit_image.py) – tap to see it big, or download."""
+    from support.kit_image import cache_key
+    items = shop.kit_items_full(row)
+    if not items:
+        return ""
+    src = f'/img/kits/{row["id"]}.png?v={cache_key(items, row["name"], "")}'
+    return (f'<a class="kitpic" href="{src}" target="_blank" rel="noopener"><img src="{src}" alt="{esc(row["name"])} '
+            f'– kit contents" loading="lazy" decoding="async" width="900" height="1090"></a>'
+            f'<a class="kitdl" href="{src}&amp;dl=1" download>⬇ Download picture</a>')
+
+
 def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, admin: bool = False,
               shop_server: str = "") -> str:
     db = shop.bot.db
@@ -222,7 +237,7 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
         values = form if form and str(form.get("kit")) == str(row["id"]) else {}
         cards = groups.setdefault((row["category"] or "").strip(), [])
         cards.append(f'<div class="card"><h2>{esc(row["name"])}</h2><div class="price">{esc(shop.fmt(row["price"]))}'
-                     f'</div>{days}{desc}{site.item_tiles(items)}'
+                     f'</div>{days}{desc}{_kit_picture(shop, row) or site.item_tiles(items)}'
                      f'<form method="post" action="{base}/store/checkout"><input type="hidden" name="kind" value="kit">'
                      f'<input type="hidden" name="kit" value="{row["id"]}">{buyer_fields(values=values, admin=admin)}'
                      f'{pay_button(admin)}</form></div>')

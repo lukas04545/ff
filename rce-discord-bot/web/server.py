@@ -409,6 +409,7 @@ class WebInterface:
         r.add_post("/api/item-images/scan", self.item_images_scan)
         r.add_get("/api/item-images/scan", self.item_images_scan_state)
         r.add_get("/img/items/{name}", self.item_image)            # public: item pictures (cached by the bot)
+        r.add_get("/img/kits/{kit_id:\\d+}.png", self.store_kit_image)  # public: picture of a kit for sale
         r.add_get("/img/bot-avatar.png", self.bot_avatar)          # public: the Discord bot's picture (panel logo)
         r.add_get("/auth", self.auth_link)
         r.add_post("/api/login", self.login)
@@ -445,6 +446,9 @@ class WebInterface:
         r.add_post("/api/players/{action:kick|ban|unban}", self.player_action)
         r.add_get("/api/kits", self.kits)
         r.add_get("/api/kits/ingame/{name}", self.ingame_kit_info)
+        r.add_get("/api/kits/ingame/{name}/image.png", self.ingame_kit_image)
+        r.add_get("/api/custom-kits/{name}/image.png", self.custom_kit_image)
+        r.add_post("/api/kit-image", self.kit_builder_image)
         r.add_post("/api/kits/give", self.give_kit)
         r.add_post("/api/kit-builder/ingame", self.builder_ingame)
         r.add_post("/api/kit-builder/custom", self.builder_custom)
@@ -784,7 +788,7 @@ class WebInterface:
                                                   timeout=4)
             except RconError:
                 return web.json_response({"kits": None, "items": None})
-            return web.json_response({"items": [{"short": i.short_name, "amount": i.amount}
+            return web.json_response({"items": [{"short": i.short_name, "amount": i.amount, "container": i.container}
                                                 for i in kitparse.parse_kit_info(raw)]})
         from rce import kits as kitparse
         from utils import sanitize_player_name
@@ -2475,6 +2479,83 @@ class WebInterface:
                   for r in self.bot.db.linked_players()]
         return web.json_response({"ingame": ingame, "custom": custom, "rules": rules, "linked": linked,
                                   "history": [dict(r) for r in self.bot.db.kit_claim_history(limit=30)]})
+
+    # ------------------------------------------------------------ Kit pictures (like the in-game inventory screen)
+
+    async def kit_png(self, items: list[tuple], title: str) -> bytes:
+        """The picture of a kit (support/kit_image.py) – item pictures from the same cache as the kit builder."""
+        from support import kit_image
+
+        class _NoPictures:                                   # item pictures switched off: names are written
+            async def get(self, *_a, **_k):
+                return None
+        template = (self.bot.config.item_image_url if self.bot is not None else "") or ""
+        images = _NoPictures()
+        if template and template.lower() != "off":
+            self.item_images.url_template = template
+            images = self.item_images
+        footer = (self.bot.config.server_display_name or "") if self.bot is not None else ""
+        cache = (self.bot.config.database_path.parent if self.bot else Path("data")) / "kit_images"
+        return await kit_image.kit_picture(items, images, cache, title=title, footer=footer)
+
+    @staticmethod
+    def _png(data: bytes, filename: str, *, download: bool = True, cache: str = "no-store") -> web.Response:
+        name = re.sub(r"[^A-Za-z0-9._ -]+", "", filename).strip() or "kit"
+        headers = {"Cache-Control": cache}
+        if download:
+            headers["Content-Disposition"] = f'attachment; filename="{name}.png"'
+        return web.Response(body=data, content_type="image/png", headers=headers)
+
+    async def kit_builder_image(self, request: web.Request) -> web.Response:
+        """Kit builder: the picture of the kit being built (slots with their container) – as a download."""
+        from support.kit_image import SIZES
+        data = await self._json(request)
+        name = self._text(data, "name", required=False, limit=40) or "Kit"
+        items = []
+        for slot in (data.get("slots") or [])[:80]:
+            if not isinstance(slot, dict):
+                continue
+            short = itemlist.normalize_shortname(str(slot.get("item", "")))
+            container = str(slot.get("container", "")).title()
+            try:
+                amount = max(1, min(int(slot.get("amount", 1)), 1_000_000))
+            except (TypeError, ValueError):
+                amount = 1
+            if short and container in SIZES:
+                items.append((short, amount, container))
+        if not items:
+            raise ApiError("The kit is empty – put some items in it first.")
+        return self._png(await self.kit_png(items, name), name)
+
+    async def custom_kit_image(self, request: web.Request) -> web.Response:
+        kit = self.bot.db.custom_kit(request.match_info["name"])
+        if kit is None:
+            raise ApiError("Custom kit not found.", 404)
+        items = [(i["shortname"], i["amount"]) for i in self.bot.db.custom_kit_items(kit["name"])]
+        if not items:
+            raise ApiError("This kit is empty.")
+        return self._png(await self.kit_png(items, kit["name"]), kit["name"])
+
+    async def ingame_kit_image(self, request: web.Request) -> web.Response:
+        name = kitparse.clean_arg(request.match_info["name"])
+        raw = await self.bot.rcon.command(f'kit info "{name}"')
+        items = [(i.short_name, i.amount, i.container) for i in kitparse.parse_kit_info(raw)]
+        if not items:
+            raise ApiError("This kit has no items (or the server didn't say).")
+        return self._png(await self.kit_png(items, name), name)
+
+    async def store_kit_image(self, request: web.Request) -> web.Response:
+        """Public: the picture on a kit's card in the web store (only kits that are for sale)."""
+        self._public_limit(request, images=True)
+        shop = self.bot.get_cog("WebShop") if self.bot is not None else None
+        row = self.bot.db.store_kit(int(request.match_info["kit_id"])) if shop is not None else None
+        if row is None or not row["enabled"] or (row["source"] == "custom" and self.bot.db.custom_kit(row["kit"]) is None):
+            raise web.HTTPNotFound()
+        items = shop.kit_items_full(row)
+        if not items:
+            raise web.HTTPNotFound()
+        return self._png(await self.kit_png(items, row["name"]), row["name"], download="dl" in request.query,
+                         cache="public, max-age=600")
 
     async def ingame_kit_info(self, request: web.Request) -> web.Response:
         name = kitparse.clean_arg(request.match_info["name"])
