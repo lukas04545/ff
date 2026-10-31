@@ -257,15 +257,57 @@ def create_server(name: str, rcon_host: str, rcon_port: str, rcon_password: str,
     return describe(sid)
 
 
-def remove_server(sid: str) -> None:
-    """Takes a server off the list. Its folder is kept (renamed to servers/_removed-<id>-<time>) – nothing is lost."""
+def remove_server(sid: str, *, keep: bool = True) -> None:
+    """Takes a server off the list. keep=True: its folder is kept (renamed to servers/_removed-<id>-<time>) – nothing
+    is lost. keep=False: its folder (database, settings, kits, logs) is deleted for good. Never the main server."""
+    if sid == MAIN_ID:
+        raise ValueError("The main server can't be removed.")
     servers = load_registry()
     if not any(s["id"] == sid for s in servers):
         raise ValueError("No such server.")
     save_registry([s for s in servers if s["id"] != sid])
     folder = home(sid)
-    if folder.exists():
+    if not folder.exists():
+        return
+    if keep:
         shutil.move(str(folder), str(folder.with_name(f"_removed-{sid}-{int(time.time())}")))
+    else:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+_REMOVED = re.compile(r"^_removed-([a-z0-9-]+)-(\d+)$")
+
+
+def removed_folders() -> list[dict]:
+    """Backups of removed servers (servers/_removed-<id>-<time>): name, server id, when, size in MB."""
+    base = main_root() / SERVERS_DIR
+    out = []
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return out
+    for folder in entries:
+        m = _REMOVED.match(folder.name)
+        if not m or not folder.is_dir():
+            continue
+        size = 0
+        for f in folder.rglob("*"):
+            try:
+                size += f.stat().st_size if f.is_file() else 0
+            except OSError:
+                pass
+        out.append({"name": folder.name, "server": m[1], "removed_at": int(m[2]), "size_mb": round(size / 1e6, 1)})
+    return sorted(out, key=lambda r: r["removed_at"], reverse=True)
+
+
+def delete_removed_folder(name: str) -> None:
+    """Deletes a removed server's backup folder for good."""
+    if not _REMOVED.match(name or ""):
+        raise ValueError("Not a removed server's folder.")
+    folder = main_root() / SERVERS_DIR / name
+    if not folder.is_dir():
+        raise ValueError("That folder is gone already.")
+    shutil.rmtree(folder)
 
 
 def use_main_bot(sid: str) -> None:
@@ -469,10 +511,10 @@ class ServerManager:
         proc = self.process(sid)
         threading.Thread(target=lambda: (proc.stop(), proc.start()), daemon=True).start()
 
-    def remove(self, sid: str) -> None:
+    def remove(self, sid: str, *, keep: bool = True) -> None:
         if sid in self.procs:
             self.procs.pop(sid).stop()
-        remove_server(sid)
+        remove_server(sid, keep=keep)
 
     def info(self, sid: str) -> dict:
         return self.procs[sid].info() if sid in self.procs else {"state": "stopped", "pid": None,

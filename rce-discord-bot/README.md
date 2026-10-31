@@ -691,8 +691,11 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
   kits with the same name there.
 - **New servers start with:** the main server's admin user IDs, plus its admin roles when it's the same Discord. Set
   the channels and everything else in the new server's own panel (Settings).
-- **Updates:** installed by the main server only; the extra servers restart with it. Removing a server keeps its
-  folder (renamed to `servers/_removed-…`), so nothing is lost.
+- **Updates:** installed by the main server only; the extra servers restart with it.
+- **Removing / deleting a server** (owner, on the main server's panel → Servers; never the main server):
+  **Remove (keep backup)** stops it and keeps its folder as `servers/_removed-…`; **🗑️ Delete server** stops it and
+  deletes its folder for good (database, settings, kits, logs) – you confirm by typing the server's name (and your
+  password). Backups of removed servers are listed under *Removed servers* with **Delete for good**.
 
 ### 🎨 Panel themes (owner picks one per account)
 

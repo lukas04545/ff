@@ -416,6 +416,7 @@ class WebInterface:
         r.add_post("/api/servers/{sid}/{action:start|stop|restart}", self.servers_action)
         r.add_post("/api/servers/{sid}/use-main-bot", self.servers_use_main_bot)
         r.add_delete("/api/servers/{sid}", self.servers_remove)
+        r.add_delete("/api/servers/removed/{name}", self.servers_delete_removed)
         r.add_get("/api/servers/{sid}/log", self.servers_log)
         r.add_post("/api/kits/copy", self.kits_copy)
         r.add_get("/api/themes", self.themes_list)
@@ -2123,8 +2124,11 @@ class WebInterface:
             out.append(s)
         shown = request.cookies.get(SERVER_COOKIE) if not servers.is_child() else None
         current = shown if shown in {s["id"] for s in out} else servers.server_id()
-        return web.json_response({"current": current, "servers": out,
-                                  "manage": servers.manager is not None and not servers.is_child()})
+        manage = servers.manager is not None and not servers.is_child()
+        return web.json_response({
+            "current": current, "servers": out, "manage": manage, "owner": request.get("role") == "owner",
+            "child": servers.is_child(),
+            "removed": await asyncio.to_thread(servers.removed_folders) if manage else []})
 
     async def servers_create(self, request: web.Request) -> web.Response:
         manager = self._servers_owner(request)
@@ -2157,11 +2161,32 @@ class WebInterface:
         return web.json_response({"ok": True})
 
     async def servers_remove(self, request: web.Request) -> web.Response:
+        """Removes an extra server: ?delete=1 deletes its folder for good, else it's kept as a backup."""
         manager = self._servers_owner(request)
         sid = self._known_server(request.match_info["sid"])
+        if sid == servers.MAIN_ID:
+            raise ApiError("The main server can't be removed.")
         name = servers.server_name(sid)
-        await asyncio.to_thread(manager.remove, sid)
-        self._audit(f"Server removed: {name} (its folder was kept as servers/_removed-{sid}-…)")
+        delete = request.query.get("delete") == "1"
+        if delete and request.query.get("confirm", "").strip().lower() != name.strip().lower():
+            raise ApiError(f"Type the server's name ({name}) to delete it for good.")
+        try:
+            await asyncio.to_thread(manager.remove, sid, keep=not delete)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from exc
+        self._audit(f"Server deleted for good: {name}" if delete
+                    else f"Server removed: {name} (its folder was kept as servers/_removed-{sid}-…)")
+        return web.json_response({"ok": True, "deleted": delete})
+
+    async def servers_delete_removed(self, request: web.Request) -> web.Response:
+        """Deletes the backup folder of a server removed earlier."""
+        self._servers_owner(request)
+        name = request.match_info["name"]
+        try:
+            await asyncio.to_thread(servers.delete_removed_folder, name)
+        except (ValueError, OSError) as exc:
+            raise ApiError(str(exc)) from exc
+        self._audit(f"Removed server's backup deleted: {name}")
         return web.json_response({"ok": True})
 
     async def servers_log(self, request: web.Request) -> web.Response:

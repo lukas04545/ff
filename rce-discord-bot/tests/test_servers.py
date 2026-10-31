@@ -422,3 +422,46 @@ def test_an_old_panel_address_goes_back_to_the_one_panel(bot, monkeypatch):  # n
         assert r.status == 302 and r.headers["Location"].startswith("/panel-") and "panel-two" not in r.headers["Location"]
         assert "rce_server=main" in r.headers["Set-Cookie"]
     run(bot, scenario)
+
+
+def test_deleting_extra_servers(main_dir):
+    servers.create_server("Two", "1.2.3.4", "28016", "pw", TOKEN_2, "111")
+    servers.create_server("Other Discord", "5.6.7.8", "28016", "pw", TOKEN_3, "999")
+    with pytest.raises(ValueError, match="main server"):
+        servers.remove_server(servers.MAIN_ID, keep=False)
+    servers.remove_server("two", keep=False)                                       # for good
+    assert not (main_dir / "servers" / "two").exists() and servers.removed_folders() == []
+    servers.remove_server("other-discord")                                         # kept as a backup
+    [backup] = servers.removed_folders()
+    assert backup["server"] == "other-discord" and backup["size_mb"] >= 0
+    with pytest.raises(ValueError):
+        servers.delete_removed_folder("../data")                                   # only removed-server folders
+    servers.delete_removed_folder(backup["name"])
+    assert servers.removed_folders() == [] and (main_dir / "data").exists()
+    assert [s["id"] for s in servers.load_registry()] == []
+
+
+def test_panel_deletes_a_server_only_with_its_name(bot, monkeypatch):  # noqa: F811
+    tmp = bot.config.database_path.parent
+    monkeypatch.chdir(tmp)
+    (tmp / ".env").write_text("WEB_PORT=8080\nGUILD_ID=1\n", encoding="utf-8")
+    removed = []
+    monkeypatch.setattr(servers, "manager", SimpleNamespace(
+        start=lambda sid: None, info=lambda sid: {"state": "running"},
+        remove=lambda sid, keep=True: (removed.append((sid, keep)), servers.remove_server(sid, keep=keep))))
+
+    async def scenario(c):
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        await c.post("/api/servers", json={"name": "Two", "rcon_host": "1.2.3.4", "rcon_port": "28016",
+                                           "rcon_password": "pw", "discord_token": TOKEN_2}, headers=H)
+        d = await (await c.get("/api/servers")).json()
+        assert d["manage"] and d["owner"] and d["removed"] == []
+        r = await c.delete("/api/servers/two?delete=1&confirm=wrong", headers=H)
+        assert r.status == 400 and removed == []
+        assert (await c.delete("/api/servers/main?delete=1&confirm=Main server", headers=H)).status in (400, 404)
+        r = await c.delete("/api/servers/two?delete=1&confirm=two", headers=H)
+        assert r.status == 200 and (await r.json())["deleted"] and removed == [("two", False)]
+        assert not (tmp / "servers" / "two").exists()
+        d = await (await c.get("/api/servers")).json()
+        assert [s["id"] for s in d["servers"]] == ["main"]
+    run(bot, scenario)
