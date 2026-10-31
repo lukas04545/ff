@@ -78,7 +78,7 @@ def layout(items: list[tuple]) -> dict[str, list[tuple[str, int] | None]]:
 
 
 def cache_key(items: list[tuple], title: str, footer: str, logo_key: str = "") -> str:
-    raw = repr([tuple(map(str, i)) for i in items]) + "|" + title + "|" + footer + "|" + logo_key
+    raw = "v2|" + repr([tuple(map(str, i)) for i in items]) + "|" + title + "|" + footer + "|" + logo_key
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 

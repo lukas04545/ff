@@ -590,8 +590,19 @@ class WebInterface:
         return True
 
     async def _warm_item_images(self) -> None:
-        """After the start: fetch the pictures of every catalogue item the bot doesn't have yet, in the
-        background – so pages don't have to wait for them. Logs which sources refused."""
+        """At the start: delete old/broken downloaded pictures (the bundled ones replace them) and kit pictures made
+        from them; then fetch the pictures of catalogue items the bot doesn't have yet, in the background."""
+        try:
+            removed = await asyncio.to_thread(self.item_images.cleanup)
+            if removed["replaced"] or removed["broken"]:
+                log.info("Item pictures: deleted %d old downloads (bundled pictures are used) and %d broken ones",
+                         removed["replaced"], removed["broken"])
+            kit_cache = self.bot.config.database_path.parent / "kit_images"
+            if (removed["replaced"] or removed["broken"]) and kit_cache.is_dir():
+                for old in kit_cache.glob("*.png"):
+                    old.unlink(missing_ok=True)
+        except Exception:
+            log.exception("Cleaning up item pictures failed")
         await asyncio.sleep(30)
         template = self.bot.config.item_image_url or ""
         if not template or template.lower() == "off":
@@ -1308,10 +1319,8 @@ class WebInterface:
 
     async def item_image(self, request: web.Request) -> web.Response:
         self._public_limit(request, images=True)
-        template = self.bot.config.item_image_url if self.bot is not None else ""
-        if not template or template.lower() == "off":
-            raise web.HTTPNotFound()
-        self.item_images.url_template = template
+        template = (self.bot.config.item_image_url if self.bot is not None else "") or ""
+        self.item_images.url_template = template or "off"     # "off": bundled/own pictures only, no downloads
         name = request.match_info["name"]
         for ext in (".png", ".jpg", ".webp"):
             name = name.removesuffix(ext)
@@ -2486,14 +2495,9 @@ class WebInterface:
         """The picture of a kit (support/kit_image.py) – item pictures from the same cache as the kit builder."""
         from support import kit_image
 
-        class _NoPictures:                                   # item pictures switched off: names are written
-            async def get(self, *_a, **_k):
-                return None
         template = (self.bot.config.item_image_url if self.bot is not None else "") or ""
-        images = _NoPictures()
-        if template and template.lower() != "off":
-            self.item_images.url_template = template
-            images = self.item_images
+        self.item_images.url_template = template or "off"     # "off": bundled/own pictures only, no downloads
+        images = self.item_images
         footer = (self.bot.config.server_display_name or "") if self.bot is not None else ""
         logo, logo_key = self._server_logo()
         cache = (self.bot.config.database_path.parent if self.bot else Path("data")) / "kit_images"
@@ -3036,7 +3040,7 @@ class WebInterface:
                                      for s, label in entries.items()]}
                           for (cat, icon), entries in itemlist.CATALOGUE.items()],
             "kit_add_template": self.bot.config.kit_add_template,
-            "item_images": self.bot.config.item_image_url.lower() != "off",
+            "item_images": True,                     # bundled pictures always; "off" only stops downloads
         })
 
     # ------------------------------------------------------------ Tickets, stats, AI

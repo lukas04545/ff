@@ -140,3 +140,31 @@ def test_logo_changes_the_picture_and_the_cache_key():
     without = kit_image.render(items, pics, title="K")
     assert with_logo != without and Image.open(io.BytesIO(with_logo)).format == "PNG"
     assert kit_image.cache_key(items, "K", "", "v1") != kit_image.cache_key(items, "K", "", "v2")
+
+
+def test_old_and_broken_downloads_are_deleted_and_the_bundle_is_used(tmp_path):
+    from web.item_images import ItemImages
+    (tmp_path / "rifle.ak.img").write_bytes(_png((1, 2, 3)))                 # an old download of a bundled item
+    (tmp_path / "zzfake.broken.img").write_bytes(b"<html>Access denied</html>")
+    (tmp_path / "zzfake.cut.img").write_bytes(_png()[:40])                   # cut-off PNG: right magic, unreadable
+    (tmp_path / "zzfake.good.img").write_bytes(_png())
+    (tmp_path / "thumbs").mkdir()
+    (tmp_path / "thumbs" / "rifle.ak.96.webp").write_bytes(b"old")
+    images = ItemImages(tmp_path)
+    assert images.cached("rifle.ak")[:4] == b"RIFF"                          # bundle wins even before cleanup
+    assert images.cached("zzfake.broken") is None and not (tmp_path / "zzfake.broken.img").exists()
+    removed = images.cleanup()
+    assert removed == {"replaced": 1, "broken": 1, "thumbs": 1}
+    assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == ["zzfake.good.img"]
+    assert not list((tmp_path / "thumbs").iterdir())
+    custom = tmp_path / "custom"
+    custom.mkdir()
+    (custom / "rifle.ak.png").write_bytes(_png())                            # own picture wins over the bundle
+    assert images.cached("rifle.ak")[:4] == b"\x89PNG"
+
+
+def test_downloads_off_still_shows_bundled_pictures(tmp_path):
+    from web.item_images import ItemImages
+    images = ItemImages(tmp_path, "off")
+    assert asyncio.run(images.get("rifle.ak"))[1] == "image/webp"
+    assert asyncio.run(images.get("zzfake.item")) is None                    # no download attempted

@@ -470,7 +470,8 @@ FIELDS: list[Field] = [
     Field("ITEM_IMAGE_URL", "Item pictures from", "web", advanced=True,
           placeholder="https://rustlabs.com/img/items180/{shortname}.png",
           help="Where the kit builder and the player website get item pictures ({shortname} is replaced). The bot "
-               "downloads each picture once and keeps it in data/item_images/. off = no pictures."),
+               "downloads pictures the bot doesn't ship with once and keeps them in data/item_images/. off = no downloads "
+               "(the bundled pictures stay)."),
     Field("WEB_ENABLED", "Web interface enabled", "web", "bool",
           help="Careful: turning this off locks you out of the web interface (then only via .env)."),
     # Updates

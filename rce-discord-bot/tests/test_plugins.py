@@ -27,6 +27,14 @@ class Hello(Plugin):
 '''
 
 
+def _real_png(colour=(200, 40, 40, 255)) -> bytes:
+    import io as _io
+    from PIL import Image as _Image
+    out = _io.BytesIO()
+    _Image.new("RGBA", (8, 8), colour).save(out, "PNG")
+    return out.getvalue()
+
+
 @pytest.fixture
 def pb(tmp_path, monkeypatch):
     for k, v in dict(DISCORD_TOKEN="x", RCON_HOST="127.0.0.1", RCON_PORT="1", RCON_PASSWORD="pw", ADMIN_ROLE_IDS="1",
@@ -321,7 +329,7 @@ def test_ai_plugin_generate_endpoint(pb, monkeypatch):
 
 def test_item_pictures_are_cached(pb, monkeypatch):
     from web import item_images
-    png = b"\x89PNG\r\n\x1a\n" + b"x" * 50
+    png = _real_png()
     calls = []
 
     async def fake_download(self, shortname):
@@ -376,7 +384,7 @@ def test_backup_contains_plugins(tmp_path):
 
 def test_website_logo_upload_and_default(pb):
     import base64
-    png = b"\x89PNG\r\n\x1a\n" + b"y" * 40
+    png = _real_png((1, 2, 3, 255))
 
     async def main():
         from web.server import WebInterface

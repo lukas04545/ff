@@ -22,8 +22,11 @@ from web.ratelimit import RateLimiter
 log = logging.getLogger("rce.items.images")
 
 # Pictures shipped with the bot (assets/item_images/<shortname>.webp): every catalogue item has one, so items show
-# up without any download. A downloaded or own picture in data/item_images/ always wins over the bundled one.
+# up without any download – they always win over downloaded ones (old/broken downloads are deleted at start).
+# Your own picture for an item: data/item_images/custom/<shortname>.png (or .webp/.jpg) – that wins over everything.
 BUNDLED_DIR = Path(__file__).resolve().parent.parent / "assets" / "item_images"
+CUSTOM_DIR = "custom"
+CUSTOM_EXTS = (".png", ".webp", ".jpg", ".jpeg", ".img")
 
 try:                                    # optional: without Pillow the original pictures are sent
     from PIL import Image
@@ -32,7 +35,7 @@ except ImportError:                     # pragma: no cover
 
 DEFAULT_URL = "https://rustlabs.com/img/items180/{shortname}.png"
 # Tried after the configured source when it has no picture for an item (best effort – a source that is down or
-# doesn't know the item is simply skipped). Your own pictures always win: put <shortname>.img in data/item_images/.
+# doesn't know the item is simply skipped). Only items without a bundled picture are downloaded.
 FALLBACK_URLS = (
     "https://cdn.rusthelp.com/images/public/{shortname}.png",
     "https://files.facepunch.com/rust/item/{shortname}_512.png",
@@ -64,6 +67,22 @@ def image_type(data: bytes) -> str | None:
         if data.startswith(magic) and (kind != "image/webp" or data[8:12] == b"WEBP"):
             return kind
     return None
+
+
+def valid_picture(data: bytes) -> bool:
+    """A real, complete picture (not an error page or a cut-off download)."""
+    if not data or image_type(data) is None:
+        return False
+    if Image is None:
+        return True
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            if im.width * im.height > MAX_PIXELS:
+                return False
+            im.load()
+    except Exception:
+        return False
+    return True
 
 
 def shrink(data: bytes, size: int) -> bytes | None:
@@ -107,18 +126,67 @@ class ItemImages:
     def _bundled_path(shortname: str) -> Path:
         return BUNDLED_DIR / (shortname.replace(" ", "_") + ".webp")
 
+    def _custom_paths(self, shortname: str) -> list[Path]:
+        stem = shortname.replace(" ", "_")
+        return [self.folder / CUSTOM_DIR / f"{stem}{ext}" for ext in CUSTOM_EXTS]
+
     def _source_path(self, shortname: str) -> Path:
-        """The file a picture comes from: the download/own one, else the bundled one (for the thumbnail's age)."""
-        own = self._path(shortname)
-        return own if own.exists() else self._bundled_path(shortname)
+        """The file a picture comes from (own, bundled, else downloaded) – for the thumbnail's age."""
+        for path in (*self._custom_paths(shortname), self._bundled_path(shortname)):
+            if path.exists():
+                return path
+        return self._path(shortname)
 
     def cached(self, shortname: str) -> bytes | None:
-        for path in (self._path(shortname), self._bundled_path(shortname)):   # own/downloaded wins over bundled
+        """Own picture (data/item_images/custom/) > the bundled one > a download. A download that isn't a real
+        picture (an error page, a cut-off file …) is deleted, so it can never hide the right picture."""
+        for path in (*self._custom_paths(shortname), self._bundled_path(shortname)):
             try:
-                return path.read_bytes()
+                data = path.read_bytes()
             except OSError:
                 continue
+            if image_type(data):
+                return data
+        path = self._path(shortname)
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return None
+        if valid_picture(data):
+            return data
+        path.unlink(missing_ok=True)
         return None
+
+    def cleanup(self) -> dict[str, int]:
+        """Runs at start: deletes downloaded pictures the bundle replaces and broken ones, and the small copies
+        (thumbs/) so they are made again from the right pictures. Returns what was removed."""
+        removed = {"replaced": 0, "broken": 0, "thumbs": 0}
+        try:
+            files = list(self.folder.glob("*.img")) + list(self.folder.glob("*.part"))
+        except OSError:
+            return removed
+        for path in files:
+            try:
+                if path.suffix == ".part":
+                    path.unlink()
+                    removed["broken"] += 1
+                elif (BUNDLED_DIR / (path.stem + ".webp")).exists():
+                    path.unlink()
+                    removed["replaced"] += 1
+                elif not valid_picture(path.read_bytes()):
+                    path.unlink()
+                    removed["broken"] += 1
+            except OSError as exc:
+                log.debug("Could not check %s: %s", path, exc)
+        thumbs = self.folder / "thumbs"
+        if thumbs.is_dir():
+            for path in thumbs.iterdir():
+                try:
+                    path.unlink()
+                    removed["thumbs"] += 1
+                except OSError:
+                    pass
+        return removed
 
     def known_missing(self, shortname: str) -> bool:
         """True if every source recently said there's no picture (not just a hiccup)."""
@@ -134,8 +202,8 @@ class ItemImages:
             return None
         data = self.cached(shortname)
         if data is None:
-            if self.known_missing(shortname):
-                return None
+            if self.known_missing(shortname) or self.url_template.lower() == "off":
+                return None                 # "off": only bundled/own pictures, no downloads
             job = self._jobs.get(shortname)
             if job is None:
                 job = self._jobs[shortname] = asyncio.create_task(self._download_once(shortname))
@@ -223,7 +291,7 @@ class ItemImages:
                         network_error = True
                         data = b""
                         break               # this source refused or is down – try the next one
-                    if data and len(data) <= MAX_BYTES and image_type(data) is not None:
+                    if data and len(data) <= MAX_BYTES and valid_picture(data):
                         break
                     data = b""
                 if data:
@@ -231,7 +299,7 @@ class ItemImages:
         if not data and network_error:
             self._missing[shortname] = time.time() - MISSING_RETRY + SOURCE_TROUBLE_RETRY   # retry soon
             return None
-        if not data or len(data) > MAX_BYTES or image_type(data) is None:
+        if not data or len(data) > MAX_BYTES or not valid_picture(data):
             self._missing[shortname] = time.time()
             return None
         try:

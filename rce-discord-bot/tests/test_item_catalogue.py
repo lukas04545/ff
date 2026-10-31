@@ -51,7 +51,15 @@ def test_name_variants():
     assert len(item_images.name_variants("a b_c.d")) <= 4
 
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"x" * 40
+
+def _real_png(colour=(200, 40, 40, 255)) -> bytes:
+    import io as _io
+    from PIL import Image as _Image
+    out = _io.BytesIO()
+    _Image.new("RGBA", (8, 8), colour).save(out, "PNG")
+    return out.getvalue()
+
+PNG = _real_png()
 
 
 def test_pictures_use_fallback_sources_and_variants(tmp_path, monkeypatch):
