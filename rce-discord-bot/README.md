@@ -508,12 +508,15 @@ specks in the background drift slowly (off by default – the page is drawn once
 **Item pictures:** the kit builder, the kit lists and the player website show pictures of the items. The bot
 downloads each picture once from `ITEM_IMAGE_URL` (default: RustLabs, `{shortname}` is replaced) and keeps it in
 `data/item_images/` – browsers only ever load them from the bot. **Every catalogue item ships with a picture**
-(bundled in `assets/item_images/`, ~160 px WebP), so items show up right away without any download or internet; a
-downloaded picture or your own file in `data/item_images/<shortname>.img` always wins. Items without any picture
+(bundled in `assets/item_images/`, ~160 px WebP), so items show up right away without any download or internet. The
+bundled picture always wins over a downloaded one: at start the bot **deletes old downloaded pictures** the bundle
+replaces and broken ones (error pages, cut-off files), plus the small copies and kit pictures made from them, so they
+are made again from the right pictures. Your own picture goes into `data/item_images/custom/<shortname>.png` (or
+`.webp`/`.jpg`) and wins over everything. Items without any picture
 show their category emoji. `ITEM_IMAGE_URL=off` switches downloads off (the bundled pictures stay). If the configured source has no picture, the bot tries other sources and
 alternative spellings of the shortname (spaces, dots, underscores). **Store → 🖼️ Item pictures → Search item
 pictures** fetches every item of the kit builder now and lists the ones that still have none; for those, put your
-own PNG/JPG/WebP into `data/item_images/<shortname>.img` and it is used right away.
+own PNG/JPG/WebP into `data/item_images/custom/<shortname>.png` and it is used right away.
 The bot also fetches every missing picture by itself in the background ~30 s after it starts (the bot log says
 how many it found and which source refused). Pages never wait more than a few seconds for a picture: the grey
 placeholder is shown meanwhile and is never cached, so the real picture appears on the next page load. A source that

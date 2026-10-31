@@ -30,17 +30,17 @@ def test_shrink_makes_a_small_webp():
 
 def test_thumbnails_are_kept_and_remade_when_the_picture_changes(tmp_path):
     images = ItemImages(tmp_path)
-    (tmp_path / "rifle.ak.img").write_bytes(png(180))
+    (tmp_path / "zzfake.item.img").write_bytes(png(180))
 
     async def main():
-        data, kind = await images.get("rifle.ak", 96)
-        assert kind == "image/webp" and (tmp_path / "thumbs" / "rifle.ak.96.webp").read_bytes() == data
-        assert (await images.get("rifle.ak"))[1] == "image/png"            # without a size: the original
-        assert (await images.get("rifle.ak", 777))[1] == "image/png"       # only the allowed sizes
-        (tmp_path / "rifle.ak.img").write_bytes(png(180, (10, 10, 240, 255)))
-        thumb = tmp_path / "thumbs" / "rifle.ak.96.webp"
+        data, kind = await images.get("zzfake.item", 96)
+        assert kind == "image/webp" and (tmp_path / "thumbs" / "zzfake.item.96.webp").read_bytes() == data
+        assert (await images.get("zzfake.item"))[1] == "image/png"            # without a size: the original
+        assert (await images.get("zzfake.item", 777))[1] == "image/png"       # only the allowed sizes
+        (tmp_path / "zzfake.item.img").write_bytes(png(180, (10, 10, 240, 255)))
+        thumb = tmp_path / "thumbs" / "zzfake.item.96.webp"
         os.utime(thumb, (1, 1))                                            # own picture put in later: newer
-        new, _ = await images.get("rifle.ak", 96)
+        new, _ = await images.get("zzfake.item", 96)
         assert new != data
     asyncio.run(main())
 

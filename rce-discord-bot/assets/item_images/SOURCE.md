@@ -7,4 +7,5 @@ Source: the community icon set at https://github.com/LehaSex/rust-game-icons (PN
 resized here to WebP). The icons are Facepunch Studios' intellectual property and are bundled only for convenience;
 they are not affiliated with or endorsed by Facepunch.
 
-A downloaded picture or your own file in `data/item_images/<shortname>.img` always wins over the bundled one.
+These win over downloaded pictures (old downloads are deleted at start). Your own file in
+`data/item_images/custom/<shortname>.png` wins over the bundled one.

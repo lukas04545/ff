@@ -3738,12 +3738,12 @@ function itemPicturesCard() {
             h("td", { text: host }), h("td", { text: s.ok }), h("td", { text: s.not_found }),
             h("td", {}, s.errors ? h("span", { class: "pill " + (s.ok ? "warn" : "bad"), text: s.errors }) : "0"),
             h("td", { class: "muted", text: s.last_error || "–" })))))));
-        if (sources.some(([, s]) => s.errors && !s.ok)) kids.push(h("p", { class: "muted", text: "A source that refuses everything (HTTP 403/429) blocks your server's connection – pick another one under Settings → Web → Item pictures from, or put your own pictures into data/item_images/<shortname>.img." }));
+        if (sources.some(([, s]) => s.errors && !s.ok)) kids.push(h("p", { class: "muted", text: "A source that refuses everything (HTTP 403/429) blocks your server's connection – pick another one under Settings → Web → Item pictures from, or put your own pictures into data/item_images/custom/<shortname>.png." }));
       }
       if (st.missing.length) {
         kids.push(h("details", {}, h("summary", { class: "muted", text: "Items without a picture" }),
           h("p", { class: "muted", text: st.missing.join(", ") }),
-          h("p", { class: "muted", text: "Put your own picture into data/item_images/<shortname>.img (PNG/JPG/WebP) and it is used right away." })));
+          h("p", { class: "muted", text: "Put your own picture into data/item_images/custom/<shortname>.png (or .webp/.jpg) and it is used right away." })));
       }
     }
     out.replaceChildren(...kids);
