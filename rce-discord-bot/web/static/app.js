@@ -1874,7 +1874,8 @@ views.kits = async (main) => {
   // --- Kit roles: compare roles and kit access, auto-give
   box.append(kitRolesCard());
 
-  // --- Autokits
+  // --- Emote binds (quick chat emote -> kit), then all autokits
+  box.append(emoteBindsCard(data, reload));
   box.append(autokitCard(data, m, reload, opts));
 
   // --- History
@@ -2239,6 +2240,65 @@ function customKitsCard(data, reload, opts) {
   }
   applyFilter();
   return card;
+}
+
+// Emote board: every in-game quick chat emote with a kit picker – pick a kit and it's bound (one emote = one kit)
+function emoteBindsCard(data, reload) {
+  const holder = h("div", { class: "card" }, h("h2", { text: "🎭 Emote kits" }), h("p", { class: "muted", text: "Loading …" }));
+  api("/api/emote-binds").then((res) => {
+    const kitOptions = (value) => {
+      const sel = h("select", {}, h("option", { value: "", text: "— no kit —" }),
+        ...data.ingame.map((k) => h("option", { value: "ingame:" + k, text: "🎒 " + k })),
+        ...data.custom.map((k) => h("option", { value: "custom:" + k.name, text: "🔒 " + k.name })));
+      if (value && ![...sel.options].some((o) => o.value === value)) sel.append(h("option", { value, text: value.split(":").slice(1).join(":") + " (not found)" }));
+      sel.value = value || "";
+      return sel;
+    };
+    const search = h("input", { type: "search", placeholder: "Search emotes or kits …", style: "max-width:260px" });
+    const onlyBound = h("input", { type: "checkbox" });
+    const groups = {};
+    for (const e of res.emotes) (groups[e.category] ||= []).push(e);
+    const rows = [];
+    const body = h("div", { class: "eb-grid" }, Object.entries(groups).map(([cat, list]) => h("div", { class: "eb-cat" },
+      h("h3", { text: cat }),
+      list.map((e) => {
+        const b = e.bind;
+        const sel = kitOptions(b ? `${b.kit_type}:${b.kit}` : "");
+        const cd = h("input", { type: "number", min: 0, value: b ? b.cooldown_minutes : 0, title: "Cooldown in minutes (0 = none)", class: "eb-cd" });
+        const save = async () => {
+          const v = sel.value;
+          const kitType = v.split(":")[0], kit = v.slice(v.indexOf(":") + 1);
+          await act(() => api("/api/emote-binds", { method: "PUT", body: v
+            ? { emote: e.raw, kit, kit_type: kitType, cooldown: Number(cd.value) || 0 }
+            : { emote: e.raw, kit: "" } }), v ? `${e.text} → ${kit}` : `${e.text}: unbound`);
+          row.classList.toggle("bound", !!v);
+          row.dataset.kit = kit.toLowerCase();
+        };
+        sel.addEventListener("change", save);
+        cd.addEventListener("change", () => { if (sel.value) save(); });
+        const row = h("div", { class: "eb-row" + (b ? " bound" : "") }, h("span", { class: "eb-text", text: "💬 " + e.text }), sel,
+          h("label", { class: "muted eb-cdl", title: "Cooldown (minutes)" }, "⏱️", cd));
+        row.dataset.text = (cat + " " + e.text).toLowerCase();
+        row.dataset.kit = b ? b.kit.toLowerCase() : "";
+        rows.push(row);
+        return row;
+      }))));
+    const filter = () => {
+      const q = search.value.trim().toLowerCase();
+      for (const r of rows) {
+        const hit = !q || r.dataset.text.includes(q) || r.dataset.kit.includes(q);
+        r.classList.toggle("hidden", !hit || (onlyBound.checked && !r.classList.contains("bound")));
+      }
+      for (const c of body.children) c.classList.toggle("hidden", ![...c.querySelectorAll(".eb-row")].some((r) => !r.classList.contains("hidden")));
+    };
+    search.addEventListener("input", filter);
+    onlyBound.addEventListener("change", filter);
+    holder.replaceChildren(h("h2", { text: "🎭 Emote kits" }),
+      h("p", { class: "muted", text: `Pick a kit next to an emote – players get it when they use that emote (quick chat) in game. One emote gives one kit; picking another replaces it. ${res.binds} bound. Discord: /kit bind, /kit binds. More options (max per player, required role) in the autokit list below.` }),
+      h("div", { class: "row" }, search, h("label", { class: "muted" }, onlyBound, " only bound emotes")),
+      body);
+  }).catch((err) => holder.replaceChildren(h("h2", { text: "🎭 Emote kits" }), h("p", { class: "muted", text: "Could not load: " + err.message })));
+  return holder;
 }
 
 function autokitCard(data, m, reload, opts) {
