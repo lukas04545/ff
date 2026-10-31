@@ -196,6 +196,7 @@ rce-discord-bot/
 │   ├── webshop.py         # Web store: PayPal checkout, gift cards, delivery of bought kits
 │   ├── aichat.py          # AI chats with members in chosen channels + acts as prison guard
 │   ├── teleports.py       # Location emotes (North … Northwest) teleport to set/captured coordinates
+│   ├── binds_panel.py     # Live emote binds panel: one message, edited when binds change
 │   ├── manager_ai.py      # Management AI: staff channel, creates kits, binds emotes, autokits, custom kits (tools)
 │   ├── prison.py          # /prison jail/free/list: lock a member to the prison channel (timed too)
 │   ├── player_accounts.py # Player website login (one-time code) + team slots on custom kits
@@ -776,6 +777,7 @@ their own. Admins can't change it themselves. The new theme shows the next time 
 | `/kit list`, `/kit info <kit>`, `/kit autokits` | everyone | Show kits and autokits |
 | `/kit give`, `/kit group`, `/kit all` | Admins | Give a kit to a player, an auth group or everyone |
 | `/kit add-item`, `/kit remove-item` | Admins | Edit kits |
+| `/kit binds-panel` | Admins | Posts a live list of all emote binds (and teleports) that updates by itself when binds change |
 | `/kit bind`, `/kit unbind`, `/kit binds` | Admins (`binds`: everyone) | Bind a kit to an emote in one step – players get it when they use that emote (quick chat) in game |
 | `/teleport here`, `/teleport set`, `/teleport clear`, `/teleport toggle`, `/teleport list` | Admins | Location emotes (North … Northwest) as teleports: capture where you stand in game, or type coordinates |
 | `/kit autokit-add`, `/kit autokit-role`, `/kit autokit-toggle`, `/kit autokit-delete`, `/kit wipe-reset`, `/kit history` | Admins | Manage autokits (also with custom kits, optionally only for a Discord role) |
@@ -1103,6 +1105,12 @@ after the admin who asked clicks **✅ Do it** (2 minutes, then it's cancelled).
 kill/delete things (`quit`, `restart`, `deleteentity`, `killplayer` …) are always blocked for the AI. Every action
 goes to the admin log, and each answer ends with a short list of what was done. `MANAGER_AI_INSTRUCTIONS` holds
 your own defaults ("kits always get a 60 minute cooldown"). It remembers the last few messages of the channel.
+**Live binds panel:** "post a live panel of all emote binds in #kits" (or `/kit binds-panel channel:#kits`) posts
+one message listing every emote bind – kit, cooldown, limit, role – and the Location teleports; the bot edits it
+within ~15 seconds whenever anything changes (Discord, panel or AI). Delete the message to stop it.
+**Mentions:** it may ping specific people when asked ("tell Ryvex the binds are done") – `find_member` looks them up
+by name, nickname or linked in-game name; at most 5 per answer, never @everyone, @here or roles. Long answers are
+sent as several messages instead of being cut off.
 Big jobs ("bind every in-game kit to an emote, leave out Location and OK") are done in one bulk call; if an answer
 gets cut off it retries once in smaller steps. When a request fails, it's still remembered – just say **again**.
 Needs the DeepSeek API key and the Message Content intent; messages in that channel are sent to DeepSeek.
