@@ -186,3 +186,57 @@ def test_custom_kits_and_autokit_tools(mgr):
         == ["rifle.ak"]
     assert asyncio.run(t("delete_autokit", {"rule_id": rule_id}, msg))["ok"]
     assert asyncio.run(t("no_such_tool", {}, msg))["ok"] is False
+
+
+def test_ai_sets_location_teleports(mgr):
+    from cogs.teleports import Teleports
+    asyncio.run(mgr.bot.add_cog(Teleports(mgr.bot)))
+    msg = mgr.message("x")
+    t = mgr.cog.run_tool
+    r = asyncio.run(t("set_teleport", {"location": "north", "x": 10, "y": 20, "z": 30, "name": "Outpost"}, msg))
+    assert r["ok"] and r["teleport"]["name"] == "Outpost" and mgr.bot.db.teleport(
+        "d11_quick_chat_location_slot_0")["x"] == 10
+    r = asyncio.run(t("set_teleport", {"location": "north", "cooldown_minutes": 15}, msg))     # keeps x/y/z
+    assert r["teleport"]["x"] == 10 and r["teleport"]["cooldown_minutes"] == 15
+    r = asyncio.run(t("set_teleport", {"location": "south", "capture_from_player": "Nobody"}, msg))
+    assert r["ok"] is False and "not online" in r["error"]
+    assert asyncio.run(t("bind_kit_to_emote", {"emote": "North", "kit": "Raid"}, msg))["ok"] is False
+    assert len(asyncio.run(t("list_teleports", {}, msg))["teleports"]) == 8
+    assert asyncio.run(t("clear_teleport", {"location": "N"}, msg))["ok"]
+
+
+def test_cut_off_answer_is_retried_and_bulk_binds(mgr):
+    from support.deepseek import DeepSeekError
+    calls = []
+
+    async def ai_chat(messages, **kw):
+        calls.append(kw.get("max_tokens"))
+        if len(calls) == 1:
+            raise DeepSeekError("Empty response (finish_reason=length).")         # like the real DeepSeek error
+        if len(calls) == 2:
+            assert "smaller steps" in messages[-1]["content"]
+            return {"content": "", "finish_reason": "tool_calls", "tool_calls": [_call(
+                "bind_kits_to_emotes", binds=[{"emote": "thanks", "kit": "Starter"}, {"emote": "hello", "kit": "Raid"},
+                                              {"emote": "north", "kit": "Raid"}])]}
+        return {"content": "Bound 2 kits.", "tool_calls": []}
+    mgr.bot.get_cog("Tickets").ai = NS(enabled=True, chat=ai_chat)
+    asyncio.run(mgr.cog.on_message(mgr.message("bind every in-game kit")))
+    assert calls[:2] == [4000, 8000]
+    assert sorted(r["kit"] for r in mgr.bot.db.kit_rules()) == ["Raid", "Starter"]          # North: a teleport
+    text, _ = mgr.replies[-1]
+    assert "Bound 2 kits." in text and "🎭 2 emote bind(s)" in text
+
+
+def test_failed_request_is_remembered_for_again(mgr):
+    from support.deepseek import DeepSeekError
+
+    async def broken(messages, **kw):
+        raise DeepSeekError("HTTP 503: DeepSeek is overloaded.")
+    mgr.bot.get_cog("Tickets").ai = NS(enabled=True, chat=broken)
+    asyncio.run(mgr.cog.on_message(mgr.message("bind all kits")))
+    assert "Say **again** to retry" in mgr.replies[-1][0]
+    mgr.bot.get_cog("Tickets").ai = NS(enabled=True, chat=lambda messages, **kw: _done(
+        {"content": "Retrying.", "tool_calls": []} if any("bind all kits" in m["content"] for m in messages
+                                                          if m["role"] == "user") else {"content": "?", "tool_calls": []}))
+    asyncio.run(mgr.cog.on_message(mgr.message("again")))
+    assert mgr.replies[-1][0].startswith("Retrying.")

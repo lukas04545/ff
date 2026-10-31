@@ -28,6 +28,7 @@ from rce import kits as kitparse
 from rce import log_parser as lp
 from rce import quickchat
 from support import emote_binds
+from support import teleports as tp
 from permcheck import main_guild
 from rce.rcon_client import RconError
 from utils import (admin_only, format_duration, player_choices, safe_md, sanitize_ingame_text,
@@ -178,8 +179,8 @@ class Kits(commands.Cog):
 
     async def _phrase_ac(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         current_l = current.lower()
-        hits = [(raw, text) for raw, text in self.phrases.items()
-                if current_l in text.lower() or current_l in raw.lower()]
+        hits = [(raw, text) for raw, text in self.phrases.items() if not tp.is_location(raw)
+                and (current_l in text.lower() or current_l in raw.lower())]
         return [app_commands.Choice(name=text[:100], value=raw[:100]) for raw, text in hits[:25]]
 
     async def _rule_ac(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
@@ -384,6 +385,11 @@ class Kits(commands.Cog):
                     "Please pick a `phrase` for the quick chat trigger.", ephemeral=True)
                 return
             phrase = phrase.strip()
+            if tp.is_location(phrase) or tp.find(phrase):
+                await interaction.response.send_message(
+                    "📍 Location emotes are teleports only – set them with `/teleport set` or `/teleport here`.",
+                    ephemeral=True)
+                return
             if phrase not in self.phrases:
                 notes.append("⚠️ Unknown phrase – it must appear exactly like this in the console log.")
             clash = [r for r in self.bot.db.kit_rules(trigger="quickchat") if r["phrase"] == phrase]
@@ -609,6 +615,8 @@ class Kits(commands.Cog):
     async def on_rce_chat(self, ev: lp.ChatEvent) -> None:
         if ev.channel == "SERVER":
             return
+        if tp.is_location(ev.raw):
+            return                       # Location emotes are teleports (cogs/teleports.py), never kits
         for rule in self.bot.db.kit_rules(enabled_only=True, trigger="quickchat"):
             if rule["phrase"] == ev.raw:
                 await self._try_claim(rule, ev.player, "quickchat")

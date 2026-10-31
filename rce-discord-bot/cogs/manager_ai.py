@@ -38,7 +38,11 @@ if TYPE_CHECKING:
 log = logging.getLogger("rce.manager_ai")
 
 HISTORY = 12                 # recent messages (admins + AI) per channel the AI sees
-MAX_ROUNDS = 10              # tool rounds per request
+MAX_ROUNDS = 12              # tool rounds per request
+MAX_TOKENS = 4000            # per AI answer (many tool calls at once need room)
+RETRY_TOKENS = 8000          # once more with this when an answer was cut off (finish_reason=length)
+SMALLER_STEPS = ("Your last answer was cut off because it was too long. Work in smaller steps: at most 8 tool "
+                 "calls per answer, and use bind_kits_to_emotes for many emote binds in ONE call.")
 MAX_REPLY = 1900
 CONFIRM_SECONDS = 120
 MAX_ITEMS_PER_CALL = 40
@@ -57,6 +61,12 @@ How to work:
   largemedkit). Containers: Wear (clothing/armour), Belt (weapons, tools, meds, ammo the player uses), Main (rest).
 - "Emote" means a quick chat phrase/emote in game. Binding a kit to an emote: bind_kit_to_emote (it replaces what
   that emote gave before). One emote gives one kit.
+- The Location emotes (North, Northeast … Northwest) are teleports only, never kits: set_teleport gives one
+  coordinates (typed, or capture_from_player = where an online admin stands right now), players who use that emote
+  in game are teleported there.
+- Many binds at once ("bind every kit to an emote"): look up list_ingame_kits and list_emotes, then make ONE
+  bind_kits_to_emotes call with all pairs – never dozens of single calls. Skip emotes the admin says to leave out
+  and emotes that already give a kit unless told to replace them.
 - If something is ambiguous (two kits match, no amount given for a big item list …) ask one short question instead
   of guessing. Small details you can sensibly default (amount 1, container from the item type, no cooldown) – do it
   and say what you chose.
@@ -109,6 +119,11 @@ TOOLS = [
          "kit": {"type": "string"},
          "kit_type": {"type": "string", "enum": ["ingame", "custom"], "description": "Default: ingame"},
          **_RULE_OPTS}, ["emote", "kit"]),
+    _fn("bind_kits_to_emotes", "Many emote binds in one call (each replaces that emote's old kit).",
+        {"binds": {"type": "array", "maxItems": 64, "items": {"type": "object", "properties": {
+            "emote": {"type": "string"}, "kit": {"type": "string"},
+            "kit_type": {"type": "string", "enum": ["ingame", "custom"]}, **_RULE_OPTS}, "required": ["emote", "kit"]}}},
+        ["binds"]),
     _fn("unbind_emote", "The emote no longer gives a kit.", {"emote": {"type": "string"}}, ["emote"]),
     _fn("create_respawn_autokit", "Gives the kit automatically every time a player respawns.",
         {"kit": {"type": "string"}, "kit_type": {"type": "string", "enum": ["ingame", "custom"]}, **_RULE_OPTS},
@@ -138,6 +153,17 @@ TOOLS = [
     _fn("give_kit_to_everyone", "Gives an in-game kit to every online player. Admin must confirm.",
         {"kit": {"type": "string"}}, ["kit"]),
     _fn("online_players", "Players online right now."),
+    _fn("list_teleports", "The 8 Location emotes (North … Northwest) and where each teleports players."),
+    _fn("set_teleport", "Sets where a Location emote teleports players: x/y/z, or capture_from_player (an online "
+                        "player's current position, e.g. the admin standing on the spot).",
+        {"location": {"type": "string", "description": "North, Northeast, East, Southeast, South, Southwest, West, "
+                                                       "Northwest"},
+         "x": {"type": "number"}, "y": {"type": "number", "description": "height"}, "z": {"type": "number"},
+         "capture_from_player": {"type": "string", "description": "In-game name; instead of x/y/z"},
+         "name": {"type": "string", "description": "e.g. Outpost"},
+         "cooldown_minutes": {"type": "integer", "minimum": 0},
+         "required_role": {"type": "string"}, "enabled": {"type": "boolean"}}, ["location"]),
+    _fn("clear_teleport", "Removes a Location emote's teleport.", {"location": {"type": "string"}}, ["location"]),
 ]
 CONSOLE_TOOL = _fn("run_console_command", "Runs a Rust console command on the server. Admin must confirm.",
                    {"command": {"type": "string"}, "why": {"type": "string", "description": "Short reason"}},
@@ -264,7 +290,12 @@ class ManagerAI(commands.Cog):
                     answer = await self._run(messages, message, done)
             except DeepSeekError as exc:
                 log.warning("Management AI failed: %s", exc)
-                await message.reply(f"⚠️ AI error: {exc}", mention_author=False,
+                # remembered, so "again" / "try again" retries the same request
+                history.append({"role": "user", "content": f"{message.author.display_name}: {text[:1500]}"})
+                history.append({"role": "assistant", "content": f"(That request failed: {exc}"
+                                + (f" – already done: {', '.join(done)}" if done else "") + ")"})
+                note = f"\n-# Done before the error: {' · '.join(done)[:500]}" if done else ""
+                await message.reply(f"⚠️ AI error: {exc}\nSay **again** to retry.{note}", mention_author=False,
                                     allowed_mentions=discord.AllowedMentions.none())
                 return None
             answer = re.sub(r"@(everyone|here)", "@​\\1", (answer or "").strip()) or "Done."
@@ -283,7 +314,7 @@ class ManagerAI(commands.Cog):
     async def _run(self, messages: list[dict], message: discord.Message, done: list[str]) -> str:
         tools = self.tools()
         for _ in range(MAX_ROUNDS):
-            reply = await self.ai.chat(messages, tools=tools, max_tokens=1500, temperature=0.2)
+            reply = await self._ask(messages, tools)
             calls = reply["tool_calls"]
             if not calls:
                 return reply["content"]
@@ -308,7 +339,23 @@ class ManagerAI(commands.Cog):
                     done.append(result["did"])
                 messages.append({"role": "tool", "tool_call_id": call.get("id", ""),
                                  "content": json.dumps(result, ensure_ascii=False, default=str)[:6000]})
-        return (await self.ai.chat(messages, json_mode=False, max_tokens=800))["content"]
+        return (await self.ai.chat(messages, json_mode=False, max_tokens=1500))["content"]
+
+    async def _ask(self, messages: list[dict], tools: list[dict]) -> dict:
+        """One AI answer. Cut off (finish_reason=length – e.g. too many tool calls at once): asked once more with
+        more room and told to work in smaller steps, instead of failing or running half-written tool calls."""
+        try:
+            reply = await self.ai.chat(messages, tools=tools, max_tokens=MAX_TOKENS, temperature=0.2)
+            if reply.get("finish_reason") != "length":
+                return reply
+        except DeepSeekError as exc:
+            if "length" not in str(exc):
+                raise
+        retry = [*messages, {"role": "user", "content": SMALLER_STEPS}]
+        reply = await self.ai.chat(retry, tools=tools, max_tokens=RETRY_TOKENS, temperature=0.2)
+        if reply.get("finish_reason") == "length" and reply.get("tool_calls"):
+            raise DeepSeekError("The request is too big for one go – ask for it in smaller parts.")
+        return reply
 
     async def confirm(self, message: discord.Message, text: str) -> bool:
         view = ConfirmView(message.author.id)
@@ -463,6 +510,21 @@ class ManagerAI(commands.Cog):
 
         if name == "list_autokits":
             return {"ok": True, "autokits": [self._rule_dict(r) for r in db.kit_rules()]}
+
+        if name == "bind_kits_to_emotes":
+            results, did = [], []
+            for b in (args.get("binds") or [])[:64]:
+                if not isinstance(b, dict):
+                    continue
+                r = await self.run_tool("bind_kit_to_emote", b, message)
+                results.append({"emote": b.get("emote"), "kit": b.get("kit"), "ok": r.get("ok"),
+                                **({"error": r.get("error"), "did_you_mean": r.get("did_you_mean")}
+                                   if not r.get("ok") else {"replaced": r.get("replaced") or None})})
+                if r.get("ok"):
+                    did.append(r["did"])
+            ok = sum(1 for r in results if r["ok"])
+            return {"ok": ok > 0, "bound": ok, "failed": len(results) - ok, "results": results,
+                    "did": f"🎭 {ok} emote bind(s)" if ok else ""}
 
         if name in ("bind_kit_to_emote", "create_respawn_autokit"):
             kit_type, kit, error = await self._kit_type(args.get("kit", ""), args.get("kit_type"))
@@ -658,6 +720,52 @@ class ManagerAI(commands.Cog):
         if name == "online_players":
             players = sorted(self.bot.online_players)
             return {"ok": True, "count": len(players), "players": players[:200]}
+
+        if name in ("list_teleports", "set_teleport", "clear_teleport"):
+            from cogs.teleports import TeleportError
+            from support import teleports as tp
+            cog = self.bot.get_cog("Teleports")
+            if cog is None:
+                return {"ok": False, "error": "The teleport module is not loaded."}
+            if name == "list_teleports":
+                return {"ok": True, "teleports": cog.all()}
+            raw = tp.find(args.get("location", ""))
+            if raw is None:
+                return {"ok": False, "error": "Unknown location – North, Northeast … Northwest."}
+            if name == "clear_teleport":
+                if not db.delete_teleport(raw):
+                    return {"ok": False, "error": "That location has no teleport."}
+                self._audit(who, f"teleport **{tp.label(raw)}** removed")
+                return {"ok": True, "did": f"📍 {tp.label(raw)} cleared"}
+            role_id: int | None | bool = False
+            if "required_role" in args:
+                role_id, role_error = self._role(args.get("required_role"))
+                if role_error:
+                    return {"ok": False, "error": role_error}
+            try:
+                captured = None
+                if args.get("capture_from_player"):
+                    captured, (x, y, z) = await cog.capture(str(args["capture_from_player"]))
+                elif all(args.get(k) is not None for k in ("x", "y", "z")):
+                    x, y, z = args["x"], args["y"], args["z"]
+                elif db.teleport(raw) is not None:
+                    old = db.teleport(raw)
+                    x, y, z = old["x"], old["y"], old["z"]
+                else:
+                    return {"ok": False, "error": "Give x, y and z or capture_from_player."}
+                cooldown = args.get("cooldown_minutes")
+                t = cog.set(raw, x, y, z, name=(str(args["name"])[:40] if args.get("name") is not None else None),
+                            cooldown_minutes=int(cooldown) if cooldown is not None else None,
+                            required_role_id=role_id, by=f"management AI ({message.author})")
+            except TeleportError as exc:
+                return {"ok": False, "error": str(exc).replace("**", "")}
+            if "enabled" in args:
+                db.update_teleport(raw, enabled=bool(args["enabled"]))
+                t = cog.info(raw)
+            self._audit(who, f"teleport **{t['location']}** → {tp.fmt(t['x'], t['y'], t['z'])}"
+                             + (f" (position of {safe_md(captured)})" if captured else ""))
+            return {"ok": True, "teleport": t, "captured_from": captured,
+                    "did": f"📍 {t['location']} → {tp.fmt(t['x'], t['y'], t['z'])}"}
 
         if name == "run_console_command" and getattr(cfg, "manager_ai_console", True):
             command = str(args.get("command") or "").strip().replace("\n", " ")[:300]

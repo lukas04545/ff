@@ -3,6 +3,7 @@
 
 Binding an emote that already gives a kit replaces that bind – one emote, one kit – so binding is a single step.
 Emotes can be named the way people say them: "thanks", "Responses > Thanks", "i need scrap" or the raw console id.
+The Location emotes (North … Northwest) are teleport points only (support/teleports.py) – they never give kits.
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import difflib
 import re
 
 from rce import quickchat
+from support import teleports
 
 CATEGORY_LABELS = {
     "combat": "Combat", "building": "Building", "questions": "Questions", "responses": "Responses",
@@ -30,9 +32,12 @@ def category(raw: str) -> str:
 
 
 def emotes() -> list[dict]:
-    """Every known emote: {"raw", "text", "category", "label"} in the in-game order."""
+    """Every emote that can give a kit: {"raw", "text", "category", "label"} in the in-game order (no Location
+    emotes – those are teleports)."""
     out = []
     for raw, text in quickchat.all_phrases().items():
+        if teleports.is_location(raw):
+            continue
         cat = category(raw)
         out.append({"raw": raw, "text": text, "category": cat, "label": f"{cat} › {text}"})
     return out
@@ -47,6 +52,8 @@ def find(query: str) -> tuple[str | None, list[str]]:
     query = str(query or "").strip()
     if not query:
         return None, []
+    if teleports.is_location(query) or teleports.find(query):
+        return None, ["Location emotes are teleports – set them with /teleport set or Kits → 📍 Teleports"]
     all_ = emotes()
     for e in all_:                                       # exact: raw id
         if e["raw"] == query:
@@ -90,7 +97,10 @@ def bound_to(db, raw: str) -> list:
 
 def bind(db, raw: str, kit: str, *, kit_type: str = "ingame", cooldown_minutes: int = 0, max_claims: int = 0,
          required_role_id: int | None = None, by: str = "") -> tuple[int, list[str]]:
-    """Binds the kit to the emote, replacing what the emote gave before. Returns (rule id, replaced kits)."""
+    """Binds the kit to the emote, replacing what the emote gave before. Returns (rule id, replaced kits).
+    Location emotes are teleports only: ValueError."""
+    if teleports.is_location(raw):
+        raise ValueError("Location emotes are teleports only – they can't give kits.")
     replaced = []
     for old in bound_to(db, raw):
         replaced.append(old["kit"])

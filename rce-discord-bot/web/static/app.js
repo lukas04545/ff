@@ -1875,6 +1875,7 @@ views.kits = async (main) => {
   box.append(kitRolesCard());
 
   // --- Emote binds (quick chat emote -> kit), then all autokits
+  box.append(teleportsCard(opts));
   box.append(emoteBindsCard(data, reload));
   box.append(autokitCard(data, m, reload, opts));
 
@@ -2242,6 +2243,62 @@ function customKitsCard(data, reload, opts) {
   return card;
 }
 
+// Location teleports: each Location emote (North … Northwest) teleports to coordinates – typed in, or captured from
+// where an admin stands in game (📍 Capture). Location emotes never give kits.
+function teleportsCard(opts) {
+  const holder = h("div", { class: "card" }, h("h2", { text: "📍 Location teleports" }), h("p", { class: "muted", text: "Loading …" }));
+  const roles = opts?.available ? opts.roles : [];
+  const load = () => api("/api/teleports").then((res) => {
+    const savedPlayer = (() => { try { return localStorage.getItem("tp-capture-player") || ""; } catch { return ""; } })();
+    const who = h("select", {}, h("option", { value: "", text: res.online.length ? "— pick yourself —" : "— nobody online —" }),
+      res.online.map((p) => h("option", { value: p, text: p })));
+    if (res.online.includes(savedPlayer)) who.value = savedPlayer;
+    who.addEventListener("change", () => { try { localStorage.setItem("tp-capture-player", who.value); } catch {} });
+    const num = (v, title) => h("input", { type: "number", step: "0.1", value: v ?? "", placeholder: title, title, class: "tp-num" });
+    const rows = res.teleports.map((t) => {
+      const name = h("input", { type: "text", value: t.name || "", placeholder: "Name (e.g. Outpost)", maxlength: 40 });
+      const x = num(t.x, "X"), y = num(t.y, "Y"), z = num(t.z, "Z");
+      const cd = h("input", { type: "number", min: 0, value: t.cooldown_minutes ?? 0, title: "Cooldown in minutes (0 = none)", class: "tp-cd" });
+      const role = h("select", { title: "Required Discord role" }, h("option", { value: "", text: "Everyone" }), roles.map((r) => h("option", { value: r.id, text: "🎖️ " + r.name })));
+      role.value = t.required_role_id || "";
+      const on = h("input", { type: "checkbox", checked: t.set ? t.enabled : true, title: "On" });
+      const save = async () => {
+        if ([x, y, z].some((el) => el.value.trim() === "")) { toast("Enter X, Y and Z – or capture a position", true); return; }
+        await act(() => api("/api/teleports", { method: "PUT", body: { location: t.raw, name: name.value, x: Number(x.value), y: Number(y.value), z: Number(z.value),
+          cooldown: Number(cd.value) || 0, required_role_id: role.value, enabled: on.checked } }), `📍 ${t.location} saved`);
+        load();
+      };
+      const capture = async () => {
+        if (!who.value) { toast("Pick yourself (online in game) under 'Capture from' first", true); return; }
+        const r = await act(() => api("/api/teleports/capture", { method: "POST", body: { player: who.value, location: t.raw } }),
+          `📍 ${t.location}: captured ${who.value}'s position`);
+        x.value = r.x.toFixed(1); y.value = r.y.toFixed(1); z.value = r.z.toFixed(1);
+        load();
+      };
+      return h("div", { class: "tp-row" + (t.set ? " set" : "") },
+        h("strong", { class: "tp-loc", text: "📍 " + t.location }), name,
+        h("div", { class: "tp-xyz" }, x, y, z),
+        h("label", { class: "muted tp-opt", title: "Cooldown (minutes)" }, "⏱️", cd),
+        roles.length ? role : "",
+        h("label", { class: "muted tp-opt" }, on, " on"),
+        h("div", { class: "row tp-btns" },
+          h("button", { class: "small", text: "📍 Capture", title: "Use the position where the picked player stands in game right now", onclick: capture }),
+          h("button", { class: "small primary", text: "Save", onclick: save }),
+          t.set ? h("button", { class: "small danger", text: "Clear", onclick: async () => {
+            if (!confirm(`Remove the ${t.location} teleport?`)) return;
+            await act(() => api("/api/teleports/clear", { method: "POST", body: { location: t.raw } }), "Removed"); load();
+          } }) : ""));
+    });
+    holder.replaceChildren(h("h2", { text: "📍 Location teleports" }),
+      h("p", { class: "muted", text: "The Location emotes (North … Northwest) are teleports only – a player who uses one in game is teleported to its coordinates. Type X / Y / Z, or stand on the spot in game and click 📍 Capture to take your position. Discord: /teleport here, /teleport set, /teleport list." }),
+      h("div", { class: "row" }, h("label", { class: "muted" }, "Capture from ", who),
+        h("button", { class: "small", text: "↻", title: "Reload the online players", onclick: load })),
+      h("div", { class: "tp-list" }, rows));
+  }).catch((err) => holder.replaceChildren(h("h2", { text: "📍 Location teleports" }), h("p", { class: "muted", text: "Could not load: " + err.message })));
+  load();
+  return holder;
+}
+
 // Emote board: every in-game quick chat emote with a kit picker – pick a kit and it's bound (one emote = one kit)
 function emoteBindsCard(data, reload) {
   const holder = h("div", { class: "card" }, h("h2", { text: "🎭 Emote kits" }), h("p", { class: "muted", text: "Loading …" }));
@@ -2316,7 +2373,7 @@ function autokitCard(data, m, reload, opts) {
     ...data.custom.map((k) => h("option", { value: "custom:" + k.name, text: "🔒 " + k.name })),
   ]);
   const trigger = h("select", {}, h("option", { value: "respawn", text: "🔄 On respawn" }), h("option", { value: "quickchat", text: "💬 Quick chat phrase" }));
-  const phrase = h("select", { class: "hidden" }, m.phrases.map((p) => h("option", { value: p.raw, text: p.text })));
+  const phrase = h("select", { class: "hidden" }, m.phrases.filter((p) => !p.raw.startsWith("d11_quick_chat_location_slot_")).map((p) => h("option", { value: p.raw, text: p.text })));
   trigger.addEventListener("change", () => phrase.classList.toggle("hidden", trigger.value !== "quickchat"));
   const cooldown = h("input", { type: "number", min: 0, value: 0, title: "Cooldown in minutes", style: "max-width:120px" });
   const maxClaims = h("input", { type: "number", min: 0, value: 0, title: "Max. per player (0 = unlimited)", style: "max-width:120px" });

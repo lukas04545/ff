@@ -438,6 +438,23 @@ class Storage:
                 created_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_kit_slots_kit ON kit_slots (kit);
+            -- Location teleports: a Location quick chat emote (North …) teleports the player to set coordinates
+            CREATE TABLE IF NOT EXISTS teleports (
+                phrase TEXT PRIMARY KEY,            -- the Location emote's quick chat id
+                name TEXT NOT NULL DEFAULT '',      -- e.g. "Outpost"
+                x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,
+                cooldown_minutes INTEGER NOT NULL DEFAULT 0,
+                required_role_id INTEGER,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                updated_by TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS teleport_uses (
+                phrase TEXT NOT NULL,
+                player TEXT NOT NULL COLLATE NOCASE,
+                used_at REAL NOT NULL,
+                PRIMARY KEY (phrase, player)
+            );
             CREATE TABLE IF NOT EXISTS plugin_data (
                 plugin TEXT NOT NULL,
                 key TEXT NOT NULL,
@@ -716,6 +733,60 @@ class Storage:
                 "SELECT * FROM kit_claims WHERE player = ? ORDER BY id DESC LIMIT ?", (player, limit)
             ).fetchall()
         return self._db.execute("SELECT * FROM kit_claims ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+    # ------------------------------------------------------------ Location teleports
+
+    def teleports(self) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM teleports ORDER BY phrase").fetchall()
+
+    def teleport(self, phrase: str) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM teleports WHERE phrase = ?", (phrase,)).fetchone()
+
+    def set_teleport(self, phrase: str, x: float, y: float, z: float, *, name: str | None = None,
+                     cooldown_minutes: int | None = None, required_role_id: int | None | bool = False,
+                     enabled: bool | None = None, by: str = "") -> None:
+        """Creates or changes a teleport; None/False = keep that value (required_role_id=None clears the role)."""
+        old = self.teleport(phrase)
+        keep = (lambda key, default: old[key] if old is not None else default)
+        self._db.execute(
+            "INSERT OR REPLACE INTO teleports (phrase, name, x, y, z, cooldown_minutes, required_role_id, enabled, "
+            "updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            (phrase, (name if name is not None else keep("name", ""))[:40], float(x), float(y), float(z),
+             max(0, int(cooldown_minutes)) if cooldown_minutes is not None else keep("cooldown_minutes", 0),
+             keep("required_role_id", None) if required_role_id is False else required_role_id,
+             int(enabled) if enabled is not None else keep("enabled", 1), by[:80]))
+        self._db.commit()
+
+    def update_teleport(self, phrase: str, **fields) -> bool:
+        old = self.teleport(phrase)
+        if old is None:
+            return False
+        self.set_teleport(phrase, fields.get("x", old["x"]), fields.get("y", old["y"]), fields.get("z", old["z"]),
+                          name=fields.get("name"), cooldown_minutes=fields.get("cooldown_minutes"),
+                          required_role_id=fields.get("required_role_id", False), enabled=fields.get("enabled"),
+                          by=fields.get("by", old["updated_by"] or ""))
+        return True
+
+    def delete_teleport(self, phrase: str) -> bool:
+        cur = self._db.execute("DELETE FROM teleports WHERE phrase = ?", (phrase,))
+        self._db.execute("DELETE FROM teleport_uses WHERE phrase = ?", (phrase,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def teleport_last_use(self, phrase: str, player: str) -> float | None:
+        row = self._db.execute("SELECT used_at FROM teleport_uses WHERE phrase = ? AND player = ?",
+                               (phrase, player)).fetchone()
+        return row["used_at"] if row else None
+
+    def record_teleport_use(self, phrase: str, player: str, when: float) -> None:
+        self._db.execute("INSERT OR REPLACE INTO teleport_uses (phrase, player, used_at) VALUES (?, ?, ?)",
+                         (phrase, player, when))
+        self._db.commit()
+
+    def reset_teleport_uses(self) -> int:
+        cur = self._db.execute("DELETE FROM teleport_uses")
+        self._db.commit()
+        return cur.rowcount
 
     # ------------------------------------------------------------ Custom Kits
 

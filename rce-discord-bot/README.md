@@ -195,6 +195,7 @@ rce-discord-bot/
 │   ├── automod.py         # AI chat moderation: warns offensive members in chosen channels
 │   ├── webshop.py         # Web store: PayPal checkout, gift cards, delivery of bought kits
 │   ├── aichat.py          # AI chats with members in chosen channels + acts as prison guard
+│   ├── teleports.py       # Location emotes (North … Northwest) teleport to set/captured coordinates
 │   ├── manager_ai.py      # Management AI: staff channel, creates kits, binds emotes, autokits, custom kits (tools)
 │   ├── prison.py          # /prison jail/free/list: lock a member to the prison channel (timed too)
 │   ├── player_accounts.py # Player website login (one-time code) + team slots on custom kits
@@ -776,6 +777,7 @@ their own. Admins can't change it themselves. The new theme shows the next time 
 | `/kit give`, `/kit group`, `/kit all` | Admins | Give a kit to a player, an auth group or everyone |
 | `/kit add-item`, `/kit remove-item` | Admins | Edit kits |
 | `/kit bind`, `/kit unbind`, `/kit binds` | Admins (`binds`: everyone) | Bind a kit to an emote in one step – players get it when they use that emote (quick chat) in game |
+| `/teleport here`, `/teleport set`, `/teleport clear`, `/teleport toggle`, `/teleport list` | Admins | Location emotes (North … Northwest) as teleports: capture where you stand in game, or type coordinates |
 | `/kit autokit-add`, `/kit autokit-role`, `/kit autokit-toggle`, `/kit autokit-delete`, `/kit wipe-reset`, `/kit history` | Admins | Manage autokits (also with custom kits, optionally only for a Discord role) |
 | `/customkit create`, `add-item`, `remove-item`, `delete` | Admins | Create and edit custom kits |
 | `/customkit import`, `/customkit import-file` | Admins | Create/fill custom kits from kit builder `kit add` commands (text box or .txt file) |
@@ -852,6 +854,17 @@ an emote again replaces its old kit (one emote = one kit). `/kit unbind emote:Th
 shows every emote with its kit. In the control panel: **Kits → 🎭 Emote kits** lists every emote by category with
 a kit dropdown and a cooldown box – pick a kit and it's bound, pick "— no kit —" to unbind. The management AI
 can do it too ("bind Starter to Thanks with a 30 min cooldown").
+
+**📍 Location teleports:** the 8 **Location** emotes (North, Northeast … Northwest) are **teleports only** – they
+never give kits (old kit binds on them are removed when the bot starts). Give each one coordinates and a player who
+uses that emote in game is teleported there (`TELEPORT_COMMAND`, default `global.teleportpos ({x},{y},{z}) "{name}"`).
+- **Capture your position:** stand on the spot in game and run `/teleport here location:North` (uses your linked
+  player from `/customkit link`, or `player:` – must be online). In the control panel: **Kits → 📍 Location
+  teleports**, pick yourself under *Capture from* and click **📍 Capture** next to the location – the bot asks the
+  server where you stand (`TELEPORT_POSITION_COMMAND`, default `server.printpos "{name}"`) and saves it.
+- **Type coordinates:** `/teleport set location:North x:1200 y:35 z:-850 name:Outpost`, or X / Y / Z in the panel.
+- Optional per location: a name, a cooldown per player, a required Discord role (linked players), on/off.
+  `/teleport list` shows them all; the management AI can set them too ("set North to where I stand").
 
 Examples:
 
@@ -1078,6 +1091,8 @@ after the admin who asked clicks **✅ Do it** (2 minutes, then it's cancelled).
 kill/delete things (`quit`, `restart`, `deleteentity`, `killplayer` …) are always blocked for the AI. Every action
 goes to the admin log, and each answer ends with a short list of what was done. `MANAGER_AI_INSTRUCTIONS` holds
 your own defaults ("kits always get a 60 minute cooldown"). It remembers the last few messages of the channel.
+Big jobs ("bind every in-game kit to an emote, leave out Location and OK") are done in one bulk call; if an answer
+gets cut off it retries once in smaller steps. When a request fails, it's still remembered – just say **again**.
 Needs the DeepSeek API key and the Message Content intent; messages in that channel are sent to DeepSeek.
 
 **AI chat moderation:** pick the channels to watch in **Settings → 🎉 Community → AI moderation: channels**
