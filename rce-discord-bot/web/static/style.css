@@ -558,3 +558,15 @@ border-radius:var(--radius);padding:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
 .eb-row select { min-width: 0; width: 100%; }
 .eb-cdl { display: flex; align-items: center; gap: .2rem; white-space: nowrap; }
 .eb-row input.eb-cd { width: 4.5rem !important; min-width: 0 !important; }
+
+/* Location teleports (Kits page) */
+.tp-list { display: flex; flex-direction: column; gap: .5rem; margin-top: .75rem; }
+.tp-row { display: flex; flex-wrap: wrap; gap: .45rem .6rem; align-items: center; padding: .55rem .65rem; border: 1px solid var(--border); border-radius: 10px; }
+.tp-row.set { border-color: var(--accent, #f75a1e); background: var(--panel); }
+.tp-loc { min-width: 7.5rem; }
+.tp-row input[type=text] { flex: 1 1 10rem; min-width: 8rem; }
+.tp-xyz { display: flex; gap: .3rem; }
+.tp-row input.tp-num { width: 6.2rem !important; min-width: 0 !important; }
+.tp-row input.tp-cd { width: 4.5rem !important; min-width: 0 !important; }
+.tp-opt { display: flex; align-items: center; gap: .25rem; white-space: nowrap; }
+.tp-btns { margin-left: auto; }

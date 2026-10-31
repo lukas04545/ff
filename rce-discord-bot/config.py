@@ -177,6 +177,8 @@ class Config:
     ai_chat_name: str                    # name the AI uses (empty = the bot's name)
     ai_chat_instructions: str            # owner's own instructions (personality, topics …)
     ai_chat_knowledge: bool              # knowledge base + live status in the chat AI
+    teleport_command: str                  # Location emote teleport: {x} {y} {z} {name}
+    teleport_position_command: str         # read a player's position (capture button): {name}
     manager_ai_channel_ids: frozenset[int]  # management AI channel(s) (admins only, empty = off)
     manager_ai_instructions: str           # owner's own rules for the management AI
     manager_ai_console: bool               # it may run console commands (each one confirmed by the admin)
@@ -413,6 +415,8 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         ai_chat_name=_get("AI_CHAT_NAME")[:40],
         ai_chat_instructions=_get("AI_CHAT_INSTRUCTIONS")[:4000],
         ai_chat_knowledge=_bool("AI_CHAT_KNOWLEDGE", True),
+        teleport_command=_get("TELEPORT_COMMAND", 'global.teleportpos ({x},{y},{z}) "{name}"').strip(),
+        teleport_position_command=_get("TELEPORT_POSITION_COMMAND", 'server.printpos "{name}"').strip(),
         manager_ai_channel_ids=_id_set("MANAGER_AI_CHANNEL_IDS"),
         manager_ai_instructions=_get("MANAGER_AI_INSTRUCTIONS")[:4000],
         manager_ai_console=_bool("MANAGER_AI_CONSOLE", True),

@@ -97,6 +97,14 @@ FIELDS: list[Field] = [
     # Kits
     Field("AUTOKIT_DELAY", "Autokit delay after respawn (seconds)", "kits", "int", placeholder="3"),
     Field("KIT_CLAIM_ANNOUNCE", "Confirm quick chat kits in-game", "kits", "bool"),
+    Field("TELEPORT_COMMAND", "Location teleports: teleport command", "kits", advanced=True,
+          placeholder='global.teleportpos ({x},{y},{z}) "{name}"',
+          help="Sent when a player uses a Location emote (North … Northwest) that has a teleport (Kits → 📍 "
+               "Teleports). {x} {y} {z} = the coordinates, {name} = the player."),
+    Field("TELEPORT_POSITION_COMMAND", "Location teleports: read a player's position", "kits", advanced=True,
+          placeholder='server.printpos "{name}"',
+          help="Used by the 📍 Capture position button and /teleport here – the server answers with the player's "
+               "position. {name} = the player."),
     Field("KIT_ROLES", "Every kit has its own Discord role", "kits", "bool",
           help="On (default): every kit – the bot's custom kits and the server's in-game kits – is connected to your "
                "existing Discord role for it (names compared loosely, typos too; checked every 10 minutes – the AI "

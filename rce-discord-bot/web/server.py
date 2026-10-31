@@ -478,6 +478,10 @@ class WebInterface:
         r.add_delete("/api/autokits/{rule_id:\\d+}", self.delete_autokit)
         r.add_get("/api/emote-binds", self.emote_binds)
         r.add_put("/api/emote-binds", self.set_emote_bind)
+        r.add_get("/api/teleports", self.teleports)
+        r.add_put("/api/teleports", self.set_teleport)
+        r.add_post("/api/teleports/capture", self.capture_teleport)
+        r.add_post("/api/teleports/clear", self.clear_teleport)
         r.add_get("/api/meta", self.meta)
         r.add_get("/api/tickets", self.tickets)
         r.add_get("/api/tickets/{ticket_id:\\d+}", self.ticket_detail)
@@ -2985,6 +2989,9 @@ class WebInterface:
         if trigger not in ("respawn", "quickchat"):
             raise ApiError("Trigger must be respawn or quickchat.")
         phrase = self._text(data, "phrase", required=trigger == "quickchat") or None
+        from support import teleports as tp
+        if trigger == "quickchat" and tp.is_location(phrase):
+            raise ApiError("Location emotes are teleports only – set them under 📍 Teleports.")
         if kit_type == "custom":
             row = self.bot.db.custom_kit(kit)
             if row is None:
@@ -3061,6 +3068,65 @@ class WebInterface:
                                     required_role_id=self._role_id(data), by="Web interface")
         self._audit(f"Emote {eb.label(raw)} → kit {kit} (autokit #{rule_id})")
         return web.json_response({"ok": True, "id": rule_id, "replaced": replaced})
+
+    # ------------------------------------------------------------ Location teleports (Location emote -> coordinates)
+
+    def _teleports_cog(self):
+        cog = self.bot.get_cog("Teleports") if self.bot is not None else None
+        if cog is None:
+            raise ApiError("The teleport module is not loaded.", 503)
+        return cog
+
+    def _location(self, data: dict) -> str:
+        from support import teleports as tp
+        raw = tp.find(self._text(data, "location"))
+        if raw is None:
+            raise ApiError("Unknown location – North, Northeast … Northwest.")
+        return raw
+
+    async def teleports(self, request: web.Request) -> web.Response:
+        cog = self._teleports_cog()
+        return web.json_response({"teleports": cog.all(), "online": sorted(self.bot.online_players)})
+
+    async def set_teleport(self, request: web.Request) -> web.Response:
+        from cogs.teleports import TeleportError
+        cog = self._teleports_cog()
+        data = await self._json(request)
+        raw = self._location(data)
+        try:
+            t = cog.set(raw, data.get("x"), data.get("y"), data.get("z"),
+                        name=str(data.get("name") or "")[:40], cooldown_minutes=self._int(data, "cooldown", 0, 0, 525600),
+                        required_role_id=self._role_id(data), by="Web interface")
+        except TeleportError as exc:
+            raise ApiError(str(exc)) from exc
+        if "enabled" in data:
+            self.bot.db.update_teleport(raw, enabled=bool(data["enabled"]))
+            t = cog.info(raw)
+        self._audit(f"Teleport {t['location']} → ({t['x']:.1f}, {t['y']:.1f}, {t['z']:.1f})")
+        return web.json_response({"ok": True, "teleport": t})
+
+    async def capture_teleport(self, request: web.Request) -> web.Response:
+        """Reads where a player (the admin, in game) stands; with a location it saves it there too."""
+        from cogs.teleports import TeleportError
+        cog = self._teleports_cog()
+        data = await self._json(request)
+        try:
+            player, (x, y, z) = await cog.capture(self._text(data, "player"))
+            t = None
+            if data.get("location"):
+                t = cog.set(self._location(data), x, y, z, by=f"Web interface (position of {player})")
+                self._audit(f"Teleport {t['location']} captured from {player} → ({x:.1f}, {y:.1f}, {z:.1f})")
+        except TeleportError as exc:
+            raise ApiError(str(exc).replace("**", "")) from exc
+        return web.json_response({"ok": True, "player": player, "x": x, "y": y, "z": z, "teleport": t})
+
+    async def clear_teleport(self, request: web.Request) -> web.Response:
+        self._teleports_cog()
+        raw = self._location(await self._json(request))
+        if not self.bot.db.delete_teleport(raw):
+            raise ApiError("That location has no teleport.", 404)
+        self._audit(f"Teleport {raw} removed")
+        return web.json_response({"ok": True})
 
     async def reset_autokits(self, request: web.Request) -> web.Response:
         count = self.bot.db.reset_kit_claims()
