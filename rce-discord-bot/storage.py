@@ -664,6 +664,11 @@ class Storage:
         self._db.commit()
         return True
 
+    def set_kit_rule_kit(self, rule_id: int, kit: str) -> bool:
+        cur = self._db.execute("UPDATE kit_rules SET kit = ? WHERE id = ?", (kit, rule_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
     def set_kit_rule_role(self, rule_id: int, role_id: int | None) -> bool:
         cur = self._db.execute("UPDATE kit_rules SET required_role_id = ? WHERE id = ?", (role_id, rule_id))
         self._db.commit()

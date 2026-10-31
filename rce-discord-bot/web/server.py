@@ -3170,6 +3170,10 @@ class WebInterface:
     async def emote_bind_roles(self, request: web.Request) -> web.Response:
         """Each emote bind (or every autokit) needs its kit's own Discord role (linked kit role, else same name)."""
         data = await self._json(request)
+        if data.get("remove"):
+            count = self._cog("Kits").clear_bind_roles(emotes_only=not data.get("all_autokits"),
+                                                       by=f"Web interface ({_current_user.get()})")
+            return web.json_response({"ok": True, "removed": count})
         result = self._cog("Kits").roles_to_binds(emotes_only=not data.get("all_autokits"),
                                                   only_missing=bool(data.get("only_missing")),
                                                   by=f"Web interface ({_current_user.get()})")

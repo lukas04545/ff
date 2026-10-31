@@ -351,6 +351,14 @@ def test_binds_get_their_kits_own_role(mgr, monkeypatch):
     emote_binds.bind(db, "d11_quick_chat_responses_slot_6", "mystery kit")    # no role
     kits = Kits(mgr.bot)
     asyncio.run(mgr.bot.add_cog(kits))
+    asked = []
+
+    async def confirm(message, text):
+        asked.append(text)
+        return len(asked) > 1                                                  # first: cancelled
+    monkeypatch.setattr(mgr.cog, "confirm", confirm)
+    r = asyncio.run(mgr.cog.run_tool("assign_kit_roles_to_binds", {}, mgr.message("x")))
+    assert r["ok"] is False and "only linked players" in asked[0].lower()
     r = asyncio.run(mgr.cog.run_tool("assign_kit_roles_to_binds", {}, mgr.message("assign them to their role")))
     assert r["ok"] and {a["kit"]: a["role"] for a in r["assigned"]} == {"AK PVP": "Ak PvP", "m4 spawn kit": "M4 Spawn"}
     assert r["no_role_found"] == ["mystery kit"] and r["did"] == "🎖️ 2 bind(s) → kit roles"
@@ -430,3 +438,38 @@ def test_it_may_mention_people_but_never_everyone_or_roles(mgr):
     allowed = kw["allowed_mentions"]
     assert allowed.everyone is False and allowed.roles is False and [m.id for m in allowed.users] == [77]
     assert "<@&5>" not in text and "@everyone" not in text.replace("@​everyone", "")
+
+
+
+def test_claims_explain_themselves_and_roles_can_be_undone(mgr, monkeypatch):
+    import cogs.kits as kits_mod
+    from cogs.kits import Kits
+    role = NS(id=12, name="Ak PvP", members=[], is_default=lambda: False)
+    guild = NS(roles=[role], get_role=lambda rid: role if rid == 12 else None, get_member=lambda uid: None)
+    monkeypatch.setattr(kits_mod, "main_guild", lambda bot: guild)
+    kits = Kits(mgr.bot)
+    asyncio.run(mgr.bot.add_cog(kits))
+
+    async def names(**kw):
+        return ["Ak PvP", "Starter"]
+    monkeypatch.setattr(kits.kit_names, "get", names)
+    mgr.bot.config = replace(mgr.bot.config, kit_claim_announce=True, autokit_delay=0)
+    db = mgr.bot.db
+    rid_ak, _ = emote_binds.bind(db, THANKS, "ak pvp", required_role_id=12)        # AI wrote the name in lower case
+    rid_x, _ = emote_binds.bind(db, "d11_quick_chat_responses_slot_5", "Nope Kit")  # no such kit
+    from rce import log_parser as lp
+    asyncio.run(kits.on_rce_chat(lp.ChatEvent("GLOBAL", "Bob", THANKS, "Thanks")))
+    assert list(kits.attempts)[-1]["outcome"] == "no_role" and "not linked" in list(kits.attempts)[-1]["detail"]
+    assert any("needs the Discord role" in c for c in mgr.sent)
+    d = asyncio.run(mgr.cog.run_tool("diagnose_kit_claims", {"player": "Bob"}, mgr.message("why")))
+    notes = {b["kit"]: " ".join(b["issues"]) for b in d["binds_with_notes"]}
+    assert "only linked players with the role Ak PvP" in notes["ak pvp"] and "no in-game kit" in notes["Nope Kit"]
+    assert d["player"]["linked_discord_user"] is None and d["recent_tries"][0]["outcome"] == "no_role"
+    r = asyncio.run(mgr.cog.run_tool("remove_roles_from_binds", {}, mgr.message("undo")))
+    assert r["binds_unlocked"] == 1 and db.kit_rule(rid_ak)["required_role_id"] is None
+    mgr.sent.clear()
+    asyncio.run(kits.on_rce_chat(lp.ChatEvent("GLOBAL", "Bob", THANKS, "Thanks")))
+    assert 'kit givetoplayer "Ak PvP" "Bob"' in mgr.sent                       # exact name used …
+    assert db.kit_rule(rid_ak)["kit"] == "Ak PvP"                               # … and fixed in the bind
+    asyncio.run(kits.on_rce_chat(lp.ChatEvent("GLOBAL", "Bob", "d11_quick_chat_responses_slot_5", "Hello")))
+    assert list(kits.attempts)[-1]["outcome"] == "kit_not_found" and not any("Nope Kit" in c for c in mgr.sent)
