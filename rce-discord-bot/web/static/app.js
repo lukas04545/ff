@@ -1972,7 +1972,7 @@ views.servers = async (main) => {
       const buttons = [s.id !== d.current ? h("button", { class: "small primary", text: "Show this server", title: "The panel switches to this server (same as the drop-down in the menu)", onclick: async () => {
         if (await switchServer(s.id)) location.hash = "#overview";
       } }) : null];
-      if (d.manage && !s.main) {
+      if (d.manage && d.owner && !s.main) {
         const run = (action, okText) => async () => {
           await act(() => api(`/api/servers/${s.id}/${action}`, { method: "POST" }), okText).catch(() => {});
           setTimeout(load, 1500);
@@ -1992,11 +1992,22 @@ views.servers = async (main) => {
             await act(() => api(`/api/servers/${s.id}/use-main-bot`, { method: "POST" }), "Switched – restarting …").catch(() => {});
             setTimeout(load, 1500);
           } }) : null,
-          h("button", { class: "small danger", text: "Remove", onclick: async () => {
-            if (!confirm(`Remove ${s.name}? It stops and leaves this list. Its folder (database, settings, kits) is kept as servers/_removed-${s.id}-… so nothing is lost.`)) return;
+          h("button", { class: "small", text: "Remove (keep backup)", title: "Stops it and takes it off the list – its folder is kept as a backup", onclick: async () => {
+            if (!confirm(`Remove ${s.name}? It stops and leaves this list. Its folder (database, settings, kits) is kept as servers/_removed-${s.id}-… – you can delete that later below.`)) return;
             await act(() => api(`/api/servers/${s.id}`, { method: "DELETE" }), "Removed").catch(() => {});
             load();
+          } }),
+          h("button", { class: "small danger", text: "🗑️ Delete server", title: "Stops it and deletes it for good: database, settings, kits, logs", onclick: async () => {
+            const typed = prompt(`Delete ${s.name} for good?\n\nIt stops and its whole folder is deleted: database, settings, kits, players, logs. This can't be undone.\n\nType the server's name to confirm:`);
+            if (typed === null) return;
+            if (typed.trim().toLowerCase() !== s.name.trim().toLowerCase()) { toast("The name didn't match – nothing was deleted", true); return; }
+            await act(() => api(`/api/servers/${s.id}?delete=1&confirm=${encodeURIComponent(typed.trim())}`, { method: "DELETE" }), `${s.name} deleted`).catch(() => {});
+            load();
           } }));
+      } else if (!s.main && !d.manage) {
+        buttons.push(h("span", { class: "muted", text: d.child ? "Open the main server's panel to stop or delete servers." : "" }));
+      } else if (!s.main && !d.owner) {
+        buttons.push(h("span", { class: "muted", text: "Only the owner can stop or delete servers." }));
       }
       return h("div", { class: "card" },
         h("h2", {}, (s.main ? "🏠 " : "🛢️ ") + s.name, s.id === d.current ? h("span", { class: "muted", text: " (shown now)" }) : null),
@@ -2005,7 +2016,20 @@ views.servers = async (main) => {
         s.public_url ? h("p", { class: "muted" }, "Public link: ", h("code", { text: s.public_url + s.panel_path })) : null,
         h("div", { class: "row" }, buttons.filter(Boolean)), logBox);
     });
-    list.replaceChildren(...cards);
+    const removed = (d.removed || []).length ? h("div", { class: "card" }, h("h2", { text: "🗃️ Removed servers (backups)" }),
+      h("p", { class: "muted", text: "Folders of servers removed with “Remove (keep backup)”. Delete them for good when you don't need them any more." }),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Folder", "Removed", "Size", ""].map((t) => h("th", { text: t })))),
+        h("tbody", {}, d.removed.map((r) => h("tr", {},
+          h("td", {}, h("code", { text: r.name })),
+          h("td", { text: new Date(r.removed_at * 1000).toLocaleString() }),
+          h("td", { text: `${r.size_mb} MB` }),
+          h("td", {}, h("button", { class: "small danger", text: "Delete for good", onclick: async () => {
+            if (!confirm(`Delete the backup ${r.name} for good? This can't be undone.`)) return;
+            await act(() => api(`/api/servers/removed/${encodeURIComponent(r.name)}`, { method: "DELETE" }), "Backup deleted").catch(() => {});
+            load();
+          } }))))))) ) : null;
+    list.replaceChildren(...cards, ...(removed ? [removed] : []));
     if (d.manage) list.append(addServerCard(load));
     else if (!d.manage) list.append(h("p", { class: "muted", text: "Servers are added and started on the main server's panel." }));
   };
