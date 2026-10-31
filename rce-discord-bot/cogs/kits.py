@@ -577,31 +577,29 @@ class Kits(commands.Cog):
 
     @kit.command(name="binds", description="Shows which emote gives which kit.")
     async def kit_binds(self, interaction: discord.Interaction) -> None:
-        rows = emote_binds.binds(self.bot.db)
-        if not rows:
+        from cogs.binds_panel import binds_embed
+        if not emote_binds.binds(self.bot.db):
             await interaction.response.send_message(
                 "No emote binds yet. Admins: `/kit bind kit:<kit> emote:<emote>`.", ephemeral=True)
             return
-        by_cat: dict[str, list[str]] = {}
-        for b in rows:
-            cat, _, text = b["label"].partition(" › ")
-            extra = []
-            if b["cooldown_minutes"]:
-                extra.append(f"⏱️ {format_duration(b['cooldown_minutes'] * 60)}")
-            if b["max_claims"]:
-                extra.append(f"max {b['max_claims']}×")
-            if b["required_role_id"]:
-                extra.append(f"🎖️ <@&{b['required_role_id']}>")
-            if not b["enabled"]:
-                extra.append("⏸️ paused")
-            by_cat.setdefault(cat, []).append(
-                f"💬 **{safe_md(text)}** → {'🔒 ' if b['kit_type'] == 'custom' else ''}{safe_md(b['kit'])}"
-                + (f" · {' · '.join(extra)}" if extra else ""))
-        embed = discord.Embed(title="🎭 Emote kits", colour=discord.Colour.dark_green(),
-                              description="Use the emote in game (quick chat) to get the kit.")
-        for cat, lines in by_cat.items():
-            embed.add_field(name=cat, value="\n".join(lines)[:1024], inline=False)
-        await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        await interaction.response.send_message(embed=binds_embed(self.bot.db),
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @kit.command(name="binds-panel", description="Posts a live list of all emote binds that updates by itself.")
+    @app_commands.describe(channel="Where to post it (default: here)")
+    @admin_only()
+    async def kit_binds_panel(self, interaction: discord.Interaction,
+                              channel: discord.TextChannel | None = None) -> None:
+        panel = self.bot.get_cog("BindsPanel")
+        target = channel or interaction.channel
+        if panel is None or target is None:
+            await interaction.response.send_message("The binds panel module is not loaded.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        msg = await panel.post(target)
+        self._audit(f"🎭 {self._who(interaction)}: live emote binds panel posted in {target.mention}")
+        await interaction.followup.send(f"✅ Live panel posted: {msg.jump_url}\nIt updates by itself when binds "
+                                        "change. Delete the message to stop it.", ephemeral=True)
 
     @kit.command(name="autokit-role", description="Sets the Discord role required for an autokit (e.g. spawn kit).")
     @app_commands.describe(rule="Autokit rule", role="Required role (empty = everyone gets the kit again)")

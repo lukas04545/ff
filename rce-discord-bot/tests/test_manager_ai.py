@@ -358,3 +358,75 @@ def test_binds_get_their_kits_own_role(mgr, monkeypatch):
     assert by_kit == {"AK PVP": 12, "m4 spawn kit": 11, "mystery kit": None}
     again = kits.roles_to_binds()
     assert again["assigned"] == [] and len(again["already_set"]) == 2
+
+
+# ------------------------------------------------------------ Live binds panel, mentions, long answers
+
+class _Msg(NS):
+    async def edit(self, **kw):
+        if self.gone:
+            import discord
+            raise discord.NotFound(NS(status=404, reason="gone"), "Unknown Message")
+        self.edits.append(kw["embed"])
+
+    async def delete(self):
+        self.gone = True
+
+
+class _Chan(NS):
+    async def send(self, content=None, embed=None, **kw):
+        msg = _Msg(id=500 + len(self.sent), gone=False, edits=[], embed=embed, jump_url="https://discord/x")
+        self.sent.append(msg)
+        return msg
+
+    def get_partial_message(self, mid):
+        return next(m for m in self.sent if m.id == mid)
+
+    async def fetch_message(self, mid):
+        return self.get_partial_message(mid)
+
+
+def test_live_binds_panel_updates_when_binds_change(mgr, monkeypatch):
+    from cogs.binds_panel import BindsPanel
+    panel = BindsPanel(mgr.bot)
+    asyncio.run(mgr.bot.add_cog(panel))
+    chan = _Chan(id=900, name="kits", sent=[], mention="<#900>")
+    monkeypatch.setattr(mgr.bot, "get_channel", lambda cid: chan if cid == 900 else None)
+    emote_binds.bind(mgr.bot.db, THANKS, "Starter", cooldown_minutes=30)
+    r = asyncio.run(mgr.cog.run_tool("post_binds_panel", {}, mgr.message("post a live panel", ch=chan)))
+    assert r["ok"] and "Starter" in chan.sent[0].embed.fields[0].value
+    assert asyncio.run(panel.refresh()) == 0                                       # nothing changed
+    emote_binds.bind(mgr.bot.db, "d11_quick_chat_responses_slot_5", "Raid")
+    assert asyncio.run(panel.refresh()) == 1
+    assert "Raid" in chan.sent[0].edits[-1].fields[0].value
+    asyncio.run(panel.post(chan))                                                  # again: replaces the old one
+    assert chan.sent[0].gone and len(panel.panels()) == 1
+    chan.sent[1].gone = True                                                        # deleted by someone
+    emote_binds.unbind(mgr.bot.db, THANKS)
+    asyncio.run(panel.refresh())
+    assert panel.panels() == []
+
+
+def test_split_long_answers():
+    from cogs.manager_ai import split_reply
+    parts = split_reply("\n".join(f"line {i} " + "x" * 80 for i in range(60)))
+    assert 2 <= len(parts) <= 4 and all(len(p) <= 1900 for p in parts)
+    assert split_reply("short") == ["short"]
+    assert all(len(p) <= 1900 for p in split_reply("y" * 5000))                    # one giant line
+    assert "ask for the rest" in split_reply("z\n" * 10000)[-1]
+
+
+def test_it_may_mention_people_but_never_everyone_or_roles(mgr):
+    members = {77: NS(id=77, name="ryvex", display_name="Ryvex | Owner", global_name=None)}
+    mgr.bot.db.link_player(77, "RyvexTTV") if hasattr(mgr.bot.db, "link_player") else None
+    guild = NS(id=1, name="Srv", members=list(members.values()), get_member=members.get)
+    msg = mgr.message("tell ryvex")
+    msg.guild = guild
+    r = asyncio.run(mgr.cog.run_tool("find_member", {"name": "ryvex"}, msg))
+    assert r["ok"] and r["members"][0]["mention"] == "<@77>"
+    mgr.script.append({"content": "<@77> the binds are done. @everyone <@&5> <@999>", "tool_calls": []})
+    asyncio.run(mgr.cog.handle(msg, "tell ryvex"))
+    text, kw = mgr.replies[-1]
+    allowed = kw["allowed_mentions"]
+    assert allowed.everyone is False and allowed.roles is False and [m.id for m in allowed.users] == [77]
+    assert "<@&5>" not in text and "@everyone" not in text.replace("@​everyone", "")
