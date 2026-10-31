@@ -73,7 +73,11 @@ How to work:
   and emotes that already give a kit unless told to replace them.
 - "Assign them to their role" / "each kit only for its role" after binding kits: assign_kit_roles_to_binds – it
   sets every emote bind's required role to that kit's own Discord role in one go (don't do this through the
-  admin website).
+  admin website). Afterwards ONLY linked players (/customkit link) who have that role get the kit – say so.
+  remove_roles_from_binds undoes it (everyone can use the emotes again).
+- "Kits/claims/binds don't work": call diagnose_kit_claims first (optionally for a player) and explain the real
+  reason from it (role lock, not linked, cooldown, wrong kit name, RCON down, no tries seen …) before changing
+  anything.
 - If something is ambiguous (two kits match, no amount given for a big item list …) ask one short question instead
   of guessing. Small details you can sensibly default (amount 1, container from the item type, no cooldown) – do it
   and say what you chose.
@@ -146,6 +150,12 @@ TOOLS = [
                                      "(the role linked to the kit, else the role named like it).",
         {"only_missing": {"type": "boolean", "description": "Only binds without a required role"},
          "all_autokits": {"type": "boolean", "description": "Also respawn autokits"}}),
+    _fn("remove_roles_from_binds", "Undo of assign_kit_roles_to_binds: emote binds (or all autokits) no longer need "
+                                   "a Discord role – everyone can use them again.",
+        {"all_autokits": {"type": "boolean"}}),
+    _fn("diagnose_kit_claims", "Why emote/respawn kits don't work: problems per bind (role lock, missing kit, paused "
+                               "…), RCON, a player's link and roles, and the recent tries with their outcome.",
+        {"player": {"type": "string", "description": "In-game name (optional)"}}),
     _fn("unbind_emote", "The emote no longer gives a kit.", {"emote": {"type": "string"}}, ["emote"]),
     _fn("create_respawn_autokit", "Gives the kit automatically every time a player respawns.",
         {"kit": {"type": "string"}, "kit_type": {"type": "string", "enum": ["ingame", "custom"]}, **_RULE_OPTS},
@@ -598,10 +608,24 @@ class ManagerAI(commands.Cog):
         if name == "list_autokits":
             return {"ok": True, "autokits": [self._rule_dict(r) for r in db.kit_rules()]}
 
+        if name in ("remove_roles_from_binds", "diagnose_kit_claims"):
+            kits = self.bot.get_cog("Kits")
+            if kits is None or not hasattr(kits, "diagnose"):
+                return {"ok": False, "error": "The kit module is not loaded."}
+            if name == "diagnose_kit_claims":
+                return {"ok": True, **await kits.diagnose(str(args.get("player") or "").strip() or None)}
+            count = kits.clear_bind_roles(emotes_only=not args.get("all_autokits"),
+                                          by=f"management AI for {message.author}")
+            return {"ok": True, "binds_unlocked": count, "did": f"🔓 {count} bind(s): no role needed"}
+
         if name == "assign_kit_roles_to_binds":
             kits = self.bot.get_cog("Kits")
             if kits is None or not hasattr(kits, "roles_to_binds"):
                 return {"ok": False, "error": "The kit module is not loaded."}
+            if not await self.confirm(message, "Lock every emote kit to its own Discord role? Afterwards **only "
+                                                "linked players who have that kit's role** get it from the emote – "
+                                                "everyone else gets nothing."):
+                return {"ok": False, "error": "The admin did not confirm."}
             result = kits.roles_to_binds(emotes_only=not args.get("all_autokits"),
                                          only_missing=bool(args.get("only_missing")),
                                          by=f"management AI for {message.author}")

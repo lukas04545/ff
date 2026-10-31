@@ -18,6 +18,7 @@ import asyncio
 import logging
 import math
 import time
+from collections import deque
 from typing import TYPE_CHECKING, Callable
 
 import discord
@@ -111,6 +112,7 @@ class Kits(commands.Cog):
         self.phrases = quickchat.all_phrases()
         self._announced: dict[str, float] = {}
         self._role_cache: dict[int, tuple[float, frozenset[int]]] = {}  # user_id -> (time, role IDs)
+        self.attempts: deque = deque(maxlen=150)   # recent autokit tries with their outcome (diagnosis)
 
     # ------------------------------------------------------------ Helpers
 
@@ -471,6 +473,17 @@ class Kits(commands.Cog):
         match = name_match(kit, candidates)
         return guild.get_role(match) if match else None
 
+    def clear_bind_roles(self, *, emotes_only: bool = True, by: str = "") -> int:
+        """Removes the required role from every emote bind (or every autokit): everyone can use them again."""
+        rules = self.bot.db.kit_rules(trigger="quickchat") if emotes_only else self.bot.db.kit_rules()
+        changed = [r for r in rules if r["required_role_id"]]
+        for r in changed:
+            self.bot.db.set_kit_rule_role(r["id"], None)
+        if changed:
+            self._audit(f"🎖️ {by or 'Bot'}: required role removed from {len(changed)} autokit(s) – everyone can use "
+                        "them again")
+        return len(changed)
+
     def roles_to_binds(self, *, emotes_only: bool = True, only_missing: bool = False, by: str = "") -> dict:
         """Every emote bind (or every autokit) gets its kit's own Discord role as the required role – players then
         only get the kit from the emote if their linked Discord account has that kit's role."""
@@ -498,10 +511,16 @@ class Kits(commands.Cog):
 
     @kit.command(name="bind-roles", description="Each emote kit only for its own Discord role (e.g. Ak Pvp → @Ak Pvp).")
     @app_commands.describe(only_missing="Only binds that have no required role yet (default: all)",
-                           all_autokits="Also respawn autokits, not just emote binds")
+                           all_autokits="Also respawn autokits, not just emote binds",
+                           remove="Undo: remove the required role from the binds – everyone can use them again")
     @admin_only()
     async def kit_bind_roles(self, interaction: discord.Interaction, only_missing: bool = False,
-                             all_autokits: bool = False) -> None:
+                             all_autokits: bool = False, remove: bool = False) -> None:
+        if remove:
+            count = self.clear_bind_roles(emotes_only=not all_autokits, by=self._who(interaction))
+            await interaction.response.send_message(f"✅ Role removed from {count} bind(s) – everyone can use them "
+                                                    "again.", ephemeral=True)
+            return
         result = self.roles_to_binds(emotes_only=not all_autokits, only_missing=only_missing,
                                      by=self._who(interaction))
         if not result["ok"]:
@@ -517,6 +536,34 @@ class Kits(commands.Cog):
                      + " – link one under Kits → Kit roles, or set it with `/kit autokit-role`.")
         await interaction.response.send_message(text[:1990], ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
+
+    @kit.command(name="why", description="Why don't emote kits work? Checks every bind and shows recent tries.")
+    @app_commands.describe(player="Only this player's tries (and their link/roles)")
+    @app_commands.autocomplete(player=_player_ac)
+    @admin_only()
+    async def kit_why(self, interaction: discord.Interaction, player: str | None = None) -> None:
+        await interaction.response.defer(ephemeral=True)
+        d = await self.diagnose(player)
+        lines = [f"RCON: {'✅ connected' if d['rcon_connected'] else '❌ not connected'} · kits in kit list: "
+                 f"{d['kits_in_kit_list']}"]
+        if "player" in d:
+            info = d["player"]
+            lines.append(f"👤 **{safe_md(info['player'])}**: " + (f"linked to <@{info['linked_discord_user']}>"
+                         if info["linked_discord_user"] else "❌ not linked (`/customkit link`)"))
+        for b in d["binds_with_notes"][:15]:
+            lines.append(f"• #{b['rule_id']} **{safe_md(b['kit'])}** ({safe_md(b['emote'])}): "
+                         + "; ".join(safe_md(i) for i in b["issues"]))
+        if d["recent_tries"]:
+            lines.append("**Recent tries:**")
+            icons = {"given": "✅", "no_role": "🎖️", "cooldown": "⏱️", "limit": "🔢", "failed": "⚠️",
+                     "kit_not_found": "❓", "disabled": "⏸️"}
+            for t in d["recent_tries"][-12:]:
+                lines.append(f"{icons.get(t['outcome'], '•')} {t['at']} {safe_md(t['player'])} → "
+                             f"{safe_md(t['kit'])}: {t['outcome']}" + (f" ({safe_md(t['detail'])})" if t["detail"] else ""))
+        elif d.get("note"):
+            lines.append(f"ℹ️ {d['note']}")
+        await interaction.followup.send("\n".join(lines)[:1990], ephemeral=True,
+                                        allowed_mentions=discord.AllowedMentions.none())
 
     @kit.command(name="bind", description="Binds a kit to an emote: players get it when they use that emote in game.")
     @app_commands.describe(kit="In-game kit (or 🔒 custom kit)", emote="The quick chat emote/phrase – type to search",
@@ -710,24 +757,46 @@ class Kits(commands.Cog):
             self._role_cache[user_id] = cached
         return role_id in cached[1]
 
+    def _attempt(self, rule, player: str, source: str, outcome: str, detail: str = "") -> None:
+        self.attempts.append({"at": int(time.time()), "player": player, "kit": rule["kit"], "rule_id": rule["id"],
+                              "source": source, "outcome": outcome, "detail": detail})
+
+    async def _exact_ingame_name(self, rule) -> str | None:
+        """The kit's exact name in `kit list` (the server's kit commands are picky about spelling). A name that
+        only differs in upper/lower case is fixed in the rule. None = the server has no such kit."""
+        names = await self.kit_names.get(max_wait=2)
+        if not names or rule["kit"] in names:
+            return rule["kit"]
+        exact = next((n for n in names if n.lower() == rule["kit"].lower().strip()), None)
+        if exact is not None:
+            self.bot.db.set_kit_rule_kit(rule["id"], exact)
+            log.info("Autokit #%s: kit name %r corrected to %r", rule["id"], rule["kit"], exact)
+        return exact
+
     async def _try_claim(self, rule, player: str, source: str) -> None:
         kit = rule["kit"]
         if rule["required_role_id"] and not await self.player_has_role(player, rule["required_role_id"]):
             guild = main_guild(self.bot)
             role = guild.get_role(rule["required_role_id"]) if guild else None
+            linked = self.bot.db.player_owner(player) is not None
+            self._attempt(rule, player, source, "no_role",
+                          f"needs role {role.name if role else rule['required_role_id']}"
+                          + ("" if linked else " – player is not linked (/customkit link)"))
             await self._announce_denied(
                 player, f"Kit <b>{sanitize_ingame_text(kit, 40)}</b> needs the Discord role "
                         f"<b>{sanitize_ingame_text(role.name if role else 'required role', 32)}</b> "
-                        "(link your account on Discord with /customkit link).", source)
+                        + ("." if linked else "(link your account on Discord with /customkit link)."), source)
             return
         count, minutes_since = self.bot.db.kit_claim_state(rule["id"], player)
 
         if rule["max_claims"] and count >= rule["max_claims"]:
+            self._attempt(rule, player, source, "limit", f"{count}/{rule['max_claims']} claims used")
             await self._announce_denied(player, f"Limit reached for kit <b>{sanitize_ingame_text(kit, 40)}</b>.",
                                         source)
             return
         if rule["cooldown_minutes"] and minutes_since is not None and minutes_since < rule["cooldown_minutes"]:
             remaining = max(1, math.ceil(rule["cooldown_minutes"] - minutes_since))
+            self._attempt(rule, player, source, "cooldown", f"{remaining} min left")
             await self._announce_denied(
                 player, f"Kit <b>{sanitize_ingame_text(kit, 40)}</b> available again in {format_duration(remaining * 60)}.",
                 source)
@@ -736,7 +805,16 @@ class Kits(commands.Cog):
         if rule["kit_type"] == "custom":                       # a switched-off custom kit isn't given automatically
             row = self.bot.db.custom_kit(kit)
             if row is not None and "disabled" in row.keys() and row["disabled"]:
+                self._attempt(rule, player, source, "disabled", "custom kit is switched off")
                 return
+        else:
+            exact = await self._exact_ingame_name(rule)
+            if exact is None:
+                self._attempt(rule, player, source, "kit_not_found", f"no in-game kit '{kit}' in kit list")
+                self._audit(f"⚠️ Autokit #{rule['id']}: the server has no kit **{safe_md(kit)}** – "
+                            f"{safe_md(player)} got nothing. Fix the bind (`/kit bind`) or the kit name.")
+                return
+            kit = exact
         # Record first, then send: prevents double claims from log lines in quick succession
         claim_id = self.bot.db.record_kit_claim(rule["id"], kit, player, source)
         if source == "respawn" and self.bot.config.autokit_delay:
@@ -754,14 +832,67 @@ class Kits(commands.Cog):
                                             expect_response=False)
         except RconError as exc:
             self.bot.db.delete_kit_claim(claim_id)
+            self._attempt(rule, player, source, "failed", str(exc)[:120])
             self._audit(f"⚠️ Autokit **{safe_md(kit)}** for **{safe_md(player)}** failed: {exc}")
             return
 
+        self._attempt(rule, player, source, "given")
         self._audit(f"🤖 Autokit **{safe_md(kit)}** to **{safe_md(player)}** "
                     f"({TRIGGER_LABELS.get(source, source)}, rule #{rule['id']})")
         if source == "quickchat" and self.bot.config.kit_claim_announce:
             await self._say(f"<color=#7CFC00>{sanitize_ingame_text(player, 32)}</color> received the kit "
                             f"<b>{sanitize_ingame_text(kit, 40)}</b>.")
+
+    async def diagnose(self, player: str | None = None) -> dict:
+        """Why autokits/emote binds may not work: problems per bind, the player's link and roles, recent tries."""
+        db, guild = self.bot.db, main_guild(self.bot)
+        names = await self.kit_names.get(max_wait=5, force=True)
+        problems = []
+        for r in db.kit_rules():
+            issues = []
+            if not r["enabled"]:
+                issues.append("paused")
+            if r["kit_type"] == "ingame" and names and r["kit"] not in names:
+                close = next((n for n in names if n.lower() == r["kit"].lower()), None)
+                issues.append(f"kit name differs in case from '{close}' (fixed on the next claim)" if close
+                              else "no in-game kit with this name in kit list")
+            if r["kit_type"] == "custom":
+                row = db.custom_kit(r["kit"])
+                if row is None:
+                    issues.append("custom kit doesn't exist")
+                elif not db.custom_kit_items(row["name"]):
+                    issues.append("custom kit is empty")
+                elif "disabled" in row.keys() and row["disabled"]:
+                    issues.append("custom kit is switched off")
+            if r["required_role_id"]:
+                role = guild.get_role(r["required_role_id"]) if guild else None
+                if role is None:
+                    issues.append("its required role no longer exists – nobody can get it")
+                else:
+                    issues.append(f"only linked players with the role {role.name} "
+                                  f"({len(getattr(role, 'members', []) or [])} member(s) have it)")
+            if issues:
+                problems.append({"rule_id": r["id"], "kit": r["kit"],
+                                 "emote": emote_binds.label(r["phrase"]) if r["trigger"] == "quickchat" else "respawn",
+                                 "issues": issues})
+        out = {"rcon_connected": self.bot.rcon.connected, "kits_in_kit_list": len(names),
+               "in_game_messages": bool(self.bot.config.kit_claim_announce), "binds_with_notes": problems}
+        tries = list(self.attempts)
+        if player:
+            p = player.strip().lower()
+            tries = [t for t in tries if t["player"].lower() == p]
+            owner = db.player_owner(player)
+            info: dict = {"player": player, "linked_discord_user": str(owner) if owner else None}
+            if owner and guild is not None:
+                member = guild.get_member(owner)
+                info["discord_roles"] = [r.name for r in getattr(member, "roles", [])
+                                         if not r.is_default()] if member else "not on the Discord server"
+            out["player"] = info
+        out["recent_tries"] = [{**t, "at": f"<t:{t['at']}:R>"} for t in tries[-25:]]
+        if not tries:
+            out["note"] = ("No emote/respawn kit tries since the bot started" + (f" from {player}" if player else "")
+                           + " – if players used the emotes, the bot didn't see them in the server log.")
+        return out
 
     async def _announce_denied(self, player: str, text: str, source: str) -> None:
         # Only for quick chat (the player actively asked) and throttled – otherwise chat spam

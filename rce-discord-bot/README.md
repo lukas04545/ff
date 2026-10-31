@@ -857,7 +857,13 @@ shows every emote with its kit. **Each kit only for its role:** `/kit bind-roles
 role** button on the emote board, or tell the management AI "assign them to their role") sets every emote bind's
 required role to that kit's own Discord role – the role linked under Kits → Kit roles, else the role named like the
 kit ("m4 spawn kit" → @M4 Spawn). Players then only get it if their linked account has that role; kits without a
-role are listed. In the control panel: **Kits → 🎭 Emote kits** lists every emote by category with
+role are listed. **Undo:** `/kit bind-roles remove:true`, the **🔓 No roles needed**
+button or "remove the roles from the binds". **Emote kits not working?** `/kit why` (optionally `player:`) – or ask
+the management AI "why don't the kits work" – checks every bind (role lock and how many members have the role,
+kit missing from `kit list`, paused, empty/switched-off custom kit), RCON, the player's link and roles, and lists
+the recent tries with their outcome (✅ given, 🎖️ no role / not linked, ⏱️ cooldown, 🔢 limit, ❓ kit not found,
+⚠️ failed). A bind whose kit name only differs in upper/lower case from the server's kit is fixed automatically;
+one whose kit doesn't exist gives nothing and says so in the admin log. In the control panel: **Kits → 🎭 Emote kits** lists every emote by category with
 a kit dropdown and a cooldown box – pick a kit and it's bound, pick "— no kit —" to unbind. The management AI
 can do it too ("bind Starter to Thanks with a 30 min cooldown").
 

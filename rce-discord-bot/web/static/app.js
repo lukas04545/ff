@@ -2354,9 +2354,15 @@ function emoteBindsCard(data, reload) {
       h("p", { class: "muted", text: `Pick a kit next to an emote – players get it when they use that emote (quick chat) in game. One emote gives one kit; picking another replaces it. ${res.binds} bound. Discord: /kit bind, /kit binds. More options (max per player, required role) in the autokit list below.` }),
       h("div", { class: "row" }, search, h("label", { class: "muted" }, onlyBound, " only bound emotes"),
         h("button", { class: "small", text: "🎖️ Each kit only for its role", title: "Every emote bind gets its kit's own Discord role as required role (linked kit role, else the role named like the kit)", onclick: async () => {
-          if (!confirm("Set every emote bind to need its kit's own Discord role?")) return;
+          if (!confirm("Set every emote bind to need its kit's own Discord role?\n\nAfterwards ONLY players who linked their account (/customkit link) AND have that kit's role get it from the emote.")) return;
           const r = await act(() => api("/api/emote-binds/roles", { method: "POST", body: {} }));
           toast(`${r.assigned.length} bind(s) now need their kit's role` + (r.no_role_found.length ? ` · no role found: ${r.no_role_found.join(", ")}` : ""));
+          reload();
+        } }),
+        h("button", { class: "small", text: "🔓 No roles needed", title: "Undo: every emote bind works for everyone again", onclick: async () => {
+          if (!confirm("Remove the required role from every emote bind? Everyone can use them again.")) return;
+          const r = await act(() => api("/api/emote-binds/roles", { method: "POST", body: { remove: true } }));
+          toast(`${r.removed} bind(s) work for everyone again`);
           reload();
         } })),
       body);
