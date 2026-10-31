@@ -181,6 +181,7 @@ class Config:
     teleport_position_command: str         # read a player's position (capture button): {name}
     manager_ai_channel_ids: frozenset[int]  # management AI channel(s) (admins only, empty = off)
     manager_ai_instructions: str           # owner's own rules for the management AI
+    manager_ai_web: bool                   # it may use the admin website's API (changes confirmed by the admin)
     manager_ai_console: bool               # it may run console commands (each one confirmed by the admin)
     tip4serv_channel_id: int | None      # channel where Tip4Serv's Discord bot announces purchases
     tip4serv_auto_approve: bool          # paid + priced new custom kits are approved by the bot
@@ -420,6 +421,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         manager_ai_channel_ids=_id_set("MANAGER_AI_CHANNEL_IDS"),
         manager_ai_instructions=_get("MANAGER_AI_INSTRUCTIONS")[:4000],
         manager_ai_console=_bool("MANAGER_AI_CONSOLE", True),
+        manager_ai_web=_bool("MANAGER_AI_WEB", True),
         tip4serv_channel_id=_int("TIP4SERV_CHANNEL_ID"),
         tip4serv_auto_approve=_bool("TIP4SERV_AUTO_APPROVE", True),
         tip4serv_name_match=_bool("TIP4SERV_NAME_MATCH", True),

@@ -240,3 +240,94 @@ def test_failed_request_is_remembered_for_again(mgr):
                                                           if m["role"] == "user") else {"content": "?", "tool_calls": []}))
     asyncio.run(mgr.cog.on_message(mgr.message("again")))
     assert mgr.replies[-1][0].startswith("Retrying.")
+
+
+# ------------------------------------------------------------ The management AI on the admin website
+
+def test_admin_website_guard_rails():
+    from web.server import WebInterface
+    assert WebInterface.ai_blocked("GET", "/api/shop") is None
+    assert WebInterface.ai_blocked("POST", "/api/shop/items") is None
+    for method, path in (("POST", "/api/users"), ("GET", "/api/users"), ("POST", "/api/restart"),
+                         ("GET", "/api/backups/x"), ("POST", "/api/2fa/disable"), ("POST", "/api/command"),
+                         ("POST", "/api/servers"), ("POST", "/api/webshop/giftcards"), ("DELETE", "/api/plugins/x"),
+                         ("POST", "/api/plugins/x/file/logo"), ("GET", "/admin"), ("POST", "/api/login")):
+        assert WebInterface.ai_blocked(method, path), (method, path)
+    assert WebInterface.ai_blocked("GET", "/api/plugins/x/file/logo") is None              # reading is fine
+    kept, dropped = WebInterface.ai_clean_settings({"values": {"DISCORD_TOKEN": "x", "WEB_PASSWORD": "p",
+                                                               "ADMIN_ROLE_IDS": "1", "SERVER_DISPLAY_NAME": "Kryvon"}})
+    assert kept == {"SERVER_DISPLAY_NAME": "Kryvon"} and set(dropped) == {"DISCORD_TOKEN", "WEB_PASSWORD",
+                                                                          "ADMIN_ROLE_IDS"}
+    red = WebInterface._ai_redact({"api_key": "abc", "items": [{"paypal_secret": "s", "name": "n"}], "token": ""})
+    assert red == {"api_key": "[hidden]", "items": [{"paypal_secret": "[hidden]", "name": "n"}], "token": ""}
+
+
+def test_admin_website_end_to_end(bot, tmp_path, monkeypatch):  # noqa: F811
+    import socket
+    from aiohttp import web as aioweb
+    from web.server import WebInterface
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    async def main():
+        tmp = bot.config.database_path.parent
+        (tmp / ".env").write_text("DISCORD_TOKEN=x\nSERVER_DISPLAY_NAME=Old\n")
+        web_ui = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        web_ui.ws = replace(web_ui.ws, host="127.0.0.1", port=port)
+        runner = aioweb.AppRunner(web_ui.app)
+        await runner.setup()
+        await aioweb.TCPSite(runner, "127.0.0.1", port).start()
+        try:
+            r = await web_ui.ai_request("GET", "/api/me")
+            assert r["ok"] and r["result"]["user"] == "Management AI" and r["result"]["role"] == "owner"
+            r = await web_ui.ai_request("GET", "/api/emote-binds")
+            assert r["ok"] and r["result"]["binds"] == 0
+            r = await web_ui.ai_request("PUT", "/api/emote-binds", {"emote": "thanks", "kit": "Starter"})
+            assert r["ok"] and bot.db.kit_rules()[0]["kit"] == "Starter"
+            r = await web_ui.ai_request("PUT", "/api/settings", {"values": {"SERVER_DISPLAY_NAME": "Kryvon",
+                                                                           "DISCORD_TOKEN": "stolen"}})
+            env = (tmp / ".env").read_text()
+            assert r["ok"] and r["not_changed"] == ["DISCORD_TOKEN"] and "SERVER_DISPLAY_NAME=Kryvon" in env \
+                and "stolen" not in env
+            r = await web_ui.ai_request("GET", "/api/users")
+            assert r["ok"] is False and r["status"] == 403
+            assert any(a["path"] == "/api/shop" for a in web_ui.ai_endpoints("shop"))
+            assert not any(a["path"].startswith("/api/users") for a in web_ui.ai_endpoints())
+            # nobody can use the AI's session from outside: an owner-looking cookie without the key fails
+            assert (await web_ui.ai_request("GET", "/api/me"))["ok"]
+        finally:
+            await runner.cleanup()
+            await bot.rcon.close()
+    asyncio.run(main())
+
+
+def test_manager_uses_the_website_with_a_click_for_changes(mgr, monkeypatch):
+    asked, calls = [], []
+
+    async def confirm(message, text):
+        asked.append(text)
+        return True
+    monkeypatch.setattr(mgr.cog, "confirm", confirm)
+
+    class FakeWeb:
+        ai_blocked = staticmethod(__import__("web.server", fromlist=["x"]).WebInterface.ai_blocked)
+
+        def ai_endpoints(self, q=""):
+            return [{"method": "GET", "path": "/api/shop"}]
+
+        async def ai_request(self, method, path, body=None):
+            calls.append((method, path, body))
+            return {"ok": True, "status": 200, "result": {}}
+    mgr.bot.web = FakeWeb()
+    names = [t["function"]["name"] for t in mgr.cog.tools()]
+    assert "admin_website" in names and "admin website" in mgr.cog._prompt()
+    t, msg = mgr.cog.run_tool, mgr.message("x")
+    assert asyncio.run(t("admin_website", {"method": "GET", "path": "/api/shop"}, msg))["ok"] and asked == []
+    r = asyncio.run(t("admin_website", {"method": "POST", "path": "/api/shop/items", "body": {"name": "VIP"}}, msg))
+    assert r["ok"] and len(asked) == 1 and "/api/shop/items" in asked[0] and r["did"].startswith("🌐 POST")
+    r = asyncio.run(t("admin_website", {"method": "POST", "path": "/api/users", "body": {}}, msg))
+    assert r["ok"] is False and len(calls) == 2                                          # blocked, never sent
+    mgr.bot.config = replace(mgr.bot.config, manager_ai_web=False)
+    assert "admin_website" not in [t["function"]["name"] for t in mgr.cog.tools()]

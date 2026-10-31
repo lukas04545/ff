@@ -124,6 +124,22 @@ ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play", 
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
                        "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection", "/api/br",
                        "/api/honeypot", "/api/themes", "/api/allplugins")
+# The management AI (cogs/manager_ai.py) uses the panel's own API with a session of its own ("Management AI",
+# owner rights, a per-start secret key – nobody can log in as it). Never for these (any method):
+AI_USER = "Management AI"
+AI_BLOCKED = ("/api/login", "/api/logout", "/api/reauth", "/api/2fa", "/api/account", "/api/users", "/api/restart",
+              "/api/update", "/api/backups", "/api/setup", "/api/honeypot", "/api/switch", "/api/command")
+# … and these only for reading (no changes): servers, the domain, gift cards (money), plugin code/files
+AI_BLOCKED_WRITES = ("/api/servers", "/api/settings/cloudflare-domain", "/api/webshop/giftcards", "/api/plugins/upload",
+                     "/api/plugins/generate", "/api/allplugins/copy")
+AI_BLOCKED_WRITE_RE = re.compile(r"^/api/plugins/[^/]+(/file/.*)?$")      # delete a plugin, upload plugin files
+# Settings it may never change (besides every secret): access, ports, who is admin, its own permissions
+AI_LOCKED_SETTINGS = {"WEB_PASSWORD", "WEB_PANEL_KNOCK", "WEB_HOST", "WEB_PORT", "WEB_PANEL_PATH", "WEB_ENABLED",
+                      "WEB_PUBLIC_URL", "ALLOW_RAW_RCON", "ADMIN_ROLE_IDS", "ADMIN_USER_IDS", "GUILD_ID", "RCON_HOST",
+                      "RCON_PORT", "DEEPSEEK_BASE_URL", "MANAGER_AI_CHANNEL_IDS", "MANAGER_AI_CONSOLE",
+                      "MANAGER_AI_WEB", "MANAGER_AI_INSTRUCTIONS"}
+AI_SECRET_KEY = re.compile(r"token|secret|passw|api_?key|cookie|session|webhook|private", re.I)
+AI_MAX_RESULT = 14000
 _current_user: contextvars.ContextVar[str] = contextvars.ContextVar("web_user", default="?")
 POLLING_COMMANDS = ("playerlist", "serverinfo")
 
@@ -338,6 +354,7 @@ class WebInterface:
         self._honeypot_told: dict[str, float] = {}               # ip:kind -> last admin log line (no flooding)
         self._ensure_panel_path()
         self._pending_2fa: dict[str, tuple[str, float]] = {}     # username -> (new secret, valid until)
+        self._ai_key = secrets.token_hex(32)                      # the management AI's session key (per start)
         self._sudo: dict[str, float] = {}                        # session token -> confirmed until
         self._revoked: set[str] = set()
         self._login_minute = RateLimiter(LOGIN_ATTEMPTS_PER_MINUTE, 60)
@@ -1091,11 +1108,115 @@ class WebInterface:
         _current_user.set(session[0])
         return await handler(request)
 
+    # ------------------------------------------------------------ The management AI using the panel
+
+    @staticmethod
+    def ai_blocked(method: str, path: str) -> str | None:
+        """Why the management AI may not make this request (None = allowed)."""
+        method, path = method.upper(), "/" + path.lstrip("/")
+        if not path.startswith("/api/"):
+            return "Only the panel API (/api/…) can be used."
+        if path.startswith(AI_BLOCKED):
+            return "Logins, accounts, 2FA, restart, updates, backups, setup and raw console are off-limits for the AI."
+        if method not in ("GET", "HEAD") and (path.startswith(AI_BLOCKED_WRITES) or AI_BLOCKED_WRITE_RE.match(path)):
+            return "The AI may only look at this (servers, domain, gift cards, plugin code), not change it."
+        return None
+
+    @staticmethod
+    def ai_clean_settings(body) -> tuple[dict | None, list[str]]:
+        """PUT /api/settings from the AI: secrets and access settings are dropped. (values, dropped keys)."""
+        values = body.get("values") if isinstance(body, dict) else None
+        if not isinstance(values, dict):
+            return None, []
+        kept, dropped = {}, []
+        for key, value in values.items():
+            f = settings_schema.FIELDS_BY_KEY.get(key)
+            if f is None or f.kind == "secret" or key in AI_LOCKED_SETTINGS:
+                dropped.append(str(key))
+            else:
+                kept[key] = value
+        return kept, dropped
+
+    def ai_endpoints(self, query: str = "") -> list[dict]:
+        """The panel's API the AI may use: method, path and what it does (first line of the handler's docstring)."""
+        out, q = [], (query or "").lower()
+        for route in self.app.router.routes():
+            info = route.resource.get_info() if route.resource is not None else {}
+            path = info.get("path") or info.get("formatter") or ""
+            if route.method == "HEAD" or not path.startswith("/api/") or self.ai_blocked(route.method, path):
+                continue
+            doc = (getattr(route.handler, "__doc__", None) or "").strip().split("\n")[0][:140]
+            item = {"method": route.method, "path": path, **({"about": doc} if doc else {})}
+            if not q or q in (path + " " + doc).lower():
+                out.append(item)
+        return out
+
+    @staticmethod
+    def _ai_redact(value):
+        if isinstance(value, dict):
+            return {k: ("[hidden]" if AI_SECRET_KEY.search(str(k)) and isinstance(v, str) and v
+                        else WebInterface._ai_redact(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [WebInterface._ai_redact(v) for v in value]
+        return value
+
+    async def ai_request(self, method: str, path: str, body=None) -> dict:
+        """One panel API request as the "Management AI" user (logged in the admin log like any panel user).
+        The caller (cogs/manager_ai.py) asks the admin before anything that changes something."""
+        method = (method or "GET").upper()
+        path = "/" + str(path or "").lstrip("/")
+        if (why := self.ai_blocked(method, path.split("?")[0])) is not None:
+            return {"ok": False, "status": 403, "error": why}
+        dropped: list[str] = []
+        if method == "PUT" and path.split("?")[0] == "/api/settings":
+            values, dropped = self.ai_clean_settings(body)
+            if not values:
+                return {"ok": False, "status": 403, "error": "None of these settings may be changed by the AI "
+                                                             "(secrets and access settings are off-limits).",
+                        "not_allowed": dropped}
+            body = {"values": values}
+        token = self._sign(AI_USER, int(time.time()) + 120, secrets.token_hex(8))
+        if method == "PUT" and path.split("?")[0] == "/api/settings":
+            self._sudo[token] = time.time() + 60            # already confirmed by the admin in Discord
+        host = self.ws.host if self.ws.host not in ("", "0.0.0.0", "::", "localhost") else "127.0.0.1"
+        url = f"http://{'[' + host + ']' if ':' in host else host}:{self.ws.port}{path}"
+        headers = {CSRF_HEADER: "rce-web", "Host": f"127.0.0.1:{self.ws.port}"}
+        cookies = {SESSION_COOKIE: token, GATE_COOKIE: self._gate_value()}
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60), cookies=cookies) as session:
+                kwargs = {"json": body} if body is not None and method not in ("GET", "HEAD") else {}
+                async with session.request(method, url, headers=headers, **kwargs) as resp:
+                    kind = resp.content_type or ""
+                    if "json" in kind:
+                        data = self._ai_redact(await resp.json(content_type=None))
+                    elif kind.startswith("text/") or not kind:
+                        data = (await resp.text())[:AI_MAX_RESULT]
+                    else:
+                        data = f"({kind}, {len(await resp.read())} bytes – not shown)"
+                    status = resp.status
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            return {"ok": False, "status": 0, "error": f"The panel did not answer: {exc}"}
+        finally:
+            self._sudo.pop(token, None)          # the token never leaves the bot and expires after 2 minutes
+        text = json.dumps(data, ensure_ascii=False, default=str, separators=(",", ":")) if not isinstance(data, str) else data
+        out = {"ok": 200 <= status < 300, "status": status}
+        if len(text) > AI_MAX_RESULT:
+            out["result_truncated"] = text[:AI_MAX_RESULT]
+            out["note"] = "Result was cut off – ask for something narrower."
+        else:
+            out["result"] = data
+        if dropped:
+            out["not_changed"] = dropped
+            out["note_settings"] = "Secrets and access settings can't be changed by the AI."
+        return out
+
     def _session_key(self, username: str) -> str | None:
         """Secret part of the signature: the owner's WEB_PASSWORD or the user's password hash.
         Changing the password (or deleting/disabling the account) ends all their sessions."""
         if username == OWNER:
             return self.password_hash
+        if username == AI_USER:
+            return self._ai_key
         return self.users.session_key(username)
 
     def _sign(self, username: str, expires: int, nonce: str) -> str | None:
@@ -1121,6 +1242,8 @@ class WebInterface:
             return None
         if username == OWNER:
             return OWNER, "owner"
+        if username == AI_USER:
+            return AI_USER, "owner"
         return username, self.users.get(username)["role"]
 
     def _set_session_cookie(self, resp: web.StreamResponse, username: str = OWNER,

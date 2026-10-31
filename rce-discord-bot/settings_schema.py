@@ -195,6 +195,11 @@ FIELDS: list[Field] = [
     Field("MANAGER_AI_INSTRUCTIONS", "Management AI: your own instructions", "community", "textarea",
           placeholder="e.g. Kits always get a 60 minute cooldown unless I say otherwise.\nAnswer in English.",
           help="Rules and defaults for the management AI – they take priority over its own."),
+    Field("MANAGER_AI_WEB", "Management AI: may use the admin website", "community", "bool",
+          help="On (default): it can do everything the control panel can (shop, wipe, schedules, rules, tickets, "
+               "plugins, settings …) through the panel's own API – reading freely, every change only after the admin "
+               "clicks ✅. Never: logins, accounts, 2FA, restart, updates, backups, secrets and access settings. Every "
+               "change shows up in the admin log as \"Web interface (Management AI)\"."),
     Field("MANAGER_AI_CONSOLE", "Management AI: may run console commands", "community", "bool",
           help="On (default): for things its other tools can't do it may run a Rust console command – only after "
                "the admin clicks ✅ (server stop/kill/delete commands are always blocked). Off: kit tools only."),
