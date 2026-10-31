@@ -71,7 +71,7 @@ def _tile(short: str, amounts: dict, disabled: bool = False) -> str:
     field = ('<input type="number" disabled placeholder="–">' if disabled else
              f'<input type="number" name="q.{esc(short)}" min="0" max="100000" step="1" inputmode="numeric" '
              f'value="{esc(amounts.get(short, ""))}" placeholder="0">')
-    return (f'<div class="bi{cls}"><img src="/img/items/{quote(short)}.png?ph=1&amp;s=96" alt="" width="40" '
+    return (f'<div class="bi{cls}"><img src="/img/items/{quote(short)}.png?ph=1&amp;s=96&amp;v=2" alt="" width="40" '
             f'height="40" loading="lazy" decoding="async">'
             f'<label>{esc(item_name(short))}{field}</label></div>')
 

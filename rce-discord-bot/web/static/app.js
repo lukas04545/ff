@@ -1178,11 +1178,13 @@ views.console = (main) => {
 let meta = null;
 async function loadMeta() { if (!meta) meta = await api("/api/meta"); return meta; }
 
-// Item picture (downloaded and cached by the bot); shows the emoji if there is none
+// Item picture (bundled with the bot or downloaded); shows the emoji if there is none.
+// ITEM_PIC_VERSION: raised when the pictures change, so browsers drop pictures they kept from before.
+const ITEM_PIC_VERSION = 2;
 function itemPic(short, emoji, cls = "pic") {
   const fallback = h("span", { class: cls + " emoji", text: emoji || "📦" });
   if (!short || meta?.item_images === false) return fallback;
-  const img = h("img", { class: cls, src: `/img/items/${encodeURIComponent(short)}.png?s=96`, alt: "", loading: "lazy", decoding: "async", draggable: "false" });
+  const img = h("img", { class: cls, src: `/img/items/${encodeURIComponent(short)}.png?s=96&v=${ITEM_PIC_VERSION}`, alt: "", loading: "lazy", decoding: "async", draggable: "false" });
   img.addEventListener("error", () => img.replaceWith(fallback), { once: true });
   return img;
 }

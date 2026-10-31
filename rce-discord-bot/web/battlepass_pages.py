@@ -68,7 +68,7 @@ def _reward_box(bp, base: str, tier: int, track: str, reward, state: str) -> str
     if reward is None:
         return f'<div class="{cls} none"><span class="lbl">–</span></div>'
     if reward.kind == "item":
-        pic = (f'<img src="/img/items/{quote(reward.item)}.png?ph=1&amp;s=96" alt="" width="56" height="56" '
+        pic = (f'<img src="/img/items/{quote(reward.item)}.png?ph=1&amp;s=96&amp;v=2" alt="" width="56" height="56" '
                'loading="lazy" decoding="async">')
     else:
         pic = f'<div class="ico">{esc(bp.coin_icon) if reward.kind == "coins" else "⭐"}</div>'
