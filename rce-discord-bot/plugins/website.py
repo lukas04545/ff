@@ -380,7 +380,7 @@ class PlayerWebsite(Plugin):
         for short, amount in items[:40]:
             short_q = quote(short)
             tiles.append(f'<div class="it" title="{esc(short)} × {amount}"><img src="/img/items/{short_q}.png?ph=1&amp;'
-                         f's=96" alt="{esc(short)}" width="46" height="46" loading="lazy" decoding="async">'
+                         f's=96&amp;v=2" alt="{esc(short)}" width="46" height="46" loading="lazy" decoding="async">'
                          f'<span class="q">{"×" + str(amount) if amount > 1 else ""}</span></div>')
         return f'<div class="items">{"".join(tiles)}</div>' if tiles else ""
 
