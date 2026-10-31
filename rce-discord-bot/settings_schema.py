@@ -178,6 +178,18 @@ FIELDS: list[Field] = [
     Field("AI_CHAT_KNOWLEDGE", "AI chat: use the knowledge base and server status", "community", "bool",
           help="On (default): it answers server questions (rules, wipes, kits …) from the knowledge base and the "
                "live status. Off: just chatting."),
+    Field("MANAGER_AI_CHANNEL_IDS", "Management AI: channel", "community", "ids", pick="text_channel",
+          help="A private staff channel where the management AI (DeepSeek, needs the API key) works for admins: "
+               "write what you want in plain words and it does it – create in-game kits, bind kits to emotes, "
+               "respawn kits, cooldowns, custom kits, give kits … Only admins (ADMIN_ROLE_IDS) are answered. Risky "
+               "things (a kit for everyone, deleting, a console command) need a ✅ click first. Messages there are "
+               "sent to DeepSeek. Empty = off."),
+    Field("MANAGER_AI_INSTRUCTIONS", "Management AI: your own instructions", "community", "textarea",
+          placeholder="e.g. Kits always get a 60 minute cooldown unless I say otherwise.\nAnswer in English.",
+          help="Rules and defaults for the management AI – they take priority over its own."),
+    Field("MANAGER_AI_CONSOLE", "Management AI: may run console commands", "community", "bool",
+          help="On (default): for things its other tools can't do it may run a Rust console command – only after "
+               "the admin clicks ✅ (server stop/kill/delete commands are always blocked). Off: kit tools only."),
     Field("AI_MOD_CHANNEL_IDS", "AI moderation: channels", "community", "ids", pick="text_channel",
           help="The AI (DeepSeek, needs the API key) reads these channels, e.g. #general, and warns members who are "
                "clearly offensive (insults at someone, slurs, hate, threats, harassment) – swearing, banter and "

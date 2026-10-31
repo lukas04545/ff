@@ -177,6 +177,9 @@ class Config:
     ai_chat_name: str                    # name the AI uses (empty = the bot's name)
     ai_chat_instructions: str            # owner's own instructions (personality, topics …)
     ai_chat_knowledge: bool              # knowledge base + live status in the chat AI
+    manager_ai_channel_ids: frozenset[int]  # management AI channel(s) (admins only, empty = off)
+    manager_ai_instructions: str           # owner's own rules for the management AI
+    manager_ai_console: bool               # it may run console commands (each one confirmed by the admin)
     tip4serv_channel_id: int | None      # channel where Tip4Serv's Discord bot announces purchases
     tip4serv_auto_approve: bool          # paid + priced new custom kits are approved by the bot
     tip4serv_name_match: bool            # payments may be matched by in-game name (not only Discord ID)
@@ -282,6 +285,8 @@ def required_intents(cfg: Config) -> dict[str, list[str]]:
         message_content.append("AI chat moderation")
     if getattr(cfg, "ai_chat_channel_ids", None):
         message_content.append("AI chat")
+    if getattr(cfg, "manager_ai_channel_ids", None):
+        message_content.append("Management AI")
     if getattr(cfg, "ai_mod_guard", False) and getattr(cfg, "prison_channel_id", None):
         message_content.append("AI prison guard")
     if getattr(cfg, "tip4serv_channel_id", None):
@@ -408,6 +413,9 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         ai_chat_name=_get("AI_CHAT_NAME")[:40],
         ai_chat_instructions=_get("AI_CHAT_INSTRUCTIONS")[:4000],
         ai_chat_knowledge=_bool("AI_CHAT_KNOWLEDGE", True),
+        manager_ai_channel_ids=_id_set("MANAGER_AI_CHANNEL_IDS"),
+        manager_ai_instructions=_get("MANAGER_AI_INSTRUCTIONS")[:4000],
+        manager_ai_console=_bool("MANAGER_AI_CONSOLE", True),
         tip4serv_channel_id=_int("TIP4SERV_CHANNEL_ID"),
         tip4serv_auto_approve=_bool("TIP4SERV_AUTO_APPROVE", True),
         tip4serv_name_match=_bool("TIP4SERV_NAME_MATCH", True),

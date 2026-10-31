@@ -476,6 +476,8 @@ class WebInterface:
         r.add_post("/api/autokits/{rule_id:\\d+}/toggle", self.toggle_autokit)
         r.add_put("/api/autokits/{rule_id:\\d+}/role", self.autokit_role)
         r.add_delete("/api/autokits/{rule_id:\\d+}", self.delete_autokit)
+        r.add_get("/api/emote-binds", self.emote_binds)
+        r.add_put("/api/emote-binds", self.set_emote_bind)
         r.add_get("/api/meta", self.meta)
         r.add_get("/api/tickets", self.tickets)
         r.add_get("/api/tickets/{ticket_id:\\d+}", self.ticket_detail)
@@ -3024,6 +3026,41 @@ class WebInterface:
             raise ApiError("Rule not found.", 404)
         self._audit(f"Autokit #{rule_id} deleted")
         return web.json_response({"ok": True})
+
+    async def emote_binds(self, request: web.Request) -> web.Response:
+        """The emote board: every quick chat emote with the kit it gives (if any)."""
+        from support import emote_binds as eb
+        bound = {}
+        for b in eb.binds(self.bot.db):
+            bound.setdefault(b["raw"], b)
+        emotes = [{**e, "bind": bound.get(e["raw"])} for e in eb.emotes()]
+        return web.json_response({"emotes": emotes, "binds": len(bound)})
+
+    async def set_emote_bind(self, request: web.Request) -> web.Response:
+        """Bind a kit to an emote (replaces what it gave before) or, with an empty kit, unbind it."""
+        from support import emote_binds as eb
+        data = await self._json(request)
+        raw, suggestions = eb.find(self._text(data, "emote"))
+        if raw is None:
+            raise ApiError("Unknown emote." + (f" Did you mean: {', '.join(suggestions)}" if suggestions else ""))
+        kit = kitparse.clean_arg(str(data.get("kit") or ""))
+        if not kit:
+            removed = eb.unbind(self.bot.db, raw)
+            if removed:
+                self._audit(f"Emote {eb.label(raw)} unbound ({', '.join(removed)})")
+            return web.json_response({"ok": True, "removed": removed})
+        kit_type = "custom" if data.get("kit_type") == "custom" else "ingame"
+        if kit_type == "custom":
+            row = self.bot.db.custom_kit(kit)
+            if row is None:
+                raise ApiError("Custom kit not found.", 404)
+            kit = row["name"]
+        rule_id, replaced = eb.bind(self.bot.db, raw, kit, kit_type=kit_type,
+                                    cooldown_minutes=self._int(data, "cooldown", 0, 0, 525600),
+                                    max_claims=self._int(data, "max_claims", 0, 0, 10000),
+                                    required_role_id=self._role_id(data), by="Web interface")
+        self._audit(f"Emote {eb.label(raw)} → kit {kit} (autokit #{rule_id})")
+        return web.json_response({"ok": True, "id": rule_id, "replaced": replaced})
 
     async def reset_autokits(self, request: web.Request) -> web.Response:
         count = self.bot.db.reset_kit_claims()

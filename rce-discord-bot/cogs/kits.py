@@ -8,6 +8,7 @@ The syntax of the modifying commands can be customized as templates in the .env 
 Autokits (driven by the bot, rules stored in the SQLite database):
   * Trigger "respawn":   player spawns ("<Name> [..] has entered the game") -> kit
   * Trigger "quickchat": player sends a specific quick chat phrase -> kit
+    Easiest: /kit bind kit emote (one emote = one kit, binding again replaces it), /kit binds, /kit unbind
   Per rule: cooldown per player and an optional limit (e.g. 1x per wipe).
 Kits given on RCE are one-off and are lost on death.
 """
@@ -26,6 +27,7 @@ from discord.ext import commands
 from rce import kits as kitparse
 from rce import log_parser as lp
 from rce import quickchat
+from support import emote_binds
 from permcheck import main_guild
 from rce.rcon_client import RconError
 from utils import (admin_only, format_duration, player_choices, safe_md, sanitize_ingame_text,
@@ -412,6 +414,120 @@ class Kits(commands.Cog):
             text += "\n\n" + "\n".join(notes)
         await interaction.response.send_message(text, ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
+
+    # ------------------------------------------------------------ Emote binds (quick chat -> kit, one step)
+
+    async def _emote_ac(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        bound = {}
+        for r in self.bot.db.kit_rules(trigger="quickchat"):
+            bound.setdefault(r["phrase"], r["kit"])
+        q = current.lower().strip()
+        out = []
+        for e in emote_binds.emotes():
+            if q and q not in e["label"].lower():
+                continue
+            name = e["label"] + (f"  → {bound[e['raw']]}" if e["raw"] in bound else "")
+            out.append(app_commands.Choice(name=name[:100], value=e["raw"][:100]))
+        return out[:25]
+
+    async def _bound_emote_ac(self, interaction: discord.Interaction, current: str
+                              ) -> list[app_commands.Choice[str]]:
+        q = current.lower().strip()
+        return [app_commands.Choice(name=f"{b['label']}  → {b['kit']}"[:100], value=b["raw"][:100])
+                for b in emote_binds.binds(self.bot.db) if not q or q in (b["label"] + b["kit"]).lower()][:25]
+
+    async def _kit_type_for(self, name: str) -> tuple[str, str]:
+        """(kit type, exact name): a custom kit if it only exists as one, else the in-game kit."""
+        custom = self.bot.db.custom_kit(name)
+        ingame = {k.lower() for k in await self.kit_names.get(max_wait=3)}
+        if custom is not None and name.lower() not in ingame:
+            return "custom", custom["name"]
+        return "ingame", name
+
+    @kit.command(name="bind", description="Binds a kit to an emote: players get it when they use that emote in game.")
+    @app_commands.describe(kit="In-game kit (or 🔒 custom kit)", emote="The quick chat emote/phrase – type to search",
+                           cooldown_minutes="Wait time per player until the next claim (0 = none)",
+                           max_per_player="Max. claims per player until the wipe reset (0 = unlimited)",
+                           required_role="Only players whose linked Discord account has this role")
+    @app_commands.autocomplete(kit=_rule_kit_ac, emote=_emote_ac)
+    @admin_only()
+    async def kit_bind(self, interaction: discord.Interaction, kit: str, emote: str,
+                       cooldown_minutes: app_commands.Range[int, 0, 525600] = 0,
+                       max_per_player: app_commands.Range[int, 0, 10000] = 0,
+                       required_role: discord.Role | None = None) -> None:
+        raw, suggestions = emote_binds.find(emote)
+        if raw is None:
+            hint = ("Did you mean: " + ", ".join(f"**{safe_md(x)}**" for x in suggestions)) if suggestions \
+                else "Pick one from the list while typing."
+            await interaction.response.send_message(f"Unknown emote **{safe_md(emote[:60])}**. {hint}", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        kit_type, name = await self._kit_type_for(kitparse.clean_arg(kit))
+        notes = []
+        if kit_type == "ingame":
+            known = await self.kit_names.get(max_wait=3)
+            if known and name.lower() not in (k.lower() for k in known):
+                notes.append(f"⚠️ Kit **{safe_md(name)}** was not found in `kit list`.")
+        rule_id, replaced = emote_binds.bind(self.bot.db, raw, name, kit_type=kit_type,
+                                             cooldown_minutes=cooldown_minutes, max_claims=max_per_player,
+                                             required_role_id=required_role.id if required_role else None,
+                                             by=str(interaction.user))
+        rule = self.bot.db.kit_rule(rule_id)
+        if replaced:
+            notes.append("♻️ Replaced: " + ", ".join(f"**{safe_md(k)}**" for k in replaced))
+        if not cooldown_minutes and not max_per_player:
+            notes.append("ℹ️ No cooldown – players can use the emote again and again. Add `cooldown_minutes` to "
+                         "limit it.")
+        self._audit(f"🎭 {self._who(interaction)}: Emote **{safe_md(emote_binds.label(raw))}** → kit "
+                    f"**{safe_md(name)}** (rule #{rule_id})")
+        await interaction.followup.send(
+            f"🎭 **{safe_md(emote_binds.label(raw))}** now gives {'🔒 ' if kit_type == 'custom' else ''}"
+            f"**{safe_md(name)}**.\n{self._rule_text(rule)}" + ("\n\n" + "\n".join(notes) if notes else ""),
+            ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @kit.command(name="unbind", description="Removes the kit from an emote.")
+    @app_commands.describe(emote="A bound emote")
+    @app_commands.autocomplete(emote=_bound_emote_ac)
+    @admin_only()
+    async def kit_unbind(self, interaction: discord.Interaction, emote: str) -> None:
+        raw, _ = emote_binds.find(emote)
+        removed = emote_binds.unbind(self.bot.db, raw) if raw else []
+        if not removed:
+            await interaction.response.send_message("That emote has no kit bound.", ephemeral=True)
+            return
+        self._audit(f"🎭 {self._who(interaction)}: Emote **{safe_md(emote_binds.label(raw))}** unbound "
+                    f"({', '.join(safe_md(k) for k in removed)})")
+        await interaction.response.send_message(
+            f"🗑️ **{safe_md(emote_binds.label(raw))}** no longer gives "
+            + ", ".join(f"**{safe_md(k)}**" for k in removed) + ".", ephemeral=True)
+
+    @kit.command(name="binds", description="Shows which emote gives which kit.")
+    async def kit_binds(self, interaction: discord.Interaction) -> None:
+        rows = emote_binds.binds(self.bot.db)
+        if not rows:
+            await interaction.response.send_message(
+                "No emote binds yet. Admins: `/kit bind kit:<kit> emote:<emote>`.", ephemeral=True)
+            return
+        by_cat: dict[str, list[str]] = {}
+        for b in rows:
+            cat, _, text = b["label"].partition(" › ")
+            extra = []
+            if b["cooldown_minutes"]:
+                extra.append(f"⏱️ {format_duration(b['cooldown_minutes'] * 60)}")
+            if b["max_claims"]:
+                extra.append(f"max {b['max_claims']}×")
+            if b["required_role_id"]:
+                extra.append(f"🎖️ <@&{b['required_role_id']}>")
+            if not b["enabled"]:
+                extra.append("⏸️ paused")
+            by_cat.setdefault(cat, []).append(
+                f"💬 **{safe_md(text)}** → {'🔒 ' if b['kit_type'] == 'custom' else ''}{safe_md(b['kit'])}"
+                + (f" · {' · '.join(extra)}" if extra else ""))
+        embed = discord.Embed(title="🎭 Emote kits", colour=discord.Colour.dark_green(),
+                              description="Use the emote in game (quick chat) to get the kit.")
+        for cat, lines in by_cat.items():
+            embed.add_field(name=cat, value="\n".join(lines)[:1024], inline=False)
+        await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     @kit.command(name="autokit-role", description="Sets the Discord role required for an autokit (e.g. spawn kit).")
     @app_commands.describe(rule="Autokit rule", role="Required role (empty = everyone gets the kit again)")

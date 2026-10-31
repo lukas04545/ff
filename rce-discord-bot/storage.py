@@ -634,6 +634,19 @@ class Storage:
         self._db.commit()
         return int(cur.lastrowid)
 
+    def update_kit_rule(self, rule_id: int, *, cooldown_minutes: int | None = None,
+                        max_claims: int | None = None) -> bool:
+        """Changes a rule's cooldown and/or limit (None = keep)."""
+        row = self.kit_rule(rule_id)
+        if row is None:
+            return False
+        cooldown = row["cooldown_minutes"] if cooldown_minutes is None else max(0, int(cooldown_minutes))
+        limit = row["max_claims"] if max_claims is None else max(0, int(max_claims))
+        self._db.execute("UPDATE kit_rules SET cooldown_minutes = ?, max_claims = ? WHERE id = ?",
+                         (cooldown, limit, rule_id))
+        self._db.commit()
+        return True
+
     def set_kit_rule_role(self, rule_id: int, role_id: int | None) -> bool:
         cur = self._db.execute("UPDATE kit_rules SET required_role_id = ? WHERE id = ?", (role_id, rule_id))
         self._db.commit()

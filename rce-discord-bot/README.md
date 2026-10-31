@@ -195,6 +195,7 @@ rce-discord-bot/
 │   ├── automod.py         # AI chat moderation: warns offensive members in chosen channels
 │   ├── webshop.py         # Web store: PayPal checkout, gift cards, delivery of bought kits
 │   ├── aichat.py          # AI chats with members in chosen channels + acts as prison guard
+│   ├── manager_ai.py      # Management AI: staff channel, creates kits, binds emotes, autokits, custom kits (tools)
 │   ├── prison.py          # /prison jail/free/list: lock a member to the prison channel (timed too)
 │   ├── player_accounts.py # Player website login (one-time code) + team slots on custom kits
 │   ├── countdown.py       # /countdown: one self-editing countdown message
@@ -217,6 +218,7 @@ rce-discord-bot/
 ├── PLUGINS.md             # How to write your own plugin
 ├── support/
 │   ├── deepseek.py        # Client for the DeepSeek platform API
+│   ├── emote_binds.py     # Emote (quick chat) -> kit binds: find emotes by name, bind/unbind (one emote = one kit)
 │   ├── casino_games.py    # Casino games: slots, coin flip, dice, roulette, blackjack, Plinko, racing (exact RTP)
 │   ├── plinko_image.py    # Plinko board pictures for Discord (animated GIF of the drop)
 │   ├── casino_images.py   # Slots, coin flip, dice, roulette, horse racing GIFs and the blackjack table for Discord
@@ -773,6 +775,7 @@ their own. Admins can't change it themselves. The new theme shows the next time 
 | `/kit list`, `/kit info <kit>`, `/kit autokits` | everyone | Show kits and autokits |
 | `/kit give`, `/kit group`, `/kit all` | Admins | Give a kit to a player, an auth group or everyone |
 | `/kit add-item`, `/kit remove-item` | Admins | Edit kits |
+| `/kit bind`, `/kit unbind`, `/kit binds` | Admins (`binds`: everyone) | Bind a kit to an emote in one step – players get it when they use that emote (quick chat) in game |
 | `/kit autokit-add`, `/kit autokit-role`, `/kit autokit-toggle`, `/kit autokit-delete`, `/kit wipe-reset`, `/kit history` | Admins | Manage autokits (also with custom kits, optionally only for a Discord role) |
 | `/customkit create`, `add-item`, `remove-item`, `delete` | Admins | Create and edit custom kits |
 | `/customkit import`, `/customkit import-file` | Admins | Create/fill custom kits from kit builder `kit add` commands (text box or .txt file) |
@@ -842,6 +845,13 @@ Autokits are given out by the bot itself. The rules are stored in the bot databa
 |---|---|---|
 | 🔄 Respawn | Log line `Name [..] has entered the game` | Starter kit after every death, e.g. with a 30 min cooldown |
 | 💬 Quick chat | The player sends the chosen phrase, e.g. "Here, take this!" | Kit on request, e.g. once per wipe (`max_per_player=1`) |
+
+**Emote kits – the easy way:** `/kit bind kit:Starter emote:Thanks cooldown_minutes:30`. The emote box
+searches as you type ("thanks", "i need scrap", "retreat" …) and shows which kit an emote already gives; binding
+an emote again replaces its old kit (one emote = one kit). `/kit unbind emote:Thanks` removes it, `/kit binds`
+shows every emote with its kit. In the control panel: **Kits → 🎭 Emote kits** lists every emote by category with
+a kit dropdown and a cooldown box – pick a kit and it's bound, pick "— no kit —" to unbind. The management AI
+can do it too ("bind Starter to Thanks with a 30 min cooldown").
 
 Examples:
 
@@ -1050,6 +1060,25 @@ from the knowledge base and the live status; it never invents rules or prices an
 doesn't know. It only talks: it can't give anything, never pings anyone (@everyone, roles, users) and keeps
 answers short, in the member's language. It sees the last messages of the channel as context. Needs the DeepSeek
 API key and the Message Content intent; messages in those channels are sent to DeepSeek.
+
+**Management AI (does the admin work for you):** pick a private staff channel in **Settings → 🎉 Community →
+Management AI: channel** (`MANAGER_AI_CHANNEL_IDS`). Only admins (`ADMIN_ROLE_IDS` / `ADMIN_USER_IDS`) are
+answered there – every message, no @mention needed; everyone else is ignored. Write what you want in plain words
+and it does it with tools:
+- **In-game kits:** create a kit and add items ("make a kit Starter with a stone pickaxe, 3 bandages and 500
+  wood"), look inside a kit, remove items. It checks every shortname against the item list (and asks or suggests
+  when one is unknown) and puts clothing in Wear, weapons/tools/meds in the Belt, the rest in the inventory.
+- **Emote binds and autokits:** bind/unbind kits to emotes, respawn kits, change cooldown, limit per player,
+  required Discord role, pause/resume, delete, list everything.
+- **Custom kits:** create (with items and cooldown), add/remove items, cooldown, switch on/off, delete.
+- **Giving:** a kit to a player, online players, item lookup.
+- **Console** (`MANAGER_AI_CONSOLE`, on): for anything else it may run a Rust console command.
+Risky actions – a kit for everyone, deleting a custom kit, resetting claims, any console command – are only done
+after the admin who asked clicks **✅ Do it** (2 minutes, then it's cancelled). Commands that stop the server or
+kill/delete things (`quit`, `restart`, `deleteentity`, `killplayer` …) are always blocked for the AI. Every action
+goes to the admin log, and each answer ends with a short list of what was done. `MANAGER_AI_INSTRUCTIONS` holds
+your own defaults ("kits always get a 60 minute cooldown"). It remembers the last few messages of the channel.
+Needs the DeepSeek API key and the Message Content intent; messages in that channel are sent to DeepSeek.
 
 **AI chat moderation:** pick the channels to watch in **Settings → 🎉 Community → AI moderation: channels**
 (`AI_MOD_CHANNEL_IDS`, e.g. #general). The AI checks new messages there in batches – every
