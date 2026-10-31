@@ -1086,6 +1086,14 @@ and it does it with tools:
 - **Custom kits:** create (with items and cooldown), add/remove items, cooldown, switch on/off, delete.
 - **Giving:** a kit to a player, online players, item lookup.
 - **Console** (`MANAGER_AI_CONSOLE`, on): for anything else it may run a Rust console command.
+- **The admin website** (`MANAGER_AI_WEB`, on): it can do everything the control panel can – shop, wipe,
+  schedules, rules, tickets, reports, giveaways, store, plugins, settings, status … It uses the panel's own API
+  with its own session (*"Management AI"*, owner rights, a secret key made at every start – nobody can log in as
+  it). Reading is free; **every change** shows you the exact request (`POST /api/shop/items` + data) and waits for
+  your ✅. Never allowed: logins, accounts, 2FA, restart, updates, backups, the raw console page, adding/removing
+  servers, gift cards and plugin code; settings it changes never include secrets (tokens, passwords, keys) or access
+  settings (web host/port/password, admin roles, its own permissions). Secret-looking values are hidden from it in
+  everything it reads. Its changes appear in the admin log as *"Web interface (Management AI)"*.
 Risky actions – a kit for everyone, deleting a custom kit, resetting claims, any console command – are only done
 after the admin who asked clicks **✅ Do it** (2 minutes, then it's cancelled). Commands that stop the server or
 kill/delete things (`quit`, `restart`, `deleteentity`, `killplayer` …) are always blocked for the AI. Every action
