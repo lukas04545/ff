@@ -2352,7 +2352,13 @@ function emoteBindsCard(data, reload) {
     onlyBound.addEventListener("change", filter);
     holder.replaceChildren(h("h2", { text: "🎭 Emote kits" }),
       h("p", { class: "muted", text: `Pick a kit next to an emote – players get it when they use that emote (quick chat) in game. One emote gives one kit; picking another replaces it. ${res.binds} bound. Discord: /kit bind, /kit binds. More options (max per player, required role) in the autokit list below.` }),
-      h("div", { class: "row" }, search, h("label", { class: "muted" }, onlyBound, " only bound emotes")),
+      h("div", { class: "row" }, search, h("label", { class: "muted" }, onlyBound, " only bound emotes"),
+        h("button", { class: "small", text: "🎖️ Each kit only for its role", title: "Every emote bind gets its kit's own Discord role as required role (linked kit role, else the role named like the kit)", onclick: async () => {
+          if (!confirm("Set every emote bind to need its kit's own Discord role?")) return;
+          const r = await act(() => api("/api/emote-binds/roles", { method: "POST", body: {} }));
+          toast(`${r.assigned.length} bind(s) now need their kit's role` + (r.no_role_found.length ? ` · no role found: ${r.no_role_found.join(", ")}` : ""));
+          reload();
+        } })),
       body);
   }).catch((err) => holder.replaceChildren(h("h2", { text: "🎭 Emote kits" }), h("p", { class: "muted", text: "Could not load: " + err.message })));
   return holder;

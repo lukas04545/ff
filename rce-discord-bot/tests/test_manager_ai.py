@@ -331,3 +331,30 @@ def test_manager_uses_the_website_with_a_click_for_changes(mgr, monkeypatch):
     assert r["ok"] is False and len(calls) == 2                                          # blocked, never sent
     mgr.bot.config = replace(mgr.bot.config, manager_ai_web=False)
     assert "admin_website" not in [t["function"]["name"] for t in mgr.cog.tools()]
+
+
+def test_binds_get_their_kits_own_role(mgr, monkeypatch):
+    import cogs.kits as kits_mod
+    from cogs.kits import Kits
+
+    class Role(NS):
+        def is_default(self):
+            return self.id == 1000
+    roles = [Role(id=1000, name="@everyone"), Role(id=11, name="M4 Spawn"), Role(id=12, name="Ak PvP"),
+             Role(id=13, name="Bot", managed=True)]
+    guild = NS(roles=roles, get_role=lambda rid: next((r for r in roles if r.id == rid), None))
+    monkeypatch.setattr(kits_mod, "main_guild", lambda bot: guild)
+    db = mgr.bot.db
+    db.set_ingame_kit_role("ak pvp", 12)                                     # linked (other spelling of the case)
+    emote_binds.bind(db, THANKS, "AK PVP")
+    emote_binds.bind(db, "d11_quick_chat_responses_slot_5", "m4 spawn kit")    # role found by its name
+    emote_binds.bind(db, "d11_quick_chat_responses_slot_6", "mystery kit")    # no role
+    kits = Kits(mgr.bot)
+    asyncio.run(mgr.bot.add_cog(kits))
+    r = asyncio.run(mgr.cog.run_tool("assign_kit_roles_to_binds", {}, mgr.message("assign them to their role")))
+    assert r["ok"] and {a["kit"]: a["role"] for a in r["assigned"]} == {"AK PVP": "Ak PvP", "m4 spawn kit": "M4 Spawn"}
+    assert r["no_role_found"] == ["mystery kit"] and r["did"] == "🎖️ 2 bind(s) → kit roles"
+    by_kit = {b["kit"]: b["required_role_id"] for b in emote_binds.binds(db)}
+    assert by_kit == {"AK PVP": 12, "m4 spawn kit": 11, "mystery kit": None}
+    again = kits.roles_to_binds()
+    assert again["assigned"] == [] and len(again["already_set"]) == 2
