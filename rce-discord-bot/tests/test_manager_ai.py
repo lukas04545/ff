@@ -473,3 +473,29 @@ def test_claims_explain_themselves_and_roles_can_be_undone(mgr, monkeypatch):
     assert db.kit_rule(rid_ak)["kit"] == "Ak PvP"                               # … and fixed in the bind
     asyncio.run(kits.on_rce_chat(lp.ChatEvent("GLOBAL", "Bob", "d11_quick_chat_responses_slot_5", "Hello")))
     assert list(kits.attempts)[-1]["outcome"] == "kit_not_found" and not any("Nope Kit" in c for c in mgr.sent)
+
+
+def test_test_bind_shows_the_servers_answer(mgr, monkeypatch):
+    from cogs.kits import Kits
+    kits = Kits(mgr.bot)
+    asyncio.run(mgr.bot.add_cog(kits))
+
+    async def names(**kw):
+        return ["Ak PvP"]
+    monkeypatch.setattr(kits.kit_names, "get", names)
+    mgr.bot.config = replace(mgr.bot.config, kit_claim_announce=False, autokit_delay=0)
+    emote_binds.bind(mgr.bot.db, THANKS, "Ak PvP", cooldown_minutes=60)
+    answers = iter(["Couldn't find player 'Bob'", ""])
+
+    async def command(cmd, expect_response=True):
+        mgr.sent.append(cmd)
+        return next(answers) if cmd.startswith("kit givetoplayer") else ""
+    monkeypatch.setattr(mgr.bot.rcon, "command", command)
+    r = asyncio.run(mgr.cog.run_tool("test_emote_bind", {"emote": "thanks", "player": "Bob"}, mgr.message("test")))
+    [t] = r["tries"]
+    assert t["outcome"] == "failed" and "Couldn't find player" in t["detail"]
+    assert mgr.bot.db.kit_claim_state(mgr.bot.db.kit_rules()[0]["id"], "Bob")[0] == 0     # cooldown not used up
+    [t] = asyncio.run(kits.test_bind(THANKS, "Bob"))
+    assert t["outcome"] == "given"
+    [t] = asyncio.run(kits.test_bind(THANKS, "Bob"))
+    assert t["outcome"] == "cooldown"

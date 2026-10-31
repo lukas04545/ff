@@ -863,7 +863,10 @@ the management AI "why don't the kits work" – checks every bind (role lock and
 kit missing from `kit list`, paused, empty/switched-off custom kit), RCON, the player's link and roles, and lists
 the recent tries with their outcome (✅ given, 🎖️ no role / not linked, ⏱️ cooldown, 🔢 limit, ❓ kit not found,
 ⚠️ failed). A bind whose kit name only differs in upper/lower case from the server's kit is fixed automatically;
-one whose kit doesn't exist gives nothing and says so in the admin log. In the control panel: **Kits → 🎭 Emote kits** lists every emote by category with
+one whose kit doesn't exist gives nothing and says so in the admin log. **Test a bind right now:** `/kit test-bind emote:Thanks
+player:<online name>` (or "test the Thanks bind on Bob") runs it exactly like the emote in game and says what
+happened – including the game server's answer to the kit command (an error answer like "player not found" counts
+as failed, and the cooldown isn't used up). In the control panel: **Kits → 🎭 Emote kits** lists every emote by category with
 a kit dropdown and a cooldown box – pick a kit and it's bound, pick "— no kit —" to unbind. The management AI
 can do it too ("bind Starter to Thanks with a 30 min cooldown").
 

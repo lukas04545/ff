@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import time
 from collections import deque
 from typing import TYPE_CHECKING, Callable
@@ -44,6 +45,9 @@ TRIGGER_LABELS = {"respawn": "🔄 Respawn", "quickchat": "💬 Quick chat"}
 KIT_TYPE_LABELS = {"ingame": "In-game kit", "custom": "🔒 Custom kit (bot only)"}
 ANNOUNCE_THROTTLE_SECONDS = 30  # max. one cooldown message per player within this period
 ROLE_CACHE_SECONDS = 120        # how long a member's Discord roles are cached for role-locked autokits
+# The server's answer to a kit give that means it didn't work (RCE kit commands are usually silent on success)
+GIVE_ERROR = re.compile(r"not found|doesn'?t exist|does not exist|no such|unknown|invalid|couldn'?t|could not|"
+                        r"failed|error|no kit|not online|no player|usage:|permission", re.I)
 
 
 class _CachedList:
@@ -565,6 +569,24 @@ class Kits(commands.Cog):
         await interaction.followup.send("\n".join(lines)[:1990], ephemeral=True,
                                         allowed_mentions=discord.AllowedMentions.none())
 
+    @kit.command(name="test-bind", description="Runs an emote bind for a player now – shows exactly what happens.")
+    @app_commands.describe(emote="A bound emote", player="In-game name (online, to really get the kit)")
+    @app_commands.autocomplete(emote=_bound_emote_ac, player=_player_ac)
+    @admin_only()
+    async def kit_test_bind(self, interaction: discord.Interaction, emote: str, player: str) -> None:
+        raw, _ = emote_binds.find(emote)
+        if raw is None or not emote_binds.bound_to(self.bot.db, raw):
+            await interaction.response.send_message("That emote has no kit bound.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        tries = await self.test_bind(raw, sanitize_player_name(player))
+        icons = {"given": "✅", "no_role": "🎖️", "cooldown": "⏱️", "limit": "🔢", "failed": "⚠️",
+                 "kit_not_found": "❓", "disabled": "⏸️"}
+        lines = [f"{icons.get(t['outcome'], '•')} **{safe_md(t['kit'])}** → {safe_md(t['player'])}: {t['outcome']}"
+                 + (f" – {safe_md(t['detail'])}" if t["detail"] else "") for t in tries] or ["Nothing ran (bind paused?)."]
+        await interaction.followup.send("\n".join(lines)[:1990], ephemeral=True,
+                                        allowed_mentions=discord.AllowedMentions.none())
+
     @kit.command(name="bind", description="Binds a kit to an emote: players get it when they use that emote in game.")
     @app_commands.describe(kit="In-game kit (or 🔒 custom kit)", emote="The quick chat emote/phrase – type to search",
                            cooldown_minutes="Wait time per player until the next claim (0 = none)",
@@ -828,11 +850,13 @@ class Kits(commands.Cog):
                 if total == 0:
                     raise RconError("Custom kit is empty or was deleted.")
             else:
-                await self.bot.rcon.command(self.bot.config.kit_give_template.format(kit=kit, name=player),
-                                            expect_response=False)
+                reply = (await self.bot.rcon.command(self.bot.config.kit_give_template.format(kit=kit, name=player),
+                                                     expect_response=False) or "").strip()
+                if reply and GIVE_ERROR.search(reply):
+                    raise RconError(f"server answered: {reply[:150]}")
         except RconError as exc:
             self.bot.db.delete_kit_claim(claim_id)
-            self._attempt(rule, player, source, "failed", str(exc)[:120])
+            self._attempt(rule, player, source, "failed", str(exc)[:160])
             self._audit(f"⚠️ Autokit **{safe_md(kit)}** for **{safe_md(player)}** failed: {exc}")
             return
 
@@ -842,6 +866,15 @@ class Kits(commands.Cog):
         if source == "quickchat" and self.bot.config.kit_claim_announce:
             await self._say(f"<color=#7CFC00>{sanitize_ingame_text(player, 32)}</color> received the kit "
                             f"<b>{sanitize_ingame_text(kit, 40)}</b>.")
+
+    async def test_bind(self, raw: str, player: str) -> list[dict]:
+        """Runs the emote's binds for this player right now, exactly like using the emote in game (role, cooldown,
+        limit, kit name, server answer). Returns what happened."""
+        before = len(self.attempts)
+        for rule in self.bot.db.kit_rules(enabled_only=True, trigger="quickchat"):
+            if rule["phrase"] == raw:
+                await self._try_claim(rule, player, "quickchat")
+        return list(self.attempts)[before:] if len(self.attempts) >= before else list(self.attempts)[-3:]
 
     async def diagnose(self, player: str | None = None) -> dict:
         """Why autokits/emote binds may not work: problems per bind, the player's link and roles, recent tries."""
