@@ -851,7 +851,11 @@ Autokits are given out by the bot itself. The rules are stored in the bot databa
 **Emote kits – the easy way:** `/kit bind kit:Starter emote:Thanks cooldown_minutes:30`. The emote box
 searches as you type ("thanks", "i need scrap", "retreat" …) and shows which kit an emote already gives; binding
 an emote again replaces its old kit (one emote = one kit). `/kit unbind emote:Thanks` removes it, `/kit binds`
-shows every emote with its kit. In the control panel: **Kits → 🎭 Emote kits** lists every emote by category with
+shows every emote with its kit. **Each kit only for its role:** `/kit bind-roles` (or the **🎖️ Each kit only for its
+role** button on the emote board, or tell the management AI "assign them to their role") sets every emote bind's
+required role to that kit's own Discord role – the role linked under Kits → Kit roles, else the role named like the
+kit ("m4 spawn kit" → @M4 Spawn). Players then only get it if their linked account has that role; kits without a
+role are listed. In the control panel: **Kits → 🎭 Emote kits** lists every emote by category with
 a kit dropdown and a cooldown box – pick a kit and it's bound, pick "— no kit —" to unbind. The management AI
 can do it too ("bind Starter to Thanks with a 30 min cooldown").
 

@@ -69,6 +69,9 @@ How to work:
 - Many binds at once ("bind every kit to an emote"): look up list_ingame_kits and list_emotes, then make ONE
   bind_kits_to_emotes call with all pairs – never dozens of single calls. Skip emotes the admin says to leave out
   and emotes that already give a kit unless told to replace them.
+- "Assign them to their role" / "each kit only for its role" after binding kits: assign_kit_roles_to_binds – it
+  sets every emote bind's required role to that kit's own Discord role in one go (don't do this through the
+  admin website).
 - If something is ambiguous (two kits match, no amount given for a big item list …) ask one short question instead
   of guessing. Small details you can sensibly default (amount 1, container from the item type, no cooldown) – do it
   and say what you chose.
@@ -134,6 +137,10 @@ TOOLS = [
             "emote": {"type": "string"}, "kit": {"type": "string"},
             "kit_type": {"type": "string", "enum": ["ingame", "custom"]}, **_RULE_OPTS}, "required": ["emote", "kit"]}}},
         ["binds"]),
+    _fn("assign_kit_roles_to_binds", "Every emote bind (or every autokit) then needs its kit's OWN Discord role "
+                                     "(the role linked to the kit, else the role named like it).",
+        {"only_missing": {"type": "boolean", "description": "Only binds without a required role"},
+         "all_autokits": {"type": "boolean", "description": "Also respawn autokits"}}),
     _fn("unbind_emote", "The emote no longer gives a kit.", {"emote": {"type": "string"}}, ["emote"]),
     _fn("create_respawn_autokit", "Gives the kit automatically every time a player respawns.",
         {"kit": {"type": "string"}, "kit_type": {"type": "string", "enum": ["ingame", "custom"]}, **_RULE_OPTS},
@@ -540,6 +547,17 @@ class ManagerAI(commands.Cog):
 
         if name == "list_autokits":
             return {"ok": True, "autokits": [self._rule_dict(r) for r in db.kit_rules()]}
+
+        if name == "assign_kit_roles_to_binds":
+            kits = self.bot.get_cog("Kits")
+            if kits is None or not hasattr(kits, "roles_to_binds"):
+                return {"ok": False, "error": "The kit module is not loaded."}
+            result = kits.roles_to_binds(emotes_only=not args.get("all_autokits"),
+                                         only_missing=bool(args.get("only_missing")),
+                                         by=f"management AI for {message.author}")
+            if result.get("ok") and result["assigned"]:
+                result["did"] = f"🎖️ {len(result['assigned'])} bind(s) → kit roles"
+            return result
 
         if name == "bind_kits_to_emotes":
             results, did = [], []

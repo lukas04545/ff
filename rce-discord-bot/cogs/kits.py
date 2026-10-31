@@ -450,6 +450,74 @@ class Kits(commands.Cog):
             return "custom", custom["name"]
         return "ingame", name
 
+    def kit_own_role(self, guild, kit: str, kit_type: str = "ingame"):
+        """The kit's own Discord role: the role linked to it (Kit roles / custom kit claim role), else a role named
+        like the kit ("m4 spawn kit" -> "M4 Spawn"). None if there is none."""
+        from support.kit_role_match import name_match
+        if guild is None:
+            return None
+        ids: list[int] = []
+        if kit_type == "custom":
+            row = self.bot.db.custom_kit(kit)
+            ids += self.bot.db.claim_roles(row) if row is not None else []
+        linked = self.bot.db.ingame_kit_role(kit) or next(
+            (r for r in self.bot.db.ingame_kit_roles() if r["kit"].lower() == kit.lower()), None)
+        if linked is not None:
+            ids.append(linked["role_id"])
+        role = next((guild.get_role(i) for i in ids if guild.get_role(i)), None)
+        if role is not None:
+            return role
+        candidates = [(r.id, r.name) for r in guild.roles if not r.is_default() and not getattr(r, "managed", False)]
+        match = name_match(kit, candidates)
+        return guild.get_role(match) if match else None
+
+    def roles_to_binds(self, *, emotes_only: bool = True, only_missing: bool = False, by: str = "") -> dict:
+        """Every emote bind (or every autokit) gets its kit's own Discord role as the required role – players then
+        only get the kit from the emote if their linked Discord account has that kit's role."""
+        guild = main_guild(self.bot)
+        if guild is None:
+            return {"ok": False, "error": "The bot isn't on a Discord server."}
+        rules = self.bot.db.kit_rules(trigger="quickchat") if emotes_only else self.bot.db.kit_rules()
+        assigned, unchanged, missing = [], [], []
+        for rule in rules:
+            if only_missing and rule["required_role_id"]:
+                continue
+            role = self.kit_own_role(guild, rule["kit"], rule["kit_type"])
+            if role is None:
+                missing.append(rule["kit"])
+                continue
+            if rule["required_role_id"] == role.id:
+                unchanged.append(rule["kit"])
+                continue
+            self.bot.db.set_kit_rule_role(rule["id"], role.id)
+            assigned.append({"rule_id": rule["id"], "kit": rule["kit"], "role": role.name, "role_id": str(role.id)})
+        if assigned:
+            self._audit(f"🎖️ {by or 'Bot'}: kit roles set on {len(assigned)} autokit(s): "
+                        + ", ".join(f"{safe_md(a['kit'])} → {safe_md(a['role'])}" for a in assigned[:25]))
+        return {"ok": True, "assigned": assigned, "already_set": unchanged, "no_role_found": sorted(set(missing))}
+
+    @kit.command(name="bind-roles", description="Each emote kit only for its own Discord role (e.g. Ak Pvp → @Ak Pvp).")
+    @app_commands.describe(only_missing="Only binds that have no required role yet (default: all)",
+                           all_autokits="Also respawn autokits, not just emote binds")
+    @admin_only()
+    async def kit_bind_roles(self, interaction: discord.Interaction, only_missing: bool = False,
+                             all_autokits: bool = False) -> None:
+        result = self.roles_to_binds(emotes_only=not all_autokits, only_missing=only_missing,
+                                     by=self._who(interaction))
+        if not result["ok"]:
+            await interaction.response.send_message(result["error"], ephemeral=True)
+            return
+        lines = [f"🎖️ **{safe_md(a['kit'])}** → <@&{a['role_id']}>" for a in result["assigned"]]
+        text = (f"✅ {len(result['assigned'])} bind(s) now need their kit's role." if lines
+                else "Nothing to change.") + ("\n" + "\n".join(lines) if lines else "")
+        if result["already_set"]:
+            text += f"\nAlready set: {len(result['already_set'])}"
+        if result["no_role_found"]:
+            text += ("\n⚠️ No role found for: " + ", ".join(f"**{safe_md(k)}**" for k in result["no_role_found"])
+                     + " – link one under Kits → Kit roles, or set it with `/kit autokit-role`.")
+        await interaction.response.send_message(text[:1990], ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
     @kit.command(name="bind", description="Binds a kit to an emote: players get it when they use that emote in game.")
     @app_commands.describe(kit="In-game kit (or 🔒 custom kit)", emote="The quick chat emote/phrase – type to search",
                            cooldown_minutes="Wait time per player until the next claim (0 = none)",

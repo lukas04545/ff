@@ -495,6 +495,7 @@ class WebInterface:
         r.add_delete("/api/autokits/{rule_id:\\d+}", self.delete_autokit)
         r.add_get("/api/emote-binds", self.emote_binds)
         r.add_put("/api/emote-binds", self.set_emote_bind)
+        r.add_post("/api/emote-binds/roles", self.emote_bind_roles)
         r.add_get("/api/teleports", self.teleports)
         r.add_put("/api/teleports", self.set_teleport)
         r.add_post("/api/teleports/capture", self.capture_teleport)
@@ -3165,6 +3166,16 @@ class WebInterface:
             bound.setdefault(b["raw"], b)
         emotes = [{**e, "bind": bound.get(e["raw"])} for e in eb.emotes()]
         return web.json_response({"emotes": emotes, "binds": len(bound)})
+
+    async def emote_bind_roles(self, request: web.Request) -> web.Response:
+        """Each emote bind (or every autokit) needs its kit's own Discord role (linked kit role, else same name)."""
+        data = await self._json(request)
+        result = self._cog("Kits").roles_to_binds(emotes_only=not data.get("all_autokits"),
+                                                  only_missing=bool(data.get("only_missing")),
+                                                  by=f"Web interface ({_current_user.get()})")
+        if not result["ok"]:
+            raise ApiError(result["error"], 503)
+        return web.json_response(result)
 
     async def set_emote_bind(self, request: web.Request) -> web.Response:
         """Bind a kit to an emote (replaces what it gave before) or, with an empty kit, unbind it."""
