@@ -75,7 +75,8 @@ How to work:
   sets every emote bind's required role to that kit's own Discord role in one go (don't do this through the
   admin website). Afterwards ONLY linked players (/customkit link) who have that role get the kit – say so.
   remove_roles_from_binds undoes it (everyone can use the emotes again).
-- "Kits/claims/binds don't work": call diagnose_kit_claims first (optionally for a player) and explain the real
+- "Kits/claims/binds don't work": call diagnose_kit_claims first (and test_emote_bind on an online player to see
+  the exact failure, incl. the game server's answer) (optionally for a player) and explain the real
   reason from it (role lock, not linked, cooldown, wrong kit name, RCON down, no tries seen …) before changing
   anything.
 - If something is ambiguous (two kits match, no amount given for a big item list …) ask one short question instead
@@ -153,6 +154,10 @@ TOOLS = [
     _fn("remove_roles_from_binds", "Undo of assign_kit_roles_to_binds: emote binds (or all autokits) no longer need "
                                    "a Discord role – everyone can use them again.",
         {"all_autokits": {"type": "boolean"}}),
+    _fn("test_emote_bind", "Runs an emote's kit bind for a player right now, exactly like using the emote in game, "
+                           "and returns what happened (given, no role, cooldown, kit not found, server error …). The "
+                           "player really gets the kit if it works.",
+        {"emote": {"type": "string"}, "player": {"type": "string"}}, ["emote", "player"]),
     _fn("diagnose_kit_claims", "Why emote/respawn kits don't work: problems per bind (role lock, missing kit, paused "
                                "…), RCON, a player's link and roles, and the recent tries with their outcome.",
         {"player": {"type": "string", "description": "In-game name (optional)"}}),
@@ -607,6 +612,18 @@ class ManagerAI(commands.Cog):
 
         if name == "list_autokits":
             return {"ok": True, "autokits": [self._rule_dict(r) for r in db.kit_rules()]}
+
+        if name == "test_emote_bind":
+            kits = self.bot.get_cog("Kits")
+            raw, suggestions = emote_binds.find(args.get("emote", ""))
+            if kits is None or raw is None:
+                return {"ok": False, "error": "Unknown emote." if raw is None else "Kit module not loaded.",
+                        "did_you_mean": suggestions}
+            from utils import sanitize_player_name
+            tries = await kits.test_bind(raw, sanitize_player_name(str(args.get("player") or "")))
+            self._audit(who, f"tested emote **{safe_md(emote_binds.label(raw))}** for "
+                             f"**{safe_md(str(args.get('player')))}**")
+            return {"ok": True, "tries": tries or "nothing ran – no enabled bind on this emote"}
 
         if name in ("remove_roles_from_binds", "diagnose_kit_claims"):
             kits = self.bot.get_cog("Kits")
