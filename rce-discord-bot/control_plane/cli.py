@@ -3,6 +3,11 @@
   init [--domain example.com]  first setup: writes /etc/rce-saas.env (master key, session secret, domain) if it
                                doesn't exist yet and creates the data folders
 
+  login-link                   one-time link to the owner panel (works once, 15 minutes) – also for the very first
+                               login: without an owner account it lets you create yours
+  setup [--port 8099]          first setup in the browser before your domain works: a temporary owner panel on
+                               http://<server ip>:8099 with a one-time link (stops after 30 minutes)
+
 Settings come from /etc/rce-saas.env (CP_ENV_FILE) – no need to load it by hand. Run as root, every command drops to
 the user that owns the bot folder (e.g. rcebot) after reading it, so files never end up owned by root.
   create-owner <username>      owner account for the owner panel (password + TOTP for an authenticator app)
@@ -209,9 +214,84 @@ def cmd_links(args, settings: Settings) -> int:
     return 0
 
 
-def cmd_rotate(args, settings: Settings) -> int:
+def apply_web_settings(settings: Settings) -> None:
+    """Settings saved on the website (owner panel → Settings) win over the file."""
+    from control_plane import websettings
+    from control_plane.crypto import CryptoError
+    if not os.environ.get("CP_MASTER_KEYS") and not os.environ.get("CP_MASTER_KEY_FILE"):
+        return
+    try:
+        db = DB(settings.db_path)
+        keys = websettings.apply_saved(db, SecretBox.from_env())
+        db.close()
+    except (CryptoError, OSError, sqlite3.Error, ValueError) as exc:
+        log.warning("Couldn't load the website's settings: %s", exc)
+        return
+    websettings.refresh(settings, keys)
+
+
+def _server_ip() -> str:
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("1.1.1.1", 80))                 # no packet is sent – it only picks the outgoing address
+            return sock.getsockname()[0]
+    except OSError:
+        return "<your-server-ip>"
+
+
+def cmd_login_link(args, settings: Settings) -> int:
+    from control_plane import websettings
+    token = websettings.new_login_link(DB(settings.db_path))
+    print("One-time login (works ONCE, for 15 minutes):")
+    if settings.owner_path:
+        print(f"  {settings.portal_url}{settings.owner_path}/once/{token}")
+    print(f"  http://127.0.0.1:{settings.owner_port}/once/{token}   (private: ssh -L {settings.owner_port}:127.0.0.1:"
+          f"{settings.owner_port} <vps>)")
+    print("Domain not working yet? Use `python3 -m control_plane setup` instead.")
+    return 0
+
+
+def cmd_setup(args, settings: Settings) -> int:
+    """A temporary owner panel on all addresses (plain HTTP!) for the first setup – stops after `minutes`."""
+    from aiohttp import web
+
+    from control_plane import websettings
+    from control_plane.web import build_owner
+    if len(settings.session_secret) < 32:
+        print("Run `python3 -m control_plane init` first (as root).")
+        return 1
     db, box = _db_and_box(settings)
-    n = 0
+
+    async def changed() -> None:
+        pass
+
+    async def serve() -> None:
+        runner = web.AppRunner(build_owner(db, box, settings, changed), access_log=None)
+        await runner.setup()
+        await web.TCPSite(runner, "0.0.0.0", args.port).start()
+        token = websettings.new_login_link(db, ttl=args.minutes * 60)
+        print(f"Open this on your phone/PC (works ONCE, for {args.minutes} minutes):\n"
+              f"  http://{_server_ip()}:{args.port}/once/{token}\n"
+              f"Firewall? `ufw allow {args.port}/tcp` (and close it again afterwards: `ufw delete allow "
+              f"{args.port}/tcp`).\nThis is plain HTTP – enter your keys here only for the first setup, later use "
+              f"{settings.portal_url}{settings.owner_path or ''}. Ctrl+C stops it.")
+        try:
+            await asyncio.sleep(args.minutes * 60)
+        finally:
+            await runner.cleanup()
+            print("Setup page closed. Start the control plane with `python3 -m control_plane run`.")
+    try:
+        asyncio.run(serve())
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def cmd_rotate(args, settings: Settings) -> int:
+    from control_plane import websettings
+    db, box = _db_and_box(settings)
+    n = int(websettings.rotate(db, box))
     for r in db.q("SELECT server_id, kind, ciphertext FROM secrets"):
         if box.needs_rotation(r["ciphertext"]):
             aad = f"server:{r['server_id']}:{r['kind']}"
@@ -337,6 +417,11 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("slots", type=int)
     g.add_argument("--reason")
     sub.add_parser("rotate-keys")
+    sub.add_parser("login-link")
+    st = sub.add_parser("setup")
+    st.add_argument("--port", type=int, default=8099)
+    st.add_argument("--minutes", type=int, default=30)
+    st.add_argument("--domain", default="", help="your domain (only used if the settings file is created now)")
     lk = sub.add_parser("links")
     lk.add_argument("--email", help="only this customer's servers")
     a = sub.add_parser("addon")
@@ -350,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--email", required=True, help="the customer it belongs to (created if new; comped)")
     i.add_argument("--name", required=True)
     args = p.parse_args(argv)
-    if args.cmd == "init":
+    if args.cmd in ("init", "setup"):                  # setup on a fresh server = init first
         try:
             args.created_env = write_env_file(env_file(), args.domain.strip())
         except PermissionError:
@@ -359,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     load_env_file()
     settings = Settings()
     prepare_and_drop(settings)
+    apply_web_settings(settings)
     if args.cmd == "run":
         if len(settings.session_secret) < 32:
             print("Set CP_SESSION_SECRET (see `init`).")
@@ -367,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     return {"init": cmd_init, "create-owner": cmd_create_owner, "grant": cmd_grant, "rotate-keys": cmd_rotate,
             "import-server": cmd_import, "addon": cmd_addon, "update": cmd_update,
-            "links": cmd_links}[args.cmd](args, settings)
+            "links": cmd_links, "login-link": cmd_login_link, "setup": cmd_setup}[args.cmd](args, settings)
 
 
 if __name__ == "__main__":

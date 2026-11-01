@@ -3,8 +3,15 @@ to the bot folder's owner after handing it the data folders."""
 import os
 import stat
 
+import pytest
+
 from control_plane import cli
 from control_plane.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def own_env(monkeypatch):
+    monkeypatch.setattr(os, "environ", dict(os.environ))     # whatever the settings file sets stays in this test
 
 
 def test_init_writes_a_private_settings_file_once(tmp_path, monkeypatch, capsys):

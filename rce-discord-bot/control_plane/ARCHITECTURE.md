@@ -284,16 +284,27 @@ folder and keys, so the owner can restore it. *Purge* (owner, only after remove)
 
 ```bash
 cd /home/rcebot/ff/rce-discord-bot && pip install -r requirements.txt   # cryptography, sqlcipher3 already in there
-python3 -m control_plane init --domain yourdomain.com   # writes /etc/rce-saas.env (keys, domain; root-only, 0600)
-nano /etc/rce-saas.env                                  # add CP_DEEPSEEK_API_KEY, the shared bot, Stripe, HQ bot
-python3 -m control_plane create-owner you               # password + authenticator app (TOTP)
+python3 -m control_plane setup --domain yourdomain.com  # first time: writes /etc/rce-saas.env, then prints a
+                                                        # one-time link http://<server ip>:8099/once/… (30 minutes)
 python3 -m control_plane run                            # systemd service, Restart=always
+python3 -m control_plane login-link                     # any time later: a one-time link to the owner panel
 python3 -m control_plane links                          # where everything is
 ```
-Every command loads `/etc/rce-saas.env` by itself (`CP_ENV_FILE` for another path) – no `set -a`/`sudo -E`
-needed. Started as root, a command reads that file, hands the data folders to the user that owns the bot folder (e.g.
-`rcebot`) and continues as that user, so no file ends up owned by root (`CP_RUN_AS_ROOT=1` turns that off).
-The shared bot's Discord app needs the redirect `https://portal.yourdomain.com/discord/callback`.
+* **Everything in the browser:** the one-time link signs you in once (15 minutes; `setup`: 30). Without an owner
+  account it first lets you create yours and shows your 2FA key.
+* **Settings page:** owner panel → **⚙️ Settings** holds the domain, DeepSeek key, shared bot, Stripe, management
+  Discord, owner panel address/IP allowlist, updates and the memory limit.
+  * Secrets show only as `set ••••1234`; leave a field empty to keep the value.
+  * Values are stored encrypted in `control.db` and win over the file. Only the master key and the session secret
+    stay in `/etc/rce-saas.env`.
+  * Most changes apply at once; ones marked *restart* need a restart of the control plane.
+* **`setup` is plain HTTP on the server's IP:** open the port only for the first setup (`ufw allow 8099/tcp`, then
+  `ufw delete allow 8099/tcp`) and use `https://portal.<domain>/management` afterwards.
+* **No `set -a` or `sudo -E` needed:** every command loads `/etc/rce-saas.env` by itself (`CP_ENV_FILE` for another
+  path).
+* **Run as root:** a command reads that file, hands the data folders to the user that owns the bot folder (e.g.
+  `rcebot`) and continues as that user (`CP_RUN_AS_ROOT=1` turns that off).
+* The shared bot's Discord app needs the redirect `https://portal.yourdomain.com/discord/callback`.
 
 Caddy (`/etc/caddy/Caddyfile`):
 ```
