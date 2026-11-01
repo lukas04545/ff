@@ -121,6 +121,16 @@ Every server runs on one of two bots:
   * Connecting it at Cloudflare: owner panel → 🌐 Domains with a token used once (*Zone › SSL and Certificates ›
     Edit*, not saved). Or, only if the owner chooses, a saved token with just that permission
     (`CP_CF_SAAS_TOKEN`) does it automatically.
+* **The website is free:** on hosted servers the player website is on from the start, in every package.
+  * Customers add a logo, a header picture and up to 6 server pictures (a gallery on the home page; big photos are
+    made smaller in the browser).
+  * They run their own web shop (kits, items, gift cards) with their own PayPal account: admin panel → Store, and
+    Settings → Store. PayPal's return link follows the address the player used, including their own domain.
+* **Premium = own domain:** besides packages that include it, customers can add the own-domain add-on to any
+  package (`CP_DOMAIN_PRICE` per month). It's an extra item in their Stripe subscription (prorated). The webhook
+  grants and takes back `custom_domain` (`granted_by = "addon"`), and a package change never removes it.
+* **The management AI never edits code:** its code tools, `MANAGER_AI_CODE`, the `.bak`/Keep/Revert machinery and
+  `revert_code.py` are gone.
 * **Themes:** the player website has a *Look (theme)* setting (rust, neon, arctic, jungle, bloodmoon, gold, clean)
   next to the logo, colours and texts. The Halloween look still wins in October.
 

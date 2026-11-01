@@ -3,7 +3,7 @@
 RCE_SAAS=1 is set by the control plane's supervisor. Every tenant server runs the SAME code folder in its OWN home
 folder (RCE_HOME) with its own .env, database, plugins data and web port. Anything that could reach beyond that
 folder – or change the shared code – is switched off here:
-  * no code changes (management AI code tools, uploaded/AI-generated Python plugins, auto-updates, full backups
+  * no code changes (uploaded/AI-generated Python plugins, auto-updates, full backups
     with the code and the emergency restore of them) – they'd affect every tenant
   * no extra servers from the bot's own Servers page – slots are sold and granted in the control plane only
   * file paths, web host/port/tunnel/public address, the Discord token and outbound URLs come from the control plane
@@ -31,7 +31,7 @@ LOCKED_SETTINGS = frozenset({
     "DATABASE_PATH", "SUPPORT_KNOWLEDGE_FILE", "RULES_FILE", "PRICE_LIST_FILE", "BACKUP_COPY_DIR",
     "ITEM_IMAGE_URL", "DEEPSEEK_BASE_URL",             # outbound URLs: no requests to local ports of others
     "AUTO_UPDATE", "AUTO_UPDATE_REPO", "AUTO_UPDATE_BRANCH", "AUTO_UPDATE_INTERVAL",
-    "MANAGER_AI_CODE", "FULL_BACKUP_ENABLED", "DB_ENCRYPTION", "BACKUP_INCLUDE_ENV",
+    "FULL_BACKUP_ENABLED", "DB_ENCRYPTION", "BACKUP_INCLUDE_ENV",
     "DEEPSEEK_API_KEY",                                # AI is an add-on: the key comes from the control plane
 })
 

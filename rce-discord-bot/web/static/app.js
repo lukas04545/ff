@@ -3414,16 +3414,31 @@ function pluginImageControl(f, p, reload) {
   const preview = f.value ? h("img", { class: "plugin-img", src: `${url}?t=${Date.now()}`, alt: "" })
     : h("span", { class: "muted", text: "Default picture" + (p.public_path ? " (see the website)" : "") });
   const file = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif" });
-  file.addEventListener("change", () => {
+  file.addEventListener("change", async () => {
     const f0 = file.files[0];
     if (!f0) return;
-    if (f0.size > 700000) { toast("The picture is too big (max. 700 KB).", true); file.value = ""; return; }
+    let blob = f0;
+    // a big photo/screenshot is made smaller in the browser first (max 1920 px, WebP) so it fits the upload limit
+    if (f0.size > 650000 && f0.type !== "image/gif") {
+      try {
+        const bmp = await createImageBitmap(f0);
+        const scale = Math.min(1, 1920 / Math.max(bmp.width, bmp.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(bmp.width * scale); canvas.height = Math.round(bmp.height * scale);
+        canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+        for (const q of [0.85, 0.7, 0.55]) {
+          blob = await new Promise((res) => canvas.toBlob(res, "image/webp", q));
+          if (blob && blob.size <= 650000) break;
+        }
+      } catch { blob = f0; }
+    }
+    if (!blob || blob.size > 700000) { toast("The picture is too big (max. 700 KB).", true); file.value = ""; return; }
     const reader = new FileReader();
     reader.onload = async () => {
       try { await api(url, { method: "POST", body: { data: reader.result } }); toast("Picture saved"); reload(); }
       catch (e) { toast(e.message, true); }
     };
-    reader.readAsDataURL(f0);
+    reader.readAsDataURL(blob);
   });
   return h("div", { class: "row" }, preview, file,
     f.value ? h("button", { class: "small ghost", text: "Use default", onclick: async () => {

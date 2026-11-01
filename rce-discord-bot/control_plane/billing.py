@@ -78,10 +78,11 @@ def _event_plan(db: DB, kind: str, obj: dict) -> int | None:
         pid = str((obj.get("metadata") or {}).get("plan_id") or "")
         return int(pid) if pid.isdigit() and plans.get(db, int(pid)) else None
     if kind in ("customer.subscription.created", "customer.subscription.updated"):
-        items = ((obj.get("items") or {}).get("data") or [])
-        price = ((items[0] if items else {}).get("price") or {}).get("id")
-        plan = plans.get(db, stripe_price=price) if price else None
-        return plan["id"] if plan else None
+        for item in ((obj.get("items") or {}).get("data") or []):     # the package item (add-ons are others)
+            price = (item.get("price") or {}).get("id")
+            plan = plans.get(db, stripe_price=price) if price else None
+            if plan:
+                return plan["id"]
     return None
 
 
@@ -99,6 +100,12 @@ def handle_event(db: DB, event: dict, *, grace_days: int = 3) -> str:
                (db.one("SELECT id FROM customers WHERE stripe_customer_id = ?", (obj.get("customer"),)) or {"id": 0})["id"])
         if cid and db.one("SELECT 1 FROM customers WHERE id = ?", (cid,)):
             plans.apply(db, cid, plan_id, actor="stripe")
+    if kind.startswith("customer.subscription."):         # the own-domain add-on item in the subscription
+        row = db.one("SELECT id FROM customers WHERE stripe_customer_id = ?", (obj.get("customer"),))
+        if row is not None:
+            prices = {(i.get("price") or {}).get("id") for i in ((obj.get("items") or {}).get("data") or [])}
+            alive = not kind.endswith(".deleted") and obj.get("status") in ("active", "trialing", "past_due")
+            plans.sync_addon(db, row["id"], alive and bool(prices & plans.addon_price_ids(db)), actor="stripe")
     return result
 
 

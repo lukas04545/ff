@@ -195,13 +195,6 @@ FIELDS: list[Field] = [
     Field("MANAGER_AI_INSTRUCTIONS", "Management AI: your own instructions", "community", "textarea",
           placeholder="e.g. Kits always get a 60 minute cooldown unless I say otherwise.\nAnswer in English.",
           help="Rules and defaults for the management AI – they take priority over its own."),
-    Field("MANAGER_AI_CODE", "Management AI: may change the bot's code", "community", "bool",
-          help="On (default): the owner can ask it to change the bot's own code (cogs, plugins, panel files). Only "
-               "the user IDs in ADMIN_USER_IDS may (if that's empty: every admin). Every edit is shown as a diff and "
-               "needs a ✅; it must compile and import or it's undone; the original stays as <file>.bak until "
-               "✅ Keep – ↩️ Revert (/code revert) puts everything back. Secrets, logins, admin checks and the AI's "
-               "own limits can't be changed. Bot won't start? Run python revert_code.py. Note: an update of the "
-               "bot can overwrite your changes."),
     Field("MANAGER_AI_WEB", "Management AI: may use the admin website", "community", "bool",
           help="On (default): it can do everything the control panel can (shop, wipe, schedules, rules, tickets, "
                "plugins, settings …) through the panel's own API – reading freely, every change only after the admin "

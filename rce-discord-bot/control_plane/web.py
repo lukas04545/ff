@@ -387,9 +387,22 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                            f"name you entered) → <code>sites.{esc(base)}</code>. The certificate (https) comes by "
                            f"itself – it can take a few minutes after we've connected it.</p>")
         else:
-            domain_part = ("<p class=muted>🌐 Want your <b>own domain</b> (e.g. www.yourserver.com)? It's in the "
-                           "bigger packages – <a href=/#plans>see the packages</a>.</p>")
-        return (f"<div class=card><h2>🌐 {esc(s['name'])} – website</h2>"
+            price = plans.addon_price(db, settings)
+            buy = (f"<form method=post action=/billing/addon/domain/on>{hidden}<button>⭐ Get your own domain – "
+                   f"{esc(price['text'])} / month</button></form>" if price else
+                   "<a href=/#plans>See the packages</a>")
+            domain_part = ("<p>⭐ <b>Premium: your own domain</b> – e.g. <code>www.yourserver.com</code> instead of "
+                           f"the address above. Your website stays free.</p>{buy}")
+        addon_row = db.one("SELECT granted_by FROM features WHERE customer_id = ? AND feature = 'custom_domain' AND "
+                           "revoked_at IS NULL", (s["customer_id"],))
+        if addon_row is not None and addon_row["granted_by"] == plans.ADDON_OWNER:
+            domain_part += (f"<form method=post action=/billing/addon/domain/off class=inline onsubmit=\"return "
+                            f"confirm('Cancel the own-domain add-on?')\">{hidden}<button class='ghost small'>Cancel "
+                            f"the own-domain add-on</button></form>")
+        return (f"<div class=card><h2>🌐 {esc(s['name'])} – website <span class=muted style='font-size:.9rem'>"
+                f"(free)</span></h2><p class=muted>Your players' website with live status, leaderboards, rules and "
+                f"your web shop (PayPal). Logo, header picture, server pictures, colours and texts: admin panel → "
+                f"Plugins → Website. Your shop's kits and prices: admin panel → Store; PayPal: Settings → Store.</p>"
                 f"<p>Address: <a href='{esc(settings.url_for(s['slug']))}' target=_blank>"
                 f"{esc(settings.url_for(s['slug']))}</a></p>"
                 f"<form method=post action=/servers/{sid}/address class=row>{hidden}<input name=address "
@@ -542,6 +555,27 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
             raise web.HTTPSeeOther("/#plans")
         raise await start_checkout(request, c, plan)
 
+    async def domain_addon(request):
+        """The premium add-on (own domain) is added to / removed from the running subscription."""
+        c = need(request)
+        await sess.form(request)
+        on = request.match_info["on"] == "on"
+        sub = db.one("SELECT stripe_subscription_id FROM subscriptions WHERE customer_id = ?", (c["id"],))
+        if not sub or not sub["stripe_subscription_id"]:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus("Choose a package first – the own domain is added "
+                                                                "to it."))
+        try:
+            price = await plans.ensure_addon_stripe_price(db, settings)
+            if not price:
+                raise plans.PlanError("The own-domain add-on isn't for sale right now.")
+            await plans.change_addon(settings, sub["stripe_subscription_id"], price, on)
+        except plans.PlanError as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
+        db.audit(f"customer:{c['id']}", "addon.domain." + ("requested" if on else "cancel_requested"),
+                 customer_id=c["id"])
+        raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(
+            "Own domain added – connect it below in a few seconds." if on else "Own-domain add-on cancelled."))
+
     async def switch_plan(request):
         """A subscriber moves to another package (Stripe prorates; the webhook applies the new package)."""
         c = need(request)
@@ -590,6 +624,7 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
 
     app.add_routes([web.get("/", index), web.get("/signup", signup_page), web.get("/login", login_page),
                     web.post("/billing/switch", switch_plan),
+                    web.post("/billing/addon/domain/{on:on|off}", domain_addon),
                     web.post(r"/servers/{sid:\d+}/address", change_address),
                     web.post(r"/servers/{sid:\d+}/domains", add_domain),
                     web.post(r"/servers/{sid:\d+}/domains/remove", remove_domain),
