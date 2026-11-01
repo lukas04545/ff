@@ -34,9 +34,13 @@ class Typing:
 
 
 class Channel:
-    def __init__(self, guild, name, category=None, topic=None):
+    def __init__(self, guild, name, category=None, topic=None, overwrites=None):
         self.id, self.guild, self.name, self.category, self.topic = next(ids), guild, name, category, topic
-        self.sent = []
+        self.overwrites = overwrites if overwrites is not None else dict(getattr(category, "overwrites", {}))
+        self.sent, self.repaired = [], 0
+
+    async def edit(self, overwrites=None, reason=None):
+        self.overwrites, self.repaired = overwrites, self.repaired + 1
 
     async def send(self, content=None, embed=None, view=None):
         m = Msg(self, content, embed, view)
@@ -62,28 +66,55 @@ class Category:
     def channels(self):
         return self.text_channels
 
-    async def create_text_channel(self, name, topic=None, reason=None):
-        ch = Channel(self.guild, name, self, topic)
+    async def edit(self, overwrites=None, reason=None):
+        self.overwrites = overwrites
+
+    async def create_text_channel(self, name, topic=None, reason=None, overwrites=None):
+        ch = Channel(self.guild, name, self, topic, overwrites)
         self.text_channels.append(ch)
         self.guild.all[ch.id] = ch
         return ch
 
 
 class Obj:
-    def __init__(self, id):
-        self.id = id
+    def __init__(self, id, name=""):
+        self.id, self.name, self.members = id, name, []
+
+
+class Member:
+    def __init__(self, guild, id, name):
+        self.id, self.guild, self.display_name, self.bot, self.roles = id, guild, name, False, []
+
+    async def add_roles(self, *roles, reason=None):
+        for r in roles:
+            self.roles.append(r)
+            r.members.append(self)
+
+    async def remove_roles(self, *roles, reason=None):
+        for r in roles:
+            self.roles.remove(r)
+            r.members.remove(self)
 
 
 class Guild:
     def __init__(self):
         self.id, self.owner_id, self.categories, self.all = GID, 1, [], {}
         self.default_role, self.me = Obj(GID), Obj(2)
+        self.roles, self.members = [], {}
 
     def get_role(self, rid):
-        return None
+        return next((r for r in self.roles if r.id == rid), None)
 
     def get_member(self, uid):
-        return None
+        return self.members.get(uid)
+
+    async def fetch_member(self, uid):
+        raise hqmod.discord.NotFound(NS(status=404, reason="x"), "unknown member")
+
+    async def create_role(self, name, colour=None, mentionable=False, reason=None):
+        role = Obj(next(ids), name)
+        self.roles.append(role)
+        return role
 
     def get_channel(self, cid):
         return self.all.get(cid)
@@ -273,3 +304,110 @@ def test_customer_channel_with_two_servers_asks_which(world):
     assert w.hq._pick_server(ch.id, "hi")[2].startswith("Which server?")
     assert w.hq._pick_server(ch.id, f"#{s2['id']} hi")[:2] == (s2["id"], "hi")
     assert "isn't one of this customer's" in w.hq._pick_server(ch.id, "#9999 hi")[2]
+
+
+def member(w, uid, name, key=None):
+    m = Member(w.guild, uid, name)
+    w.guild.members[uid] = m
+    if key:
+        role = w.guild.get_role(w.hq.role_ids[key])
+        m.roles.append(role)
+        role.members.append(m)
+    return m
+
+
+def test_roles_and_every_channel_are_created_and_repaired(world):
+    w = world
+    asyncio.run(w.hq.sync())
+    assert sorted(r.name for r in w.guild.roles) == ["HQ Admin", "HQ Support", "HQ Viewer"]
+    hq_cat = w.guild.categories[0]
+    assert [c.name for c in hq_cat.text_channels] == list(hqmod.CHANNELS)
+    roles = {k: w.guild.get_role(v) for k, v in w.hq.role_ids.items()}
+    audit, ai = _channel(w, "hq-audit"), _channel(w, "hq-ai")
+    assert roles["admin"] in audit.overwrites and roles["viewer"] not in audit.overwrites      # admins only
+    assert ai.overwrites[roles["support"]].send_messages is True
+    assert ai.overwrites[roles["viewer"]].send_messages is False and ai.overwrites[roles["viewer"]].view_channel
+    cust = _channel(w, hqmod.channel_name(w.cid, "a@x.io"))
+    assert cust.overwrites[roles["viewer"]].send_messages is False
+    # somebody opens the audit channel to everyone → repaired; the roles aren't made twice
+    audit.overwrites = {}
+    asyncio.run(w.hq.sync())
+    assert audit.repaired == 1 and len(w.guild.roles) == 3
+    assert "HQ Support" in _channel(w, "hq-staff").sent[0].embed.fields[1].name
+
+
+def test_staff_levels(world, monkeypatch):
+    w = world
+    asked = []
+
+    async def fake_ask(db, box, sid, text, history, *, allow_risky):
+        asked.append(text)
+        return {"ok": True, "answer": "ok", "done": [], "asked": []}
+    monkeypatch.setattr(manage_ai, "ask", fake_ask)
+    asyncio.run(w.hq.sync())
+    viewer, support = member(w, 31, "Vic", "viewer"), member(w, 32, "Sue", "support")
+    ch = _channel(w, hqmod.channel_name(w.cid, "a@x.io"))
+
+    async def go():
+        i = interaction(w.guild, f"hq:s:restart:{w.sid}", user_id=31)
+        i.user = viewer
+        await w.hq.on_interaction(i)
+        assert "can't do that" in i.log[-1] and w.sup.restarted == []
+        i = interaction(w.guild, f"hq:s:restart:{w.sid}")
+        i.user = support
+        await w.hq.on_interaction(i)
+        assert w.sup.restarted == [w.sid]
+        for cid_ in (f"hq:s:suspend:{w.sid}", f"hq:c:grant:{w.cid}", "hq:u:install", "hq:r:admin"):
+            i = interaction(w.guild, cid_)
+            i.user = support
+            await w.hq.on_interaction(i)
+            assert "can't do that" in i.log[-1], cid_
+        for who, text in ((viewer, "list kits"), (support, "list binds")):
+            m = Msg(ch, text)
+            m.author, m.guild = who, w.guild
+            await w.hq.on_message(m)
+    asyncio.run(go())
+    assert asked == ["list binds"]                                      # the viewer only reads
+
+
+def test_staff_panel_gives_and_takes_roles(world):
+    w = world
+    asyncio.run(w.hq.sync())
+    newbie = member(w, 41, "Nia")
+
+    async def go():
+        i = interaction(w.guild, "hq:r:support")
+        i.data["values"] = ["41"]
+        await w.hq.on_interaction(i)
+        assert "Nia → HQ Support" in i.log[-1]
+        assert [r.name for r in newbie.roles] == ["HQ Support"]
+        i = interaction(w.guild, "hq:r:admin")
+        i.data["values"] = ["41", "999"]                                  # unknown people are skipped
+        await w.hq.on_interaction(i)
+        assert [r.name for r in newbie.roles] == ["HQ Admin"]               # one HQ role per person
+        i = interaction(w.guild, "hq:r:none")
+        i.data["values"] = ["41"]
+        await w.hq.on_interaction(i)
+        assert newbie.roles == [] and w.hq.level(newbie) == hqmod.NONE
+    asyncio.run(go())
+    staff = _channel(w, "hq-staff").sent[0]
+    assert staff.edits >= 1
+    assert any(r["action"] == "hq.staff.support" for r in w.cp.db.q("SELECT action FROM audit_log"))
+
+
+def test_alerts_and_audit_feed(world):
+    w = world
+    asyncio.run(w.hq.sync())                                            # first look: nothing posted
+    alerts, audit = _channel(w, "hq-alerts"), _channel(w, "hq-audit")
+    assert alerts.sent == [] and audit.sent == []
+    w.cp.db.run("INSERT OR REPLACE INTO health (server_id, checked_at, process, discord_ready, rcon_connected) "
+                "VALUES (?, 1, 'crashloop', 0, 0)", (w.sid,))
+    customer(w.cp, "new@x.io")
+    w.cp.db.audit("owner:boss", "server.restart", server_id=w.sid)
+    asyncio.run(w.hq.sync())
+    text = "\n".join(m.content for m in alerts.sent)
+    assert "New customer" in text and "new@x.io" in text and "crashloop" in text
+    feed = "\n".join(m.content for m in audit.sent)
+    assert "server.restart" in feed and "owner:boss" in feed
+    asyncio.run(w.hq.sync())                                            # nothing new: nothing posted again
+    assert len(audit.sent) == 1

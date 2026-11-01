@@ -106,31 +106,43 @@ Every server runs on one of two bots:
 
 ## The management Discord (HQ)
 
-Connect your own Discord server to the control plane (`control_plane/hq.py`, runs inside `python -m control_plane run`):
+Connect your own Discord server to the control plane (`control_plane/hq.py`, runs inside `python -m control_plane run`).
+The bot builds everything by itself and repairs it at every start: roles, categories, channels, permissions and panels.
 
-* **Setup:** create a NEW bot in the Discord Developer Portal (not the shared bot) and switch on its *Message Content*
-  intent. Invite it to your management server with *Manage Channels*, *View Channels*, *Send Messages*, *Embed Links*
-  and *Read Message History*. Then set `CP_HQ_BOT_TOKEN`, `CP_HQ_GUILD_ID` and `CP_HQ_ADMIN_IDS` (your Discord user
-  id, comma list) or `CP_HQ_ADMIN_ROLE_ID`, and restart the control plane.
-* **What it builds** (private categories, hidden from @everyone):
+* **Setup:**
+  1. Create a NEW bot in the Discord Developer Portal (not the shared bot). Switch on its *Message Content* and
+     *Server Members* intents.
+  2. Invite it to your management server with *Manage Roles*, *Manage Channels*, *View Channels*, *Send Messages*,
+     *Embed Links* and *Read Message History*. Easiest: give it *Administrator* in that private server only.
+  3. Set `CP_HQ_BOT_TOKEN`, `CP_HQ_GUILD_ID` and `CP_HQ_ADMIN_IDS` (your Discord user id, comma list), then restart
+     the control plane.
+* **Staff roles** (created by the bot, no Discord permissions – they only open the HQ channels; one per person):
+  * **HQ Admin** – everything: all buttons, add-ons, slots, updates, risky AI actions, staff roles, the audit feed.
+  * **HQ Support** – the management AI without risky actions, *Restart* / *Reactivate* servers, sees every customer.
+  * **HQ Viewer** – reads every panel and alert, can't type or press anything.
+  * The server owner, `CP_HQ_ADMIN_IDS` and `CP_HQ_ADMIN_ROLE_ID` always count as HQ Admin.
+  * Give or take the roles in `#hq-staff` (user pickers, HQ Admin only) or in Discord's normal role menu.
+* **Channels** (hidden from @everyone):
   * `🛠 RCE HQ` contains:
     * `#hq-overview`: customers, subscriptions, servers, live bots/players, the version, and *Check for updates* /
       *Install update for ALL servers* (asks again).
-    * `#hq-ai`: the management AI for any server, e.g. `#12 list the emote binds`.
-  * `👥 Customers`: one channel per customer who bought the bot. It holds:
+    * `#hq-ai`: the management AI for any server, e.g. `#12 list the emote binds` (Support and Admin can type).
+    * `#hq-alerts`: new customers and servers, crashes, bots offline/back, RCON lost/back, late payments.
+    * `#hq-audit`: every action from the portal, the owner panel and HQ (Admin only).
+    * `#hq-staff`: the staff role panel (Admin only).
+  * `👥 Customers` (more categories after 50): one channel per customer who bought the bot. It holds:
     * a customer panel (account, subscription, slots, add-ons; buttons *Suspend/Reactivate account*, *+1 slot*,
       *Comp*, add-ons on/off);
     * one panel per server (state, Discord, RCON, players, errors, a link to its secret admin panel; buttons
       *Restart*, *Suspend/Reactivate*, *Discord AI on/off*).
     * Typing in the channel talks to that customer's server's management AI (`#<id> …` if they have more servers).
-* **Updates:** panels refresh every 2 minutes and right after any change from the portal, the owner panel or HQ.
-* **Access:** only `CP_HQ_ADMIN_IDS`, the `CP_HQ_ADMIN_ROLE_ID` role and the server owner. Everyone else's messages
-  and button clicks are ignored or refused.
+* **Updates:** panels, alerts and the audit feed refresh every minute and right after any change. Unchanged panels
+  aren't edited.
 * **The bot itself:** it leaves any other Discord server it's added to, and refuses to run with the shared bot's token.
 * **Actions:** every one goes through the same code as the owner panel (`actions.py`) and is audited as
   `discord:<user id>`. Remove and purge stay in the owner panel only.
-* **Risky AI actions:** console commands, deleting and similar first come back as "not done" with an *Allow risky
-  actions and run again* button.
+* **Risky AI actions:** they first come back as "not done" with an *Allow risky actions and run again* button
+  (HQ Admin only).
 
 ## Isolation, layer by layer
 
