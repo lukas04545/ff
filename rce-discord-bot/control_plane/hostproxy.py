@@ -33,7 +33,7 @@ def portal_host(settings: Settings) -> str:
 def resolve(db: DB, settings: Settings, host: str) -> tuple[str, dict | None]:
     """("portal" | "tenant" | "paused" | "unknown", server row)."""
     domain = settings.base_domain.lower()
-    if not host or host in (portal_host(settings), domain, "127.0.0.1", "localhost"):
+    if not host or host in (portal_host(settings), f"portal.{domain}", domain, "127.0.0.1", "localhost"):
         return "portal", None
     alias = db.one("SELECT value FROM settings_kv WHERE key = ?", (f"host_alias:{host}",))
     if alias:
