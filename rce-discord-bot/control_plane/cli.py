@@ -7,6 +7,7 @@
                                login: without an owner account it lets you create yours
   adopt [--email <you>]        move EVERY server of this install (main + servers/<id>) into tenants at once –
                                tokens, databases (also encrypted ones), settings and panel addresses stay
+  shared-bot [--server N]      move every server (or one) onto the ONE shared bot, fenced to its Discord server
   cloudflare [--domain x]      every website through ONE Cloudflare tunnel, set up by itself (asks for your API
                                token once – not stored); no Caddy, no open ports
   setup [--port 8099]          first setup in the browser before your domain works: a temporary owner panel on
@@ -474,6 +475,27 @@ def cmd_cloudflare(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_shared_bot(args, settings: Settings) -> int:
+    """Every server (or --server N) onto the ONE shared bot, each fenced to its own Discord server."""
+    db, box = _db_and_box(settings)
+    if not settings.shared_bot_token:
+        print("Set the shared bot first: owner panel → Settings → Shared Discord bot (token, client id, secret).")
+        return 1
+    rows = db.q("SELECT * FROM servers WHERE status != 'deleted'" + (" AND id = ?" if args.server else "")
+                + " ORDER BY id", (args.server,) if args.server else ())
+    failed = 0
+    for s in rows:
+        try:
+            guild = provisioning.move_to_shared_bot(db, settings, s["id"], args.guild or "", actor="cli")
+            print(f"  ✅ #{s['id']} {s['name']} → shared bot, Discord server {guild}")
+        except provisioning.ProvisionError as exc:
+            failed += 1
+            print(f"  ✖ #{s['id']} {s['name']}: {exc}")
+    print(f"\nInvite the shared bot to each of these Discord servers (once): {provisioning.shared_invite(settings)}\n"
+          "Then restart: systemctl restart rce-saas")
+    return 1 if failed else 0
+
+
 OWNER_ACCOUNT = "owner@servers.local"     # your own servers' account when no e-mail is given (never mailed)
 
 
@@ -589,6 +611,9 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--reason")
     sub.add_parser("rotate-keys")
     sub.add_parser("login-link")
+    sb = sub.add_parser("shared-bot")
+    sb.add_argument("--server", type=int, help="only this server id (default: all)")
+    sb.add_argument("--guild", help="its Discord server id (default: GUILD_ID from its settings)")
     cf = sub.add_parser("cloudflare")
     cf.add_argument("--domain", help="your domain, e.g. kryvon3x.com (if it isn't set yet)")
     ad = sub.add_parser("adopt")
@@ -632,7 +657,7 @@ def main(argv: list[str] | None = None) -> int:
     return {"init": cmd_init, "create-owner": cmd_create_owner, "grant": cmd_grant, "rotate-keys": cmd_rotate,
             "import-server": cmd_import, "addon": cmd_addon, "update": cmd_update,
             "links": cmd_links, "login-link": cmd_login_link, "setup": cmd_setup,
-            "adopt": cmd_adopt, "cloudflare": cmd_cloudflare}[args.cmd](args, settings)
+            "adopt": cmd_adopt, "cloudflare": cmd_cloudflare, "shared-bot": cmd_shared_bot}[args.cmd](args, settings)
 
 
 if __name__ == "__main__":
