@@ -17,6 +17,11 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+# /admin is the honeypot (fake login); the rest are the portal's own pages
+RESERVED_PATHS = frozenset({"/admin", "/login", "/logout", "/signup", "/dashboard", "/servers", "/billing", "/stripe",
+                            "/paused", "/discord"})
+
+
 def _owner_path(raw: str) -> str:
     raw = raw.strip()
     if raw.lower() in ("", "off", "0", "false", "no"):
@@ -24,6 +29,8 @@ def _owner_path(raw: str) -> str:
     path = "/" + raw.strip("/")
     if not re.fullmatch(r"/[A-Za-z0-9_-]{1,64}", path):
         raise ValueError("CP_OWNER_PATH must be one path part like /management (letters, digits, - and _).")
+    if path.lower() in RESERVED_PATHS:
+        raise ValueError(f"CP_OWNER_PATH can't be {path}: /admin is the honeypot and the others are portal pages.")
     return path
 
 

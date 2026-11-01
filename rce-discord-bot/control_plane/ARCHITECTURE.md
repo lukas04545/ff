@@ -265,7 +265,10 @@ Cloudflare: `*.yourdomain.com` and `portal` → the VPS (proxied). The Stripe we
 
 **Owner panel:** open `https://portal.yourdomain.com/management` (no extra Caddy or DNS entry, it's part of the
 portal). Sign in with your owner username, password and 2FA code.
-* `CP_OWNER_PATH` changes the address (e.g. `/my-secret-panel`); `CP_OWNER_PATH=off` removes it from the website.
+* `CP_OWNER_PATH` changes the address (e.g. `/my-secret-panel`); `CP_OWNER_PATH=off` removes it from the website `/admin`
+  is reserved (it's the honeypot on every bot website), and so are the portal's own pages.
+* Tenant panels never live at `/admin` either: every server gets a secret panel address (`WEB_PANEL_PATH`,
+  `panel-…`) at provisioning, and the portal shows the customer that link. `/admin` on a tenant site is the honeypot.
 * `CP_OWNER_ALLOW_IPS=1.2.3.4,5.6.7.8` shows it only to these IPs (everyone else gets 404).
 * The login is limited per IP and per username. The session cookie only works under that path, a customer's portal
   login gives no access, and search engines are told not to index it.

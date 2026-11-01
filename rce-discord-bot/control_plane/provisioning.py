@@ -85,7 +85,7 @@ def _free_port(db: DB, settings: Settings) -> int:
 def provision_server(db: DB, box: SecretBox, settings: Settings, customer_id: int, name: str, *,
                      actor: str) -> dict:
     """Creates a server for the customer if a slot is free (checked server-side, inside the write lock).
-    Returns {"id", "slug", "url", "panel_password"} – the panel password is shown ONCE."""
+    Returns {"id", "slug", "url", "panel_url", "panel_password"} – the panel password is shown ONCE."""
     name = " ".join(str(name).split())[:60]
     if len(name) < 2:
         raise ProvisionError("Give the server a name.")
@@ -101,7 +101,8 @@ def provision_server(db: DB, box: SecretBox, settings: Settings, customer_id: in
         sid = int(cur.lastrowid)
         db.audit(actor, "server.create", customer_id=customer_id, server_id=sid, detail=f"{slug} port {port}")
     password = finish_provisioning(db, box, settings, sid)
-    return {"id": sid, "slug": slug, "url": settings.url_for(slug), "panel_password": password}
+    return {"id": sid, "slug": slug, "url": settings.url_for(slug), "panel_password": password,
+            "panel_url": f"{settings.url_for(slug)}/{panel_path(home)}"}
 
 
 def finish_provisioning(db: DB, box: SecretBox, settings: Settings, server_id: int) -> str:
@@ -119,6 +120,7 @@ def finish_provisioning(db: DB, box: SecretBox, settings: Settings, server_id: i
         if db.one("SELECT 1 FROM secrets WHERE server_id = ? AND kind = ?", (server_id, kind)) is None:
             put_secret(db, box, server_id, kind, secrets.token_hex(32))
     password = secrets.token_urlsafe(12)
+    write_env(home, {"WEB_PANEL_PATH": panel_path(home) or new_panel_path()})   # keep it on a re-run
     write_env(home, {
         "WEB_ENABLED": "true", "WEB_HOST": "127.0.0.1", "WEB_PORT": str(s["web_port"]), "WEB_TUNNEL": "false",
         "WEB_PUBLIC_URL": settings.url_for(s["slug"]), "WEB_OPEN_BROWSER": "false",
@@ -130,6 +132,27 @@ def finish_provisioning(db: DB, box: SecretBox, settings: Settings, server_id: i
         db.run("UPDATE servers SET status = ? WHERE id = ?",
                ("active" if slots.bot_ready(db, server_id) else "awaiting_token", server_id))
     return password
+
+
+def new_panel_path() -> str:
+    """The tenant panel's secret address. Never /admin: on a website /admin is the honeypot (fake login)."""
+    return "panel-" + secrets.token_urlsafe(12).replace("_", "x").replace("-", "y")
+
+
+def panel_path(home: Path) -> str:
+    """The tenant panel's current secret address (WEB_PANEL_PATH in its .env; the tenant may change it)."""
+    from envfile import read_env
+    try:
+        value = (read_env(Path(home) / ".env").get("WEB_PANEL_PATH") or "").strip().strip("/")
+    except OSError:
+        return ""
+    return value if re.fullmatch(r"[A-Za-z0-9_-]{8,64}", value) and value.lower() != "admin" else ""
+
+
+def panel_url(settings: Settings, server: dict) -> str:
+    """Link to the tenant's real panel – never /admin (that's the honeypot)."""
+    path = panel_path(Path(server["home_dir"]))
+    return f"{settings.url_for(server['slug'])}/{path}" if path else settings.url_for(server["slug"])
 
 
 def write_env(home: Path, values: dict[str, str]) -> None:
