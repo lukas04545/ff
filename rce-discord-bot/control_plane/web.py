@@ -24,7 +24,10 @@ from typing import Awaitable, Callable
 
 from aiohttp import web
 
-from control_plane import actions, billing, hostproxy, features, manage_ai, provisioning, slots, updates, websettings
+from urllib.parse import quote_plus
+
+from control_plane import (actions, billing, features, hostproxy, manage_ai, plans, provisioning, shop_ui, slots,
+                           updates, websettings)
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -144,6 +147,7 @@ def build_portal(db: DB, box: SecretBox, settings: Settings, changed: Callable[[
     app = web.Application(client_max_size=hostproxy.MAX_BODY, middlewares=[hostproxy.middleware(db, settings)])
     sess = Sessions(settings.session_secret, "portal", "cp_c")
     limiter = RateLimiter(10, 300)
+    plans.seed(db)                                       # a new shop starts with example packages
 
     def me(request) -> dict | None:
         sub = sess.subject(request)
@@ -166,28 +170,98 @@ def build_portal(db: DB, box: SecretBox, settings: Settings, changed: Callable[[
             raise web.HTTPNotFound(text="No such server.")
         return dict(row)
 
+    def shop(request, title: str, body: str) -> web.Response:
+        c = me(request)
+        if c:
+            nav = (f"<a href=/dashboard>Dashboard</a><form method=post action=/logout class=inline>"
+                   f"<input type=hidden name=csrf value={sess.csrf(request)}><button class='ghost small'>Sign out"
+                   f"</button></form>")
+        else:
+            nav = "<a href=/#plans>Packages</a><a href=/login>Sign in</a><a class='btn small' href=/signup>Get started</a>"
+        return shop_ui.shop_page(settings.shop_name, title, body, nav=nav)
+
+    def flash(request) -> str:
+        msg = request.query.get("m") or request.query.get("e") or ""
+        return f"<div class=flash>{esc(msg)}</div>" if msg else ""
+
     async def index(request):
+        """The shop: what the bot does and the packages."""
+        signed_in = me(request) is not None
+
+        def choose(p):
+            if signed_in:
+                return (f"<form method=post action=/billing/checkout><input type=hidden name=csrf "
+                        f"value={sess.csrf(request)}><input type=hidden name=plan value={p['id']}>"
+                        f"<button>Choose {esc(p['name'])}</button></form>")
+            return f"<a class=btn href='/signup?plan={esc(p['slug'])}'>Choose {esc(p['name'])}</a>"
+        items = plans.listed(db)
+        cards = (shop_ui.plan_cards(items, action=choose) if items else
+                 "<p class=section>Packages are coming soon.</p>")
+        return shop(request, "Discord bot for Rust Console servers", f"""{flash(request)}
+<section class=hero><h1>Your Rust Console server,<br><em>run by one smart bot</em></h1>
+<p>Kits, shop, points, tickets, stats, events and an AI that does the admin work – set up in minutes, hosted for
+you. No PC that has to stay on.</p><a class=btn href=#plans>See the packages</a>
+{'' if signed_in else ' <a class="btn ghost" href=/login>Sign in</a>'}</section>
+<div class=feats><div class=feat><b>🎁 Kits &amp; shop</b><span>Kit claims with emotes, a points shop and a web store
+for your players.</span></div><div class=feat><b>🎫 Tickets &amp; moderation</b><span>Support tickets, reports,
+watchlists – with AI help if you want it.</span></div><div class=feat><b>📊 Stats &amp; events</b><span>Leaderboards,
+bounties, battle royale, weekly recaps and more.</span></div><div class=feat><b>🛡️ Hosted &amp; protected</b>
+<span>Your own admin website, encrypted database, DDoS protection, daily backups.</span></div></div>
+<h2 class=section id=plans>Packages</h2><p class=section>Monthly, cancel any time. Sign up to create an account.</p>
+{cards}""")
+
+    async def signup_page(request):
         if me(request):
             raise web.HTTPSeeOther("/dashboard")
-        msg = esc(request.query.get("e", ""))
-        return page("Rust bot – sign in", f"""<h1>Rust community bot</h1>{f'<p class=err>{msg}</p>' if msg else ''}
-<div class=card><h2>Sign in</h2><form method=post action=/login><input name=email type=email placeholder=E-mail
-required> <input name=password type=password placeholder=Password required> <button>Sign in</button></form></div>
-<div class=card><h2>Create an account</h2><form method=post action=/signup><input name=name placeholder="Community
-name"> <input name=email type=email placeholder=E-mail required> <input name=password type=password minlength=10
-placeholder="Password (10+)" required> <button>Sign up</button></form></div>""")
+        plan = plans.get(db, slug=request.query.get("plan", "")) if request.query.get("plan") else None
+        chosen = (f"<p>Package: <b>{esc(plan['name'])}</b> – {esc(plans.price_text(plan))} / month "
+                  f"<a href=/#plans>change</a></p><input type=hidden name=plan value={esc(plan['slug'])}>"
+                  if plan and plan["active"] else "")
+        return shop(request, "Create your account", f"""<div class=auth>{flash(request)}<div class=card>
+<h2>Create your account</h2><form method=post action=/signup>{chosen}
+<label>Community name<input name=name placeholder="e.g. Kryvon Empire"></label>
+<label>E-mail<input name=email type=email required autocomplete=email></label>
+<label>Password<input name=password type=password minlength=10 required autocomplete=new-password
+placeholder="10+ characters"></label><button style="width:100%">{'Continue to payment' if chosen else 'Sign up'}
+</button></form><p class=muted>Already have an account? <a href=/login>Sign in</a></p></div></div>""")
+
+    async def login_page(request):
+        if me(request):
+            raise web.HTTPSeeOther("/dashboard")
+        return shop(request, "Sign in", f"""<div class=auth>{flash(request)}<div class=card><h2>Sign in</h2>
+<form method=post action=/login><label>E-mail<input name=email type=email required autocomplete=email></label>
+<label>Password<input name=password type=password required autocomplete=current-password></label>
+<button style="width:100%">Sign in</button></form><p class=muted>New here? <a href=/signup>Create an account</a></p>
+</div></div>""")
+
+    async def start_checkout(request, c: dict, plan: dict) -> web.HTTPSeeOther:
+        """Stripe Checkout for this package (its Stripe price is created on the fly when needed)."""
+        try:
+            price = await plans.ensure_stripe_price(db, settings, plan["id"])
+            if not price:
+                raise billing.BillingError("Payments aren't set up yet – we'll switch you on by hand.")
+            base = settings.portal_url
+            url = await billing.checkout_url(settings, c, f"{base}/dashboard?m=Thanks!+Your+package+is+active.",
+                                             f"{base}/dashboard", price_id=price, plan_id=plan["id"])
+        except (billing.BillingError, plans.PlanError) as exc:
+            return web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc)))
+        return web.HTTPSeeOther(url)
 
     async def signup(request):
         _same_origin(request)
         data = dict(await request.post())
         if limiter.hit("signup:" + _client_ip(request)) is not None:
-            raise web.HTTPSeeOther("/?e=Too+many+attempts,+try+later")
+            raise web.HTTPSeeOther("/signup?e=Too+many+attempts,+try+later")
         try:
             cid = provisioning.create_customer(db, str(data.get("email", "")), str(data.get("password", "")),
                                                str(data.get("name", "")))
         except provisioning.ProvisionError as exc:
-            raise web.HTTPSeeOther("/?e=" + str(exc).replace(" ", "+")) from None
-        resp = web.HTTPSeeOther("/dashboard")
+            raise web.HTTPSeeOther("/signup?e=" + quote_plus(str(exc))) from None
+        plan = plans.get(db, slug=str(data.get("plan", ""))) if data.get("plan") else None
+        if plan and plan["active"]:
+            resp = await start_checkout(request, dict(db.one("SELECT * FROM customers WHERE id = ?", (cid,))), plan)
+        else:
+            resp = web.HTTPSeeOther("/dashboard")
         sess.issue(resp, f"c{cid}", request)
         raise resp
 
@@ -197,10 +271,10 @@ placeholder="Password (10+)" required> <button>Sign up</button></form></div>""")
         data = dict(await request.post())
         email = str(data.get("email", "")).strip().lower()
         if limiter.hit("login:" + _client_ip(request)) is not None or limiter.hit("login:" + email) is not None:
-            raise web.HTTPSeeOther("/?e=Too+many+attempts,+try+later")
+            raise web.HTTPSeeOther("/login?e=Too+many+attempts,+try+later")
         row = db.one("SELECT id, password_hash FROM customers WHERE email = ? AND status != 'deleted'", (email,))
         if row is None or not verify_password(str(data.get("password", "")), row["password_hash"]):
-            raise web.HTTPSeeOther("/?e=Wrong+e-mail+or+password")
+            raise web.HTTPSeeOther("/login?e=Wrong+e-mail+or+password")
         resp = web.HTTPSeeOther("/dashboard")
         sess.issue(resp, f"c{row['id']}", request)
         raise resp
@@ -213,7 +287,10 @@ placeholder="Password (10+)" required> <button>Sign up</button></form></div>""")
     async def dashboard(request):
         c = need(request)
         csrf = sess.csrf(request)
+        hidden = f"<input type=hidden name=csrf value={csrf}>"
         sub = db.one("SELECT * FROM subscriptions WHERE customer_id = ?", (c["id"],))
+        paid_ok = billing.subscription_ok(db, c["id"])
+        plan = plans.current(db, c["id"])
         sl = slots.summary(db, c["id"])
         addons = features.active(db, c["id"])
         own_bot = "custom_bot" in addons
@@ -221,37 +298,74 @@ placeholder="Password (10+)" required> <button>Sign up</button></form></div>""")
                        "h.bot_user "
                        "FROM servers s LEFT JOIN health h ON h.server_id = s.id WHERE s.customer_id = ? AND "
                        "s.status != 'deleted' ORDER BY s.id", (c["id"],))
-        flash = request.query.get("m", "")
+        first = dict(servers[0]) if servers else None
+        # ---- the set-up steps
+        has_server = first is not None
+        in_discord = bool(first and ((first["bot_mode"] == "shared" and first["guild_id"]) or
+                                     first["bot_mode"] == "custom"))
+        rcon = any(s["rcon_connected"] for s in servers)
+        order = [paid_ok, has_server, in_discord, rcon]
+        now = order.index(False) if False in order else 4
+
+        def state(i):
+            return "done" if order[i] else ("now" if i == now else "later")
+        pick = shop_ui.plan_cards(plans.listed(db), action=lambda p: (
+            f"<form method=post action=/billing/checkout>{hidden}<input type=hidden name=plan value={p['id']}>"
+            f"<button class=small>Choose {esc(p['name'])}</button></form>"))
+        steps = "".join([
+            shop_ui.step(1, state(0), "Choose your package",
+                         (f"{esc(plan['name'])} – {esc(plans.price_text(plan))} / month" if plan and paid_ok else
+                          "Pick a package – you pay securely with Stripe."), pick),
+            shop_ui.step(2, state(1), "Create your server", "Give it a name – you get its own admin website.",
+                         f"<form method=post action=/servers class=row>{hidden}<input name=name required "
+                         f"placeholder='Server name, e.g. Kryvon EU'><button>Create</button></form>"),
+            shop_ui.step(3, state(2), "Add the bot to your Discord",
+                         "One click – Discord asks which server, and the bot is locked to it.",
+                         (f"<a class=btn href=/servers/{first['id']}/discord>➕ Add the bot to Discord</a>"
+                          if first else "")),
+            shop_ui.step(4, state(3), "Connect your Rust server",
+                         "Open your admin panel → Settings and enter your G-Portal RCON IP, port and password.",
+                         (f"<a class=btn href='{esc(provisioning.panel_url(settings, first))}' target=_blank>"
+                          f"Open my admin panel</a>" if first else "")),
+        ])
+        done = now == 4
         rows = "".join(
-            f"<tr><td><b>{esc(s['name'])}</b><br><a href='{esc(settings.url_for(s['slug']))}' target=_blank>"
-            f"{esc(settings.url_for(s['slug']))}</a><br><a href='{esc(provisioning.panel_url(settings, s))}' "
-            f"target=_blank>Admin panel</a></td><td>{pill(s['status'])}"
+            f"<tr><td><b>{esc(s['name'])}</b><br><a href='{esc(provisioning.panel_url(settings, s))}' "
+            f"target=_blank>Admin panel</a> · <a href='{esc(settings.url_for(s['slug']))}' target=_blank>Website</a>"
+            f"</td><td>{pill(s['status'])}"
             f"{'<br><span class=muted>' + esc(s['suspend_reason']) + '</span>' if s['suspend_reason'] else ''}</td>"
-            f"<td>{'🟢 ' + esc(s['guild_name'] or 'online') if s['discord_ready'] else '⚪'} "
-            f"{'· RCON ✅' if s['rcon_connected'] else ''} {'· ' + str(s['players_online']) + ' online' if s['players_online'] else ''}</td>"
+            f"<td>{'🟢 ' + esc(s['guild_name'] or 'online') if s['discord_ready'] else '⚪ offline'}"
+            f"{' · RCON ✅' if s['rcon_connected'] else ''}"
+            f"{' · ' + str(s['players_online']) + ' online' if s['players_online'] else ''}</td>"
             f"<td>{bot_cell(s, csrf, own_bot)}"
-            f"<form method=post action=/servers/{s['id']}/remove class=inline onsubmit=\"return confirm('Remove?')\">"
-            f"<input type=hidden name=csrf value={csrf}><button class=danger>Remove</button></form></td></tr>"
+            f"<form method=post action=/servers/{s['id']}/remove class=inline onsubmit=\"return confirm('Remove "
+            f"this server? Its data is kept for a while.')\">{hidden}<button class='danger small'>Remove</button>"
+            f"</form></td></tr>"
             for s in servers)
-        billing_btn = (f"<form method=post action=/billing/portal class=inline><input type=hidden name=csrf "
-                       f"value={csrf}><button>Manage billing</button></form>" if c.get("stripe_customer_id") else
-                       f"<form method=post action=/billing/checkout class=inline><input type=hidden name=csrf "
-                       f"value={csrf}><button>Subscribe</button></form>")
-        add = (f"<form method=post action=/servers><input type=hidden name=csrf value={csrf}><input name=name "
-               f"placeholder='Server name' required> <button>Add server</button></form>" if sl["free"] else
-               "<p class=muted>All slots in use. Extra server slots are an add-on – contact us to unlock one.</p>")
-        return page("Dashboard", f"""<h1>{esc(c['name'] or c['email'])}</h1>
-{f'<div class=card>{esc(flash)}</div>' if flash else ''}
-<div class=card><b>Subscription:</b> {pill(sub['status'] if sub else 'none')} {billing_btn}
-<br><span class=muted>Add-ons: own bot {'✅' if own_bot else '– (contact us)'} · AI features
-{'✅' if 'ai' in addons else '– (contact us)'} · management AI in Discord: on the servers we switched it on for
-({sum(1 for x in servers if x['manager_ai'])})</span>
-<form method=post action=/logout class=inline><input type=hidden name=csrf value={csrf}><button>Sign out</button>
-</form></div>
+        add = (f"<form method=post action=/servers class=row>{hidden}<input name=name placeholder='Server name' "
+               f"required><button>Add server</button></form>" if sl["free"] and has_server else
+               ("" if not has_server else "<p class=muted>All your server slots are in use – a bigger package gives "
+                                          "you more.</p>"))
+        billing_btn = (f"<form method=post action=/billing/portal class=inline>{hidden}<button class='ghost small'>"
+                       f"Invoices &amp; payment</button></form>" if c.get("stripe_customer_id") else "")
+        switch = ""
+        if paid_ok and sub and sub["stripe_subscription_id"]:
+            others = [p for p in plans.listed(db) if not plan or p["id"] != plan["id"]]
+            switch = "".join(
+                f"<form method=post action=/billing/switch class=inline>{hidden}<input type=hidden name=plan "
+                f"value={p['id']}><button class='ghost small'>Switch to {esc(p['name'])} "
+                f"({esc(plans.price_text(p))})</button></form> " for p in others)
+        package = (f"<b>{esc(plan['name'])}</b> · {esc(plans.price_text(plan))} / month · " if plan else "") + \
+            f"{pill(sub['status'] if sub else 'none')}"
+        return shop(request, "Dashboard", f"""{flash(request)}
+<h1>Hi {esc(c['name'] or c['email'])} 👋</h1>
+{'' if done else f"<div class=card><h2>Get started</h2><div class=steps>{steps}</div></div>"}
+<div class=card><h2>Your package</h2><p>{package} {billing_btn}</p>
+<p class=muted>{sl['used']} of {sl['limit']} slots used · AI features {'✅' if 'ai' in addons else '–'} · own bot
+{'✅' if own_bot else '–'}</p>{switch}</div>
 <div class=card><h2>Servers <span class=muted>({sl['used']} of {sl['limit']} slots)</span></h2>
-<table><tr><th>Server</th><th>Status</th><th>Live</th><th></th></tr>{rows or '<tr><td colspan=4>No server yet.</td></tr>'}
-</table>{add}<p class=muted>Each server is fully separate: its own bot (create one per server in the Discord
-Developer Portal), website, database, kits and settings. Open the server's link to log in to its panel.</p></div>""")
+<table><tr><th>Server</th><th>Status</th><th>Live</th><th></th></tr>
+{rows or '<tr><td colspan=4 class=muted>No server yet – start with the steps above.</td></tr>'}</table>{add}</div>""")
 
     def bot_cell(s, csrf: str, own_bot: bool) -> str:
         sid = s["id"]
@@ -319,13 +433,16 @@ Developer Portal), website, database, kits and settings. Open the server's link 
             out = provisioning.provision_server(db, box, settings, c["id"], str(data.get("name", "")),
                                                 actor=f"customer:{c['id']}")
         except (slots.SlotError, provisioning.ProvisionError) as exc:
-            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href=/dashboard>Back</a></div>")
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
         await changed()
-        return page("Server created", f"""<div class=card><h2>✅ {esc(data.get('name'))} created</h2>
-<p>Panel (secret address – bookmark it; /admin is a trap for intruders): <a href='{esc(out['panel_url'])}'>{esc(out['panel_url'])}</a></p>
-<p>Panel password (shown ONCE – save it): <code>{esc(out['panel_password'])}</code></p>
-<p>Next: create a bot in the Discord Developer Portal, invite it to your Discord and paste its token on the
-dashboard.</p><a href=/dashboard>Back to the dashboard</a></div>""")
+        return shop(request, "Server created", f"""<div class=card><h2>✅ {esc(data.get('name'))} is ready</h2>
+<p><b>Your admin panel</b> (a secret address – bookmark it):<br><a href='{esc(out['panel_url'])}' target=_blank>
+{esc(out['panel_url'])}</a></p>
+<p><b>Panel password</b> – shown only this once, save it now:<br><code style="font-size:1.15rem">
+{esc(out['panel_password'])}</code></p>
+<p class=muted>Next: add the bot to your Discord, then enter your Rust server's RCON details in the panel.</p>
+<a class=btn href=/servers/{out['id']}/discord>➕ Add the bot to Discord</a>
+<a class="btn ghost" href=/dashboard>Back to the dashboard</a></div>""")
 
     async def set_token(request):
         c = need(request)
@@ -348,13 +465,30 @@ dashboard.</p><a href=/dashboard>Back to the dashboard</a></div>""")
 
     async def checkout(request):
         c = need(request)
-        await sess.form(request)
-        base = f"https://portal.{settings.base_domain}"
+        data = await sess.form(request)
+        plan = plans.get(db, str(data.get("plan", "0"))) if str(data.get("plan", "")).isdigit() else None
+        if plan is None or not plan["active"]:
+            raise web.HTTPSeeOther("/#plans")
+        raise await start_checkout(request, c, plan)
+
+    async def switch_plan(request):
+        """A subscriber moves to another package (Stripe prorates; the webhook applies the new package)."""
+        c = need(request)
+        data = await sess.form(request)
+        plan = plans.get(db, str(data.get("plan", "0"))) if str(data.get("plan", "")).isdigit() else None
+        sub = db.one("SELECT stripe_subscription_id FROM subscriptions WHERE customer_id = ?", (c["id"],))
+        if plan is None or not plan["active"] or not sub or not sub["stripe_subscription_id"]:
+            raise web.HTTPSeeOther("/dashboard")
         try:
-            url = await billing.checkout_url(settings, c, f"{base}/dashboard?m=Thanks!", f"{base}/dashboard")
-        except billing.BillingError as exc:
-            raise web.HTTPSeeOther("/dashboard?m=" + str(exc).replace(" ", "+")) from None
-        raise web.HTTPSeeOther(url)
+            price = await plans.ensure_stripe_price(db, settings, plan["id"])
+            if not price:
+                raise plans.PlanError("Payments aren't set up yet.")
+            await plans.switch_subscription(settings, sub["stripe_subscription_id"], price)
+        except plans.PlanError as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
+        db.audit(f"customer:{c['id']}", "plan.switch_requested", customer_id=c["id"], detail=plan["slug"])
+        raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(f"Switching to {plan['name']} – it's active in a few "
+                                                            "seconds."))
 
     async def billing_portal(request):
         c = need(request)
@@ -379,11 +513,13 @@ dashboard.</p><a href=/dashboard>Back to the dashboard</a></div>""")
 
     async def paused(request):
         s = db.one("SELECT name FROM servers WHERE slug = ?", (request.match_info["slug"],))
-        return page("Paused", f"<div class=card><h1>⏸️ {esc(s['name'] if s else 'This server')}</h1><p>This "
-                              "server's bot and website are paused right now. The community's admins can reactivate "
-                              "it – everything is kept.</p></div>")
+        return shop(request, "Paused", f"<div class=card><h1>⏸️ {esc(s['name'] if s else 'This server')}</h1><p>This "
+                                       "server's bot and website are paused right now. The community's admins can "
+                                       "reactivate it – everything is kept.</p></div>")
 
-    app.add_routes([web.get("/", index), web.post("/signup", signup), web.post("/login", login),
+    app.add_routes([web.get("/", index), web.get("/signup", signup_page), web.get("/login", login_page),
+                    web.post("/billing/switch", switch_plan),
+                    web.post("/signup", signup), web.post("/login", login),
                     web.post("/logout", logout), web.get("/dashboard", dashboard), web.post("/servers", add_server),
                     web.post(r"/servers/{sid:\d+}/token", set_token), web.post(r"/servers/{sid:\d+}/remove", remove),
                     web.post("/billing/checkout", checkout), web.post("/billing/portal", billing_portal),
@@ -412,6 +548,7 @@ def build_owner(db: DB, box: SecretBox, settings: Settings, changed: Callable[[]
 
     app = web.Application(client_max_size=64 * 1024, middlewares=[guard])
     sess = Sessions(settings.session_secret, "owner", "cp_o")
+    plans.seed(db)
     limiter = RateLimiter(5, 900)
     user_limiter = RateLimiter(10, 900)                  # per username too (IP headers can be spoofed)
 
@@ -544,7 +681,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         running = sum(1 for p in (supervisor.procs.values() if supervisor else []) if p.state == "running")
         return page("Owner", f"""<h1>Owner panel <span class=muted>({esc(who)})</span></h1>
 <p>{len(customers)} customers · {counts['n'] or 0} servers ({counts['a'] or 0} active, {running} processes running)
-· <a href={P}/settings>⚙️ settings</a> · <a href={P}/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
+· <a href={P}/plans>🛒 packages</a> · <a href={P}/settings>⚙️ settings</a> · <a href={P}/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
 {update_card(request)}
 {f"<div class=card><h2>🤖 Shared bot</h2><p>One bot for every server. Add it to a Discord: <a href='{esc(provisioning.shared_invite(settings))}' target=_blank>invite link</a>. Then press <b>Use the shared bot</b> on that server's row (its Discord server id is filled in when known).</p></div>" if settings.shared_client_id else ""}
 <div class=card><h2>Customers</h2><table><tr><th>Customer</th><th>Account</th><th>Subscription</th><th>Slots
@@ -585,6 +722,10 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
 {('· grace until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['grace_until']))) if sub and sub['grace_until'] else ''}
 <br><br>{acct} {comp} {button(request, f'/customers/{cid}/remove', 'Remove customer', danger=True,
                                        confirm='Remove the customer and all their servers?')}</div>
+<div class=card><h2>Package</h2><p>{esc((plans.current(db, cid) or {}).get('name') or 'none')}
+<span class=muted>– sets the server slots and the add-ons below (paid packages come from Stripe by themselves)</span></p>
+<form method=post action={P}/customers/{cid}/plan>{hidden(request)}<select name=plan>{''.join(f"<option value={p['id']}>{esc(p['name'])} – {esc(plans.price_text(p))} ({p['slots']} servers)</option>" for p in plans.listed(db, all_=True))}</select>
+<label><input type=checkbox name=comp value=1 checked> free (comped – no Stripe)</label> <button>Set package</button></form></div>
 <div class=card><h2>Add-ons</h2>{addon_rows}</div>
 <div class=card><h2>Slots: {sl['used']} used of {sl['limit']} ({c['base_slots']} in the plan)</h2>
 <form method=post action={P}/customers/{cid}/grant>{hidden(request)}<input name=slots type=number min=1 max=100 value=1>
@@ -617,6 +758,68 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
             return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
         await changed()
         raise go(back)
+
+    def plan_form(p: dict | None, request) -> str:
+        p = p or {"name": "", "tagline": "", "price_cents": 999, "currency": "eur", "slots": 1, "ai": 0,
+                  "custom_bot": 0, "perks": "", "highlight": 0, "sort": 0, "active": 1}
+        action = f"{P}/plans/{p['id']}" if p.get("id") else f"{P}/plans"
+        cur = "".join(f"<option value={k}{' selected' if p['currency'] == k else ''}>{k.upper()}</option>"
+                      for k in plans.CURRENCIES)
+        def chk(name, label):
+            return f"<label><input type=checkbox name={name} value=1{' checked' if p[name] else ''}> {label}</label> "
+        return (f"<form method=post action={action}>{hidden(request)}<input name=name value='{esc(p['name'])}' "
+                f"placeholder=Name required> <input name=price value='{p['price_cents'] / 100:.2f}' size=7> "
+                f"<select name=currency>{cur}</select> / month · <input name=slots type=number min=1 max=100 "
+                f"value={p['slots']} style='width:4rem'> servers · order <input name=sort type=number "
+                f"value={p['sort']} style='width:4rem'><br><input name=tagline value='{esc(p['tagline'])}' "
+                f"placeholder='Short line under the name' style='width:100%'><br><textarea name=perks rows=4 "
+                f"style='width:100%' placeholder='One perk per line'>{esc(p['perks'])}</textarea><br>"
+                f"{chk('ai', 'AI features')}{chk('custom_bot', 'own bot')}{chk('highlight', 'most popular')}"
+                f"{chk('active', 'for sale')}<button>{'Save' if p.get('id') else 'Create package'}</button></form>")
+
+    async def plans_page(request):
+        owner(request)
+        msg = esc(request.query.get("m", ""))
+        cards = "".join(
+            f"<div class=card><h2>{esc(p['name'])} {pill('active' if p['active'] else 'off')} "
+            f"<span class=muted>{esc(plans.price_text(p))} / month · Stripe: "
+            f"{esc(p['stripe_price_id'] or 'created at the first sale')}</span></h2>{plan_form(p, request)}</div>"
+            for p in plans.listed(db, all_=True))
+        return page("Packages", f"""<p><a href={P}/>← owner panel</a> · <a href='{esc(settings.portal_url)}/#plans'
+target=_blank>see the shop</a></p><h1>🛒 Packages</h1>{f'<p class=muted>{msg}</p>' if msg else ''}
+<p class=muted>What customers can buy. A package decides how many servers they get and the AI / own-bot add-ons.
+With Stripe set up (Settings), its monthly price is created in Stripe when you save – nothing to copy. Changing a
+price makes a new Stripe price; current subscribers keep theirs. Packages are never deleted, only switched off.</p>
+{cards}<div class=card><h2>New package</h2>{plan_form(None, request)}</div>""")
+
+    async def plan_save(request):
+        who = owner(request)
+        data = await sess.form(request)
+        try:
+            pid = plans.save(db, data, actor=f"owner:{who}",
+                             plan_id=int(request.match_info["id"]) if "id" in request.match_info else None)
+            note = "Saved."
+            if settings.stripe_secret_key:
+                await plans.ensure_stripe_price(db, settings, pid)
+                note = "Saved – Stripe price ready."
+        except plans.PlanError as exc:
+            return page("Not saved", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/plans>Back</a></div>")
+        raise go("/plans?m=" + quote_plus(note))
+
+    async def customer_plan(request):
+        who = owner(request)
+        data = await sess.form(request)
+        cid = int(request.match_info["id"])
+        try:
+            plans.apply(db, cid, int(data.get("plan") or 0), actor=f"owner:{who}")
+            if data.get("comp"):
+                db.run("UPDATE subscriptions SET status = 'comped', updated_at = ? WHERE customer_id = ?",
+                       (int(time.time()), cid))
+                db.audit(f"owner:{who}", "subscription.comped", customer_id=cid)
+        except (plans.PlanError, ValueError) as exc:
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
+        await changed()
+        raise go(f"/customers/{cid}")
 
     async def update_action(request):
         who = owner(request)
@@ -867,6 +1070,8 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.get("/once/{token}", once_page), web.post("/once/{token}", once_use),
                     web.get("/settings", settings_page), web.post("/settings", settings_save),
                     web.post("/cloudflare", cloudflare_setup),
+                    web.get("/plans", plans_page), web.post("/plans", plan_save),
+                    web.post(r"/plans/{id:\d+}", plan_save), web.post(r"/customers/{id:\d+}/plan", customer_plan),
                     web.get("/", dashboard), web.get(r"/customers/{cid:\d+}", customer), web.get("/audit", audit),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post(r"/grants/{id:\d+}/revoke", act),

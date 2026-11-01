@@ -112,6 +112,25 @@ CREATE TABLE IF NOT EXISTS hq_messages (
     message_id INTEGER NOT NULL,
     PRIMARY KEY (kind, ref_id)
 );
+-- Packages of the shop (control_plane/plans.py)
+CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    tagline TEXT NOT NULL DEFAULT '',
+    price_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'eur',
+    slots INTEGER NOT NULL DEFAULT 1,
+    ai INTEGER NOT NULL DEFAULT 0,
+    custom_bot INTEGER NOT NULL DEFAULT 0,
+    perks TEXT NOT NULL DEFAULT '',
+    highlight INTEGER NOT NULL DEFAULT 0,
+    sort INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    stripe_price_id TEXT,
+    stripe_price_cents INTEGER,
+    created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS hq_channels (customer_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL);
 """
 
@@ -133,6 +152,9 @@ class DB:
             self.conn.execute("ALTER TABLE servers ADD COLUMN bot_mode TEXT NOT NULL DEFAULT 'shared'")
         if "guild_id" not in cols:
             self.conn.execute("ALTER TABLE servers ADD COLUMN guild_id TEXT")
+        subs = {r["name"] for r in self.conn.execute("PRAGMA table_info(subscriptions)")}
+        if "plan_id" not in subs:      # the customer's package (plans)
+            self.conn.execute("ALTER TABLE subscriptions ADD COLUMN plan_id INTEGER")
         if "manager_ai" not in cols:   # the management AI in this server's Discord – only on servers the owner chose
             self.conn.execute("ALTER TABLE servers ADD COLUMN manager_ai INTEGER NOT NULL DEFAULT 0")
         # One Discord server can be bound to only one shared-bot tenant server

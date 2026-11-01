@@ -39,6 +39,7 @@ FIELDS = (
     Field("CP_BASE_DOMAIN", "Your domain", "Basics", kind="domain",
           help="Customers' sites become <name>.<domain>, the portal portal.<domain>."),
     Field("CP_PORTAL_URL", "Portal address (optional)", "Basics", help="Default: https://portal.<domain>"),
+    Field("CP_SHOP_NAME", "Shop name", "Basics", help="Shown on every page of the shop, e.g. Kryvon Bot."),
     Field("CP_DEEPSEEK_API_KEY", "DeepSeek API key", "AI", secret=True,
           help="For the AI add-on and the management AI."),
     Field("CP_SHARED_BOT_TOKEN", "Shared bot token", "Shared Discord bot", secret=True, restart=True),
@@ -105,7 +106,7 @@ KEY_ATTR = {"CP_BASE_DOMAIN": "base_domain", "CP_DEEPSEEK_API_KEY": "deepseek_ap
             "CP_HQ_ADMIN_IDS": "hq_admin_ids", "CP_HQ_ADMIN_ROLE_ID": "hq_admin_role_id",
             "CP_OWNER_PATH": "owner_path", "CP_OWNER_ALLOW_IPS": "owner_allow_ips", "CP_UPDATE_REPO": "update_repo",
             "CP_UPDATE_BRANCH": "update_branch", "CP_TENANT_MEMORY_MB": "memory_mb",
-            "CP_CF_TUNNEL_TOKEN": "cf_tunnel_token"}
+            "CP_CF_TUNNEL_TOKEN": "cf_tunnel_token", "CP_SHOP_NAME": "shop_name"}
 
 
 def refresh(settings: Settings, keys=None) -> None:

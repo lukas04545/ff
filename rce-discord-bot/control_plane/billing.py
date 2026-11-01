@@ -71,12 +71,38 @@ def _set(db: DB, customer_id: int, status: str, *, sub_id: str | None, period_en
     db.audit("stripe", "subscription." + status, customer_id=customer_id, detail=sub_id or "")
 
 
+def _event_plan(db: DB, kind: str, obj: dict) -> int | None:
+    """Which package an event is about: checkout carries metadata.plan_id, subscriptions their price."""
+    from control_plane import plans
+    if kind == "checkout.session.completed":
+        pid = str((obj.get("metadata") or {}).get("plan_id") or "")
+        return int(pid) if pid.isdigit() and plans.get(db, int(pid)) else None
+    if kind in ("customer.subscription.created", "customer.subscription.updated"):
+        items = ((obj.get("items") or {}).get("data") or [])
+        price = ((items[0] if items else {}).get("price") or {}).get("id")
+        plan = plans.get(db, stripe_price=price) if price else None
+        return plan["id"] if plan else None
+    return None
+
+
 def handle_event(db: DB, event: dict, *, grace_days: int = 3) -> str:
     """Applies one verified Stripe event. Returns what happened (for logs/tests)."""
+    from control_plane import plans
     eid, kind = event.get("id", ""), event.get("type", "")
     if db.one("SELECT 1 FROM stripe_events WHERE id = ?", (eid,)):
         return "duplicate"
     obj = (event.get("data") or {}).get("object") or {}
+    result = _handle(db, eid, kind, obj, grace_days)
+    plan_id = _event_plan(db, kind, obj)
+    if plan_id is not None:                            # the package decides slots and add-ons
+        cid = (int(obj.get("client_reference_id") or 0) if kind == "checkout.session.completed" else
+               (db.one("SELECT id FROM customers WHERE stripe_customer_id = ?", (obj.get("customer"),)) or {"id": 0})["id"])
+        if cid and db.one("SELECT 1 FROM customers WHERE id = ?", (cid,)):
+            plans.apply(db, cid, plan_id, actor="stripe")
+    return result
+
+
+def _handle(db: DB, eid: str, kind: str, obj: dict, grace_days: int) -> str:
     result = "ignored"
     with db.transaction():
         db.run("INSERT INTO stripe_events (id, received_at) VALUES (?, ?)", (eid, int(time.time())))
@@ -102,12 +128,19 @@ def handle_event(db: DB, event: dict, *, grace_days: int = 3) -> str:
     return result
 
 
-async def checkout_url(settings, customer: dict, success_url: str, cancel_url: str) -> str:
-    """A Stripe Checkout page for the subscription (client_reference_id ties it to the customer)."""
-    if not settings.stripe_secret_key or not settings.stripe_price_id:
-        raise BillingError("Billing isn't set up yet (STRIPE_SECRET_KEY / STRIPE_PRICE_ID).")
-    form = {"mode": "subscription", "line_items[0][price]": settings.stripe_price_id, "line_items[0][quantity]": "1",
-            "client_reference_id": str(customer["id"]), "success_url": success_url, "cancel_url": cancel_url}
+async def checkout_url(settings, customer: dict, success_url: str, cancel_url: str, *, price_id: str = "",
+                       plan_id: int | None = None) -> str:
+    """A Stripe Checkout page for the subscription (client_reference_id ties it to the customer, metadata to the
+    package)."""
+    price_id = price_id or settings.stripe_price_id
+    if not settings.stripe_secret_key or not price_id:
+        raise BillingError("Payments aren't set up yet – please try again later.")
+    form = {"mode": "subscription", "line_items[0][price]": price_id, "line_items[0][quantity]": "1",
+            "client_reference_id": str(customer["id"]), "success_url": success_url, "cancel_url": cancel_url,
+            "allow_promotion_codes": "true"}
+    if plan_id is not None:
+        form["metadata[plan_id]"] = str(plan_id)
+        form["subscription_data[metadata][plan_id]"] = str(plan_id)
     if customer.get("stripe_customer_id"):
         form["customer"] = customer["stripe_customer_id"]
     else:

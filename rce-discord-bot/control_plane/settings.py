@@ -77,6 +77,8 @@ class Settings:
     hq_admin_role_id: int = field(default_factory=lambda: _int("CP_HQ_ADMIN_ROLE_ID", 0))
     # Cloudflare tunnel for every website (python -m control_plane cloudflare) – the API token is never stored
     cf_tunnel_token: str = field(default_factory=lambda: os.environ.get("CP_CF_TUNNEL_TOKEN", ""))
+    # The shop (portal): its name on every page
+    shop_name: str = field(default_factory=lambda: os.environ.get("CP_SHOP_NAME", "") or "Rust Console Bot")
     # Updates (owner panel only): where the bot code comes from
     update_repo: str = field(default_factory=lambda: os.environ.get("CP_UPDATE_REPO", "lukas04545/ff"))
     update_branch: str = field(default_factory=lambda: os.environ.get("CP_UPDATE_BRANCH", "main"))
