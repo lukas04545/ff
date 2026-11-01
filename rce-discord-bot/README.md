@@ -197,6 +197,7 @@ rce-discord-bot/
 │   ├── aichat.py          # AI chats with members in chosen channels + acts as prison guard
 │   ├── teleports.py       # Location emotes (North … Northwest) teleport to set/captured coordinates
 │   ├── binds_panel.py     # Live emote binds panel: one message, edited when binds change
+│   ├── code_changes.py    # AI code changes: apply + reload, ✅ Keep / ↩️ Revert (.bak), /code …
 │   ├── manager_ai.py      # Management AI: staff channel, creates kits, binds emotes, autokits, custom kits (tools)
 │   ├── prison.py          # /prison jail/free/list: lock a member to the prison channel (timed too)
 │   ├── player_accounts.py # Player website login (one-time code) + team slots on custom kits
@@ -1104,6 +1105,17 @@ and it does it with tools:
 - **Custom kits:** create (with items and cooldown), add/remove items, cooldown, switch on/off, delete.
 - **Giving:** a kit to a player, online players, item lookup.
 - **Console** (`MANAGER_AI_CONSOLE`, on): for anything else it may run a Rust console command.
+- **The bot's own code** (`MANAGER_AI_CODE`, on – only for the user IDs in `ADMIN_USER_IDS`, i.e. the owner; if
+  that list is empty, every admin; main server only): "add a /ping command", "make the kit list sorted" … It
+  reads the files, then edits them. **Every edit** shows you the diff (attached as a file) and waits for your ✅.
+  Before saving, the new code must compile; after saving it must still import – otherwise it's undone right away.
+  Cogs and plugins reload live; other Python files need a restart (it asks). The original of every changed file
+  is kept next to it as **`<file>.bak`** until you click **✅ Keep (works)**; **↩️ Revert** puts every original
+  back (also `/code revert`, `/code keep`, `/code pending` with the diffs – the buttons keep working after a
+  restart). **Bot won't start after a change?** Run `python revert_code.py` in the bot folder. Off-limits for the
+  AI: `.env`, `data/`, logins/2FA, admin checks, the AI's own limits and this safety net (its own files, and
+  functions like `is_admin` or the panel's login code must stay byte-for-byte the same). An update of the bot
+  can overwrite changed files – confirm or revert before updating.
 - **The admin website** (`MANAGER_AI_WEB`, on): it can do everything the control panel can – shop, wipe,
   schedules, rules, tickets, reports, giveaways, store, plugins, settings, status … It uses the panel's own API
   with its own session (*"Management AI"*, owner rights, a secret key made at every start – nobody can log in as
