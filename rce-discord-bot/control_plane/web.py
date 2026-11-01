@@ -21,7 +21,7 @@ from typing import Awaitable, Callable
 
 from aiohttp import web
 
-from control_plane import billing, features, provisioning, slots, updates
+from control_plane import billing, features, manage_ai, provisioning, slots, updates
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -239,7 +239,8 @@ placeholder="Password (10+)" required> <button>Sign up</button></form></div>""")
 {f'<div class=card>{esc(flash)}</div>' if flash else ''}
 <div class=card><b>Subscription:</b> {pill(sub['status'] if sub else 'none')} {billing_btn}
 <br><span class=muted>Add-ons: own bot {'✅' if own_bot else '– (contact us)'} · AI features
-{'✅' if 'ai' in addons else '– (contact us)'}</span>
+{'✅' if 'ai' in addons else '– (contact us)'} · management AI in Discord: on the servers we switched it on for
+({sum(1 for x in servers if x['manager_ai'])})</span>
 <form method=post action=/logout class=inline><input type=hidden name=csrf value={csrf}><button>Sign out</button>
 </form></div>
 <div class=card><h2>Servers <span class=muted>({sl['used']} of {sl['limit']} slots)</span></h2>
@@ -457,6 +458,9 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                 elif s["status"] == "active":
                     acts.append(button(request, f"/servers/{sid}/suspend", "Suspend"))
                     acts.append(button(request, f"/servers/{sid}/restart", "Restart"))
+                acts.append(f"<a href=/servers/{sid}/ai>🧠 Management AI</a>")
+                acts.append(button(request, f"/servers/{sid}/manager-ai/{'off' if s['manager_ai'] else 'on'}",
+                                   ("Discord AI: on → switch off" if s["manager_ai"] else "Discord AI: off → switch on")))
                 acts.append(button(request, f"/servers/{sid}/remove", "Remove", danger=True,
                                    confirm="Remove this server? (kept for restore until purged)"))
             live = (f"{'🟢' if s['discord_ready'] else '🔴'} {esc(s['bot_user'] or '')}<br>"
@@ -624,6 +628,66 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         await changed()                                  # running servers restart with the new setup
         raise web.HTTPSeeOther(f"/customers/{cid}")
 
+    ai_history: dict[int, list[dict]] = {}
+
+    async def ai_page(request):
+        owner(request)
+        sid = int(request.match_info["id"])
+        srv = db.one("SELECT s.*, c.email FROM servers s JOIN customers c ON c.id = s.customer_id WHERE s.id = ?", (sid,))
+        if srv is None:
+            raise web.HTTPNotFound()
+        hist = ai_history.get(sid, [])
+        chat = "".join(
+            f"<div class=card><b>{'You' if h['role'] == 'user' else '🧠 AI'}</b><br>"
+            f"{esc(h['content']).replace(chr(10), '<br>')}"
+            + (f"<br><span class=muted>{esc(' · '.join(h.get('done') or []))}</span>" if h.get("done") else "")
+            + (f"<br><span class=muted>{esc(' · '.join(h.get('asked') or []))}</span>" if h.get("asked") else "")
+            + "</div>" for h in hist[-20:])
+        return page(f"Management AI – {srv['name']}", f"""<p><a href=/>← all</a></p>
+<h1>🧠 Management AI – {esc(srv['name'])}</h1><p class=muted>Runs on this server's own bot with all its tools (kits,
+emote binds, teleports, ZORP, custom kits, its admin website …). Customer: {esc(srv['email'])} · in their Discord:
+{'on' if srv['manager_ai'] else 'off (only you, here)'}</p>{chat or '<p class=muted>Ask something, e.g. "list the emote binds".</p>'}
+<div class=card><form method=post action=/servers/{sid}/ai>{hidden(request)}
+<textarea name=message rows=3 style="width:100%" required placeholder="What should it do on this server?"></textarea>
+<label><input type=checkbox name=allow_risky value=1> allow risky actions for this message (console commands,
+deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
+{button(request, f'/servers/{sid}/ai/clear', 'Clear the conversation')}</div>""")
+
+    async def ai_send(request):
+        owner(request)
+        data = await sess.form(request)
+        sid = int(request.match_info["id"])
+        text = str(data.get("message", "")).strip()[:3000]
+        if not text:
+            raise web.HTTPSeeOther(f"/servers/{sid}/ai")
+        hist = ai_history.setdefault(sid, [])
+        out = await manage_ai.ask(db, box, sid, text, [{"role": h["role"], "content": h["content"]} for h in hist],
+                                  allow_risky=data.get("allow_risky") == "1")
+        hist.append({"role": "user", "content": text})
+        hist.append({"role": "assistant", "content": out.get("answer") or f"⚠️ {out.get('error', 'no answer')}",
+                     "done": out.get("done") or [], "asked": out.get("asked") or []})
+        del hist[:-40]
+        db.audit(f"owner:{owner(request)}", "manager_ai.request", server_id=sid,
+                 detail=f"{text[:200]} → {', '.join(out.get('done') or []) or 'no changes'}")
+        raise web.HTTPSeeOther(f"/servers/{sid}/ai")
+
+    async def ai_clear(request):
+        owner(request)
+        await sess.form(request)
+        ai_history.pop(int(request.match_info["id"]), None)
+        raise web.HTTPSeeOther(f"/servers/{request.match_info['id']}/ai")
+
+    async def manager_toggle(request):
+        who = owner(request)
+        await sess.form(request)
+        try:
+            provisioning.set_manager_ai(db, int(request.match_info["id"]), request.match_info["on"] == "on",
+                                        actor=f"owner:{who}")
+        except provisioning.ProvisionError as exc:
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href=/>Back</a></div>")
+        await changed()                                  # the server restarts with it on/off
+        raise web.HTTPSeeOther("/")
+
     async def audit(request):
         owner(request)
         rows = db.q("SELECT * FROM audit_log ORDER BY id DESC LIMIT 300")
@@ -639,5 +703,8 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                     web.post(r"/grants/{id:\d+}/revoke", act),
                     web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act),
                     web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai}/{on:on|off}", feature_action),
-                    web.post("/update/{action:check|install}", update_action)])
+                    web.post("/update/{action:check|install}", update_action),
+                    web.get(r"/servers/{id:\d+}/ai", ai_page), web.post(r"/servers/{id:\d+}/ai", ai_send),
+                    web.post(r"/servers/{id:\d+}/ai/clear", ai_clear),
+                    web.post(r"/servers/{id:\d+}/manager-ai/{on:on|off}", manager_toggle)])
     return app

@@ -10,7 +10,9 @@ folder – or change the shared code – is switched off here:
     and are locked in the tenant's panel (no reading other folders, no requests to other tenants' local ports)
   * the database key comes from the environment (DB_KEY) and is never written to a shared key file
   * updates: only the owner installs them (owner panel → Update) – a tenant can't update itself
-  * AI (tickets AI, chat, moderation, management AI): only when the owner switched the AI add-on on (SAAS_AI=1)
+  * AI (tickets AI, chat, moderation): only when the owner switched the AI add-on on (SAAS_AI=1)
+  * management AI: in the server's Discord only on servers the owner chose (SAAS_MANAGER_AI=1); the owner can
+    always use it from the owner panel (POST /saas/manage, Bearer SAAS_MANAGE_TOKEN) – with the platform's key
   * shared bot (SAAS_SHARED_BOT=1): fenced to its own Discord server (saas_fence.py)
 GET /saas/health (Bearer SAAS_HEALTH_TOKEN) gives the control plane a small status – nothing of the tenant's data.
 """
@@ -37,11 +39,28 @@ LOCKED_SETTINGS = frozenset({
 def locked_settings() -> frozenset[str]:
     """Locked keys for this tenant: on the shared bot also the Discord server (it's fenced to it)."""
     extra = {"GUILD_ID"} if os.environ.get("SAAS_SHARED_BOT") == "1" else set()
+    if os.environ.get("SAAS_MANAGER_AI") != "1":
+        extra |= MANAGER_KEYS                          # the management AI isn't switched on for this server
     return LOCKED_SETTINGS | extra
 
 
 def ai_enabled() -> bool:
     return not enabled() or os.environ.get("SAAS_AI") == "1"
+
+
+MANAGER_KEYS = frozenset({"MANAGER_AI_CHANNEL_IDS", "MANAGER_AI_INSTRUCTIONS", "MANAGER_AI_CONSOLE", "MANAGER_AI_WEB"})
+
+
+def manager_ai_in_discord() -> bool:
+    """The management AI in this server's Discord: always on own installs; hosted only on servers the owner chose."""
+    return not enabled() or os.environ.get("SAAS_MANAGER_AI") == "1"
+
+
+def manage_ok(header: str) -> bool:
+    """POST /saas/manage (the owner panel's management AI): Bearer <SAAS_MANAGE_TOKEN>."""
+    expected = os.environ.get("SAAS_MANAGE_TOKEN", "")
+    given = header[7:] if header.startswith("Bearer ") else ""
+    return bool(expected) and hmac.compare_digest(given.encode(), expected.encode())
 
 # Panel API that's off in hosted mode: (method or "*", path prefix)
 BLOCKED_API = (

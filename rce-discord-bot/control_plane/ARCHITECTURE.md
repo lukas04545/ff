@@ -81,12 +81,21 @@ Every server runs on one of two bots:
 
 * **Add-ons** (`features` table, owner panel → customer → Add-ons, or `python -m control_plane addon …`):
   `custom_bot` and `ai`. Like slots, only the owner can change them.
-  * **AI** (tickets AI, AI chat, AI moderation, management AI) runs only with the add-on. The tenant then gets the
+  * **AI** (tickets AI, AI chat, AI moderation) runs only with the add-on. The tenant then gets the
     platform's DeepSeek key (`CP_DEEPSEEK_API_KEY`) in its environment.
   * Without the add-on the bot forces the key empty. `DEEPSEEK_API_KEY` is locked in the tenant panel, so a tenant
     can't bring its own key to get around it.
   * Hosted bots load their `.env` with *override*, so the control plane's values (token, guild, AI key, port, DB key)
     are pinned after loading: a tenant's `.env` can never override them.
+  * **Management AI is not part of the add-on.** It uses the platform key separately (`SAAS_OWNER_AI_KEY`) and
+    is reachable in two places only:
+    * **Owner panel → server → 🧠 Management AI**, always, for every server. The panel POSTs to the server's own
+      bot at `127.0.0.1:<port>/saas/manage` with a per-server bearer token (`SAAS_MANAGE_TOKEN`, derived from the
+      health token; any other caller gets 404). Risky tools run only if *allow risky actions* is ticked; code
+      editing tools never exist in hosted mode. Every request is audited (`manager_ai.request`).
+    * **The server's Discord management channel**, only on servers the owner switched on (owner panel → *Discord
+      AI on/off*, column `servers.manager_ai`, env `SAAS_MANAGER_AI`). Elsewhere the channel stays silent and the
+      `MANAGER_AI_*` settings are locked in the tenant panel.
   * When an add-on changes, the supervisor sees the server's environment changed and restarts it with the new setup.
 * **Updates only from the owner panel:** tenants can't update themselves. Their auto-updater is off, the update API
   is blocked and the panel says "installed by your host".
@@ -142,7 +151,7 @@ slot_grants(id, customer_id→customers, slots>0, reason, granted_by, granted_at
           -- written ONLY by the owner panel / CLI; slot_limit = base_slots + SUM(active grants)
 servers(id, customer_id→customers, slug UNIQUE, name, status[provisioning|awaiting_token|active|stopped|suspended|
           over_limit|deleted], suspend_reason, home_dir UNIQUE, web_port UNIQUE, node, created_at, deleted_at,
-          bot_mode[shared|custom], guild_id)      -- UNIQUE(guild_id) for live shared-bot servers
+          bot_mode[shared|custom], guild_id, manager_ai 0|1)      -- UNIQUE(guild_id) for live shared-bot servers
 features(id, customer_id→customers, feature[custom_bot|ai], granted_by, granted_at, revoked_by, revoked_at)
           -- add-ons, written ONLY by the owner panel / CLI
 settings_kv(key PK, value)                 -- e.g. the update status
