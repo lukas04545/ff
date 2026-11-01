@@ -140,3 +140,34 @@ def test_links_command_shows_the_owner_panel_and_secret_panels(cp, capsys, monke
     assert "/admin" not in text
     assert cli.main(["links", "--email", "nobody@x.io"]) == 0
     assert "Servers: none" in capsys.readouterr().out
+
+
+def test_restart_control_plane_button(cp):  # noqa: F811
+    from control_plane import updates
+    from control_plane.web import build_owner
+    from web.totp import code_at
+    secret = _owner(cp)
+    restarted = []
+    updates._save(cp.db, {"control_plane_restart_needed": True})
+
+    async def changed():
+        pass
+
+    async def scenario():
+        c = TestClient(TestServer(build_owner(cp.db, cp.box, cp.settings, changed,
+                                              restart=lambda: restarted.append(1))))
+        await c.start_server()
+        try:
+            await c.post("/login", data={"username": "boss", "password": "owner-password-123",
+                                         "code": code_at(secret, int(time.time() // 30))})
+            page = await (await c.get("/")).text()
+            assert "Restart control plane" in page and "still runs the old code" in page
+            assert (await c.post("/update/restart", data={})).status == 403                 # CSRF
+            r = await c.post("/update/restart", data={"csrf": csrf_of(page)})
+            assert "Restarting" in await r.text() and restarted == []                  # only after the page is sent
+            await asyncio.sleep(1.2)
+            assert restarted == [1]
+            assert any(row["action"] == "control_plane.restart" for row in cp.db.q("SELECT action FROM audit_log"))
+        finally:
+            await c.close()
+    asyncio.run(scenario())

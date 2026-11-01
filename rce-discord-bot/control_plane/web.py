@@ -13,6 +13,7 @@ checks on every customer action (a customer can only ever touch rows with their 
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import html
@@ -396,7 +397,7 @@ dashboard.</p><a href=/dashboard>Back to the dashboard</a></div>""")
 
 def build_owner(db: DB, box: SecretBox, settings: Settings, changed: Callable[[], Awaitable[None]],
                 supervisor=None, *, prefix: str = "", allow_ips: frozenset[str] = frozenset(),
-                ai_history: dict | None = None) -> web.Application:
+                ai_history: dict | None = None, restart: Callable[[], None] | None = None) -> web.Application:
     """The owner panel. prefix="" on its private listener; prefix="/management" when it's also mounted on the
     public portal (a sub-app there) – then allow_ips (if set) limits who even sees the login page."""
     P = prefix.rstrip("/")
@@ -521,10 +522,15 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
             lines.append(f"Last install: {esc(last.get('status'))} {esc(last.get('message') or '')} – "
                          f"{last.get('restarted', 0)} server(s) restarted")
         if st.get("control_plane_restart_needed"):
-            lines.append("<span class=err>Restart the control plane service so it runs the new code too.</span>")
+            lines.append("<span class=err>The control plane still runs the old code – press <b>Restart control "
+                         "plane</b>.</span>")
+        again = (" " + button(request, '/update/restart', 'Restart control plane (new code)', danger=bool(
+            st.get("control_plane_restart_needed")), confirm="Restart the control plane? Every server restarts too "
+                                                              "(back within seconds).")) if restart else ""
         return (f"<div class=card><h2>Updates (only here – tenants can't update)</h2>{'<br>'.join(lines)}<br><br>"
                 f"{button(request, '/update/check', 'Check for updates')} "
-                f"{button(request, '/update/install', 'Install update for ALL servers', danger=True, confirm='Install the newest version and restart every server one by one?')}</div>")
+                f"{button(request, '/update/install', 'Install update for ALL servers', danger=True, confirm='Install the newest version and restart every server one by one?')}"
+                f"{again}</div>")
 
     async def dashboard(request):
         who = owner(request)
@@ -617,6 +623,14 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         await sess.form(request)
         if request.match_info["action"] == "check":
             await updates.check(db, settings)
+        elif request.match_info["action"] == "restart":
+            if restart is None:
+                raise go("/")
+            db.audit(f"owner:{who}", "control_plane.restart")
+            asyncio.get_running_loop().call_later(1.0, restart)       # after this page has been sent
+            return page("Restarting", f"""<meta http-equiv=refresh content="20;url={P}/"><div class=card>
+<h1>♻️ Restarting the control plane …</h1><p>Every server stops and starts again with the new code. This page
+reloads by itself in 20 seconds (sign in again if it asks).</p><p><a href={P}/>Back to the owner panel</a></p></div>""")
         else:
             await updates.install(db, settings, supervisor, owner=who)
         raise go("/")
@@ -858,7 +872,7 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.post(r"/grants/{id:\d+}/revoke", act),
                     web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act),
                     web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai}/{on:on|off}", feature_action),
-                    web.post("/update/{action:check|install}", update_action),
+                    web.post("/update/{action:check|install|restart}", update_action),
                     web.get(r"/servers/{id:\d+}/ai", ai_page), web.post(r"/servers/{id:\d+}/ai", ai_send),
                     web.post(r"/servers/{id:\d+}/ai/clear", ai_clear),
                     web.post(r"/servers/{id:\d+}/manager-ai/{on:on|off}", manager_toggle),
