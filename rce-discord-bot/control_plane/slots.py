@@ -20,6 +20,16 @@ class SlotError(Exception):
     pass
 
 
+def bot_ready(db: DB, server_id: int) -> bool:
+    """Its bot is set up: own bot -> token stored; shared bot -> a Discord server bound (via "Add to Discord")."""
+    s = db.one("SELECT bot_mode, guild_id FROM servers WHERE id = ?", (server_id,))
+    if s is None:
+        return False
+    if s["bot_mode"] == "custom":
+        return db.one("SELECT 1 FROM secrets WHERE server_id = ? AND kind = 'discord_token'", (server_id,)) is not None
+    return bool(s["guild_id"])
+
+
 def slot_limit(db: DB, customer_id: int) -> int:
     row = db.one("SELECT base_slots FROM customers WHERE id = ?", (customer_id,))
     if row is None:
@@ -93,9 +103,8 @@ def release_over_limit(db: DB, customer_id: int, *, actor: str) -> list[int]:
                   (customer_id,)):
         if slots_used(db, customer_id) >= slot_limit(db, customer_id):
             break
-        has_token = db.one("SELECT 1 FROM secrets WHERE server_id = ? AND kind = 'discord_token'", (r["id"],))
         db.run("UPDATE servers SET status = ?, suspend_reason = NULL WHERE id = ?",
-               ("active" if has_token else "awaiting_token", r["id"]))
+               ("active" if bot_ready(db, r["id"]) else "awaiting_token", r["id"]))
         db.audit(actor, "server.back_from_over_limit", customer_id=customer_id, server_id=r["id"])
         back.append(r["id"])
     return back

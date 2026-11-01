@@ -78,6 +78,17 @@ CREATE TABLE IF NOT EXISTS health (
     rcon_connected INTEGER, players_online INTEGER, latency_ms INTEGER, setup_mode INTEGER,
     error TEXT
 );
+-- Add-ons the OWNER switches on per customer: 'custom_bot' (own bot token = own name/avatar) and 'ai'
+CREATE TABLE IF NOT EXISTS features (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    feature TEXT NOT NULL CHECK (feature IN ('custom_bot', 'ai')),
+    granted_by TEXT NOT NULL,
+    granted_at INTEGER NOT NULL,
+    revoked_by TEXT,
+    revoked_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS settings_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS owners (
     username TEXT PRIMARY KEY,
     password_hash TEXT NOT NULL,
@@ -105,6 +116,17 @@ class DB:
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(servers)")}
+        if "bot_mode" not in cols:     # shared = the platform's bot (fenced to guild_id); custom = own token
+            self.conn.execute("ALTER TABLE servers ADD COLUMN bot_mode TEXT NOT NULL DEFAULT 'shared'")
+        if "guild_id" not in cols:
+            self.conn.execute("ALTER TABLE servers ADD COLUMN guild_id TEXT")
+        # One Discord server can be bound to only one shared-bot tenant server
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_one_guild_per_shared_server ON servers (guild_id) "
+                          "WHERE bot_mode = 'shared' AND status != 'deleted' AND guild_id IS NOT NULL")
 
     def q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
         return self.conn.execute(sql, args).fetchall()

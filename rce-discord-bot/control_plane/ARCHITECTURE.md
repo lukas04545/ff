@@ -49,6 +49,52 @@ to a shared multi-tenant process would be riskier and weaker on isolation.
   their node, and Caddy points `<slug>` at `node-ip:port` over WireGuard. Swap `ProcessLauncher` for a container
   launcher (one container per server, read-only code mount, per-container user) when you want kernel-level isolation.
 
+## Bot identity: shared bot (default) or own bot (paid add-on)
+
+Every server runs on one of two bots:
+
+* **Shared bot (default, included):** the platform's bot (`CP_SHARED_BOT_TOKEN`). In the portal the customer clicks
+  **Add the bot to your Discord**, which goes through Discord's OAuth2 install page.
+  * The callback exchanges the code with the client secret, and **Discord's answer** names the server the bot was
+    added to. The `guild_id` in the URL is ignored, and only someone with *Manage Server* there can add a bot.
+  * The `state` is HMAC-signed, tied to the customer and server, and expires after 15 minutes.
+  * One Discord server can belong to only one tenant server (unique index).
+  * Each tenant still runs **its own process** (own data, website, settings); they all share the token.
+  * **Guild fence** (`saas_fence.py`): without sharding, Discord sends every connection every guild's events and
+    lets it act anywhere. The fence wraps every gateway parser, so other guilds' events are dropped before
+    discord.py builds objects. That includes slash commands, buttons and modals, which bypass normal dispatch, so
+    another tenant's button click can never run here. DMs are dropped too.
+  * It also wraps every REST call: only its own guild and its own channels, no global command changes (they're
+    every tenant's), and no listing of the bot's guilds. Commands are synced to the tenant's guild only. Logins of
+    the shared token are spaced 6 s apart (Discord: one identify per 5 s).
+  * *Scaling note:* every shared-bot process receives every shared guild's events (it drops them, but still
+    downloads them). That's fine for dozens of shared-bot servers. For hundreds, move to a single gateway
+    connector that forwards each guild's events to its tenant process; the fence and the per-tenant processes stay
+    the same.
+* **Own bot (add-on `custom_bot`, switched on by the owner):** the customer pastes their own bot token, so the
+  server has its own name, avatar and rate limits, and no fence is needed. Without the add-on the portal doesn't
+  offer it and the server refuses the token (covered by a test).
+  * Switching the add-on off moves the customer's servers back to the shared bot: the token is deleted, nothing
+    else is, and the customer adds the shared bot to their Discord again.
+
+## Add-ons and updates
+
+* **Add-ons** (`features` table, owner panel → customer → Add-ons, or `python -m control_plane addon …`):
+  `custom_bot` and `ai`. Like slots, only the owner can change them.
+  * **AI** (tickets AI, AI chat, AI moderation, management AI) runs only with the add-on. The tenant then gets the
+    platform's DeepSeek key (`CP_DEEPSEEK_API_KEY`) in its environment.
+  * Without the add-on the bot forces the key empty. `DEEPSEEK_API_KEY` is locked in the tenant panel, so a tenant
+    can't bring its own key to get around it.
+  * Hosted bots load their `.env` with *override*, so the control plane's values (token, guild, AI key, port, DB key)
+    are pinned after loading: a tenant's `.env` can never override them.
+  * When an add-on changes, the supervisor sees the server's environment changed and restarts it with the new setup.
+* **Updates only from the owner panel:** tenants can't update themselves. Their auto-updater is off, the update API
+  is blocked and the panel says "installed by your host".
+  * Owner panel → **Updates**: *Check for updates* shows the installed and newest version. *Install update for ALL
+    servers* installs it into the shared code folder, then restarts every running server one by one (rolling, never
+    all at once). The control plane then asks you to restart its own service.
+  * CLI: `python -m control_plane update [--install]`.
+
 ## Isolation, layer by layer
 
 1. **Process:** one OS process per server. Only the environment that `provisioning.environment()` builds is passed
@@ -58,9 +104,9 @@ to a shared multi-tenant process would be riskier and weaker on isolation.
 3. **Database:** its own SQLite file, encrypted with SQLCipher (AES-256) using a **per-server random key** from the
    control plane. A file copied from one tenant can't be read with anything another tenant has. *Purge* deletes the
    key: crypto-shredding, so archives of a purged server are unreadable too.
-4. **Discord:** one bot token per server, so a separate gateway connection, rate limits and application identity
-   (the customer's name and avatar). `secrets.fingerprint` has a unique index, so the same token can't run two
-   servers.
+4. **Discord:** own bot (add-on): its own token, gateway connection, rate limits and name/avatar; one token runs one
+   server (unique fingerprint). Shared bot: one token, but each tenant process is **fenced** to its own Discord server
+   in and out (`saas_fence.py`, see above).
 5. **Web:** each server's own website and panel on its own port, reachable at `<slug>.<domain>`. Panel logins, 2FA,
    sessions and secrets live in its own folder. Cookies are scoped to its own host.
 6. **Hosted-mode lockdown in the bot** (`saas_mode.py`, `RCE_SAAS=1`). Every tenant runs the same code folder, so
@@ -95,7 +141,11 @@ subscriptions(customer_id PK→customers, stripe_subscription_id UNIQUE, status[
 slot_grants(id, customer_id→customers, slots>0, reason, granted_by, granted_at, revoked_by, revoked_at)
           -- written ONLY by the owner panel / CLI; slot_limit = base_slots + SUM(active grants)
 servers(id, customer_id→customers, slug UNIQUE, name, status[provisioning|awaiting_token|active|stopped|suspended|
-          over_limit|deleted], suspend_reason, home_dir UNIQUE, web_port UNIQUE, node, created_at, deleted_at)
+          over_limit|deleted], suspend_reason, home_dir UNIQUE, web_port UNIQUE, node, created_at, deleted_at,
+          bot_mode[shared|custom], guild_id)      -- UNIQUE(guild_id) for live shared-bot servers
+features(id, customer_id→customers, feature[custom_bot|ai], granted_by, granted_at, revoked_by, revoked_at)
+          -- add-ons, written ONLY by the owner panel / CLI
+settings_kv(key PK, value)                 -- e.g. the update status
 secrets(server_id→servers, kind[discord_token|db_key|health_token], ciphertext (AES-GCM, AAD "server:<id>:<kind>"),
           fingerprint, updated_at, PK(server_id, kind));  UNIQUE(fingerprint) WHERE kind='discord_token'
 health(server_id PK, checked_at, process, pid, restarts, discord_ready, bot_user, guild_id, guild_name,
@@ -186,7 +236,9 @@ folder and keys, so the owner can restore it. *Purge* (owner, only after remove)
 ```bash
 cd rce-discord-bot && pip install -r requirements.txt   # cryptography, sqlcipher3 already in there
 python -m control_plane init                           # prints CP_MASTER_KEYS + CP_SESSION_SECRET
-# put them + CP_BASE_DOMAIN, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_ID into /etc/rce-saas.env
+# put them + CP_BASE_DOMAIN, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_ID into /etc/rce-saas.env,
+# plus the shared bot (CP_SHARED_BOT_TOKEN, CP_SHARED_CLIENT_ID, CP_SHARED_CLIENT_SECRET – Discord app with the
+# redirect https://portal.yourdomain.com/discord/callback) and CP_DEEPSEEK_API_KEY for the AI add-on
 python -m control_plane create-owner you                # password + authenticator app (TOTP)
 python -m control_plane run                             # systemd service, Restart=always
 ```
@@ -209,7 +261,8 @@ vps`, then open `http://localhost:8090`.
    before.
 2. **Stand up the control plane on the new VPS** (steps above). Create your owner account and test with a throwaway
    server.
-3. **Prepare each existing server:**
+3. **Prepare each existing server** (the import switches on the own-bot and AI add-ons for your account, so your
+   servers keep their own bots; set `CP_DEEPSEEK_API_KEY` to your DeepSeek key):
    * if it uses `DB_ENCRYPTION`, turn it off and restart once (the import copies the plaintext database; the tenant
      re-encrypts it with its own new key on first start);
    * note its Discord token (it stays the same bot, so no re-invite is needed).

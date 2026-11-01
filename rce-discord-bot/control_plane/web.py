@@ -21,7 +21,7 @@ from typing import Awaitable, Callable
 
 from aiohttp import web
 
-from control_plane import billing, provisioning, slots
+from control_plane import billing, features, provisioning, slots, updates
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -113,6 +113,27 @@ def _client_ip(request: web.Request) -> str:
             or request.remote or "?").strip()[:64]
 
 
+class OAuthError(Exception):
+    pass
+
+
+async def exchange_code(settings: Settings, code: str) -> str:
+    """Discord OAuth2 "add bot" code -> the id of the Discord server it was added to (from Discord, not the URL)."""
+    import aiohttp
+    if not code:
+        raise OAuthError("Discord didn't send a code – try again.")
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+        async with session.post("https://discord.com/api/v10/oauth2/token",
+                                data={"grant_type": "authorization_code", "code": code,
+                                      "redirect_uri": f"{settings.portal_url}/discord/callback"},
+                                auth=aiohttp.BasicAuth(settings.shared_client_id, settings.shared_client_secret)) as resp:
+            data = await resp.json(content_type=None)
+    guild = (data or {}).get("guild") or {}
+    if not guild.get("id"):
+        raise OAuthError("Discord didn't confirm the server – try again.")
+    return str(guild["id"])
+
+
 # ================================================================== PORTAL (customers)
 
 def build_portal(db: DB, box: SecretBox, settings: Settings, changed: Callable[[], Awaitable[None]]) -> web.Application:
@@ -190,7 +211,10 @@ placeholder="Password (10+)" required> <button>Sign up</button></form></div>""")
         csrf = sess.csrf(request)
         sub = db.one("SELECT * FROM subscriptions WHERE customer_id = ?", (c["id"],))
         sl = slots.summary(db, c["id"])
-        servers = db.q("SELECT s.*, h.process, h.discord_ready, h.guild_name, h.rcon_connected, h.players_online "
+        addons = features.active(db, c["id"])
+        own_bot = "custom_bot" in addons
+        servers = db.q("SELECT s.*, h.process, h.discord_ready, h.guild_name, h.rcon_connected, h.players_online, "
+                       "h.bot_user "
                        "FROM servers s LEFT JOIN health h ON h.server_id = s.id WHERE s.customer_id = ? AND "
                        "s.status != 'deleted' ORDER BY s.id", (c["id"],))
         flash = request.query.get("m", "")
@@ -200,8 +224,7 @@ placeholder="Password (10+)" required> <button>Sign up</button></form></div>""")
             f"{'<br><span class=muted>' + esc(s['suspend_reason']) + '</span>' if s['suspend_reason'] else ''}</td>"
             f"<td>{'🟢 ' + esc(s['guild_name'] or 'online') if s['discord_ready'] else '⚪'} "
             f"{'· RCON ✅' if s['rcon_connected'] else ''} {'· ' + str(s['players_online']) + ' online' if s['players_online'] else ''}</td>"
-            f"<td><form method=post action=/servers/{s['id']}/token><input type=hidden name=csrf value={csrf}>"
-            f"<input name=token type=password placeholder='Bot token' required> <button>Save token</button></form>"
+            f"<td>{bot_cell(s, csrf, own_bot)}"
             f"<form method=post action=/servers/{s['id']}/remove class=inline onsubmit=\"return confirm('Remove?')\">"
             f"<input type=hidden name=csrf value={csrf}><button class=danger>Remove</button></form></td></tr>"
             for s in servers)
@@ -215,12 +238,73 @@ placeholder="Password (10+)" required> <button>Sign up</button></form></div>""")
         return page("Dashboard", f"""<h1>{esc(c['name'] or c['email'])}</h1>
 {f'<div class=card>{esc(flash)}</div>' if flash else ''}
 <div class=card><b>Subscription:</b> {pill(sub['status'] if sub else 'none')} {billing_btn}
+<br><span class=muted>Add-ons: own bot {'✅' if own_bot else '– (contact us)'} · AI features
+{'✅' if 'ai' in addons else '– (contact us)'}</span>
 <form method=post action=/logout class=inline><input type=hidden name=csrf value={csrf}><button>Sign out</button>
 </form></div>
 <div class=card><h2>Servers <span class=muted>({sl['used']} of {sl['limit']} slots)</span></h2>
 <table><tr><th>Server</th><th>Status</th><th>Live</th><th></th></tr>{rows or '<tr><td colspan=4>No server yet.</td></tr>'}
 </table>{add}<p class=muted>Each server is fully separate: its own bot (create one per server in the Discord
 Developer Portal), website, database, kits and settings. Open the server's link to log in to its panel.</p></div>""")
+
+    def bot_cell(s, csrf: str, own_bot: bool) -> str:
+        sid = s["id"]
+        hidden = f"<input type=hidden name=csrf value={csrf}>"
+        if s["bot_mode"] == "custom":
+            out = (f"🤖 <b>Own bot</b> {'· ' + esc(s['bot_user']) if s['bot_user'] else ''}<form method=post "
+                   f"action=/servers/{sid}/token>{hidden}<input name=token type=password placeholder='New bot token' "
+                   f"required> <button>Save token</button></form><form method=post action=/servers/{sid}/shared "
+                   f"class=inline>{hidden}<button>Use our bot instead</button></form> ")
+        else:
+            out = (f"🤖 Our bot – {'connected to Discord ' + esc(s['guild_name'] or s['guild_id']) if s['guild_id'] else 'not in a Discord yet'}"
+                   f"<br><a href=/servers/{sid}/discord>{'Move to another Discord' if s['guild_id'] else '➕ Add the bot to your Discord'}</a><br>")
+            if own_bot:
+                out += (f"<form method=post action=/servers/{sid}/token>{hidden}<input name=token type=password "
+                        f"placeholder='Own bot token' required> <button>Use my own bot</button></form> ")
+        return out
+
+    def install_state(customer_id: int, server_id: int) -> str:
+        exp = int(time.time()) + 900
+        return f"{server_id}.{exp}.{sess._sig(f'install:{customer_id}:{server_id}:{exp}')[:40]}"
+
+    async def discord_install(request):
+        """"Add the bot to your Discord": Discord's own install page; the answer tells us WHICH server it went to
+        (and only someone allowed to add bots there can do it)."""
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        if s["bot_mode"] != "shared":
+            raise web.HTTPSeeOther("/dashboard")
+        if not settings.shared_client_id:
+            raise web.HTTPSeeOther("/dashboard?m=The+shared+bot+isn't+set+up+yet")
+        from urllib.parse import urlencode
+        query = urlencode({"client_id": settings.shared_client_id, "permissions": settings.shared_permissions,
+                           "scope": "bot applications.commands", "response_type": "code",
+                           "redirect_uri": f"{settings.portal_url}/discord/callback",
+                           "state": install_state(c["id"], s["id"]), "integration_type": "0"})
+        raise web.HTTPSeeOther(f"https://discord.com/oauth2/authorize?{query}")
+
+    async def discord_callback(request):
+        c = need(request)
+        state = request.query.get("state", "").split(".")
+        if len(state) != 3 or not state[0].isdigit() or not state[1].isdigit() or int(state[1]) < time.time() or \
+                not hmac.compare_digest(state[2], sess._sig(f"install:{c['id']}:{state[0]}:{state[1]}")[:40]):
+            raise web.HTTPSeeOther("/dashboard?m=That+link+expired+–+try+again")
+        s = own_server(c, int(state[0]))
+        try:
+            guild = await exchange_code(settings, request.query.get("code", ""))
+            provisioning.bind_guild(db, s["id"], guild, actor=f"customer:{c['id']}")
+        except (provisioning.ProvisionError, OAuthError) as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + str(exc).replace(" ", "+")) from None
+        await changed()
+        raise web.HTTPSeeOther("/dashboard?m=Bot+added+–+it+starts+in+a+few+seconds")
+
+    async def use_shared(request):
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        await sess.form(request)
+        provisioning.use_shared_bot(db, s["id"], actor=f"customer:{c['id']}")
+        await changed()
+        raise web.HTTPSeeOther("/dashboard?m=Switched+to+our+bot+–+add+it+to+your+Discord")
 
     async def add_server(request):
         c = need(request)
@@ -246,7 +330,7 @@ dashboard.</p><a href=/dashboard>Back to the dashboard</a></div>""")
         except provisioning.ProvisionError as exc:
             raise web.HTTPSeeOther("/dashboard?m=" + str(exc).replace(" ", "+")) from None
         await changed()
-        raise web.HTTPSeeOther("/dashboard?m=Token+saved+–+the+bot+starts+in+a+few+seconds")
+        raise web.HTTPSeeOther("/dashboard?m=Own+bot+saved+–+it+starts+in+a+few+seconds")
 
     async def remove(request):
         c = need(request)
@@ -297,7 +381,9 @@ dashboard.</p><a href=/dashboard>Back to the dashboard</a></div>""")
                     web.post("/logout", logout), web.get("/dashboard", dashboard), web.post("/servers", add_server),
                     web.post(r"/servers/{sid:\d+}/token", set_token), web.post(r"/servers/{sid:\d+}/remove", remove),
                     web.post("/billing/checkout", checkout), web.post("/billing/portal", billing_portal),
-                    web.post("/stripe/webhook", stripe_webhook), web.get("/paused/{slug}", paused)])
+                    web.post("/stripe/webhook", stripe_webhook), web.get("/paused/{slug}", paused),
+                    web.get(r"/servers/{sid:\d+}/discord", discord_install), web.get("/discord/callback", discord_callback),
+                    web.post(r"/servers/{sid:\d+}/shared", use_shared)])
     return app
 
 
@@ -378,7 +464,9 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                     f"RCON {'✅' if s['rcon_connected'] else '❌'} · {s['players_online'] or 0} online"
                     f"{' · setup mode' if s['setup_mode'] else ''}") if s["checked_at"] else "–"
             out.append(f"<tr><td>#{sid} <b>{esc(s['name'])}</b><br><a href='{esc(settings.url_for(s['slug']))}' "
-                       f"target=_blank>{esc(s['slug'])}</a> · port {s['web_port']}</td>"
+                       f"target=_blank>{esc(s['slug'])}</a> · port {s['web_port']}<br><span class=muted>"
+                       f"{'own bot' if s['bot_mode'] == 'custom' else 'shared bot · guild ' + esc(s['guild_id'] or '–')}"
+                       f"</span></td>"
                        f"<td><a href=/customers/{s['customer_id']}>{esc(s['email'])}</a></td>"
                        f"<td>{pill(s['status'])}<br>{pill(s['process'] or 'not started')}"
                        f"{' ↻' + str(s['restarts']) if s['restarts'] else ''}"
@@ -386,6 +474,22 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                        f"<td>{live}</td><td>{' '.join(acts)}</td></tr>")
         return ("<table><tr><th>Server</th><th>Customer</th><th>State</th><th>Health</th><th></th></tr>"
                 + ("".join(out) or "<tr><td colspan=5>None.</td></tr>") + "</table>")
+
+    def update_card(request) -> str:
+        st = updates.status(db)
+        cur, latest, last = st.get("current") or {}, st.get("latest") or {}, st.get("last_install") or {}
+        lines = [f"Installed: <code>{esc((cur.get('sha') or '?')[:10])}</code> {esc(cur.get('title') or '')}"]
+        if latest.get("sha"):
+            lines.append(f"Newest: <code>{esc(latest['sha'][:10])}</code> {esc(latest.get('title') or '')} "
+                         + (pill("update available") if st.get("available") else pill("active")))
+        if last:
+            lines.append(f"Last install: {esc(last.get('status'))} {esc(last.get('message') or '')} – "
+                         f"{last.get('restarted', 0)} server(s) restarted")
+        if st.get("control_plane_restart_needed"):
+            lines.append("<span class=err>Restart the control plane service so it runs the new code too.</span>")
+        return (f"<div class=card><h2>Updates (only here – tenants can't update)</h2>{'<br>'.join(lines)}<br><br>"
+                f"{button(request, '/update/check', 'Check for updates')} "
+                f"{button(request, '/update/install', 'Install update for ALL servers', danger=True, confirm='Install the newest version and restart every server one by one?')}</div>")
 
     async def dashboard(request):
         who = owner(request)
@@ -400,6 +504,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         return page("Owner", f"""<h1>Owner panel <span class=muted>({esc(who)})</span></h1>
 <p>{len(customers)} customers · {counts['n'] or 0} servers ({counts['a'] or 0} active, {running} processes running)
 · <a href=/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
+{update_card(request)}
 <div class=card><h2>Customers</h2><table><tr><th>Customer</th><th>Account</th><th>Subscription</th><th>Slots
 (used / limit)</th></tr>{crows or '<tr><td colspan=4>None yet.</td></tr>'}</table></div>
 <div class=card><h2>All servers</h2>{server_rows(request, "WHERE s.status != 'deleted'")}</div>
@@ -420,6 +525,13 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
             + (f"revoked by {esc(g['revoked_by'])}" if g["revoked_at"] else
                button(request, f"/grants/{g['id']}/revoke", "Revoke", danger=True, confirm="Revoke these slots?"))
             + "</td></tr>" for g in grants)
+        on = features.active(db, cid)
+        addon_rows = "".join(
+            f"<p>{esc(label)}: {pill('active' if f in on else 'off')} "
+            + (button(request, f"/customers/{cid}/feature/{f}/off", "Switch off", danger=True,
+                      confirm=f"Switch {label} off for this customer?") if f in on
+               else button(request, f"/customers/{cid}/feature/{f}/on", "Switch on")) + "</p>"
+            for f, label in features.FEATURES.items())
         acct = (button(request, f"/customers/{cid}/reactivate", "Reactivate account") if c["status"] == "suspended"
                 else button(request, f"/customers/{cid}/suspend", "Suspend account", danger=True,
                             confirm="Stop all servers of this customer?"))
@@ -431,6 +543,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
 {('· grace until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['grace_until']))) if sub and sub['grace_until'] else ''}
 <br><br>{acct} {comp} {button(request, f'/customers/{cid}/remove', 'Remove customer', danger=True,
                                        confirm='Remove the customer and all their servers?')}</div>
+<div class=card><h2>Add-ons</h2>{addon_rows}</div>
 <div class=card><h2>Slots: {sl['used']} used of {sl['limit']} ({c['base_slots']} in the plan)</h2>
 <form method=post action=/customers/{cid}/grant>{hidden(request)}<input name=slots type=number min=1 max=100 value=1>
 <input name=reason placeholder="Reason (e.g. paid add-on)"> <button>Unlock slots</button></form>
@@ -488,6 +601,29 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         await changed()
         raise web.HTTPSeeOther(back)
 
+    async def update_action(request):
+        who = owner(request)
+        await sess.form(request)
+        if request.match_info["action"] == "check":
+            await updates.check(db, settings)
+        else:
+            await updates.install(db, settings, supervisor, owner=who)
+        raise web.HTTPSeeOther("/")
+
+    async def feature_action(request):
+        who = owner(request)
+        await sess.form(request)
+        cid, feature = int(request.match_info["id"]), request.match_info["feature"]
+        try:
+            if request.match_info["on"] == "on":
+                features.grant(db, cid, feature, owner=who)
+            else:
+                features.revoke(db, cid, feature, owner=who)
+        except features.FeatureError as exc:
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href=/>Back</a></div>")
+        await changed()                                  # running servers restart with the new setup
+        raise web.HTTPSeeOther(f"/customers/{cid}")
+
     async def audit(request):
         owner(request)
         rows = db.q("SELECT * FROM audit_log ORDER BY id DESC LIMIT 300")
@@ -501,5 +637,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                     web.get("/", dashboard), web.get(r"/customers/{cid:\d+}", customer), web.get("/audit", audit),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post(r"/grants/{id:\d+}/revoke", act),
-                    web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act)])
+                    web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act),
+                    web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai}/{on:on|off}", feature_action),
+                    web.post("/update/{action:check|install}", update_action)])
     return app

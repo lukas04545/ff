@@ -9,6 +9,9 @@ folder – or change the shared code – is switched off here:
   * file paths, web host/port/tunnel/public address, the Discord token and outbound URLs come from the control plane
     and are locked in the tenant's panel (no reading other folders, no requests to other tenants' local ports)
   * the database key comes from the environment (DB_KEY) and is never written to a shared key file
+  * updates: only the owner installs them (owner panel → Update) – a tenant can't update itself
+  * AI (tickets AI, chat, moderation, management AI): only when the owner switched the AI add-on on (SAAS_AI=1)
+  * shared bot (SAAS_SHARED_BOT=1): fenced to its own Discord server (saas_fence.py)
 GET /saas/health (Bearer SAAS_HEALTH_TOKEN) gives the control plane a small status – nothing of the tenant's data.
 """
 from __future__ import annotations
@@ -27,7 +30,18 @@ LOCKED_SETTINGS = frozenset({
     "ITEM_IMAGE_URL", "DEEPSEEK_BASE_URL",             # outbound URLs: no requests to local ports of others
     "AUTO_UPDATE", "AUTO_UPDATE_REPO", "AUTO_UPDATE_BRANCH", "AUTO_UPDATE_INTERVAL",
     "MANAGER_AI_CODE", "FULL_BACKUP_ENABLED", "DB_ENCRYPTION", "BACKUP_INCLUDE_ENV",
+    "DEEPSEEK_API_KEY",                                # AI is an add-on: the key comes from the control plane
 })
+
+
+def locked_settings() -> frozenset[str]:
+    """Locked keys for this tenant: on the shared bot also the Discord server (it's fenced to it)."""
+    extra = {"GUILD_ID"} if os.environ.get("SAAS_SHARED_BOT") == "1" else set()
+    return LOCKED_SETTINGS | extra
+
+
+def ai_enabled() -> bool:
+    return not enabled() or os.environ.get("SAAS_AI") == "1"
 
 # Panel API that's off in hosted mode: (method or "*", path prefix)
 BLOCKED_API = (

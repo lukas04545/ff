@@ -40,8 +40,12 @@ def cp(tmp_path, monkeypatch):
     db.close()
 
 
-def customer(cp, email="a@x.io") -> int:
-    return provisioning.create_customer(cp.db, email, "password1234")
+def customer(cp, email="a@x.io", *, own_bot: bool = True) -> int:
+    from control_plane import features
+    cid = provisioning.create_customer(cp.db, email, "password1234")
+    if own_bot:
+        features.grant(cp.db, cid, "custom_bot", owner="test")
+    return cid
 
 
 def paid(cp, cid) -> None:

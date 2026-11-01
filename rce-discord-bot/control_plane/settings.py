@@ -37,6 +37,16 @@ class Settings:
     stripe_webhook_secret: str = field(default_factory=lambda: os.environ.get("STRIPE_WEBHOOK_SECRET", ""))
     stripe_price_id: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_ID", ""))
     grace_days: int = field(default_factory=lambda: _int("CP_GRACE_DAYS", 3))
+    # The platform's shared bot (default for every server): token + OAuth app for "Add to Discord"
+    shared_bot_token: str = field(default_factory=lambda: os.environ.get("CP_SHARED_BOT_TOKEN", ""))
+    shared_client_id: str = field(default_factory=lambda: os.environ.get("CP_SHARED_CLIENT_ID", ""))
+    shared_client_secret: str = field(default_factory=lambda: os.environ.get("CP_SHARED_CLIENT_SECRET", ""))
+    shared_permissions: str = field(default_factory=lambda: os.environ.get("CP_SHARED_PERMISSIONS", "1099780151318"))
+    # AI add-on: the platform's DeepSeek key, given only to customers with the 'ai' add-on
+    deepseek_api_key: str = field(default_factory=lambda: os.environ.get("CP_DEEPSEEK_API_KEY", ""))
+    # Updates (owner panel only): where the bot code comes from
+    update_repo: str = field(default_factory=lambda: os.environ.get("CP_UPDATE_REPO", "lukas04545/ff"))
+    update_branch: str = field(default_factory=lambda: os.environ.get("CP_UPDATE_BRANCH", "main"))
     # Per tenant server process
     memory_mb: int = field(default_factory=lambda: _int("CP_TENANT_MEMORY_MB", 512))
     # Reverse proxy (Caddy): where the generated config goes and how to reload it (empty = don't reload)
@@ -48,6 +58,10 @@ class Settings:
     @property
     def db_path(self) -> Path:
         return self.data_dir / "control.db"
+
+    @property
+    def portal_url(self) -> str:
+        return os.environ.get("CP_PORTAL_URL", f"https://portal.{self.base_domain}")
 
     def url_for(self, slug: str) -> str:
         return f"https://{slug}.{self.base_domain}"
