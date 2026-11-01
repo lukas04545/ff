@@ -1883,7 +1883,8 @@ rules* (`AI_ABUSE_INSTRUCTIONS`, e.g. "Admins may spawn building materials durin
 `control_plane/` turns the bot into a hosted product: a **customer portal** (sign up, Stripe subscription, add
 servers, add the shared bot to their Discord – or, with the *own bot* add-on, paste their own bot token), a **supervisor** that runs every server as its own isolated process
 (own token, folder, SQLCipher database with its own key, web port and `<slug>.yourdomain.com` website), **server
-slots** that only you can unlock (enforced server-side), and an **owner panel** (private listener, password + 2FA)
+slots** that only you can unlock (enforced server-side), and an **owner panel** at
+`https://portal.yourdomain.com/management` (password + 2FA; `CP_OWNER_ALLOW_IPS` can limit it to your IPs)
 with every customer, subscription, slot, server and its health – suspend, reactivate, restart, remove, purge;
 add-ons you switch on per customer (**own bot**, **AI features**) and **updates only from there** (tenants can't
 update themselves; one click updates everyone with a rolling restart). The **management AI** is yours: the owner

@@ -15,7 +15,7 @@ to a shared multi-tenant process would be riskier and weaker on isolation.
 | Control plane DB | SQLite (WAL); same schema works on Postgres | One writer process; easy backups |
 | Web routing | **Caddy** (`<slug>.yourdomain.com` → the server's port) + Cloudflare wildcard DNS in front | Automatic TLS, websockets/streaming, DDoS absorbed by Cloudflare |
 | Billing | **Stripe** Checkout + Customer Portal + webhooks (no SDK) | Stripe handles cards, dunning, invoices, EU VAT |
-| Owner panel | Separate listener on `127.0.0.1` (reach it via SSH tunnel / Tailscale) + password + TOTP | It doesn't exist on the internet at all |
+| Owner panel | Website at `portal.<domain>/management` (own cookie path, password + TOTP, rate limits, optional IP allowlist) plus a private listener on `127.0.0.1` | Reachable from anywhere without SSH; `CP_OWNER_ALLOW_IPS` or `CP_OWNER_PATH=off` shrink the exposure again |
 
 ## Overview
 
@@ -33,7 +33,7 @@ to a shared multi-tenant process would be riskier and weaker on isolation.
  │ supervisor ──────┼────►│ /saas/health     │            │ /saas/health     │
  │ health poller    │     └──────────────────┘            └──────────────────┘
  │ control.db       │     /var/lib/rce-saas/tenants/c1/kryvon/{.env,data/bot.db(SQLCipher),logs}
- └──────────────────┘     * owner panel bound to 127.0.0.1 only
+ └──────────────────┘     * owner panel on 127.0.0.1 + portal/management
 ```
 
 * **Supervisor** (`supervisor.py`) runs a reconcile loop. It compares what *should* run (server active, customer
@@ -261,8 +261,16 @@ import /var/lib/rce-saas/Caddyfile.tenants
 ```
 Cloudflare: `*.yourdomain.com` and `portal` → the VPS (proxied). The Stripe webhook endpoint is
 `https://portal.yourdomain.com/stripe/webhook` with the events `checkout.session.completed`,
-`customer.subscription.*`, `invoice.paid` and `invoice.payment_failed`. Owner panel: `ssh -L 8090:127.0.0.1:8090
-vps`, then open `http://localhost:8090`.
+`customer.subscription.*`, `invoice.paid` and `invoice.payment_failed`.
+
+**Owner panel:** open `https://portal.yourdomain.com/management` (no extra Caddy or DNS entry, it's part of the
+portal). Sign in with your owner username, password and 2FA code.
+* `CP_OWNER_PATH` changes the address (e.g. `/my-secret-panel`); `CP_OWNER_PATH=off` removes it from the website.
+* `CP_OWNER_ALLOW_IPS=1.2.3.4,5.6.7.8` shows it only to these IPs (everyone else gets 404).
+* The login is limited per IP and per username. The session cookie only works under that path, a customer's portal
+  login gives no access, and search engines are told not to index it.
+* The private listener still works too: `ssh -L 8090:127.0.0.1:8090 vps`, then `http://localhost:8090` – handy if
+  you lock yourself out of the website version (it has its own rate limits).
 
 ## Migration from the current single-bot setup (minimal downtime)
 

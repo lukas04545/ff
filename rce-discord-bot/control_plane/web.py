@@ -3,9 +3,10 @@
 * PORTAL (public, behind Caddy): customers sign up, subscribe (Stripe), add servers (only while a slot is free),
   set each server's bot token, open each server's own panel/website, remove servers. Plus the Stripe webhook and the
   "paused" page for suspended sites. There is NO route, form field or parameter here that changes slots.
-* OWNER (bind it to 127.0.0.1 / a VPN address only – it doesn't exist on the public listener): every customer,
-  subscription, slot, server and health in one place; grant/revoke slots; suspend, reactivate, restart, remove,
-  purge. Login: owner password + TOTP code.
+* OWNER: every customer, subscription, slot, server and health in one place; grant/revoke slots; suspend,
+  reactivate, restart, remove, purge. Login: owner password + TOTP code. Runs on its private listener (127.0.0.1) and
+  – unless CP_OWNER_PATH=off – also as a website on the portal under /management (mount_owner): its own cookie
+  (path /management), noindex, rate limits per IP and per username, optional IP allowlist (CP_OWNER_ALLOW_IPS).
 
 Both: signed session cookies (HttpOnly, SameSite=Strict, Secure behind HTTPS), CSRF token on every form, ownership
 checks on every customer action (a customer can only ever touch rows with their own customer_id).
@@ -73,10 +74,10 @@ class Sessions:
     def _sig(self, msg: str) -> str:
         return hmac.new(self.key, msg.encode(), hashlib.sha256).hexdigest()
 
-    def issue(self, resp: web.StreamResponse, subject: str, request: web.Request) -> None:
+    def issue(self, resp: web.StreamResponse, subject: str, request: web.Request, *, path: str = "/") -> None:
         msg = f"{subject}.{int(time.time()) + SESSION_TTL}.{secrets.token_hex(8)}"
         resp.set_cookie(self.cookie, f"{msg}.{self._sig(msg)}", httponly=True, samesite="Strict", max_age=SESSION_TTL,
-                        secure=request.headers.get("X-Forwarded-Proto") == "https" or request.secure, path="/")
+                        secure=request.headers.get("X-Forwarded-Proto") == "https" or request.secure, path=path)
 
     def subject(self, request: web.Request) -> str | None:
         raw = request.cookies.get(self.cookie, "")
@@ -391,15 +392,32 @@ dashboard.</p><a href=/dashboard>Back to the dashboard</a></div>""")
 # ================================================================== OWNER (only you)
 
 def build_owner(db: DB, box: SecretBox, settings: Settings, changed: Callable[[], Awaitable[None]],
-                supervisor=None) -> web.Application:
-    app = web.Application(client_max_size=64 * 1024)
+                supervisor=None, *, prefix: str = "", allow_ips: frozenset[str] = frozenset(),
+                ai_history: dict | None = None) -> web.Application:
+    """The owner panel. prefix="" on its private listener; prefix="/management" when it's also mounted on the
+    public portal (a sub-app there) – then allow_ips (if set) limits who even sees the login page."""
+    P = prefix.rstrip("/")
+
+    @web.middleware
+    async def guard(request, handler):
+        if allow_ips and _client_ip(request) not in allow_ips:
+            raise web.HTTPNotFound()                     # don't even show that a panel exists here
+        resp = await handler(request)
+        resp.headers["X-Robots-Tag"] = "noindex, nofollow"
+        return resp
+
+    app = web.Application(client_max_size=64 * 1024, middlewares=[guard])
     sess = Sessions(settings.session_secret, "owner", "cp_o")
     limiter = RateLimiter(5, 900)
+    user_limiter = RateLimiter(10, 900)                  # per username too (IP headers can be spoofed)
+
+    def go(path: str) -> web.HTTPSeeOther:
+        return web.HTTPSeeOther(P + path)
 
     def owner(request) -> str:
         sub = sess.subject(request)
         if not sub or not sub.startswith("o:") or db.one("SELECT 1 FROM owners WHERE username = ?", (sub[2:],)) is None:
-            raise web.HTTPSeeOther("/login")
+            raise go("/login")
         return sub[2:]
 
     def hidden(request) -> str:
@@ -407,13 +425,13 @@ def build_owner(db: DB, box: SecretBox, settings: Settings, changed: Callable[[]
 
     def button(request, action: str, label: str, *, danger: bool = False, confirm: str = "") -> str:
         js = f" onsubmit=\"return confirm('{esc(confirm)}')\"" if confirm else ""
-        return (f"<form method=post action='{esc(action)}' class=inline{js}>{hidden(request)}"
+        return (f"<form method=post action='{esc(P + action)}' class=inline{js}>{hidden(request)}"
                 f"<button{' class=danger' if danger else ''}>{esc(label)}</button></form>")
 
     async def login_page(request):
         msg = esc(request.query.get("e", ""))
         return page("Owner login", f"""<h1>Owner panel</h1>{f'<p class=err>{msg}</p>' if msg else ''}<div class=card>
-<form method=post action=/login><input name=username placeholder=Username required> <input name=password
+<form method=post action={P}/login><input name=username placeholder=Username required> <input name=password
 type=password placeholder=Password required> <input name=code inputmode=numeric placeholder="2FA code" required>
 <button>Sign in</button></form></div>""")
 
@@ -423,21 +441,21 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         _same_origin(request)
         data = dict(await request.post())
         ip = _client_ip(request)
-        if limiter.hit("ip:" + ip) is not None:
-            raise web.HTTPSeeOther("/login?e=Too+many+attempts")
+        if limiter.hit("ip:" + ip) is not None or user_limiter.hit("user:" + str(data.get("username", ""))[:64]) is not None:
+            raise go("/login?e=Too+many+attempts")
         row = db.one("SELECT * FROM owners WHERE username = ?", (str(data.get("username", "")),))
         if row is None or not verify_password(str(data.get("password", "")), row["password_hash"]) \
                 or matching_step(row["totp_secret"], str(data.get("code", ""))) is None:
             db.audit("system", "owner.login_failed", detail=ip)
-            raise web.HTTPSeeOther("/login?e=Wrong+login")
+            raise go("/login?e=Wrong+login")
         db.audit(f"owner:{row['username']}", "owner.login", detail=ip)
-        resp = web.HTTPSeeOther("/")
-        sess.issue(resp, f"o:{row['username']}", request)
+        resp = go("/")
+        sess.issue(resp, f"o:{row['username']}", request, path=P or "/")
         raise resp
 
     async def logout(request):
-        resp = web.HTTPSeeOther("/login")
-        resp.del_cookie(sess.cookie, path="/")
+        resp = go("/login")
+        resp.del_cookie(sess.cookie, path=P or "/")
         raise resp
 
     def server_rows(request, where: str = "", args: tuple = ()) -> str:
@@ -458,7 +476,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                 elif s["status"] == "active":
                     acts.append(button(request, f"/servers/{sid}/suspend", "Suspend"))
                     acts.append(button(request, f"/servers/{sid}/restart", "Restart"))
-                acts.append(f"<a href=/servers/{sid}/ai>🧠 Management AI</a>")
+                acts.append(f"<a href={P}/servers/{sid}/ai>🧠 Management AI</a>")
                 acts.append(button(request, f"/servers/{sid}/manager-ai/{'off' if s['manager_ai'] else 'on'}",
                                    ("Discord AI: on → switch off" if s["manager_ai"] else "Discord AI: off → switch on")))
                 acts.append(button(request, f"/servers/{sid}/remove", "Remove", danger=True,
@@ -471,7 +489,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                        f"target=_blank>{esc(s['slug'])}</a> · port {s['web_port']}<br><span class=muted>"
                        f"{'own bot' if s['bot_mode'] == 'custom' else 'shared bot · guild ' + esc(s['guild_id'] or '–')}"
                        f"</span></td>"
-                       f"<td><a href=/customers/{s['customer_id']}>{esc(s['email'])}</a></td>"
+                       f"<td><a href={P}/customers/{s['customer_id']}>{esc(s['email'])}</a></td>"
                        f"<td>{pill(s['status'])}<br>{pill(s['process'] or 'not started')}"
                        f"{' ↻' + str(s['restarts']) if s['restarts'] else ''}"
                        f"{'<br><span class=err>' + esc(s['error'])[:120] + '</span>' if s['error'] else ''}</td>"
@@ -500,14 +518,14 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         customers = db.q("SELECT c.*, s.status AS sub_status, s.grace_until FROM customers c LEFT JOIN subscriptions s "
                          "ON s.customer_id = c.id WHERE c.status != 'deleted' ORDER BY c.id")
         crows = "".join(
-            f"<tr><td><a href=/customers/{c['id']}>#{c['id']} {esc(c['email'])}</a><br><span class=muted>"
+            f"<tr><td><a href={P}/customers/{c['id']}>#{c['id']} {esc(c['email'])}</a><br><span class=muted>"
             f"{esc(c['name'])}</span></td><td>{pill(c['status'])}</td><td>{pill(c['sub_status'] or 'none')}</td>"
             f"<td>{slots.slots_used(db, c['id'])} / {slots.slot_limit(db, c['id'])}</td></tr>" for c in customers)
         counts = db.one("SELECT COUNT(*) AS n, SUM(status = 'active') AS a FROM servers WHERE status != 'deleted'")
         running = sum(1 for p in (supervisor.procs.values() if supervisor else []) if p.state == "running")
         return page("Owner", f"""<h1>Owner panel <span class=muted>({esc(who)})</span></h1>
 <p>{len(customers)} customers · {counts['n'] or 0} servers ({counts['a'] or 0} active, {running} processes running)
-· <a href=/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
+· <a href={P}/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
 {update_card(request)}
 <div class=card><h2>Customers</h2><table><tr><th>Customer</th><th>Account</th><th>Subscription</th><th>Slots
 (used / limit)</th></tr>{crows or '<tr><td colspan=4>None yet.</td></tr>'}</table></div>
@@ -541,7 +559,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                             confirm="Stop all servers of this customer?"))
         comp = button(request, f"/customers/{cid}/comp", "Comp (free, no Stripe)" if (sub and sub["status"]) != "comped"
                       else "Remove comp")
-        return page(f"Customer {cid}", f"""<p><a href=/>← all</a></p><h1>#{cid} {esc(c['email'])}</h1>
+        return page(f"Customer {cid}", f"""<p><a href={P}/>← all</a></p><h1>#{cid} {esc(c['email'])}</h1>
 <div class=card>Account {pill(c['status'])} {esc(c['suspend_reason'] or '')} · Subscription
 {pill(sub['status'] if sub else 'none')} {esc(sub['stripe_subscription_id'] or '') if sub else ''}
 {('· grace until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['grace_until']))) if sub and sub['grace_until'] else ''}
@@ -549,7 +567,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                                        confirm='Remove the customer and all their servers?')}</div>
 <div class=card><h2>Add-ons</h2>{addon_rows}</div>
 <div class=card><h2>Slots: {sl['used']} used of {sl['limit']} ({c['base_slots']} in the plan)</h2>
-<form method=post action=/customers/{cid}/grant>{hidden(request)}<input name=slots type=number min=1 max=100 value=1>
+<form method=post action={P}/customers/{cid}/grant>{hidden(request)}<input name=slots type=number min=1 max=100 value=1>
 <input name=reason placeholder="Reason (e.g. paid add-on)"> <button>Unlock slots</button></form>
 <table><tr><th>Grant</th><th>Slots</th><th>Reason</th><th>Granted</th><th></th></tr>{grows or '<tr><td colspan=5>No extra slots.</td></tr>'}</table></div>
 <div class=card><h2>Servers</h2>{server_rows(request, "WHERE s.customer_id = ?", (cid,))}</div>""")
@@ -558,7 +576,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         who = owner(request)
         data = await sess.form(request)
         actor = f"owner:{who}"
-        path = request.path
+        path = request.path[len(P):]
         try:
             if path.startswith("/customers/"):
                 cid = int(request.match_info["id"])
@@ -601,9 +619,9 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                     provisioning.purge_server(db, settings, sid, actor=actor)
                 back = "/"
         except (slots.SlotError, provisioning.ProvisionError, TypeError, ValueError) as exc:
-            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href=/>Back</a></div>")
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
         await changed()
-        raise web.HTTPSeeOther(back)
+        raise go(back)
 
     async def update_action(request):
         who = owner(request)
@@ -612,7 +630,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
             await updates.check(db, settings)
         else:
             await updates.install(db, settings, supervisor, owner=who)
-        raise web.HTTPSeeOther("/")
+        raise go("/")
 
     async def feature_action(request):
         who = owner(request)
@@ -624,11 +642,11 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
             else:
                 features.revoke(db, cid, feature, owner=who)
         except features.FeatureError as exc:
-            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href=/>Back</a></div>")
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
         await changed()                                  # running servers restart with the new setup
-        raise web.HTTPSeeOther(f"/customers/{cid}")
+        raise go(f"/customers/{cid}")
 
-    ai_history: dict[int, list[dict]] = {}
+    ai_history = {} if ai_history is None else ai_history      # shared by the private and the public mount
 
     async def ai_page(request):
         owner(request)
@@ -643,11 +661,11 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
             + (f"<br><span class=muted>{esc(' · '.join(h.get('done') or []))}</span>" if h.get("done") else "")
             + (f"<br><span class=muted>{esc(' · '.join(h.get('asked') or []))}</span>" if h.get("asked") else "")
             + "</div>" for h in hist[-20:])
-        return page(f"Management AI – {srv['name']}", f"""<p><a href=/>← all</a></p>
+        return page(f"Management AI – {srv['name']}", f"""<p><a href={P}/>← all</a></p>
 <h1>🧠 Management AI – {esc(srv['name'])}</h1><p class=muted>Runs on this server's own bot with all its tools (kits,
 emote binds, teleports, ZORP, custom kits, its admin website …). Customer: {esc(srv['email'])} · in their Discord:
 {'on' if srv['manager_ai'] else 'off (only you, here)'}</p>{chat or '<p class=muted>Ask something, e.g. "list the emote binds".</p>'}
-<div class=card><form method=post action=/servers/{sid}/ai>{hidden(request)}
+<div class=card><form method=post action={P}/servers/{sid}/ai>{hidden(request)}
 <textarea name=message rows=3 style="width:100%" required placeholder="What should it do on this server?"></textarea>
 <label><input type=checkbox name=allow_risky value=1> allow risky actions for this message (console commands,
 deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
@@ -659,7 +677,7 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         sid = int(request.match_info["id"])
         text = str(data.get("message", "")).strip()[:3000]
         if not text:
-            raise web.HTTPSeeOther(f"/servers/{sid}/ai")
+            raise go(f"/servers/{sid}/ai")
         hist = ai_history.setdefault(sid, [])
         out = await manage_ai.ask(db, box, sid, text, [{"role": h["role"], "content": h["content"]} for h in hist],
                                   allow_risky=data.get("allow_risky") == "1")
@@ -669,13 +687,13 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         del hist[:-40]
         db.audit(f"owner:{owner(request)}", "manager_ai.request", server_id=sid,
                  detail=f"{text[:200]} → {', '.join(out.get('done') or []) or 'no changes'}")
-        raise web.HTTPSeeOther(f"/servers/{sid}/ai")
+        raise go(f"/servers/{sid}/ai")
 
     async def ai_clear(request):
         owner(request)
         await sess.form(request)
         ai_history.pop(int(request.match_info["id"]), None)
-        raise web.HTTPSeeOther(f"/servers/{request.match_info['id']}/ai")
+        raise go(f"/servers/{request.match_info['id']}/ai")
 
     async def manager_toggle(request):
         who = owner(request)
@@ -684,9 +702,9 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
             provisioning.set_manager_ai(db, int(request.match_info["id"]), request.match_info["on"] == "on",
                                         actor=f"owner:{who}")
         except provisioning.ProvisionError as exc:
-            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href=/>Back</a></div>")
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
         await changed()                                  # the server restarts with it on/off
-        raise web.HTTPSeeOther("/")
+        raise go("/")
 
     async def audit(request):
         owner(request)
@@ -694,7 +712,7 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         body = "".join(f"<tr><td>{time.strftime('%Y-%m-%d %H:%M', time.gmtime(r['at']))}</td><td>{esc(r['actor'])}</td>"
                        f"<td>{esc(r['action'])}</td><td>{esc(r['customer_id'])}</td><td>{esc(r['server_id'])}</td>"
                        f"<td>{esc(r['detail'])}</td></tr>" for r in rows)
-        return page("Audit", f"<p><a href=/>← back</a></p><h1>Audit log</h1><table><tr><th>When (UTC)</th><th>Who</th>"
+        return page("Audit", f"<p><a href={P}/>← back</a></p><h1>Audit log</h1><table><tr><th>When (UTC)</th><th>Who</th>"
                              f"<th>What</th><th>Customer</th><th>Server</th><th>Detail</th></tr>{body}</table>")
 
     app.add_routes([web.get("/login", login_page), web.post("/login", login), web.post("/logout", logout),
@@ -708,3 +726,12 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
                     web.post(r"/servers/{id:\d+}/ai/clear", ai_clear),
                     web.post(r"/servers/{id:\d+}/manager-ai/{on:on|off}", manager_toggle)])
     return app
+
+
+def mount_owner(portal: web.Application, owner_app: web.Application, prefix: str) -> None:
+    """Puts the owner panel on the public portal under prefix (e.g. /management). Its own cookie (path = prefix),
+    password + 2FA login, CSRF and rate limits stay the same; customers' portal sessions don't give access."""
+    async def to_slash(request):
+        raise web.HTTPSeeOther(prefix + "/")
+    portal.router.add_get(prefix, to_slash)
+    portal.add_subapp(prefix, owner_app)
