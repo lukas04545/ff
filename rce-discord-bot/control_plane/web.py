@@ -485,6 +485,11 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                                    ("Discord AI: on → switch off" if s["manager_ai"] else "Discord AI: off → switch on")))
                 acts.append(button(request, f"/servers/{sid}/remove", "Remove", danger=True,
                                    confirm="Remove this server? (kept for restore until purged)"))
+                if s["bot_mode"] != "shared" or not s["guild_id"]:
+                    acts.append(f"<form method=post action='{P}/servers/{sid}/shared-bot' class=inline>"
+                                f"{hidden(request)}<input name=guild_id inputmode=numeric size=14 placeholder='"
+                                f"{esc(provisioning.tenant_guild(dict(s))) or 'Discord server id'}'>"
+                                f"<button>Use the shared bot</button></form>")
                 acts.append(f"<form method=post action='{P}/servers/{sid}/token' class=inline>{hidden(request)}"
                             f"<input name=token type=password autocomplete=off placeholder='"
                             f"{'Bot token needed!' if s['status'] == 'awaiting_token' else 'New bot token'}' size=14>"
@@ -535,6 +540,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
 <p>{len(customers)} customers · {counts['n'] or 0} servers ({counts['a'] or 0} active, {running} processes running)
 · <a href={P}/settings>⚙️ settings</a> · <a href={P}/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
 {update_card(request)}
+{f"<div class=card><h2>🤖 Shared bot</h2><p>One bot for every server. Add it to a Discord: <a href='{esc(provisioning.shared_invite(settings))}' target=_blank>invite link</a>. Then press <b>Use the shared bot</b> on that server's row (its Discord server id is filled in when known).</p></div>" if settings.shared_client_id else ""}
 <div class=card><h2>Customers</h2><table><tr><th>Customer</th><th>Account</th><th>Subscription</th><th>Slots
 (used / limit)</th></tr>{crows or '<tr><td colspan=4>None yet.</td></tr>'}</table></div>
 <div class=card><h2>All servers</h2>{server_rows(request, "WHERE s.status != 'deleted'")}</div>
@@ -694,6 +700,17 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         await changed()                                  # the server (re)starts on its own bot
         raise go("/")
 
+    async def shared_bot(request):
+        who = owner(request)
+        data = await sess.form(request)
+        try:
+            provisioning.move_to_shared_bot(db, settings, int(request.match_info["id"]),
+                                            str(data.get("guild_id", "")), actor=f"owner:{who}")
+        except provisioning.ProvisionError as exc:
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
+        await changed()                                  # it restarts on the shared bot, fenced to that Discord
+        raise go("/")
+
     async def manager_toggle(request):
         who = owner(request)
         await sess.form(request)
@@ -845,7 +862,8 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.get(r"/servers/{id:\d+}/ai", ai_page), web.post(r"/servers/{id:\d+}/ai", ai_send),
                     web.post(r"/servers/{id:\d+}/ai/clear", ai_clear),
                     web.post(r"/servers/{id:\d+}/manager-ai/{on:on|off}", manager_toggle),
-                    web.post(r"/servers/{id:\d+}/token", set_token)])
+                    web.post(r"/servers/{id:\d+}/token", set_token),
+                    web.post(r"/servers/{id:\d+}/shared-bot", shared_bot)])
     return app
 
 

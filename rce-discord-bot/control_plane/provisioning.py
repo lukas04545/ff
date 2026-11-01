@@ -236,6 +236,43 @@ def bind_guild(db: DB, server_id: int, guild_id: str, *, actor: str) -> None:
         raise ProvisionError("That Discord server is already connected to another server here.") from None
 
 
+def tenant_guild(server: dict) -> str:
+    """The Discord server id in a tenant's own .env (GUILD_ID) – where its bot worked before."""
+    from envfile import read_env
+    try:
+        value = (read_env(Path(server["home_dir"]) / ".env").get("GUILD_ID") or "").strip()
+    except OSError:
+        return ""
+    return value if value.isdigit() else ""
+
+
+def shared_invite(settings: Settings) -> str:
+    """The plain invite link of the shared bot (for the owner: no portal OAuth round trip)."""
+    from urllib.parse import urlencode
+    return "https://discord.com/oauth2/authorize?" + urlencode({
+        "client_id": settings.shared_client_id, "permissions": settings.shared_permissions,
+        "scope": "bot applications.commands", "integration_type": "0"})
+
+
+def move_to_shared_bot(db: DB, settings: Settings, server_id: int, guild_id: str = "", *, actor: str) -> str:
+    """OWNER: the server runs on the platform's shared bot (fenced to its Discord server) instead of its own token.
+    guild_id: its Discord server; empty = the one in its .env. Returns the guild id."""
+    if not settings.shared_bot_token:
+        raise ProvisionError("Set the shared bot first (Settings → Shared Discord bot: token and client id).")
+    s = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (server_id,))
+    if s is None:
+        raise ProvisionError("No such server.")
+    already = str(s["guild_id"] or "") if s["bot_mode"] == "shared" else ""
+    guild_id = str(guild_id or "").strip() or already or tenant_guild(dict(s))
+    if not guild_id.isdigit():
+        raise ProvisionError("Which Discord server? Enter its id (Discord: right-click the server → Copy Server ID).")
+    if s["bot_mode"] == "shared" and str(s["guild_id"] or "") == guild_id:
+        return guild_id
+    use_shared_bot(db, server_id, actor=actor)
+    bind_guild(db, server_id, guild_id, actor=actor)
+    return guild_id
+
+
 def environment(db: DB, box: SecretBox, settings: Settings, server_id: int) -> dict[str, str]:
     """The ONLY environment a tenant process gets: no control plane secrets (master keys, Stripe) leak into it."""
     s = db.one("SELECT * FROM servers WHERE id = ?", (server_id,))

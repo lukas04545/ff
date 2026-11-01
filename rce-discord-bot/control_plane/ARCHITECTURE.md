@@ -77,6 +77,12 @@ Every server runs on one of two bots:
   * Switching the add-on off moves the customer's servers back to the shared bot: the token is deleted, nothing
     else is, and the customer adds the shared bot to their Discord again.
 
+* **Moving servers onto the shared bot:** `python3 -m control_plane shared-bot` (all servers; `--server N`,
+  `--guild <id>`), or owner panel → server → *Use the shared bot*. Each server is fenced to its Discord server (the
+  `GUILD_ID` from its settings, or the id you enter). Its own token is deleted. The owner panel shows the shared
+  bot's invite link: add it once to every Discord server that doesn't have it yet. Using your existing bot
+  application as the shared bot keeps it in the Discords it's already in.
+
 ## Add-ons and updates
 
 * **Add-ons** (`features` table, owner panel → customer → Add-ons, or `python -m control_plane addon …`):
