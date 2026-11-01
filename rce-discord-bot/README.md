@@ -1890,8 +1890,9 @@ add-ons you switch on per customer (**own bot**, **AI features**) and **updates 
 update themselves; one click updates everyone with a rolling restart). The **management AI** is yours: the owner
 panel has a 🧠 *Management AI* chat for every server, and it answers in a server's Discord only where you switched it
 on (separate from the AI add-on). Optionally connect your own **management Discord** (`CP_HQ_BOT_TOKEN`,
-`CP_HQ_GUILD_ID`, `CP_HQ_ADMIN_IDS`): an overview channel, the management AI and a live panel channel with buttons
-for every customer who bought the bot.
+`CP_HQ_GUILD_ID`, `CP_HQ_ADMIN_IDS`). The bot creates everything there by itself: staff roles (HQ Admin / Support /
+Viewer), an overview, the management AI, alerts, an audit feed, a staff panel and a live panel channel with buttons for
+every customer who bought the bot.
 Tenant bots run with `RCE_SAAS=1` (`saas_mode.py`), which switches off everything that could reach beyond the
 tenant's own folder. Design, data model, security and the migration path: **`control_plane/ARCHITECTURE.md`**.
 

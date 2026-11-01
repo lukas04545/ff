@@ -2,16 +2,22 @@
 
 Its own bot (CP_HQ_BOT_TOKEN – never the shared bot) builds and keeps up to date, in CP_HQ_GUILD_ID:
 
+  roles             HQ Admin (everything), HQ Support (management AI without risky actions, restart/reactivate
+                    servers), HQ Viewer (reads everything, can't change anything) – created by the bot
   🛠 RCE HQ          (private category)
     #hq-overview     numbers, update status, [Check for updates] [Install update for ALL servers]
     #hq-ai           the management AI for any server: "#12 list the emote binds"
+    #hq-alerts       new customers/servers, crashes, bots offline, RCON lost, late payments
+    #hq-audit        every action from the portal, the owner panel and here (HQ Admin only)
+    #hq-staff        give or take the HQ roles with a user picker (HQ Admin only)
   👥 Customers       (private category; "Customers 2", … after 50 channels)
     #12-alex         one channel per customer who bought the bot: a customer panel (account, subscription, slots,
                      add-ons + buttons) and one panel per server (health + Restart / Suspend / Discord AI on/off).
                      Typing here talks to the management AI of that customer's server ("#<id> …" if they have more).
 
-Who can use it: CP_HQ_ADMIN_IDS (user ids), members with CP_HQ_ADMIN_ROLE_ID and the HQ server's owner – everyone
-else is ignored (and the categories are hidden from @everyone). The bot leaves any other Discord server it's added
+Who can use it: the HQ roles above; CP_HQ_ADMIN_IDS (user ids), CP_HQ_ADMIN_ROLE_ID and the HQ server's owner always
+count as HQ Admin. Everyone else is ignored (and every channel is hidden from @everyone). The bot creates and repairs
+the roles, categories, channels and their permissions by itself at every start. The bot leaves any other Discord server it's added
 to. Every action is in the audit log as "discord:<user id>". Destructive ones (remove, purge) stay in the owner panel.
 Risky management-AI actions (console commands, deleting …) only run after an extra "Allow and run again" click.
 """
@@ -36,8 +42,26 @@ log = logging.getLogger("cp.hq")
 
 HQ_CATEGORY, CUSTOMER_CATEGORY = "🛠 RCE HQ", "👥 Customers"
 OVERVIEW_CHANNEL, AI_CHANNEL = "hq-overview", "hq-ai"
+ALERTS_CHANNEL, AUDIT_CHANNEL, STAFF_CHANNEL = "hq-alerts", "hq-audit", "hq-staff"
 CHANNELS_PER_CATEGORY = 50
-REFRESH_EVERY = 120
+REFRESH_EVERY = 60
+NONE, VIEWER, SUPPORT, ADMIN = 0, 1, 2, 3
+# staff roles the bot creates: key -> (name, colour, level)
+ROLES = {"admin": ("HQ Admin", 0xE74C3C, ADMIN), "support": ("HQ Support", 0x3498DB, SUPPORT),
+         "viewer": ("HQ Viewer", 0x95A5A6, VIEWER)}
+# who may press which button: (kind, action) or kind -> level
+NEEDS = {("s", "restart"): SUPPORT, ("s", "reactivate"): SUPPORT}
+# channel -> (topic, {role key: "read" | "write"}) – roles not listed don't see it
+CHANNELS = {
+    OVERVIEW_CHANNEL: ("Numbers, version and updates.", {"viewer": "read", "support": "read", "admin": "read"}),
+    AI_CHANNEL: ("The management AI for any server: '#12 list the emote binds'.",
+                 {"viewer": "read", "support": "write", "admin": "write"}),
+    ALERTS_CHANNEL: ("New customers and servers, crashes, bots offline, RCON lost, late payments.",
+                     {"viewer": "read", "support": "read", "admin": "read"}),
+    AUDIT_CHANNEL: ("Every action from the portal, the owner panel and this Discord.", {"admin": "read"}),
+    STAFF_CHANNEL: ("Give or take the HQ roles.", {"admin": "read"}),
+}
+CUSTOMER_ACCESS = {"viewer": "read", "support": "write", "admin": "write"}
 SERVER_PREFIX = re.compile(r"^\s*#(\d+)[\s:,-]+(.*)$", re.S)
 COLORS = {"ok": 0x2ECC71, "warn": 0xF39C12, "bad": 0xE74C3C, "info": 0xF7931E}
 
@@ -64,12 +88,15 @@ class HQ:
             raise HQError("Set CP_HQ_GUILD_ID (your management Discord server's id).")
         self.db, self.box, self.settings, self.changed, self.supervisor = db, box, settings, changed, supervisor
         intents = discord.Intents.none()
-        intents.guilds = intents.guild_messages = intents.message_content = True
+        intents.guilds = intents.guild_messages = intents.message_content = intents.members = True
         self.client = client or discord.Client(intents=intents, allowed_mentions=discord.AllowedMentions.none())
         self.history: dict[tuple[int, int], list[dict]] = {}       # (channel, server) -> AI conversation
         self.retries: dict[str, tuple[int, int, str]] = {}         # token -> (channel, server, text)
         self._last: dict[tuple[str, int], str] = {}                # panel -> hash of what's shown (no needless edits)
         self._lock = asyncio.Lock()
+        self._snap: dict | None = None                             # last state seen, for #hq-alerts
+        row = db.one("SELECT value FROM settings_kv WHERE key = 'hq_roles'")
+        self.role_ids: dict[str, int] = json.loads(row["value"]) if row else {}
         if client is None:
             self.client.event(self.on_ready)
             self.client.event(self.on_guild_join)
@@ -82,14 +109,19 @@ class HQ:
     def guild(self):
         return self.client.get_guild(self.settings.hq_guild_id)
 
-    def is_admin(self, user) -> bool:
+    def level(self, user) -> int:
         guild = getattr(user, "guild", None)
         if guild is None or guild.id != self.settings.hq_guild_id or getattr(user, "bot", False):
-            return False
+            return NONE
         if user.id in self.settings.hq_admin_ids or user.id == guild.owner_id:
-            return True
-        role = self.settings.hq_admin_role_id
-        return bool(role) and any(r.id == role for r in getattr(user, "roles", []))
+            return ADMIN
+        mine = {r.id for r in getattr(user, "roles", [])}
+        if self.settings.hq_admin_role_id and self.settings.hq_admin_role_id in mine:
+            return ADMIN
+        return max([lvl for key, (_, _, lvl) in ROLES.items() if self.role_ids.get(key) in mine], default=NONE)
+
+    def is_admin(self, user) -> bool:
+        return self.level(user) >= ADMIN
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -121,36 +153,66 @@ class HQ:
 
     # ------------------------------------------------------------------ channels
 
-    def _overwrites(self, guild) -> dict:
+    async def ensure_roles(self, guild) -> None:
+        """Creates the staff roles (no Discord permissions – they only open the HQ channels) if they're missing."""
+        changed = False
+        for key, (name, colour, _) in ROLES.items():
+            role = guild.get_role(self.role_ids.get(key, 0)) or discord.utils.get(guild.roles, name=name)
+            if role is None:
+                role = await guild.create_role(name=name, colour=discord.Colour(colour), mentionable=False,
+                                               reason="RCE HQ: staff role")
+            if self.role_ids.get(key) != role.id:
+                self.role_ids[key], changed = role.id, True
+        if changed:
+            self.db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('hq_roles', ?)",
+                        (json.dumps(self.role_ids),))
+
+    def _overwrites(self, guild, access: dict[str, str]) -> dict:
+        """@everyone can't see it; the bot can do everything; each HQ role reads or writes as given."""
+        def perm(mode: str):
+            return discord.PermissionOverwrite(view_channel=True, read_message_history=True,
+                                               send_messages=(mode == "write"))
         ow = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
               guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True,
                                                     read_message_history=True, manage_channels=True)}
-        role = guild.get_role(self.settings.hq_admin_role_id) if self.settings.hq_admin_role_id else None
-        if role is not None:
-            ow[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
-        for uid in self.settings.hq_admin_ids:
-            member = guild.get_member(uid)
-            if member is not None:
-                ow[member] = discord.PermissionOverwrite(view_channel=True, send_messages=True,
-                                                         read_message_history=True)
+        for key, mode in access.items():
+            role = guild.get_role(self.role_ids.get(key, 0))
+            if role is not None:
+                ow[role] = perm(mode)
+        if "admin" in access:                          # the configured admins always get in
+            role = guild.get_role(self.settings.hq_admin_role_id) if self.settings.hq_admin_role_id else None
+            if role is not None:
+                ow[role] = perm(access["admin"])
+            for uid in self.settings.hq_admin_ids:
+                member = guild.get_member(uid)
+                if member is not None:
+                    ow[member] = perm(access["admin"])
         return ow
 
-    async def _category(self, guild, name: str):
+    async def _category(self, guild, name: str, access: dict[str, str]):
+        ow = self._overwrites(guild, access)
         for cat in guild.categories:
             if cat.name == name:
+                if cat.overwrites != ow:               # repair permissions someone changed
+                    await cat.edit(overwrites=ow, reason="RCE HQ: repair permissions")
                 return cat
-        return await guild.create_category(name, overwrites=self._overwrites(guild), reason="RCE HQ")
+        return await guild.create_category(name, overwrites=ow, reason="RCE HQ")
 
     async def _text(self, guild, category, name: str):
+        topic, access = CHANNELS[name]
+        ow = self._overwrites(guild, access)
         for ch in category.text_channels:
             if ch.name == name:
+                if ch.overwrites != ow:
+                    await ch.edit(overwrites=ow, reason="RCE HQ: repair permissions")
                 return ch
-        return await category.create_text_channel(name, reason="RCE HQ")
+        return await category.create_text_channel(name, topic=topic, overwrites=ow, reason="RCE HQ")
 
     async def _customer_category(self, guild):
         n = 1
         while True:
-            cat = await self._category(guild, CUSTOMER_CATEGORY if n == 1 else f"{CUSTOMER_CATEGORY} {n}")
+            cat = await self._category(guild, CUSTOMER_CATEGORY if n == 1 else f"{CUSTOMER_CATEGORY} {n}",
+                                       CUSTOMER_ACCESS)
             if len(cat.channels) < CHANNELS_PER_CATEGORY:
                 return cat
             n += 1
@@ -264,6 +326,109 @@ class HQ:
                                      custom_id=f"hq:m:{'off' if s['manager_ai'] else 'on'}:{sid}", emoji="🧠"))
         return e, v
 
+    def staff_panel(self, guild) -> tuple[discord.Embed, discord.ui.View]:
+        e = discord.Embed(title="👥 HQ staff", color=COLORS["info"],
+                          description="**HQ Admin** – everything (buttons, add-ons, slots, updates, risky AI actions)\n"
+                                      "**HQ Support** – the management AI (no risky actions), restart/reactivate "
+                                      "servers, sees every customer\n"
+                                      "**HQ Viewer** – reads every panel and alert, can't change anything\n\n"
+                                      "Pick people below – each person has one HQ role.")
+        for key, (name, _, _) in ROLES.items():
+            role = guild.get_role(self.role_ids.get(key, 0))
+            members = sorted(m.display_name for m in getattr(role, "members", [])) if role else []
+            e.add_field(name=f"{name} ({len(members)})", value=", ".join(members)[:1000] or "–", inline=False)
+        v = discord.ui.View(timeout=None)
+        for row, (key, label) in enumerate((("admin", "Make HQ Admin …"), ("support", "Make HQ Support …"),
+                                            ("viewer", "Make HQ Viewer …"), ("none", "Remove from HQ staff …"))):
+            v.add_item(discord.ui.UserSelect(custom_id=f"hq:r:{key}", placeholder=label, min_values=1,
+                                             max_values=10, row=row))
+        return e, v
+
+    async def set_staff(self, guild, user_ids: list[int], key: str, *, actor: str) -> list[str]:
+        """Gives each person the HQ role `key` (and takes their other HQ roles), or takes all of them ("none")."""
+        roles = {k: guild.get_role(self.role_ids.get(k, 0)) for k in ROLES}
+        done = []
+        for uid in user_ids:
+            member = guild.get_member(uid)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(uid)
+                except discord.HTTPException:
+                    continue
+            if member.bot:
+                continue
+            drop = [r for k, r in roles.items() if r is not None and k != key and r in member.roles]
+            if drop:
+                await member.remove_roles(*drop, reason=f"RCE HQ staff change by {actor}")
+            if key in roles and roles[key] is not None and roles[key] not in member.roles:
+                await member.add_roles(roles[key], reason=f"RCE HQ staff change by {actor}")
+            self.db.audit(actor, f"hq.staff.{key}", detail=f"{member} ({member.id})")
+            done.append(member.display_name)
+        return done
+
+    def alerts(self) -> list[str]:
+        """What changed since the last look: new customers/servers, crashes, offline bots, RCON, late payments."""
+        servers = {r["id"]: dict(r) for r in self.db.q(
+            "SELECT s.id, s.name, s.status, s.customer_id, h.process, h.discord_ready, h.rcon_connected "
+            "FROM servers s LEFT JOIN health h ON h.server_id = s.id WHERE s.status != 'deleted'")}
+        custs = {r["id"]: dict(r) for r in self.db.q(
+            "SELECT c.id, c.email, c.status, s.status AS sub FROM customers c LEFT JOIN subscriptions s "
+            "ON s.customer_id = c.id WHERE c.status != 'deleted'")}
+        old, self._snap = self._snap, {"servers": servers, "customers": custs}
+        if old is None:                                # first look after a start: nothing to compare with
+            return []
+        out = []
+        for cid, c in custs.items():
+            before = old["customers"].get(cid)
+            if before is None:
+                out.append(f"🆕 New customer **#{cid}** {c['email']}")
+                continue
+            if c["sub"] != before["sub"] and c["sub"] in ("past_due", "unpaid", "canceled"):
+                out.append(f"💳 #{cid} {c['email']}: subscription **{c['sub']}**")
+            if c["status"] != before["status"]:
+                out.append(f"👤 #{cid} {c['email']}: account {before['status']} → **{c['status']}**")
+        for sid, s in servers.items():
+            before, tag = old["servers"].get(sid), f"#{sid} {s['name']}"
+            if before is None:
+                out.append(f"🖥️ New server **{tag}** (customer #{s['customer_id']})")
+                continue
+            if s["status"] != before["status"]:
+                out.append(f"🖥️ {tag}: {before['status']} → **{s['status']}**")
+            if s["process"] != before["process"] and s["process"] in ("crashed", "crashloop"):
+                out.append(f"💥 {tag}: process **{s['process']}**")
+            if s["status"] == "active" and before["discord_ready"] and not s["discord_ready"]:
+                out.append(f"🔴 {tag}: bot went offline in Discord")
+            elif s["status"] == "active" and not before["discord_ready"] and s["discord_ready"]:
+                out.append(f"🟢 {tag}: bot is back online")
+            if s["status"] == "active" and before["rcon_connected"] and not s["rcon_connected"]:
+                out.append(f"❌ {tag}: RCON connection lost")
+            elif s["status"] == "active" and not before["rcon_connected"] and s["rcon_connected"]:
+                out.append(f"✅ {tag}: RCON back")
+        return out
+
+    def audit_lines(self, limit: int = 30) -> list[str]:
+        """New audit log rows since the last post (the first start only remembers where it is)."""
+        row = self.db.one("SELECT value FROM settings_kv WHERE key = 'hq_audit_last'")
+        top = self.db.one("SELECT MAX(id) AS m FROM audit_log")["m"] or 0
+        last = int(row["value"]) if row else top
+        rows = self.db.q("SELECT * FROM audit_log WHERE id > ? ORDER BY id LIMIT ?", (last, limit))
+        new_last = rows[-1]["id"] if rows else last
+        if new_last != (int(row["value"]) if row else None):
+            self.db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('hq_audit_last', ?)", (str(new_last),))
+        return [f"<t:{r['at']}:t> `{r['actor']}` **{r['action']}**"
+                + (f" c#{r['customer_id']}" if r["customer_id"] else "") + (f" s#{r['server_id']}" if r["server_id"] else "")
+                + (f" – {discord.utils.escape_markdown(str(r['detail']))[:200]}" if r["detail"] else "") for r in rows]
+
+    async def _post(self, channel, lines: list[str]) -> None:
+        text = ""
+        for line in lines:
+            if len(text) + len(line) > 1900:
+                await channel.send(text)
+                text = ""
+            text += line + "\n"
+        if text:
+            await channel.send(text)
+
     # ------------------------------------------------------------------ panels (posting)
 
     async def _show(self, channel, kind: str, ref: int, content: tuple) -> None:
@@ -293,11 +458,15 @@ class HQ:
         if guild is None:
             return
         async with self._lock:
-            hq = await self._category(guild, HQ_CATEGORY)
-            await self._show(await self._text(guild, hq, OVERVIEW_CHANNEL), "overview", 0, self.overview())
-            await self._text(guild, hq, AI_CHANNEL)
+            await self.ensure_roles(guild)
+            hq = await self._category(guild, HQ_CATEGORY, {"viewer": "read", "support": "read", "admin": "read"})
+            chans = {name: await self._text(guild, hq, name) for name in CHANNELS}
+            await self._show(chans[OVERVIEW_CHANNEL], "overview", 0, self.overview())
+            await self._show(chans[STAFF_CHANNEL], "staff", 0, self.staff_panel(guild))
             for c in self.db.q("SELECT id FROM customers WHERE status != 'deleted' ORDER BY id"):
                 await self.refresh_customer(c["id"], guild)
+            await self._post(chans[ALERTS_CHANNEL], self.alerts())
+            await self._post(chans[AUDIT_CHANNEL], self.audit_lines())
 
     async def refresh_customer(self, cid: int, guild=None) -> None:
         guild = guild or self.guild
@@ -314,13 +483,29 @@ class HQ:
         cid_ = (getattr(interaction, "data", None) or {}).get("custom_id", "")
         if not cid_.startswith("hq:"):
             return
-        if not self.is_admin(interaction.user):
-            await interaction.response.send_message("Not for you.", ephemeral=True)
+        parts = cid_.split(":")
+        need = NEEDS.get(tuple(parts[1:3]), ADMIN)
+        have = self.level(interaction.user)
+        if have < need:
+            await interaction.response.send_message(
+                "Not for you." if have == NONE else "Your HQ role can't do that – ask an HQ Admin.", ephemeral=True)
             return
         actor = f"discord:{interaction.user.id}"
         owner = f"discord:{getattr(interaction.user, 'name', None) or interaction.user.id}"
-        parts = cid_.split(":")
         try:
+            if parts[1] == "r":
+                guild = self.guild
+                values = [int(x) for x in (interaction.data.get("values") or []) if str(x).isdigit()]
+                await interaction.response.defer(ephemeral=True, thinking=True)
+                done = await self.set_staff(guild, values, parts[2], actor=actor)
+                async with self._lock:
+                    row = self.db.one("SELECT channel_id FROM hq_messages WHERE kind = 'staff' AND ref_id = 0")
+                    ch = guild.get_channel(row["channel_id"]) if row else None
+                    if ch is not None:
+                        await self._show(ch, "staff", 0, self.staff_panel(guild))
+                label = ROLES[parts[2]][0] if parts[2] in ROLES else "no HQ role"
+                await interaction.followup.send(f"✅ {', '.join(done) or 'nobody'} → {label}", ephemeral=True)
+                return
             if parts[1] == "u":
                 if parts[2] == "check":
                     await interaction.response.defer(ephemeral=True, thinking=True)
@@ -363,9 +548,12 @@ class HQ:
                 text = actions.feature(self.db, cid, parts[2], parts[3] == "on", owner=owner)
             else:
                 raise ValueError("Unknown button.")
-        except (slots.SlotError, provisioning.ProvisionError, features.FeatureError, ValueError, IndexError) as exc:
+        except (slots.SlotError, provisioning.ProvisionError, features.FeatureError, ValueError, IndexError,
+                discord.Forbidden) as exc:
             send = interaction.followup.send if interaction.response.is_done() else interaction.response.send_message
-            await send(f"❌ {exc}", ephemeral=True)
+            text = ("The bot isn't allowed to do that – give it **Manage Roles** and drag its role above the HQ "
+                    "roles in Server Settings → Roles." if isinstance(exc, discord.Forbidden) else str(exc))
+            await send(f"❌ {text}", ephemeral=True)
             return
         await self.changed()
         async with self._lock:                         # never two refreshes creating the same channel
@@ -411,7 +599,7 @@ class HQ:
     async def on_message(self, message) -> None:
         if message.author.bot or message.guild is None or message.guild.id != self.settings.hq_guild_id:
             return
-        if not self.is_admin(message.author):
+        if self.level(message.author) < SUPPORT:              # viewers read, they don't ask
             return
         if not (self._is_ai_channel(message.channel) or self.channel_customer(message.channel.id) is not None):
             return
