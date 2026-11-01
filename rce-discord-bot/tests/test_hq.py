@@ -154,7 +154,8 @@ class Response:
 def interaction(guild, custom_id, user_id=ADMIN, channel=None):
     log = []
     user = NS(id=user_id, guild=guild, bot=False, roles=[])
-    i = NS(data={"custom_id": custom_id}, user=user, channel=channel, response=Response(log), log=log)
+    i = NS(data={"custom_id": custom_id}, user=user, channel=channel, response=Response(log), log=log,
+           guild_id=guild.id)
 
     async def followup(content, ephemeral=False, view=None):
         log.append(content)
@@ -190,14 +191,34 @@ def _channel(w, name):
     return next(ch for cat in w.guild.categories for ch in cat.text_channels if ch.name == name)
 
 
-def test_refuses_the_shared_bot_and_needs_a_guild(cp):  # noqa: F811
-    cp.settings.hq_bot_token = cp.settings.shared_bot_token = "same"
-    cp.settings.hq_guild_id = GID
+def test_runs_on_the_shared_bot_and_needs_a_guild(cp):  # noqa: F811
+    cp.settings.hq_guild_id, cp.settings.shared_bot_token = GID, "shared"
+    cp.settings.hq_bot_token = ""
+    h = hqmod.HQ(cp.db, cp.box, cp.settings, None, client=Client(Guild()))
+    assert h.token == "shared" and h.on_shared and hqmod.enabled(cp.settings)       # one token for everything
+    cp.settings.hq_bot_token = "own"
+    assert not hqmod.HQ(cp.db, cp.box, cp.settings, None, client=Client(Guild())).on_shared
+    cp.settings.hq_bot_token = cp.settings.shared_bot_token = ""
     with pytest.raises(hqmod.HQError):
         hqmod.HQ(cp.db, cp.box, cp.settings, None, client=Client(Guild()))
     cp.settings.hq_bot_token, cp.settings.hq_guild_id = "other", 0
     with pytest.raises(hqmod.HQError):
         hqmod.HQ(cp.db, cp.box, cp.settings, None, client=Client(Guild()))
+
+
+def test_shared_bot_never_answers_or_leaves_in_customer_discords(cp):  # noqa: F811
+    cp.settings.hq_guild_id, cp.settings.shared_bot_token, cp.settings.hq_bot_token = GID, "shared", ""
+    hq_guild = Guild()
+    h = hqmod.HQ(cp.db, cp.box, cp.settings, None, client=Client(hq_guild))
+    other = NS(id=12345, owner_id=1, left=[])
+
+    async def leave():
+        other.left.append(1)
+    other.leave = leave
+    i = interaction(other, "hq:u:install")
+    asyncio.run(h.on_interaction(i))
+    asyncio.run(h.on_guild_join(other))
+    assert i.log == [] and other.left == []                                 # silent, and it stays
 
 
 def test_sync_builds_private_channels_and_panels_once(world):

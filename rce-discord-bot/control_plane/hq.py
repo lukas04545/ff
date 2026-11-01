@@ -1,6 +1,6 @@
 """The management Discord ("HQ"): connect YOUR own Discord server to the control plane.
 
-Its own bot (CP_HQ_BOT_TOKEN – never the shared bot) builds and keeps up to date, in CP_HQ_GUILD_ID:
+The shared bot of every server (or, with CP_HQ_BOT_TOKEN, a bot of its own) builds and keeps up to date, in CP_HQ_GUILD_ID:
 
   roles             HQ Admin (everything), HQ Support (management AI without risky actions, restart/reactivate
                     servers), HQ Viewer (reads everything, can't change anything) – created by the bot
@@ -82,14 +82,19 @@ def _chunks(text: str, size: int = 1900) -> list[str]:
 class HQ:
     def __init__(self, db: DB, box: SecretBox, settings: Settings, changed: Callable[[], Awaitable[None]],
                  supervisor=None, client: discord.Client | None = None) -> None:
-        if settings.hq_bot_token and settings.hq_bot_token == settings.shared_bot_token:
-            raise HQError("CP_HQ_BOT_TOKEN must be its own bot, not the shared bot.")
         if not settings.hq_guild_id:
             raise HQError("Set CP_HQ_GUILD_ID (your management Discord server's id).")
+        # its own bot (CP_HQ_BOT_TOKEN), or – empty / the same token – the ONE shared bot of every server
+        self.token = settings.hq_bot_token or settings.shared_bot_token
+        if not self.token:
+            raise HQError("No bot for the management Discord: set the shared bot (or CP_HQ_BOT_TOKEN).")
+        self.on_shared = self.token == settings.shared_bot_token
         self.db, self.box, self.settings, self.changed, self.supervisor = db, box, settings, changed, supervisor
         intents = discord.Intents.none()
         intents.guilds = intents.guild_messages = intents.message_content = intents.members = True
-        self.client = client or discord.Client(intents=intents, allowed_mentions=discord.AllowedMentions.none())
+        # on the shared bot it's in every customer's Discord: only the HQ server's members are loaded (on_ready)
+        self.client = client or discord.Client(intents=intents, allowed_mentions=discord.AllowedMentions.none(),
+                                               chunk_guilds_at_startup=False)
         self.history: dict[tuple[int, int], list[dict]] = {}       # (channel, server) -> AI conversation
         self.retries: dict[str, tuple[int, int, str]] = {}         # token -> (channel, server, text)
         self._last: dict[tuple[str, int], str] = {}                # panel -> hash of what's shown (no needless edits)
@@ -126,20 +131,23 @@ class HQ:
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
-        await self.client.start(self.settings.hq_bot_token)
+        await self.client.start(self.token)
 
     async def on_ready(self) -> None:
-        for g in list(self.client.guilds):
-            if g.id != self.settings.hq_guild_id:
-                log.warning("HQ bot: leaving %s (%s) – it only works in the management Discord", g.name, g.id)
-                await g.leave()
+        if not self.on_shared:                         # its own bot only belongs in the management Discord
+            for g in list(self.client.guilds):
+                if g.id != self.settings.hq_guild_id:
+                    log.warning("HQ bot: leaving %s (%s) – it only works in the management Discord", g.name, g.id)
+                    await g.leave()
         if self.guild is None:
-            log.error("HQ bot isn't in the management Discord %s – invite it there.", self.settings.hq_guild_id)
+            log.error("The bot isn't in the management Discord %s – invite it there.", self.settings.hq_guild_id)
             return
+        if not self.guild.chunked:
+            await self.guild.chunk()                   # the staff panel lists who has which HQ role
         await self.sync()
 
     async def on_guild_join(self, guild) -> None:
-        if guild.id != self.settings.hq_guild_id:
+        if guild.id != self.settings.hq_guild_id and not self.on_shared:     # the shared bot joins customers
             await guild.leave()
 
     async def refresh_forever(self, every: float = REFRESH_EVERY) -> None:
@@ -481,8 +489,8 @@ class HQ:
 
     async def on_interaction(self, interaction) -> None:
         cid_ = (getattr(interaction, "data", None) or {}).get("custom_id", "")
-        if not cid_.startswith("hq:"):
-            return
+        if not cid_.startswith("hq:") or getattr(interaction, "guild_id", None) != self.settings.hq_guild_id:
+            return                                     # never answers in a customer's Discord (shared bot)
         parts = cid_.split(":")
         need = NEEDS.get(tuple(parts[1:3]), ADMIN)
         have = self.level(interaction.user)
@@ -659,4 +667,4 @@ class HQ:
 
 
 def enabled(settings: Settings) -> bool:
-    return bool(settings.hq_bot_token)
+    return bool(settings.hq_guild_id and (settings.hq_bot_token or settings.shared_bot_token))

@@ -520,10 +520,19 @@ def cmd_adopt(args, settings: Settings) -> int:
     except (RuntimeError, provisioning.ProvisionError, slots.SlotError) as exc:
         print(f"Stopped: {exc}")
         return 1
+    on_shared = bool(settings.shared_bot_token) and not args.own_tokens
     for r in results:
         if r["skipped"]:
             print(f"  = {r['name']}: already adopted as server #{r['id']}")
             continue
+        if on_shared:                                  # one bot token for everything: the shared bot
+            try:
+                guild = provisioning.move_to_shared_bot(db, settings, r["id"], actor="migration")
+                r["shared_bot"] = False
+                print(f"  + {r['name']} → server #{r['id']} on the shared bot (Discord server {guild}) {r['url']}")
+                continue
+            except provisioning.ProvisionError as exc:
+                print(f"  ! {r['name']}: stays on its own token – {exc}")
         note = ("  ⚠️ used the main server's Discord bot – give it its own bot token in the owner panel "
                 "(server → Bot token)" if r["shared_bot"] else "")
         print(f"  + {r['name']} → server #{r['id']} {r['url']}  panel: {provisioning.panel_url(settings, {"home_dir": r["home"], "slug": r["slug"]})}{note}")
@@ -558,7 +567,8 @@ async def _run(settings: Settings) -> None:
         if hq is not None and hq.client.is_ready():
             asyncio.create_task(hq.sync())             # the management Discord's panels follow right away
 
-    if settings.hq_bot_token:                           # the management Discord (control_plane/hq.py)
+    from control_plane import hq as hqmod
+    if hqmod.enabled(settings):                         # the management Discord (control_plane/hq.py)
         from control_plane.hq import HQ
         hq = HQ(db, box, settings, changed, sup)
 
@@ -648,6 +658,8 @@ def main(argv: list[str] | None = None) -> int:
     ad.add_argument("--source", help="the old bot folder (default: this one)")
     ad.add_argument("--dry-run", action="store_true", help="only show what would be adopted")
     ad.add_argument("--force", action="store_true", help="even if the old bot still seems to run")
+    ad.add_argument("--own-tokens", action="store_true",
+                    help="keep each server's own bot token (default: the shared bot, if it's set up)")
     st = sub.add_parser("setup")
     st.add_argument("--port", type=int, default=8099)
     st.add_argument("--minutes", type=int, default=30)

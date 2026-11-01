@@ -266,6 +266,8 @@ def move_to_shared_bot(db: DB, settings: Settings, server_id: int, guild_id: str
     guild_id = str(guild_id or "").strip() or already or tenant_guild(dict(s))
     if not guild_id.isdigit():
         raise ProvisionError("Which Discord server? Enter its id (Discord: right-click the server → Copy Server ID).")
+    if settings.hq_guild_id and guild_id == str(settings.hq_guild_id):
+        raise ProvisionError("That's your management Discord – a server's bot can't run there.")
     if s["bot_mode"] == "shared" and str(s["guild_id"] or "") == guild_id:
         return guild_id
     use_shared_bot(db, server_id, actor=actor)
