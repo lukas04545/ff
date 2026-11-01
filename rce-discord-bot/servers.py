@@ -43,7 +43,7 @@ ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 OWN_ABUSE_KEY = "ABUSE_OWN_SETTINGS"   # an extra server with its own abuse protection settings (not the main's)
 SHARED_KEYS = tuple(f.key for f in FIELDS if f.group == "abuse" and f.key != OWN_ABUSE_KEY)
 GUILD_SPECIFIC = frozenset(f.key for f in FIELDS if f.group == "abuse" and f.pick)   # roles/channels of one Discord
-LOGIN_KEYS = ("WEB_PASSWORD",)
+LOGIN_KEYS = ("WEB_PASSWORD", "DB_ENCRYPTION")     # the same for every server
 DISCORD_KEYS = ("DISCORD_TOKEN", "GUILD_ID")      # servers on the main server's Discord bot: taken from the main
 # Servers on the main server's Discord bot: these come from the main server while they're empty here (the tickets
 # work right away – in the same ticket category, with the same staff and AI key – until the server sets its own)

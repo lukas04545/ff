@@ -5,3 +5,5 @@ tzdata>=2023.3
 # aiohttp (WebSocket client for RCON, web interface) is installed together with discord.py
 # Small, fast item pictures and logo for the websites (optional – without it the full-size pictures are sent)
 Pillow>=10.0
+# Encrypted databases (DB_ENCRYPTION) – SQLCipher
+sqlcipher3>=0.6

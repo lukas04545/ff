@@ -455,6 +455,13 @@ FIELDS: list[Field] = [
           help="On (default): once a day and before every automatic update the bot saves the database, web "
                "logins, rules and knowledge base to data/backups/ (your .env with the tokens is not included)."),
     Field("BACKUP_KEEP_DAYS", "Keep backups for … days", "alerts", "int", placeholder="7"),
+    Field("DB_ENCRYPTION", "Encrypt the databases", "alerts", "bool",
+          help="On: every database of the bot (all servers, the shared links) is encrypted on disk with SQLCipher "
+               "(AES-256) – a copied bot folder, backup ZIP, Google Drive copy or stolen disk is unreadable without "
+               "the key. The key is kept outside the bot folder (Windows: locked to your Windows account). SAVE THE "
+               "RECOVERY KEY (button below) – without it a new PC or reinstalled Windows can't open the data or the "
+               "backups. Takes effect after a restart (converts the files; turning it off converts them back). It "
+               "can't protect against someone who controls the PC while the bot runs."),
     Field("FULL_BACKUP_ENABLED", "Weekly full backup (code + everything)", "alerts", "bool",
           help="On (default): every week the WHOLE bot folder – code, every database (also the extra servers'), "
                "settings (.env), plugins and uploads – is saved to data/full_backups/; each is deleted after a week "

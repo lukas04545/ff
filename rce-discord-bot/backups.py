@@ -58,12 +58,8 @@ def _write_zip(db_path: Path, target: Path, *, base: Path, include_env: bool) ->
     with tempfile.TemporaryDirectory() as tmp:
         copy = Path(tmp) / "bot.db"
         if db_path.exists():
-            src, dest = sqlite3.connect(db_path), sqlite3.connect(copy)
-            try:
-                src.backup(dest)       # consistent copy even while the bot writes
-            finally:
-                dest.close()
-                src.close()
+            import dbcrypt
+            dbcrypt.backup_copy(db_path, copy)   # consistent copy even while the bot writes (encrypted if on)
         partial = target.with_suffix(".zip.part")
         with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("README.txt", README)

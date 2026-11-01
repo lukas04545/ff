@@ -544,6 +544,7 @@ class WebInterface:
         r.add_get("/api/backups", self.list_backups)
         r.add_post("/api/backups", self.create_backup)
         r.add_get("/api/backups/full", self.full_backups)
+        r.add_post("/api/backups/db-key", self.db_recovery_key)
         r.add_post("/api/backups/full", self.create_full_backup)
         r.add_post("/api/backups/full/{name}/restore", self.emergency_restore)
         r.add_get("/api/backups/{name}", self.download_backup)
@@ -3752,6 +3753,7 @@ class WebInterface:
         return web.json_response({"enabled": self.bot.config.backup_enabled,
                                   "keep_days": self.bot.config.backup_keep_days,
                                   "backups": await asyncio.to_thread(backups.list_backups),
+                                  "encryption": self._encryption_status(),
                                   **(monitor.backup_status() if monitor else {})})
 
     async def create_backup(self, request: web.Request) -> web.Response:
@@ -3760,6 +3762,23 @@ class WebInterface:
             raise ApiError("Backup failed – see the bot log.", 500)
         self._audit(f"Backup created: {name}")
         return web.json_response({"ok": True, "name": name})
+
+    def _encryption_status(self) -> dict:
+        import dbcrypt
+        return {"on": dbcrypt.active(), "setting": bool(getattr(self.bot.config, "db_encryption", False)),
+                "available": dbcrypt.available(), "key_file": str(dbcrypt.key_file())}
+
+    async def db_recovery_key(self, request: web.Request) -> web.Response:
+        """The database recovery key – owner, password re-check (POST under /api/backups). Write it down!"""
+        import dbcrypt
+        if not dbcrypt.active():
+            raise ApiError("The databases aren't encrypted (turn on “Encrypt the databases” and restart).")
+        try:
+            key = dbcrypt.load_key()
+        except dbcrypt.KeyError_ as exc:
+            raise ApiError(str(exc)) from exc
+        self._audit("Database recovery key shown")
+        return web.json_response({"key": key, "key_file": str(dbcrypt.key_file())})
 
     async def full_backups(self, request: web.Request) -> web.Response:
         """Weekly full backups (code + every database + settings) and whether an emergency restore is possible."""

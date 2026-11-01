@@ -3199,13 +3199,30 @@ function backupBox() {
     box.replaceChildren(
       h("div", { class: "row" }, h("strong", { text: "Backups " }),
         h("span", { class: "muted", text: `${r.enabled ? `daily + before every update, kept ${r.keep_days} days` : "daily backup off"} · data/backups/ · ${r.include_env ? "with .env" : "without .env"}` })),
-      copy, ...errs,
+      copy, ...errs, encryptionLine(r.encryption),
       ...(list.length ? list : [h("span", { class: "muted", text: "No backup yet." })]),
       h("div", { class: "row", style: "margin-top:.4rem" }, btn),
       fullBackupBox());
   };
   api("/api/backups").then(render).catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
   return box;
+}
+
+// Database encryption status + the recovery key (owner, password re-check)
+function encryptionLine(e) {
+  if (!e) return "";
+  if (!e.on) return h("div", { class: "muted", style: "font-size:.85rem", text: e.setting
+    ? "🔓 Databases: encryption is switched on – restart the bot to encrypt them."
+    : "🔓 Databases are not encrypted – turn on “Encrypt the databases” above and restart (save the recovery key afterwards!)." });
+  const out = h("div", { style: "font-size:.85rem" });
+  const show = h("button", { class: "small", text: "🔑 Show recovery key", onclick: async () => {
+    const r = await act(() => api("/api/backups/db-key", { method: "POST" })).catch(() => null);
+    if (!r) return;
+    out.replaceChildren(h("div", { class: "row" }, h("strong", { text: "🔐 Recovery key: " }), h("code", { text: r.key, style: "user-select:all;word-break:break-all" })),
+      h("div", { class: "muted", text: `Save it somewhere safe (password manager, paper) – NOT in the bot folder. On a new PC or after reinstalling Windows, put DB_KEY=<this key> into the .env once and start the bot; it moves the key to ${r.key_file} and you remove DB_KEY again.` }));
+  } });
+  out.append(h("div", { class: "row" }, h("span", { text: "🔐 Databases are encrypted (SQLCipher, AES-256) – key: " }), h("code", { text: e.key_file })), show);
+  return out;
 }
 
 // Weekly full backups (code + every database + settings) with the 🚨 emergency restore
