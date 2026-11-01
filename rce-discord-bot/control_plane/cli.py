@@ -168,7 +168,7 @@ async def _run(settings: Settings) -> None:
 
     from control_plane import health
     from control_plane.supervisor import Supervisor
-    from control_plane.web import build_owner, build_portal
+    from control_plane.web import build_owner, build_portal, mount_owner
     db, box = _db_and_box(settings)
     sup = Supervisor(db, box, settings)
 
@@ -177,14 +177,22 @@ async def _run(settings: Settings) -> None:
         await proxy.apply(db, settings)
 
     runners = []
-    for app, host, port in ((build_portal(db, box, settings, changed), settings.portal_host, settings.portal_port),
-                            (build_owner(db, box, settings, changed, sup), settings.owner_host, settings.owner_port)):
+    ai_history: dict = {}
+    portal = build_portal(db, box, settings, changed)
+    if settings.owner_path:                              # the owner panel as a website: portal.<domain>/management
+        mount_owner(portal, build_owner(db, box, settings, changed, sup, prefix=settings.owner_path,
+                                        allow_ips=settings.owner_allow_ips, ai_history=ai_history),
+                    settings.owner_path)
+    for app, host, port in ((portal, settings.portal_host, settings.portal_port),
+                            (build_owner(db, box, settings, changed, sup, ai_history=ai_history),
+                             settings.owner_host, settings.owner_port)):
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         await web.TCPSite(runner, host, port).start()
         runners.append(runner)
-    log.info("portal on %s:%s, owner panel on %s:%s", settings.portal_host, settings.portal_port,
-             settings.owner_host, settings.owner_port)
+    log.info("portal on %s:%s, owner panel on %s:%s%s", settings.portal_host, settings.portal_port,
+             settings.owner_host, settings.owner_port,
+             f" and {settings.portal_url}{settings.owner_path}" if settings.owner_path else "")
     await proxy.apply(db, settings)
     try:
         await asyncio.gather(sup.run_forever(), health.poll_forever(db, box, sup))

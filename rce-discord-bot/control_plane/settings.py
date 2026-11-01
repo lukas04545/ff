@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,16 @@ def _int(name: str, default: int) -> int:
         return int(os.environ.get(name, default))
     except ValueError:
         return default
+
+
+def _owner_path(raw: str) -> str:
+    raw = raw.strip()
+    if raw.lower() in ("", "off", "0", "false", "no"):
+        return ""
+    path = "/" + raw.strip("/")
+    if not re.fullmatch(r"/[A-Za-z0-9_-]{1,64}", path):
+        raise ValueError("CP_OWNER_PATH must be one path part like /management (letters, digits, - and _).")
+    return path
 
 
 @dataclass
@@ -31,6 +42,12 @@ class Settings:
     portal_port: int = field(default_factory=lambda: _int("CP_PORTAL_PORT", 8000))
     owner_host: str = field(default_factory=lambda: os.environ.get("CP_OWNER_HOST", "127.0.0.1"))
     owner_port: int = field(default_factory=lambda: _int("CP_OWNER_PORT", 8090))
+    # The owner panel ALSO as a website on the portal: https://portal.<domain>/management ("off" = only the private
+    # listener). CP_OWNER_ALLOW_IPS (comma list) limits that public address to these IPs; empty = anyone may try
+    # (password + 2FA + rate limits).
+    owner_path: str = field(default_factory=lambda: _owner_path(os.environ.get("CP_OWNER_PATH", "/management")))
+    owner_allow_ips: frozenset = field(default_factory=lambda: frozenset(
+        ip.strip() for ip in os.environ.get("CP_OWNER_ALLOW_IPS", "").split(",") if ip.strip()))
     session_secret: str = field(default_factory=lambda: os.environ.get("CP_SESSION_SECRET", ""))
     # Billing (Stripe)
     stripe_secret_key: str = field(default_factory=lambda: os.environ.get("STRIPE_SECRET_KEY", ""))
