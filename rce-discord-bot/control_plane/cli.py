@@ -5,6 +5,8 @@
 
   login-link                   one-time link to the owner panel (works once, 15 minutes) – also for the very first
                                login: without an owner account it lets you create yours
+  adopt --email <you>          move EVERY server of this install (main + servers/<id>) into tenants at once –
+                               tokens, databases (also encrypted ones), settings and panel addresses stay
   setup [--port 8099]          first setup in the browser before your domain works: a temporary owner panel on
                                http://<server ip>:8099 with a one-time link (stops after 30 minutes)
 
@@ -302,7 +304,47 @@ def cmd_rotate(args, settings: Settings) -> int:
     return 0
 
 
-def import_server(db: DB, box: SecretBox, settings: Settings, source: Path, email: str, name: str) -> dict:
+def copy_database(src_db: Path, dst_db: Path) -> bool:
+    """A consistent PLAIN copy of a bot database – also of an encrypted one (DB_ENCRYPTION), opened with the
+    install's key (DB_KEY or the key file of the user running this). The tenant encrypts it with its own key."""
+    import dbcrypt
+    state = dbcrypt.is_plain(src_db)
+    if state is None:
+        return False
+    dst_db.parent.mkdir(parents=True, exist_ok=True)
+    if state:
+        src, dst = sqlite3.connect(src_db), sqlite3.connect(dst_db)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+        return True
+    key = dbcrypt.load_key()
+    if key is None or not dbcrypt.ensure_installed():
+        raise RuntimeError(f"{src_db} is encrypted and its key wasn't found – run this as the bot's user, or set "
+                           "DB_KEY to the recovery key (panel: Settings → Database encryption).")
+    import sqlcipher3.dbapi2 as sc
+    dst_db.unlink(missing_ok=True)
+    src = sc.connect(str(src_db))
+    try:
+        src.execute(f"PRAGMA key = \"x'{key}'\"")
+        src.execute("ATTACH DATABASE ? AS plain KEY ''", (str(dst_db),))
+        src.execute("SELECT sqlcipher_export('plain')")
+        src.execute("DETACH DATABASE plain")
+    finally:
+        src.close()
+    check = sqlite3.connect(dst_db)
+    try:
+        if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise RuntimeError(f"The copy of {src_db.name} failed its check.")
+    finally:
+        check.close()
+    return True
+
+
+def import_server(db: DB, box: SecretBox, settings: Settings, source: Path, email: str, name: str, *,
+                  token: bool = True, links_db: Path | None = None) -> dict:
     """An existing bot folder becomes a tenant server. The source folder isn't changed (rollback = start it again)."""
     from envfile import read_env
     import saas_mode
@@ -322,14 +364,9 @@ def import_server(db: DB, box: SecretBox, settings: Settings, source: Path, emai
     home = Path(db.one("SELECT home_dir FROM servers WHERE id = ?", (out["id"],))["home_dir"])
     # the database: a consistent copy (an encrypted one needs its old key – turn DB_ENCRYPTION off before importing;
     # the tenant encrypts it with its own key on the first start)
-    src_db = source / (env.get("DATABASE_PATH") or "data/bot.db")
-    if src_db.exists():
-        src, dst = sqlite3.connect(src_db), sqlite3.connect(home / "data" / "bot.db")
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-            src.close()
+    copy_database(source / (env.get("DATABASE_PATH") or "data/bot.db"), home / "data" / "bot.db")
+    if links_db is not None:                         # Discord ↔ game links (shared by all servers of an install)
+        copy_database(links_db, home / "data" / "linked_players.db")
     for rel in COPY_FILES:
         if (source / rel).is_file():
             (home / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -339,9 +376,101 @@ def import_server(db: DB, box: SecretBox, settings: Settings, source: Path, emai
             shutil.copytree(source / rel, home / rel, dirs_exist_ok=True)
     keep = {k: v for k, v in env.items() if k not in saas_mode.LOCKED_SETTINGS}   # paths, ports, token: not copied
     provisioning.write_env(home, keep)
-    if env.get("DISCORD_TOKEN"):
+    if token and env.get("DISCORD_TOKEN"):
         provisioning.set_bot_token(db, box, out["id"], env["DISCORD_TOKEN"], actor="migration")
     return {**out, "customer_id": cid, "home": str(home)}
+
+
+def old_bot_processes(source: Path) -> list[int]:
+    """PIDs of bot processes still running from the old install (its folder or one of its servers/ folders)."""
+    source = source.resolve()
+    pids = []
+    for proc in Path("/proc").glob("[0-9]*"):
+        try:
+            cmd = (proc / "cmdline").read_bytes().split(b"\0")
+            cwd = Path(os.readlink(proc / "cwd")).resolve()
+            env = (proc / "environ").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if int(proc.name) == os.getpid() or not any(c.endswith(b"bot.py") for c in cmd):
+            continue
+        if b"RCE_SAAS=1" in env:                   # a tenant of the control plane, not the old install
+            continue
+        if cwd == source or source in cwd.parents:
+            pids.append(int(proc.name))
+    return sorted(pids)
+
+
+def discover(source: Path) -> list[dict]:
+    """The old install's servers: the main one and every extra server (servers/<id>) from its registry."""
+    import json
+    from envfile import read_env
+    source = source.resolve()
+    main_env = read_env(source / ".env")
+    found = [{"sid": "main", "folder": source, "name": main_env.get("SERVER_DISPLAY_NAME") or "Main server",
+              "shared_bot": False, "enabled": True}]
+    try:
+        registry = json.loads((source / "data" / "servers.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        registry = []
+    for s in registry if isinstance(registry, list) else []:
+        folder = source / "servers" / str(s.get("id", ""))
+        if s.get("id") and (folder / ".env").exists():
+            found.append({"sid": s["id"], "folder": folder, "name": s.get("name") or s["id"],
+                          "shared_bot": s.get("discord") == "shared", "enabled": s.get("enabled", True)})
+    return found
+
+
+def adopt(db: DB, box: SecretBox, settings: Settings, source: Path, email: str) -> list[dict]:
+    """Every server of the old install becomes a tenant (once – a second run skips what's already adopted)."""
+    results = []
+    links = source / "data" / "linked_players.db"
+    for srv in discover(source):
+        mark = f"adopted:{srv['folder']}"
+        done = db.one("SELECT value FROM settings_kv WHERE key = ?", (mark,))
+        if done:
+            results.append({**srv, "id": int(done["value"]), "skipped": True})
+            continue
+        # a server on the main server's Discord bot can't share that token with a separate process
+        out = import_server(db, box, settings, srv["folder"], email, srv["name"], token=not srv["shared_bot"],
+                            links_db=links if links.exists() else None)
+        if not srv["enabled"]:
+            provisioning.set_server_status(db, out["id"], "stopped", actor="migration")
+        db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)", (mark, str(out["id"])))
+        db.audit("migration", "server.adopt", customer_id=out["customer_id"], server_id=out["id"],
+                 detail=f"{srv['sid']} from {srv['folder']}")
+        results.append({**srv, **out, "skipped": False})
+    return results
+
+
+def cmd_adopt(args, settings: Settings) -> int:
+    source = Path(args.source or settings.bot_dir).resolve()
+    found = discover(source)
+    print(f"Old install: {source} – {len(found)} server(s): " + ", ".join(f"{s['name']} ({s['sid']})" for s in found))
+    if args.dry_run:
+        return 0
+    running = old_bot_processes(source)
+    if running and not args.force:
+        print(f"The old bot is still running (PID {', '.join(map(str, running))}). Stop it first – e.g. "
+              "`systemctl stop <its service>` or `kill " + " ".join(map(str, running)) + "` – then run this again.\n"
+              "Its databases must not change while they're copied, and one Discord bot token can't run twice.")
+        return 1
+    db, box = _db_and_box(settings)
+    try:
+        results = adopt(db, box, settings, source, args.email)
+    except (RuntimeError, provisioning.ProvisionError, slots.SlotError) as exc:
+        print(f"Stopped: {exc}")
+        return 1
+    for r in results:
+        if r["skipped"]:
+            print(f"  = {r['name']}: already adopted as server #{r['id']}")
+            continue
+        note = ("  ⚠️ used the main server's Discord bot – give it its own bot token in the owner panel "
+                "(server → Bot token)" if r["shared_bot"] else "")
+        print(f"  + {r['name']} → server #{r['id']} {r['url']}  panel: {provisioning.panel_url(settings, {"home_dir": r["home"], "slug": r["slug"]})}{note}")
+    print("Start (or restart) the control plane: `python3 -m control_plane run` – the servers come online within "
+          "seconds. Rollback: stop it and start the old bot again (its folder wasn't changed).")
+    return 0
 
 
 def cmd_import(args, settings: Settings) -> int:
@@ -418,6 +547,11 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--reason")
     sub.add_parser("rotate-keys")
     sub.add_parser("login-link")
+    ad = sub.add_parser("adopt")
+    ad.add_argument("--email", required=True, help="your account for these servers (created if new; free)")
+    ad.add_argument("--source", help="the old bot folder (default: this one)")
+    ad.add_argument("--dry-run", action="store_true", help="only show what would be adopted")
+    ad.add_argument("--force", action="store_true", help="even if the old bot still seems to run")
     st = sub.add_parser("setup")
     st.add_argument("--port", type=int, default=8099)
     st.add_argument("--minutes", type=int, default=30)
@@ -453,7 +587,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     return {"init": cmd_init, "create-owner": cmd_create_owner, "grant": cmd_grant, "rotate-keys": cmd_rotate,
             "import-server": cmd_import, "addon": cmd_addon, "update": cmd_update,
-            "links": cmd_links, "login-link": cmd_login_link, "setup": cmd_setup}[args.cmd](args, settings)
+            "links": cmd_links, "login-link": cmd_login_link, "setup": cmd_setup,
+            "adopt": cmd_adopt}[args.cmd](args, settings)
 
 
 if __name__ == "__main__":

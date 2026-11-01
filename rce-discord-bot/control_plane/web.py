@@ -484,6 +484,10 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                                    ("Discord AI: on → switch off" if s["manager_ai"] else "Discord AI: off → switch on")))
                 acts.append(button(request, f"/servers/{sid}/remove", "Remove", danger=True,
                                    confirm="Remove this server? (kept for restore until purged)"))
+                acts.append(f"<form method=post action='{P}/servers/{sid}/token' class=inline>{hidden(request)}"
+                            f"<input name=token type=password autocomplete=off placeholder='"
+                            f"{'Bot token needed!' if s['status'] == 'awaiting_token' else 'New bot token'}' size=14>"
+                            f"<button>Set bot token</button></form>")
             live = (f"{'🟢' if s['discord_ready'] else '🔴'} {esc(s['bot_user'] or '')}<br>"
                     f"<span class=muted>Discord: {esc(s['guild_name'] or '–')} {esc(s['guild_id'] or '')}</span><br>"
                     f"RCON {'✅' if s['rcon_connected'] else '❌'} · {s['players_online'] or 0} online"
@@ -673,6 +677,22 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         ai_history.pop(int(request.match_info["id"]), None)
         raise go(f"/servers/{request.match_info['id']}/ai")
 
+    async def set_token(request):
+        who = owner(request)
+        data = await sess.form(request)
+        sid = int(request.match_info["id"])
+        row = db.one("SELECT customer_id FROM servers WHERE id = ?", (sid,))
+        try:
+            if row is None:
+                raise provisioning.ProvisionError("No such server.")
+            if not features.has(db, row["customer_id"], "custom_bot"):      # the owner may always set one
+                features.grant(db, row["customer_id"], "custom_bot", owner=who)
+            provisioning.set_bot_token(db, box, sid, str(data.get("token", "")), actor=f"owner:{who}")
+        except (provisioning.ProvisionError, features.FeatureError) as exc:
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
+        await changed()                                  # the server (re)starts on its own bot
+        raise go("/")
+
     async def manager_toggle(request):
         who = owner(request)
         await sess.form(request)
@@ -800,7 +820,8 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
                     web.post("/update/{action:check|install}", update_action),
                     web.get(r"/servers/{id:\d+}/ai", ai_page), web.post(r"/servers/{id:\d+}/ai", ai_send),
                     web.post(r"/servers/{id:\d+}/ai/clear", ai_clear),
-                    web.post(r"/servers/{id:\d+}/manager-ai/{on:on|off}", manager_toggle)])
+                    web.post(r"/servers/{id:\d+}/manager-ai/{on:on|off}", manager_toggle),
+                    web.post(r"/servers/{id:\d+}/token", set_token)])
     return app
 
 
