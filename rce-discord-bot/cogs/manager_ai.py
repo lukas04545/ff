@@ -32,6 +32,7 @@ from rce import items as itemlist
 from rce import kits as kitparse
 from rce.rcon_client import RconError
 from support import emote_binds
+from support import teleports as tp
 from support.deepseek import DeepSeekError
 from utils import is_admin, safe_md
 
@@ -80,6 +81,10 @@ How to work:
   the exact failure, incl. the game server's answer) (optionally for a player) and explain the real
   reason from it (role lock, not linked, cooldown, wrong kit name, RCON down, no tries seen …) before changing
   anything.
+- Offline protection zones (ZORP) for players: protection_zone_status, place_protection_zone (at a player's
+  current position, at another online player's position, or at coordinates x/y/z), resize_protection_zone,
+  remove_protection_zone. Zones belong to the player's in-game team. Only give a custom size (radius) when the
+  admin says a size – otherwise leave it out so the automatic team-size/VIP size is used.
 - If something is ambiguous (two kits match, no amount given for a big item list …) ask one short question instead
   of guessing. Small details you can sensibly default (amount 1, container from the item type, no cooldown) – do it
   and say what you chose.
@@ -205,6 +210,20 @@ TOOLS = [
     _fn("post_binds_panel", "Posts a live list of all emote binds (and teleports) that the bot updates by itself "
                             "whenever binds change. Default: this channel.",
         {"channel": {"type": "string", "description": "Channel name, #mention or id; empty = this channel"}}),
+    _fn("protection_zone_status", "A player's team and its offline protection zone (ZORP): position, size, status.",
+        {"player": {"type": "string"}}, ["player"]),
+    _fn("place_protection_zone", "Places (or moves) the offline protection zone of a player's team – at the player's "
+                                 "position (default), at another online player's position, or at coordinates.",
+        {"player": {"type": "string", "description": "Whose team gets the zone (any team member)"},
+         "at_player": {"type": "string", "description": "Place it where this online player stands (default: player)"},
+         "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"},
+         "radius": {"type": "integer", "minimum": 1, "maximum": 1000,
+                    "description": "Custom size in metres – ONLY if the admin said a size"}}, ["player"]),
+    _fn("resize_protection_zone", "Changes the size of a team's zone (same spot). Leave radius out to go back to the "
+                                  "automatic size.",
+        {"player": {"type": "string"}, "radius": {"type": "integer", "minimum": 1, "maximum": 1000}}, ["player"]),
+    _fn("remove_protection_zone", "Deletes a team's offline protection zone. Admin must confirm.",
+        {"player": {"type": "string"}}, ["player"]),
     _fn("list_teleports", "The 8 Location emotes (North … Northwest) and where each teleports players."),
     _fn("set_teleport", "Sets where a Location emote teleports players: x/y/z, or capture_from_player (an online "
                         "player's current position, e.g. the admin standing on the spot).",
@@ -933,9 +952,50 @@ class ManagerAI(commands.Cog):
             return {"ok": True, "link": posted.jump_url, "channel": f"<#{target.id}>",
                     "did": f"📋 live binds panel in #{getattr(target, 'name', target.id)}"}
 
+        if name in ("protection_zone_status", "place_protection_zone", "resize_protection_zone",
+                    "remove_protection_zone"):
+            zorp = self.bot.plugins.running("offline_protection") if getattr(self.bot, "plugins", None) else None
+            if zorp is None:
+                return {"ok": False, "error": "The Offline protection plugin is off – switch it on first."}
+            player = str(args.get("player") or "").strip()
+            if not player:
+                return {"ok": False, "error": "Which player?"}
+            if name == "protection_zone_status":
+                return {"ok": True, **await zorp.zone_status(player)}
+            by = f"management AI for {message.author}"
+            if name == "remove_protection_zone":
+                if not await self.confirm(message, f"Delete the offline protection zone of **{safe_md(player)}**'s "
+                                                   "team?"):
+                    return {"ok": False, "error": "The admin did not confirm."}
+                result = await zorp.admin_remove(player, by)
+                if result["ok"]:
+                    result["did"] = f"🛡️ zone of {player}'s team removed"
+                return result
+            radius = args.get("radius")
+            radius = int(radius) if radius not in (None, "", 0) else None
+            if name == "resize_protection_zone":
+                result = await zorp.admin_resize(player, radius)
+                if result["ok"]:
+                    result["did"] = f"📏 {player}'s zone → {result['radius']} m"
+                return result
+            coords = [args.get(k) for k in ("x", "y", "z")]
+            position = None
+            if any(c is not None for c in coords):
+                if not all(c is not None for c in coords):
+                    return {"ok": False, "error": "Give all three coordinates x, y and z."}
+                try:
+                    position = tp.check_coords(*coords)
+                except ValueError as exc:
+                    return {"ok": False, "error": str(exc)}
+            result = await zorp.admin_place(player, position=position,
+                                            at_player=str(args.get("at_player") or "").strip() or None,
+                                            radius=radius, via=by)
+            if result["ok"]:
+                result["did"] = f"🛡️ zone for {player}'s team {result['result']} ({result['radius']} m)"
+            return result
+
         if name in ("list_teleports", "set_teleport", "clear_teleport"):
             from cogs.teleports import TeleportError
-            from support import teleports as tp
             cog = self.bot.get_cog("Teleports")
             if cog is None:
                 return {"ok": False, "error": "The teleport module is not loaded."}

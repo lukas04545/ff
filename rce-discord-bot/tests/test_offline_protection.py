@@ -530,3 +530,44 @@ def test_zone_deleted_when_a_member_leaves_the_team(zp):
     zp.said.clear()
     asyncio.run(zp.p.clock())
     assert zp.p.zone(5) is None and "TEST_REMOVE team_5" in zp.said
+
+
+def test_admins_place_anywhere_with_custom_sizes(zp):
+    """Management AI / admins: any team member's team, at a player's position or coordinates, custom size kept."""
+    from types import SimpleNamespace as NS
+    from cogs.manager_ai import ManagerAI
+    configure(zp)
+    p = zp.p
+    r = asyncio.run(p.admin_place("Mate", via="test"))                     # a member, not the leader: allowed
+    assert r["ok"] and r["position"] == [123.5, 20.0, -456.2] and r["radius"] == 25 and not r["custom_size"]
+    assert "TEST_CREATE team_5 123.5 20.0 -456.25 25" in zp.said
+    r = asyncio.run(p.admin_place("Lead", position=(1, 2, 3), radius=80, via="test"))
+    assert r["ok"] and r["result"] == "moved" and r["radius"] == 80 and p.zone(5)["custom_radius"]
+    assert "TEST_REMOVE team_5" in zp.said and "TEST_CREATE team_5 1.0 2.0 3.0 80" in zp.said
+    zp.db.team_event("join", "Third", 5, "Lead")                           # team grows: automatic sizing …
+    asyncio.run(p._resize(5))
+    assert p.zone(5)["radius"] == 80                                       # … leaves the custom size alone
+    r = asyncio.run(p.admin_resize("Lead", None))
+    assert r["ok"] and r["radius"] == 25 and not p.zone(5)["custom_radius"]
+    assert asyncio.run(p.admin_place("Stranger"))["ok"] is False           # no team
+    assert asyncio.run(p.admin_place("Lead", at_player="Ghost"))["ok"] is False
+    assert asyncio.run(p.admin_place("Lead", radius=5000))["ok"] is False
+
+    # the management AI tools
+    ai = ManagerAI(zp.bot)
+    asked = []
+
+    async def confirm(message, text, file=None):
+        asked.append(text)
+        return True
+    ai.confirm = confirm
+    msg = NS(author=NS(id=1, roles=[], mention="<@1>", __str__=lambda: "Boss"), channel=None, guild=None)
+    r = asyncio.run(ai.run_tool("place_protection_zone", {"player": "Mate", "x": 10, "y": 5, "z": -20,
+                                                          "radius": 45}, msg))
+    assert r["ok"] and r["radius"] == 45 and r["position"] == [10.0, 5.0, -20.0] and "45 m" in r["did"]
+    assert asyncio.run(ai.run_tool("place_protection_zone", {"player": "Mate", "x": 10}, msg))["ok"] is False
+    r = asyncio.run(ai.run_tool("resize_protection_zone", {"player": "Lead", "radius": 60}, msg))
+    assert r["ok"] and p.zone(5)["radius"] == 60
+    assert asyncio.run(ai.run_tool("protection_zone_status", {"player": "Lead"}, msg))["zone"]["name"] == "team_5"
+    r = asyncio.run(ai.run_tool("remove_protection_zone", {"player": "Lead"}, msg))
+    assert r["ok"] and asked and p.zone(5) is None
