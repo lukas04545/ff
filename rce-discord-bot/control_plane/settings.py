@@ -94,7 +94,7 @@ class Settings:
 
     @property
     def portal_url(self) -> str:
-        return os.environ.get("CP_PORTAL_URL", f"https://portal.{self.base_domain}")
+        return (os.environ.get("CP_PORTAL_URL") or "").strip().rstrip("/") or f"https://portal.{self.base_domain}"
 
     def url_for(self, slug: str) -> str:
         return f"https://{slug}.{self.base_domain}"

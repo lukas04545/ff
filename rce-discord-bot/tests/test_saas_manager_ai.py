@@ -126,3 +126,22 @@ def test_control_plane_switch_and_owner_chat(cp, monkeypatch):
         finally:
             await owner.close()
     asyncio.run(scenario())
+
+
+def test_health_says_why_a_server_waits_in_setup_mode(tmp_path, monkeypatch):
+    from web.server import WebInterface, WebSettings
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RCE_SAAS", "1")
+    monkeypatch.setenv("SAAS_HEALTH_TOKEN", "h" * 64)
+
+    async def scenario():
+        w = WebInterface(None, web_settings=WebSettings(password="pw"), setup_error="Configuration incomplete: "
+                         "RCON_PORT missing", env_path=tmp_path / ".env", secret_path=tmp_path / "s.key")
+        c = TestClient(TestServer(w.app))
+        await c.start_server()
+        try:
+            data = await (await c.get("/saas/health", headers={"Authorization": "Bearer " + "h" * 64})).json()
+            assert data["setup_mode"] is True and "RCON_PORT missing" in data["error"]
+        finally:
+            await c.close()
+    asyncio.run(scenario())

@@ -2044,6 +2044,8 @@ class WebInterface:
             "rcon_connected": bool(bot is not None and bot.rcon.connected),
             "players_online": len(bot.online_players) if bot is not None else 0,
             "latency_ms": round(bot.latency * 1000) if bot is not None and bot.is_ready() else None,
+            # why it waits in setup mode (a settings message, no secrets) – shown in the owner panel
+            "error": (str(self.setup_error or "Waiting for its settings")[:300]) if self.setup_mode else None,
         }, headers={"Cache-Control": "no-store"})
 
     async def shield_status(self, request: web.Request) -> web.Response:

@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 import time
+from pathlib import Path
 from dataclasses import dataclass
 
 from control_plane.crypto import SecretBox
@@ -78,9 +79,18 @@ def saved(db: DB, box: SecretBox) -> dict[str, str]:
     return {k: str(v) for k, v in data.items() if k in BY_KEY}
 
 
+def _file_values() -> dict[str, str]:
+    from envfile import read_env
+    try:
+        return read_env(Path(os.environ.get("CP_ENV_FILE", "/etc/rce-saas.env")))
+    except OSError:
+        return {}
+
+
 def apply_saved(db: DB, box: SecretBox) -> list[str]:
-    """Puts the website's settings into the environment (they win over the file). Returns their keys."""
-    values = saved(db, box)
+    """Puts the website's settings into the environment (they win over the file). Returns their keys.
+    An empty non-secret value means "not set" (older saves stored blank fields): file value / default stays."""
+    values = {k: v for k, v in saved(db, box).items() if v or BY_KEY[k].secret}
     for key, value in values.items():
         os.environ[key] = value
     return list(values)
@@ -150,10 +160,21 @@ def save(db: DB, box: SecretBox, form: dict, *, actor: str) -> list[str]:
         value = _check(f, str(form[f.key]))
         if f.secret and not value:
             continue                                   # blank = keep what's there
+        if not value:
+            new.pop(f.key, None)                       # blank = not set here: the file's value or the default
+            continue
         new[f.key] = value
-    changed = sorted(k for k in new if new[k] != os.environ.get(k, ""))     # vs. what's in effect now
+    file_values = _file_values()
+    unset = [k for k in current if k not in new]
+    changed = sorted({k for k in new if new[k] != os.environ.get(k, "")}
+                     | {k for k in unset if file_values.get(k, "") != os.environ.get(k, "")})
     db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('web_settings', ?)",
            (box.encrypt(json.dumps(new), AAD),))
+    for key in unset:                                  # back to the file's value, or the built-in default
+        if key in file_values:
+            os.environ[key] = file_values[key]
+        else:
+            os.environ.pop(key, None)
     for key, value in new.items():
         os.environ[key] = value
     if changed:

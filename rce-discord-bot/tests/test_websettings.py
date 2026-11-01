@@ -122,3 +122,24 @@ def test_setup_serves_a_one_time_link_then_stops(cp, capsys, monkeypatch, tmp_pa
     out = capsys.readouterr().out
     assert re.search(r"http://\S+:0/once/[A-Za-z0-9_-]+", out) and "Setup page closed" in out
     assert env.read_text() == ""                                  # an existing settings file is never replaced
+
+
+def test_blank_fields_keep_the_defaults(cp, tmp_path):  # noqa: F811
+    """Saving the whole Settings form with empty fields must not blank out defaults (portal address, owner path)."""
+    from control_plane import hostproxy
+    os.environ["CP_ENV_FILE"] = str(tmp_path / "none.env")
+    form = {f.key: "" for f in websettings.FIELDS}
+    form["CP_BASE_DOMAIN"] = "kryvon3x.com"
+    websettings.save(cp.db, cp.box, form, actor="t")
+    websettings.refresh(cp.settings, list(websettings.KEY_ATTR))
+    assert "CP_PORTAL_URL" not in os.environ and "CP_OWNER_PATH" not in os.environ
+    assert cp.settings.portal_url == "https://portal.kryvon3x.com" and cp.settings.owner_path == "/management"
+    assert cp.settings.update_repo                                               # the default, not ""
+    assert hostproxy.resolve(cp.db, cp.settings, "portal.kryvon3x.com")[0] == "portal"
+    # an older save that stored blanks: they're ignored on start
+    cp.db.run("UPDATE settings_kv SET value = ? WHERE key = 'web_settings'",
+              (cp.box.encrypt('{"CP_PORTAL_URL": "", "CP_BASE_DOMAIN": "kryvon3x.com"}', websettings.AAD),))
+    assert websettings.apply_saved(cp.db, cp.box) == ["CP_BASE_DOMAIN"] and "CP_PORTAL_URL" not in os.environ
+    os.environ["CP_PORTAL_URL"] = ""                                             # even if it's set but empty
+    assert cp.settings.portal_url == "https://portal.kryvon3x.com"
+    assert hostproxy.resolve(cp.db, cp.settings, "portal.kryvon3x.com")[0] == "portal"
