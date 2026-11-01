@@ -91,7 +91,7 @@ def locked_settings() -> frozenset[str]:
     (SaaS) tenants: everything the control plane sets or that could reach beyond the tenant's folder."""
     import saas_mode
     if saas_mode.enabled():
-        return saas_mode.LOCKED_SETTINGS
+        return saas_mode.locked_settings()
     if not servers.is_child():
         return frozenset()
     import discord_router
@@ -2616,6 +2616,10 @@ class WebInterface:
         return web.json_response({"ok": True, **(preflight or {})})
 
     async def update_info(self, request: web.Request) -> web.Response:
+        import saas_mode
+        if saas_mode.enabled():                                   # hosted: the host installs updates for everyone
+            return web.json_response({"available": False, "managed": True,
+                                      "message": "Updates are installed by your host for all servers."})
         updates = self.bot.get_cog("Updates")
         return web.json_response(updates.info() if updates else {"available": False})
 

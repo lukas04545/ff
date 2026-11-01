@@ -5,6 +5,8 @@
   run                          supervisor + health checks + Caddy config + portal + owner panel
   import-server ...            MIGRATION: an existing bot folder becomes a tenant server (data, settings, token)
   grant <email> <slots>        unlock extra server slots (same as the owner panel)
+  addon <email> <custom_bot|ai> <on|off>   switch an add-on (same as the owner panel)
+  update [--install]           check for a new bot version / install it for every server (only way to update)
   rotate-keys                  re-encrypt every secret with the newest master key
 """
 from __future__ import annotations
@@ -19,7 +21,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from control_plane import provisioning, proxy, slots
+from control_plane import features, provisioning, proxy, slots
 from control_plane.crypto import SecretBox, new_master_key
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -73,6 +75,31 @@ def cmd_grant(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_addon(args, settings: Settings) -> int:
+    db = DB(settings.db_path)
+    c = db.one("SELECT id FROM customers WHERE email = ?", (args.email.lower(),))
+    if c is None:
+        print("No such customer.")
+        return 1
+    if args.state == "on":
+        features.grant(db, c["id"], args.feature, owner="cli")
+    else:
+        print("Servers moved back to the shared bot:", features.revoke(db, c["id"], args.feature, owner="cli"))
+    print(sorted(features.active(db, c["id"])))
+    return 0
+
+
+def cmd_update(args, settings: Settings) -> int:
+    from control_plane import updates
+    db = DB(settings.db_path)
+    if args.install:
+        print(asyncio.run(updates.install(db, settings, None, owner="cli")))
+        print("Running servers pick it up when restarted – use the owner panel's update button for a rolling restart.")
+    else:
+        print(asyncio.run(updates.check(db, settings)))
+    return 0
+
+
 def cmd_rotate(args, settings: Settings) -> int:
     db, box = _db_and_box(settings)
     n = 0
@@ -98,6 +125,8 @@ def import_server(db: DB, box: SecretBox, settings: Settings, source: Path, emai
         db.run("UPDATE subscriptions SET status = 'comped' WHERE customer_id = ?", (cid,))   # your own servers
     else:
         cid = c["id"]
+    for addon in ("custom_bot", "ai"):              # your own servers keep their own bots (and AI)
+        features.grant(db, cid, addon, owner="migration")
     if slots.summary(db, cid)["free"] == 0:
         slots.grant(db, cid, 1, owner="migration", reason=f"import {name}")
     out = provisioning.provision_server(db, box, settings, cid, name, actor="migration")
@@ -179,6 +208,12 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("slots", type=int)
     g.add_argument("--reason")
     sub.add_parser("rotate-keys")
+    a = sub.add_parser("addon")
+    a.add_argument("email")
+    a.add_argument("feature", choices=sorted(features.FEATURES))
+    a.add_argument("state", choices=("on", "off"))
+    u = sub.add_parser("update")
+    u.add_argument("--install", action="store_true")
     i = sub.add_parser("import-server")
     i.add_argument("source", help="the existing bot folder (main server) or servers/<id> folder")
     i.add_argument("--email", required=True, help="the customer it belongs to (created if new; comped)")
@@ -192,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         asyncio.run(_run(settings))
         return 0
     return {"init": cmd_init, "create-owner": cmd_create_owner, "grant": cmd_grant, "rotate-keys": cmd_rotate,
-            "import-server": cmd_import}[args.cmd](args, settings)
+            "import-server": cmd_import, "addon": cmd_addon, "update": cmd_update}[args.cmd](args, settings)
 
 
 if __name__ == "__main__":

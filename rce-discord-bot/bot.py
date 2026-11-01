@@ -114,6 +114,9 @@ class RceBot(commands.Bot):
     # ------------------------------------------------------------ Lifecycle
 
     async def setup_hook(self) -> None:
+        import saas_fence
+        if saas_fence.install(self):             # hosted tenant on the shared bot: only its own guild, in and out
+            self._global_commands_cleared = True  # never touch global commands – they're every tenant's
         self.rcon.add_message_listener(self._on_rcon_message)
         self.rcon.add_state_listener(self._on_rcon_state)
 

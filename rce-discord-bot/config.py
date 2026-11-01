@@ -322,9 +322,22 @@ def required_intents(cfg: Config) -> dict[str, list[str]]:
     return {"message_content": message_content, "members": members}
 
 
+# Hosted (SaaS) tenants: these come from the control plane's environment and always win over the tenant's .env
+SAAS_ENV_KEYS = ("DISCORD_TOKEN", "DB_KEY", "DB_ENCRYPTION", "WEB_PORT", "WEB_HOST", "SAAS_SHARED_BOT",
+                 "SAAS_GUILD_ID", "SAAS_AI", "DEEPSEEK_API_KEY", "SAAS_HEALTH_TOKEN")
+
+
 def load_config(env_file: str | os.PathLike = ".env") -> Config:
     # override=True: changes from the web interface are picked up when reloading
+    saas = os.environ.get("RCE_SAAS") == "1"
+    pinned = {k: os.environ[k] for k in SAAS_ENV_KEYS if saas and k in os.environ}
     load_dotenv(env_file, override=True)
+    if saas:
+        os.environ.update(pinned)
+        if os.environ.get("SAAS_GUILD_ID"):
+            os.environ["GUILD_ID"] = os.environ["SAAS_GUILD_ID"]   # shared bot: its one guild, nothing else
+        if os.environ.get("SAAS_AI") != "1":
+            os.environ["DEEPSEEK_API_KEY"] = ""                    # AI is an add-on the owner switches on
 
     port = _int("RCON_PORT")
     if port is None:

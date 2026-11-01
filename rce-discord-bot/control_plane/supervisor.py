@@ -13,6 +13,8 @@ name (see ARCHITECTURE.md); one container per server is a drop-in Launcher.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import signal
@@ -30,6 +32,7 @@ from control_plane.settings import Settings
 log = logging.getLogger("cp.supervisor")
 BACKOFF = (5, 15, 30, 60, 120, 300)
 CRASHLOOP_COUNT, CRASHLOOP_WINDOW = 5, 600
+SHARED_START_GAP = 6          # seconds between two logins of the shared bot (Discord allows 1 identify / 5 s)
 STOP_TIMEOUT = 20
 
 
@@ -45,6 +48,7 @@ class Proc:
     tail: deque = field(default_factory=lambda: deque(maxlen=60))
     watcher: asyncio.Task | None = None
     stopping: bool = False
+    env_hash: str = ""                # what it was started with – a change (add-on, token, guild) restarts it
 
 
 class ProcessLauncher:
@@ -75,12 +79,17 @@ class Supervisor:
         self.launcher = launcher or ProcessLauncher(settings)
         self.procs: dict[int, Proc] = {}
         self._loop_task: asyncio.Task | None = None
+        self._last_shared_start = 0.0
 
     # ------------------------------------------------------------ Reconcile
 
     def wanted(self) -> set[int]:
         rows = self.db.q("SELECT id FROM servers WHERE status = 'active' AND node = 'local'")
-        return {r["id"] for r in rows if provisioning.runnable(self.db, r["id"])}
+        return {r["id"] for r in rows if provisioning.runnable(self.db, r["id"], self.settings)}
+
+    def _env(self, sid: int) -> tuple[dict, str]:
+        env = provisioning.environment(self.db, self.box, self.settings, sid)
+        return env, hashlib.sha256(json.dumps(env, sort_keys=True).encode()).hexdigest()
 
     async def reconcile(self) -> dict:
         want, now = self.wanted(), time.time()
@@ -91,8 +100,16 @@ class Supervisor:
                 stopped.append(sid)
         for sid in want:
             p = self.procs.setdefault(sid, Proc(sid))
+            if p.state == "running" and p.env_hash and self._env(sid)[1] != p.env_hash:
+                await self.stop(sid)                     # add-on switched / token or guild changed: new setup
+                p.state = "stopped"
             if p.state in ("stopped", "crashed") and now >= p.next_start:
+                shared = self._env(sid)[0].get("SAAS_SHARED_BOT") == "1"
+                if shared and time.time() - self._last_shared_start < SHARED_START_GAP:
+                    continue                             # next reconcile (a few seconds) starts it
                 await self.start(sid)
+                if shared:
+                    self._last_shared_start = time.time()
                 started.append(sid)
         self._write_health()
         return {"started": started, "stopped": stopped}
@@ -110,7 +127,7 @@ class Supervisor:
     async def start(self, sid: int) -> None:
         p = self.procs.setdefault(sid, Proc(sid))
         s = self.db.one("SELECT home_dir, slug FROM servers WHERE id = ?", (sid,))
-        env = provisioning.environment(self.db, self.box, self.settings, sid)
+        env, p.env_hash = self._env(sid)
         p.stopping = False
         try:
             p.process = await self.launcher.start(env, Path(s["home_dir"]))
@@ -184,6 +201,18 @@ class Supervisor:
         p.crashes.clear()
         p.state, p.next_start = "stopped", 0           # also clears a crashloop (owner pressed "restart")
         await self.reconcile()
+
+    async def rolling_restart(self, gap: float = SHARED_START_GAP) -> list[int]:
+        """After an update: every running server restarts one after another (new code), never all at once."""
+        done = []
+        for sid, p in list(self.procs.items()):
+            if p.state == "running":
+                await self.stop(sid)
+                p.state, p.next_start = "stopped", 0
+                await self.start(sid)
+                done.append(sid)
+                await asyncio.sleep(gap)
+        return done
 
     async def stop_all(self) -> None:
         await asyncio.gather(*(self.stop(sid) for sid in list(self.procs)))
