@@ -11,7 +11,7 @@ H = {"X-Requested-With": "rce-web"}
 DEFAULT_ON = {"starter_kit", "lowpop_bonus", "early_bird", "bounties", "weekly_recap", "achievements", "wipe_poll"}
 ALL = DEFAULT_ON | {"invites", "website", "filling_ping", "comeback", "casino", "offline_protection", "battlepass", "battle_royale",
                     "player_count", "streamers", "tp_home", "bank", "market", "clans", "challenges", "auto_events",
-                    "zones", "leaderboard_panels", "raid_alerts"}
+                    "zones", "leaderboard_panels", "raid_alerts", "dial_a_ride"}
 
 HELLO = '''
 from plugin_api import Plugin, Setting
