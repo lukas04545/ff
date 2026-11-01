@@ -197,9 +197,17 @@ async def _run(settings: Settings) -> None:
     db, box = _db_and_box(settings)
     sup = Supervisor(db, box, settings)
 
+    hq = None
+
     async def changed() -> None:
         await sup.reconcile()
         await proxy.apply(db, settings)
+        if hq is not None and hq.client.is_ready():
+            asyncio.create_task(hq.sync())             # the management Discord's panels follow right away
+
+    if settings.hq_bot_token:                           # the management Discord (control_plane/hq.py)
+        from control_plane.hq import HQ
+        hq = HQ(db, box, settings, changed, sup)
 
     runners = []
     ai_history: dict = {}
@@ -220,8 +228,11 @@ async def _run(settings: Settings) -> None:
              f" and {settings.portal_url}{settings.owner_path}" if settings.owner_path else "")
     await proxy.apply(db, settings)
     try:
-        await asyncio.gather(sup.run_forever(), health.poll_forever(db, box, sup))
+        extra = (hq.start(), hq.refresh_forever()) if hq is not None else ()
+        await asyncio.gather(sup.run_forever(), health.poll_forever(db, box, sup), *extra)
     finally:
+        if hq is not None:
+            await hq.client.close()
         await sup.stop_all()
         for r in runners:
             await r.cleanup()

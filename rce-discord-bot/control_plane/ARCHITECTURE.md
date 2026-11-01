@@ -104,6 +104,34 @@ Every server runs on one of two bots:
     all at once). The control plane then asks you to restart its own service.
   * CLI: `python -m control_plane update [--install]`.
 
+## The management Discord (HQ)
+
+Connect your own Discord server to the control plane (`control_plane/hq.py`, runs inside `python -m control_plane run`):
+
+* **Setup:** create a NEW bot in the Discord Developer Portal (not the shared bot) and switch on its *Message Content*
+  intent. Invite it to your management server with *Manage Channels*, *View Channels*, *Send Messages*, *Embed Links*
+  and *Read Message History*. Then set `CP_HQ_BOT_TOKEN`, `CP_HQ_GUILD_ID` and `CP_HQ_ADMIN_IDS` (your Discord user
+  id, comma list) or `CP_HQ_ADMIN_ROLE_ID`, and restart the control plane.
+* **What it builds** (private categories, hidden from @everyone):
+  * `🛠 RCE HQ` contains:
+    * `#hq-overview`: customers, subscriptions, servers, live bots/players, the version, and *Check for updates* /
+      *Install update for ALL servers* (asks again).
+    * `#hq-ai`: the management AI for any server, e.g. `#12 list the emote binds`.
+  * `👥 Customers`: one channel per customer who bought the bot. It holds:
+    * a customer panel (account, subscription, slots, add-ons; buttons *Suspend/Reactivate account*, *+1 slot*,
+      *Comp*, add-ons on/off);
+    * one panel per server (state, Discord, RCON, players, errors, a link to its secret admin panel; buttons
+      *Restart*, *Suspend/Reactivate*, *Discord AI on/off*).
+    * Typing in the channel talks to that customer's server's management AI (`#<id> …` if they have more servers).
+* **Updates:** panels refresh every 2 minutes and right after any change from the portal, the owner panel or HQ.
+* **Access:** only `CP_HQ_ADMIN_IDS`, the `CP_HQ_ADMIN_ROLE_ID` role and the server owner. Everyone else's messages
+  and button clicks are ignored or refused.
+* **The bot itself:** it leaves any other Discord server it's added to, and refuses to run with the shared bot's token.
+* **Actions:** every one goes through the same code as the owner panel (`actions.py`) and is audited as
+  `discord:<user id>`. Remove and purge stay in the owner panel only.
+* **Risky AI actions:** console commands, deleting and similar first come back as "not done" with an *Allow risky
+  actions and run again* button.
+
 ## Isolation, layer by layer
 
 1. **Process:** one OS process per server. Only the environment that `provisioning.environment()` builds is passed

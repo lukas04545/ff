@@ -22,7 +22,7 @@ from typing import Awaitable, Callable
 
 from aiohttp import web
 
-from control_plane import billing, features, manage_ai, provisioning, slots, updates
+from control_plane import actions, billing, features, manage_ai, provisioning, slots, updates
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -582,23 +582,8 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
             if path.startswith("/customers/"):
                 cid = int(request.match_info["id"])
                 action = request.match_info["action"]
-                if action == "grant":
-                    slots.grant(db, cid, int(data.get("slots") or 1), owner=who, reason=str(data.get("reason", "")))
-                    slots.release_over_limit(db, cid, actor=actor)
-                elif action in ("suspend", "reactivate"):
-                    provisioning.set_customer_status(db, cid, "suspended" if action == "suspend" else "active",
-                                                     actor=actor, reason="by the owner" if action == "suspend" else None)
-                elif action == "comp":
-                    row = db.one("SELECT status FROM subscriptions WHERE customer_id = ?", (cid,))
-                    new = "none" if row and row["status"] == "comped" else "comped"
-                    db.run("UPDATE subscriptions SET status = ?, updated_at = ? WHERE customer_id = ?",
-                           (new, int(time.time()), cid))
-                    db.audit(actor, f"subscription.{new}", customer_id=cid)
-                elif action == "remove":
-                    for s in db.q("SELECT id FROM servers WHERE customer_id = ? AND status != 'deleted'", (cid,)):
-                        provisioning.remove_server(db, s["id"], actor=actor)
-                    db.run("UPDATE customers SET status = 'deleted' WHERE id = ?", (cid,))
-                    db.audit(actor, "customer.remove", customer_id=cid)
+                actions.customer(db, cid, action, actor=actor, owner=who, slots_n=int(data.get("slots") or 1),
+                                 reason=str(data.get("reason", "")))
                 back = f"/customers/{cid}" if action != "remove" else "/"
             elif path.startswith("/grants/"):
                 gid = int(request.match_info["id"])
@@ -606,18 +591,8 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                 slots.revoke(db, gid, owner=who)
                 back = f"/customers/{cid}"
             else:
-                sid = int(request.match_info["id"])
-                action = request.match_info["action"]
-                if action == "suspend":
-                    provisioning.set_server_status(db, sid, "suspended", actor=actor, reason="by the owner")
-                elif action == "reactivate":
-                    provisioning.set_server_status(db, sid, "active", actor=actor)
-                elif action == "restart" and supervisor is not None:
-                    await supervisor.restart(sid)
-                elif action == "remove":
-                    provisioning.remove_server(db, sid, actor=actor)
-                elif action == "purge":
-                    provisioning.purge_server(db, settings, sid, actor=actor)
+                await actions.server(db, settings, supervisor, int(request.match_info["id"]),
+                                     request.match_info["action"], actor=actor)
                 back = "/"
         except (slots.SlotError, provisioning.ProvisionError, TypeError, ValueError) as exc:
             return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")

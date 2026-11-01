@@ -104,6 +104,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
     server_id INTEGER,
     detail TEXT NOT NULL DEFAULT ''
 );
+-- The management Discord (HQ): where each panel message lives (kind: overview | customer | server)
+CREATE TABLE IF NOT EXISTS hq_messages (
+    kind TEXT NOT NULL,
+    ref_id INTEGER NOT NULL,                      -- 0 for the overview, else the customer / server id
+    channel_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    PRIMARY KEY (kind, ref_id)
+);
+CREATE TABLE IF NOT EXISTS hq_channels (customer_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL);
 """
 
 
