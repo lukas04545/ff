@@ -83,6 +83,32 @@ Every server runs on one of two bots:
   bot's invite link: add it once to every Discord server that doesn't have it yet. Using your existing bot
   application as the shared bot keeps it in the Discords it's already in.
 
+## The shop: packages (monthly subscriptions)
+
+* **The portal is a shop:** the start page shows what the bot does and the packages (`plans` table,
+  `control_plane/plans.py`). *Choose* leads to sign-up, then straight to Stripe Checkout for that package.
+* **The dashboard guides new customers** in four steps, each ticked off by itself:
+  1. package paid;
+  2. server created;
+  3. bot added to their Discord;
+  4. RCON connected.
+  Subscribers can switch packages there; Stripe prorates.
+* **Owner panel → 🛒 Packages:**
+  * name, monthly price (EUR/USD/GBP), number of servers, AI and own-bot add-ons, perks, "most popular", order,
+    for sale yes/no;
+  * saving creates the monthly Stripe price by itself (`STRIPE_PRICE_ID` isn't needed any more);
+  * a new price makes a new Stripe price, and existing subscribers keep theirs;
+  * a new shop starts with three example packages; packages are never deleted, only taken off sale.
+* **A package decides the entitlements:**
+  * `base_slots` comes from the package's server count;
+  * the AI / own-bot add-ons are granted with `granted_by = "plan"` and only those are taken away on a downgrade;
+  * add-ons and slot grants the owner gave by hand stay;
+  * too many servers after a downgrade: the newest become `over_limit` (stopped, data kept).
+* **Stripe drives it:** `checkout.session.completed` (metadata `plan_id`) and `customer.subscription.updated`
+  (its price) apply the package.
+* **Without Stripe:** owner panel → customer → *Set package* (optionally *free / comped*).
+* **Shop name:** Settings → *Shop name* (`CP_SHOP_NAME`).
+
 ## Add-ons and updates
 
 * **Add-ons** (`features` table, owner panel → customer → Add-ons, or `python -m control_plane addon …`):
