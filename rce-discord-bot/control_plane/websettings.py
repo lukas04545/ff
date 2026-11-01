@@ -57,6 +57,8 @@ FIELDS = (
           help="/management by default; 'off' = only the private listener. Never /admin (honeypot)."),
     Field("CP_OWNER_ALLOW_IPS", "Only these IPs may open it (comma list, empty = anyone)", "Owner panel",
           kind="ips", restart=True),
+    Field("CP_CF_TUNNEL_TOKEN", "Cloudflare tunnel token (set by the Cloudflare setup)", "Cloudflare", secret=True,
+          restart=True, help="Filled in by 'Set up Cloudflare' below – you don't need to paste it yourself."),
     Field("CP_UPDATE_REPO", "Update source (GitHub owner/repo)", "Updates"),
     Field("CP_UPDATE_BRANCH", "Update branch", "Updates"),
     Field("CP_TENANT_MEMORY_MB", "Memory limit per server (MB)", "Servers", kind="int"),
@@ -92,7 +94,8 @@ KEY_ATTR = {"CP_BASE_DOMAIN": "base_domain", "CP_DEEPSEEK_API_KEY": "deepseek_ap
             "CP_GRACE_DAYS": "grace_days", "CP_HQ_BOT_TOKEN": "hq_bot_token", "CP_HQ_GUILD_ID": "hq_guild_id",
             "CP_HQ_ADMIN_IDS": "hq_admin_ids", "CP_HQ_ADMIN_ROLE_ID": "hq_admin_role_id",
             "CP_OWNER_PATH": "owner_path", "CP_OWNER_ALLOW_IPS": "owner_allow_ips", "CP_UPDATE_REPO": "update_repo",
-            "CP_UPDATE_BRANCH": "update_branch", "CP_TENANT_MEMORY_MB": "memory_mb"}
+            "CP_UPDATE_BRANCH": "update_branch", "CP_TENANT_MEMORY_MB": "memory_mb",
+            "CP_CF_TUNNEL_TOKEN": "cf_tunnel_token"}
 
 
 def refresh(settings: Settings, keys=None) -> None:

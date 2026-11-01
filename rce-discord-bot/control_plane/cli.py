@@ -7,6 +7,8 @@
                                login: without an owner account it lets you create yours
   adopt [--email <you>]        move EVERY server of this install (main + servers/<id>) into tenants at once –
                                tokens, databases (also encrypted ones), settings and panel addresses stay
+  cloudflare [--domain x]      every website through ONE Cloudflare tunnel, set up by itself (asks for your API
+                               token once – not stored); no Caddy, no open ports
   setup [--port 8099]          first setup in the browser before your domain works: a temporary owner panel on
                                http://<server ip>:8099 with a one-time link (stops after 30 minutes)
 
@@ -443,6 +445,35 @@ def adopt(db: DB, box: SecretBox, settings: Settings, source: Path, email: str) 
     return results
 
 
+def cmd_cloudflare(args, settings: Settings) -> int:
+    """Puts every website behind one Cloudflare tunnel (no Caddy, no open ports). The API token isn't stored."""
+    from control_plane import cftunnel
+    from support.cloudflare import CloudflareError
+    if args.domain:
+        from control_plane import websettings
+        db0, box0 = _db_and_box(settings)
+        websettings.save(db0, box0, {"CP_BASE_DOMAIN": args.domain}, actor="cli")
+        websettings.refresh(settings, ["CP_BASE_DOMAIN"])
+    token = os.environ.get("CF_API_TOKEN") or getpass.getpass(
+        "Cloudflare API token (Tunnel Edit, DNS Edit, Zone Read – not stored, input hidden): ")
+    db, box = _db_and_box(settings)
+    try:
+        out = asyncio.run(cftunnel.setup(db, box, settings, token))
+    except CloudflareError as exc:
+        print(f"Not done: {exc}")
+        return 1
+    print(f"✅ Cloudflare tunnel {out['tunnel']} for {out['domain']}:")
+    for host, state in out["dns"].items():
+        print(f"   {host}: {state}")
+    print("The API token wasn't saved. Now restart the control plane so it starts the tunnel:\n"
+          "   systemctl restart rce-saas      (or stop and start `python3 -m control_plane run`)\n"
+          "If you added A records for portal / * by hand before, delete them in Cloudflare (DNS → Records).\n")
+    cmd_links(argparse.Namespace(email=None), settings)
+    print()
+    cmd_login_link(args, settings)
+    return 0
+
+
 OWNER_ACCOUNT = "owner@servers.local"     # your own servers' account when no e-mail is given (never mailed)
 
 
@@ -527,10 +558,14 @@ async def _run(settings: Settings) -> None:
              settings.owner_host, settings.owner_port,
              f" and {settings.portal_url}{settings.owner_path}" if settings.owner_path else "")
     await proxy.apply(db, settings)
+    from control_plane import cftunnel
+    tunnel = cftunnel.start_tunnel(settings)           # every website through the Cloudflare tunnel (if set up)
     try:
         extra = (hq.start(), hq.refresh_forever()) if hq is not None else ()
         await asyncio.gather(sup.run_forever(), health.poll_forever(db, box, sup), *extra)
     finally:
+        if tunnel is not None:
+            tunnel.stop()
         if hq is not None:
             await hq.client.close()
         await sup.stop_all()
@@ -554,6 +589,8 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--reason")
     sub.add_parser("rotate-keys")
     sub.add_parser("login-link")
+    cf = sub.add_parser("cloudflare")
+    cf.add_argument("--domain", help="your domain, e.g. kryvon3x.com (if it isn't set yet)")
     ad = sub.add_parser("adopt")
     ad.add_argument("--email", help="optional: the account these servers belong to (default: your own owner account)")
     ad.add_argument("--source", help="the old bot folder (default: this one)")
@@ -595,7 +632,7 @@ def main(argv: list[str] | None = None) -> int:
     return {"init": cmd_init, "create-owner": cmd_create_owner, "grant": cmd_grant, "rotate-keys": cmd_rotate,
             "import-server": cmd_import, "addon": cmd_addon, "update": cmd_update,
             "links": cmd_links, "login-link": cmd_login_link, "setup": cmd_setup,
-            "adopt": cmd_adopt}[args.cmd](args, settings)
+            "adopt": cmd_adopt, "cloudflare": cmd_cloudflare}[args.cmd](args, settings)
 
 
 if __name__ == "__main__":

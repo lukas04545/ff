@@ -23,7 +23,7 @@ from typing import Awaitable, Callable
 
 from aiohttp import web
 
-from control_plane import actions, billing, features, manage_ai, provisioning, slots, updates, websettings
+from control_plane import actions, billing, hostproxy, features, manage_ai, provisioning, slots, updates, websettings
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -139,7 +139,8 @@ async def exchange_code(settings: Settings, code: str) -> str:
 # ================================================================== PORTAL (customers)
 
 def build_portal(db: DB, box: SecretBox, settings: Settings, changed: Callable[[], Awaitable[None]]) -> web.Application:
-    app = web.Application(client_max_size=256 * 1024)
+    # every website (<slug>.<domain>) can come in through this listener too (one Cloudflare tunnel): hostproxy
+    app = web.Application(client_max_size=hostproxy.MAX_BODY, middlewares=[hostproxy.middleware(db, settings)])
     sess = Sessions(settings.session_secret, "portal", "cp_c")
     limiter = RateLimiter(10, 300)
 
@@ -778,7 +779,13 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         return page("Settings", f"""<p><a href={P}/>← owner panel</a></p><h1>⚙️ Settings</h1>{warn}
 {f'<p class=muted>{msg}</p>' if msg else ''}<p class=muted>Saved encrypted in the control plane's database; they win over
 /etc/rce-saas.env. The master key and the session secret stay in that file only.</p>
-<form method=post action={P}/settings>{hidden(request)}{body}<button>Save</button></form>""")
+<form method=post action={P}/settings>{hidden(request)}{body}<button>Save</button></form>
+<div class=card><h2>☁️ Set up Cloudflare (every website through one tunnel)</h2><p class=muted>Paste a Cloudflare API
+token with <b>Account › Cloudflare Tunnel › Edit</b>, <b>Zone › DNS › Edit</b> and <b>Zone › Zone › Read</b>. It's used
+once for the setup and <b>not stored</b>. Creates the tunnel, the record *.{esc(settings.base_domain)} and moves the old
+addresses of your adopted servers. No Caddy and no open ports needed.</p>
+<form method=post action={P}/cloudflare>{hidden(request)}<input name=api_token type=password autocomplete=off
+style="width:100%" placeholder="Cloudflare API token" required><br><br><button>Set up Cloudflare</button></form></div>""")
 
     async def settings_page(request):
         owner(request)
@@ -800,6 +807,22 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
                     " (systemctl restart rce-saas, or stop and start `run`).")
         return settings_form(request, esc(msg))
 
+    async def cloudflare_setup(request):
+        from control_plane import cftunnel
+        from support.cloudflare import CloudflareError
+        who = owner(request)
+        data = await sess.form(request)
+        try:
+            out = await cftunnel.setup(db, box, settings, str(data.get("api_token", "")))
+        except CloudflareError as exc:
+            return page("Not done", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/settings>Back</a></div>")
+        db.audit(f"owner:{who}", "cloudflare.setup.web")
+        rows = "".join(f"<li><code>{esc(h)}</code>: {esc(v)}</li>" for h, v in out["dns"].items())
+        return page("Cloudflare", f"""<p><a href={P}/settings>← settings</a></p><h1>☁️ Cloudflare is set up</h1>
+<div class=card><p>Tunnel {esc(out['tunnel'])} for <b>{esc(out['domain'])}</b>. DNS:</p><ul>{rows}</ul>
+<p>The API token wasn't saved. <b>Restart the control plane</b> (<code>systemctl restart rce-saas</code>) – it then
+starts the tunnel and every website is online at its address.</p></div>""")
+
     async def audit(request):
         owner(request)
         rows = db.q("SELECT * FROM audit_log ORDER BY id DESC LIMIT 300")
@@ -812,6 +835,7 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
     app.add_routes([web.get("/login", login_page), web.post("/login", login), web.post("/logout", logout),
                     web.get("/once/{token}", once_page), web.post("/once/{token}", once_use),
                     web.get("/settings", settings_page), web.post("/settings", settings_save),
+                    web.post("/cloudflare", cloudflare_setup),
                     web.get("/", dashboard), web.get(r"/customers/{cid:\d+}", customer), web.get("/audit", audit),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post(r"/grants/{id:\d+}/revoke", act),

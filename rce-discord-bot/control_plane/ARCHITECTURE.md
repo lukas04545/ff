@@ -306,6 +306,18 @@ python3 -m control_plane links                          # where everything is
   `rcebot`) and continues as that user (`CP_RUN_AS_ROOT=1` turns that off).
 * The shared bot's Discord app needs the redirect `https://portal.yourdomain.com/discord/callback`.
 
+**Cloudflare instead of Caddy (recommended – nothing to install or open):**
+`python3 -m control_plane cloudflare --domain yourdomain.com` (or owner panel → Settings → *Set up Cloudflare*) asks
+once for a Cloudflare API token (*Account › Cloudflare Tunnel › Edit*, *Zone › DNS › Edit*, *Zone › Zone › Read*). It:
+* creates the tunnel `rce-saas-<domain>`;
+* routes `*.<domain>` and `<domain>` to the portal listener;
+* creates the proxied record `*.<domain>`;
+* moves the old addresses of adopted servers (their previous panel hostnames) to it.
+
+Only the tunnel token is kept, encrypted with the website settings; the API token is not stored. `run` starts
+cloudflared. The portal listener then passes each `<slug>.<domain>` on to that server's port (`hostproxy.py`), sets
+`X-Forwarded-For` to the visitor, keeps the `Host`, and sends suspended servers to their *paused* page.
+
 Caddy (`/etc/caddy/Caddyfile`):
 ```
 portal.yourdomain.com {
