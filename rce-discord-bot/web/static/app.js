@@ -417,6 +417,7 @@ function route() {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
+  if ((me.hidden_views || []).includes(view)) { location.replace("#overview"); return; }   // hosted: not here
   if (view.startsWith("p/")) { pluginTab(main, view.slice(2)); return; }
   (views[view] || views.overview)(main);
 }
@@ -506,8 +507,10 @@ async function start() {
   try { me = await api("/api/me"); } catch { return; }
   setupMode = !!me.setup_mode;
   window.RCE_SKINS?.apply(me.skin, me.skin_options);              // the panel theme the owner picked for this account
+  const hiddenViews = new Set(me.hidden_views || []);   // hosted: the host's pages / AI without the add-on
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("hidden",
-    (setupMode && a.dataset.view !== "settings") || (a.hasAttribute("data-owner") && !isOwner())));
+    (setupMode && a.dataset.view !== "settings") || (a.hasAttribute("data-owner") && !isOwner())
+    || hiddenViews.has(a.dataset.view)));
   $("#whoami").replaceChildren(h("strong", { text: me.user }), h("small", { text: me.role === "owner" ? "Owner" : "Admin" }));
   $("#avatar").textContent = (me.user || "?").slice(0, 1);
   $("#account").classList.remove("hidden");        // everyone: password + two-factor login

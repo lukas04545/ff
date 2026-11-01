@@ -26,8 +26,8 @@ from aiohttp import web
 
 from urllib.parse import quote_plus
 
-from control_plane import (actions, billing, features, hostproxy, manage_ai, plans, provisioning, shop_ui, slots,
-                           updates, websettings)
+from control_plane import (actions, billing, features, hostproxy, manage_ai, owner_ui, plans, provisioning, shop_ui,
+                           slots, updates, websettings)
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -612,6 +612,9 @@ def build_owner(db: DB, box: SecretBox, settings: Settings, changed: Callable[[]
     public portal (a sub-app there) – then allow_ips (if set) limits who even sees the login page."""
     P = prefix.rstrip("/")
 
+    def page(title: str, body: str) -> web.Response:      # the owner panel's own look (owner_ui.py)
+        return owner_ui.owner_frame(title, body, prefix=P, shop=settings.shop_name)
+
     @web.middleware
     async def guard(request, handler):
         if allow_ips and _client_ip(request) not in allow_ips:
@@ -743,25 +746,77 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                 f"{button(request, '/update/install', 'Install update for ALL servers', danger=True, confirm='Install the newest version and restart every server one by one?')}"
                 f"{again}</div>")
 
+    def customer_rows(customers) -> str:
+        return "".join(
+            f"<tr><td><a href={P}/customers/{c['id']}>#{c['id']} {esc(c['email'])}</a><br><span class=muted>"
+            f"{esc(c['name'])}</span></td><td>{pill(c['status'])}</td><td>{pill(c['sub_status'] or 'none')}"
+            f"{'<br><span class=muted>' + esc(c['plan_name']) + '</span>' if c['plan_name'] else ''}</td>"
+            f"<td>{slots.slots_used(db, c['id'])} / {slots.slot_limit(db, c['id'])}</td></tr>" for c in customers)
+
+    def all_customers():
+        return db.q("SELECT c.*, s.status AS sub_status, s.grace_until, p.name AS plan_name FROM customers c "
+                    "LEFT JOIN subscriptions s ON s.customer_id = c.id LEFT JOIN plans p ON p.id = s.plan_id "
+                    "WHERE c.status != 'deleted' ORDER BY c.id")
+
     async def dashboard(request):
         who = owner(request)
-        customers = db.q("SELECT c.*, s.status AS sub_status, s.grace_until FROM customers c LEFT JOIN subscriptions s "
-                         "ON s.customer_id = c.id WHERE c.status != 'deleted' ORDER BY c.id")
-        crows = "".join(
-            f"<tr><td><a href={P}/customers/{c['id']}>#{c['id']} {esc(c['email'])}</a><br><span class=muted>"
-            f"{esc(c['name'])}</span></td><td>{pill(c['status'])}</td><td>{pill(c['sub_status'] or 'none')}</td>"
-            f"<td>{slots.slots_used(db, c['id'])} / {slots.slot_limit(db, c['id'])}</td></tr>" for c in customers)
+        customers = all_customers()
         counts = db.one("SELECT COUNT(*) AS n, SUM(status = 'active') AS a FROM servers WHERE status != 'deleted'")
         running = sum(1 for p in (supervisor.procs.values() if supervisor else []) if p.state == "running")
-        return page("Owner", f"""<h1>Owner panel <span class=muted>({esc(who)})</span></h1>
-<p>{len(customers)} customers · {counts['n'] or 0} servers ({counts['a'] or 0} active, {running} processes running)
-· <a href={P}/plans>🛒 packages</a> · <a href={P}/domains>🌐 domains</a> · <a href={P}/settings>⚙️ settings</a> · <a href={P}/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
+        live = db.one("SELECT SUM(h.discord_ready) AS d, SUM(h.rcon_connected) AS r, SUM(h.players_online) AS p "
+                      "FROM health h JOIN servers s ON s.id = h.server_id WHERE s.status = 'active'")
+        mrr = db.q("SELECT p.price_cents, p.currency FROM subscriptions s JOIN plans p ON p.id = s.plan_id "
+                   "WHERE s.status IN ('active', 'trialing')")
+        totals: dict[str, int] = {}
+        for r in mrr:
+            totals[r["currency"]] = totals.get(r["currency"], 0) + r["price_cents"]
+        money = " + ".join(f"{plans.CURRENCIES.get(cur, cur)}{cents / 100:.2f}" for cur, cents in totals.items()) or "–"
+        problems = db.q("SELECT s.id, s.name, h.error, h.process FROM servers s LEFT JOIN health h ON h.server_id = s.id "
+                        "WHERE s.status = 'active' AND (h.error IS NOT NULL OR h.discord_ready = 0 OR "
+                        "h.process IN ('crashed', 'crashloop'))")
+        attention = "".join(f"<tr><td>#{p['id']} {esc(p['name'])}</td><td>{pill(p['process'] or 'not started')}</td>"
+                            f"<td class=err>{esc((p['error'] or 'Discord offline')[:160])}</td></tr>" for p in problems)
+        paying = sum(1 for c in customers if c["sub_status"] in ("active", "trialing"))
+        return page("Owner", f"""<div class=kicker>LIVE PLATFORM OPERATIONS</div><h1>Owner panel · Overview <span class=muted
+style="font-size:1rem">· {esc(who)}</span></h1>
+<div class=stats>{owner_ui.stat("Customers", len(customers), f"{paying} paying")}
+{owner_ui.stat("Servers", f"{counts['a'] or 0} / {counts['n'] or 0}", f"{running} processes running")}
+{owner_ui.stat("Bots online", live['d'] or 0, f"RCON {live['r'] or 0}")}
+{owner_ui.stat("Players now", live['p'] or 0)}
+{owner_ui.stat("Monthly revenue", money, "active subscriptions")}
+{owner_ui.stat("Need attention", len(problems))}</div>
+{f"<div class=card><h2>⚠️ Need attention</h2><table><tr><th>Server</th><th>Process</th><th>Problem</th></tr>{attention}</table></div>" if problems else ""}
 {update_card(request)}
 {f"<div class=card><h2>🤖 Shared bot</h2><p>One bot for every server. Add it to a Discord: <a href='{esc(provisioning.shared_invite(settings))}' target=_blank>invite link</a>. Then press <b>Use the shared bot</b> on that server's row (its Discord server id is filled in when known).</p></div>" if settings.shared_client_id else ""}
-<div class=card><h2>Customers</h2><table><tr><th>Customer</th><th>Account</th><th>Subscription</th><th>Slots
-(used / limit)</th></tr>{crows or '<tr><td colspan=4>None yet.</td></tr>'}</table></div>
+<div class=card><h2>Newest customers</h2><table><tr><th>Customer</th><th>Account</th><th>Package</th><th>Slots</th></tr>
+{customer_rows(list(customers)[-5:][::-1]) or '<tr><td colspan=4>None yet.</td></tr>'}</table>
+<a href={P}/customers>All customers →</a></div>
+<div class=card><h2>All servers</h2>{server_rows(request, "WHERE s.status != 'deleted'")}</div>""")
+
+    async def customers_page(request):
+        owner(request)
+        return page("Customers", f"""<div class=kicker>CUSTOMERS</div><h1>Customers</h1><div class=card><table>
+<tr><th>Customer</th><th>Account</th><th>Package</th><th>Slots (used / limit)</th></tr>
+{customer_rows(all_customers()) or '<tr><td colspan=4>None yet.</td></tr>'}</table></div>""")
+
+    async def servers_page(request):
+        owner(request)
+        return page("Servers", f"""<div class=kicker>CUSTOMERS</div><h1>Servers</h1>
 <div class=card><h2>All servers</h2>{server_rows(request, "WHERE s.status != 'deleted'")}</div>
 <div class=card><h2>Removed (restorable until purged)</h2>{server_rows(request, "WHERE s.status = 'deleted'")}</div>""")
+
+    async def system_page(request):
+        owner(request)
+        info = host_stats(supervisor, db)
+        rows = "".join(f"<tr><td>#{p['id']} {esc(p['name'])}</td><td>{esc(p['pid'] or '–')}</td>"
+                       f"<td>{esc(p['mem'])}</td><td>{pill(p['state'])}</td></tr>" for p in info["procs"])
+        return page("System", f"""<div class=kicker>CONTROL</div><h1>System</h1>
+<p class=muted>The VPS every server runs on (what used to be each server's System page – it belongs here).</p>
+<div class=stats>{owner_ui.stat("CPU load", info['load'], f"{info['cores']} cores")}
+{owner_ui.stat("Memory", info['mem'], info['mem_sub'])}{owner_ui.stat("Disk", info['disk'], info['disk_sub'])}
+{owner_ui.stat("Up for", info['uptime'])}</div>
+<div class=card><h2>Server processes</h2><table><tr><th>Server</th><th>Process ID</th><th>Memory</th><th>State</th></tr>
+{rows or '<tr><td colspan=4>No processes.</td></tr>'}</table></div>""")
 
     async def customer(request):
         owner(request)
@@ -1183,6 +1238,8 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.get("/domains", domains_page), web.post("/domains/activate", domains_activate),
                     web.post(r"/plans/{id:\d+}", plan_save), web.post(r"/customers/{id:\d+}/plan", customer_plan),
                     web.get("/", dashboard), web.get(r"/customers/{cid:\d+}", customer), web.get("/audit", audit),
+                    web.get("/customers", customers_page), web.get("/servers", servers_page),
+                    web.get("/system", system_page),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post(r"/grants/{id:\d+}/revoke", act),
                     web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act),
@@ -1194,6 +1251,56 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.post(r"/servers/{id:\d+}/token", set_token),
                     web.post(r"/servers/{id:\d+}/shared-bot", shared_bot)])
     return app
+
+
+def host_stats(supervisor, db: DB) -> dict:
+    """CPU load, memory, disk and uptime of the VPS plus each server process' memory (Linux /proc; best effort)."""
+    import os
+    import shutil
+
+    def fmt(n: float) -> str:
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if n < 1024:
+                return f"{n:.0f} {unit}" if unit in ("B", "KB") else f"{n:.1f} {unit}"
+            n /= 1024
+        return f"{n:.1f} PB"
+    out = {"cores": os.cpu_count() or "?", "load": "–", "mem": "–", "mem_sub": "", "disk": "–", "disk_sub": "",
+           "uptime": "–", "procs": []}
+    try:
+        out["load"] = " / ".join(f"{x:.2f}" for x in os.getloadavg())
+    except (OSError, AttributeError):
+        pass
+    try:
+        info = {k.strip(): int(v.split()[0]) * 1024 for k, v in
+                (line.split(":", 1) for line in open("/proc/meminfo", encoding="utf-8") if ":" in line)}
+        used = info["MemTotal"] - info.get("MemAvailable", info.get("MemFree", 0))
+        out["mem"] = f"{100 * used / info['MemTotal']:.0f}%"
+        out["mem_sub"] = f"{fmt(used)} of {fmt(info['MemTotal'])}"
+    except (OSError, KeyError, ValueError):
+        pass
+    try:
+        du = shutil.disk_usage("/")
+        out["disk"], out["disk_sub"] = f"{100 * du.used / du.total:.0f}%", f"{fmt(du.free)} free"
+    except OSError:
+        pass
+    try:
+        secs = float(open("/proc/uptime", encoding="utf-8").read().split()[0])
+        out["uptime"] = f"{int(secs // 86400)}d {int(secs % 86400 // 3600)}h"
+    except (OSError, ValueError, IndexError):
+        pass
+    names = {r["id"]: r["name"] for r in db.q("SELECT id, name FROM servers")}
+    for sid, p in sorted((supervisor.procs.items() if supervisor else [])):
+        pid = getattr(getattr(p, "process", None), "pid", None) or getattr(p, "pid", None)
+        mem = "–"
+        try:
+            for line in open(f"/proc/{pid}/status", encoding="utf-8"):
+                if line.startswith("VmRSS:"):
+                    mem = fmt(int(line.split()[1]) * 1024)
+        except (OSError, TypeError, ValueError):
+            pass
+        out["procs"].append({"id": sid, "name": names.get(sid, "?"), "pid": pid, "mem": mem,
+                             "state": getattr(p, "state", "?")})
+    return out
 
 
 def mount_owner(portal: web.Application, owner_app: web.Application, prefix: str) -> None:

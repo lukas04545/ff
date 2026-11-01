@@ -41,6 +41,8 @@ def locked_settings() -> frozenset[str]:
     extra = {"GUILD_ID"} if os.environ.get("SAAS_SHARED_BOT") == "1" else set()
     if os.environ.get("SAAS_MANAGER_AI") != "1":
         extra |= MANAGER_KEYS                          # the management AI isn't switched on for this server
+    if enabled() and not ai_enabled():
+        extra |= ai_keys()                             # no AI add-on: no AI settings at all
     return LOCKED_SETTINGS | extra
 
 
@@ -67,7 +69,13 @@ BLOCKED_API = (
     ("POST", "/api/plugins/upload"), ("POST", "/api/plugins/generate"), ("*", "/api/allplugins"),
     ("POST", "/api/servers"), ("DELETE", "/api/servers"), ("POST", "/api/switch"),
     ("POST", "/api/update"), ("*", "/api/backups/full"), ("POST", "/api/settings/cloudflare-domain"),
+    ("*", "/api/system"),                              # the VPS's CPU/memory: the owner panel's System page
 )
+# Panel pages a hosted tenant doesn't get (they belong to the owner panel or need code changes)
+HIDDEN_VIEWS = ("servers", "makeplugin", "system")
+AI_VIEWS = ("knowledge",)                              # only with the AI add-on
+AI_PREFIXES = ("AI_", "DEEPSEEK_", "TICKET_AI_", "KNOWLEDGE_")
+AI_API = ("/api/knowledge",)
 
 
 def enabled() -> bool:
@@ -77,7 +85,21 @@ def enabled() -> bool:
 def blocked(method: str, path: str) -> bool:
     if not enabled():
         return False
+    if not ai_enabled() and any(path.startswith(p) for p in AI_API):
+        return True                                    # the AI add-on isn't on: its knowledge base isn't either
     return any((m == "*" or m == method.upper()) and path.startswith(p) for m, p in BLOCKED_API)
+
+
+def ai_keys() -> frozenset[str]:
+    from settings_schema import FIELDS
+    return frozenset(f.key for f in FIELDS if f.key.startswith(AI_PREFIXES))
+
+
+def hidden_views() -> list[str]:
+    """Panel pages this tenant doesn't see (the server still refuses their API calls)."""
+    if not enabled():
+        return []
+    return list(HIDDEN_VIEWS) + ([] if ai_enabled() else list(AI_VIEWS))
 
 
 def health_ok(header: str) -> bool:
