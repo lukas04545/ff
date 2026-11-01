@@ -543,6 +543,9 @@ class WebInterface:
         r.add_delete("/api/timed-roles/{row_id:\\d+}", self.delete_timed_role)
         r.add_get("/api/backups", self.list_backups)
         r.add_post("/api/backups", self.create_backup)
+        r.add_get("/api/backups/full", self.full_backups)
+        r.add_post("/api/backups/full", self.create_full_backup)
+        r.add_post("/api/backups/full/{name}/restore", self.emergency_restore)
         r.add_get("/api/backups/{name}", self.download_backup)
         r.add_get("/api/webshop", self.webshop)
         r.add_post("/api/webshop/kits", self.webshop_kit_create)
@@ -3757,6 +3760,39 @@ class WebInterface:
             raise ApiError("Backup failed – see the bot log.", 500)
         self._audit(f"Backup created: {name}")
         return web.json_response({"ok": True, "name": name})
+
+    async def full_backups(self, request: web.Request) -> web.Response:
+        """Weekly full backups (code + every database + settings) and whether an emergency restore is possible."""
+        import full_backup
+        cog = self.bot.get_cog("FullBackups") if self.bot else None
+        last = float(self.bot.db.get_value("last_full_backup_ts") or 0) if self.bot else 0
+        return web.json_response({"enabled": bool(cog and cog.enabled()), "available": cog is not None,
+                                  "main": not servers.is_child(), "last": int(last) or None,
+                                  "error": getattr(cog, "last_error", None),
+                                  "backups": await asyncio.to_thread(full_backup.list_backups)})
+
+    async def create_full_backup(self, request: web.Request) -> web.Response:
+        cog = self._cog("FullBackups")
+        if servers.is_child():
+            raise ApiError("Full backups are made on the main server (they include every server).")
+        try:
+            name = await cog.make_now("manual")
+        except Exception as exc:
+            raise ApiError(f"Full backup failed: {exc}", 500) from exc
+        self._audit(f"Full backup created: {name}")
+        return web.json_response({"ok": True, "name": name})
+
+    async def emergency_restore(self, request: web.Request) -> web.Response:
+        """🚨 Saves the current state, then restarts into the chosen full backup (type RESTORE to confirm)."""
+        cog = self._cog("FullBackups")
+        data = await self._json(request)
+        if str(data.get("confirm") or "").strip().upper() != "RESTORE":
+            raise ApiError("Type RESTORE to confirm.")
+        try:
+            safety = await cog.emergency_restore(request.match_info["name"], by=f"web ({_current_user.get()})")
+        except ValueError as exc:
+            raise ApiError(str(exc)) from exc
+        return web.json_response({"ok": True, "safety": safety})
 
     async def download_backup(self, request: web.Request) -> web.StreamResponse:
         path = backups.backup_path(request.match_info["name"])

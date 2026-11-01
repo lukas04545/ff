@@ -455,6 +455,12 @@ FIELDS: list[Field] = [
           help="On (default): once a day and before every automatic update the bot saves the database, web "
                "logins, rules and knowledge base to data/backups/ (your .env with the tokens is not included)."),
     Field("BACKUP_KEEP_DAYS", "Keep backups for … days", "alerts", "int", placeholder="7"),
+    Field("FULL_BACKUP_ENABLED", "Weekly full backup (code + everything)", "alerts", "bool",
+          help="On (default): every week the WHOLE bot folder – code, every database (also the extra servers'), "
+               "settings (.env), plugins and uploads – is saved to data/full_backups/; each is deleted after a week "
+               "(the newest always stays). 🚨 Emergency restore (below, or /emergency-restore) saves the current state "
+               "first, then puts everything back to the chosen one and restarts. Bot won't start? Run "
+               "python full_backup.py restore in the bot folder."),
     Field("BACKUP_COPY_DIR", "Also copy backups to folder (e.g. Google Drive)", "alerts",
           placeholder=r"G:\My Drive\RCE bot backups",
           help="Install Google Drive for desktop, then enter a folder inside it. Every backup ZIP is copied there "

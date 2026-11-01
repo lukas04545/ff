@@ -3201,9 +3201,42 @@ function backupBox() {
         h("span", { class: "muted", text: `${r.enabled ? `daily + before every update, kept ${r.keep_days} days` : "daily backup off"} · data/backups/ · ${r.include_env ? "with .env" : "without .env"}` })),
       copy, ...errs,
       ...(list.length ? list : [h("span", { class: "muted", text: "No backup yet." })]),
-      h("div", { class: "row", style: "margin-top:.4rem" }, btn));
+      h("div", { class: "row", style: "margin-top:.4rem" }, btn),
+      fullBackupBox());
   };
   api("/api/backups").then(render).catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
+  return box;
+}
+
+// Weekly full backups (code + every database + settings) with the 🚨 emergency restore
+function fullBackupBox() {
+  const box = h("div", { style: "margin-top:.9rem;padding-top:.7rem;border-top:1px solid var(--border)" }, h("span", { class: "muted", text: "Loading full backups …" }));
+  const load = () => api("/api/backups/full").then((r) => {
+    if (!r.main) { box.replaceChildren(h("span", { class: "muted", text: "🧳 Full backups and the emergency restore are on the main server's panel (they cover every server)." })); return; }
+    const make = h("button", { class: "small", text: "🧳 Full backup now", onclick: async () => {
+      make.disabled = true; make.textContent = "Saving … (can take a minute)";
+      try { await act(() => api("/api/backups/full", { method: "POST" }), "Full backup saved"); } catch {}
+      load();
+    } });
+    const rows = r.backups.map((b) => h("div", { class: "row", style: "font-size:.85rem;align-items:center" },
+      h("code", { text: b.name }),
+      h("span", { class: "muted", text: `${b.size_mb} MB · ${new Date(b.created * 1000).toLocaleString()}` }),
+      h("button", { class: "small danger", text: "🚨 Emergency restore", onclick: async () => {
+        const typed = prompt(`Put EVERYTHING back to ${b.name}?\n\nCode, databases (all servers), settings and plugins go back to that point – everything since then is replaced. The current state is saved first (pre-restore), so you can undo it. The bot restarts.\n\nType RESTORE to confirm:`);
+        if (typed === null) return;
+        if (typed.trim().toUpperCase() !== "RESTORE") { toast("Not confirmed – nothing was changed", true); return; }
+        const res = await act(() => api(`/api/backups/full/${encodeURIComponent(b.name)}/restore`, { method: "POST", body: { confirm: "RESTORE" } }), "Restoring – the bot restarts …").catch(() => null);
+        if (res) box.replaceChildren(h("strong", { text: `🚨 Restoring ${b.name} – the panel is back in a moment. The state before is saved as ${res.safety}.` }));
+      } })));
+    box.replaceChildren(
+      h("div", { class: "row" }, h("strong", { text: "🧳 Full backups " }),
+        h("span", { class: "muted", text: `${r.enabled ? "weekly" : "weekly backup off"} · the whole bot: code, every database, settings (.env), plugins · each kept a week (the newest always stays) · data/full_backups/` + (r.last ? ` · last ${new Date(r.last * 1000).toLocaleString()}` : "") })),
+      r.error ? h("div", { class: "error", style: "font-size:.85rem", text: "⚠️ " + r.error }) : "",
+      ...(rows.length ? rows : [h("span", { class: "muted", text: "No full backup yet." })]),
+      h("div", { class: "row", style: "margin-top:.4rem" }, make),
+      h("div", { class: "muted", style: "font-size:.8rem", text: "Bot doesn't start at all? Run  python full_backup.py restore  in the bot folder (newest backup)." }));
+  }).catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
+  load();
   return box;
 }
 
