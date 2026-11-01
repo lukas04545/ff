@@ -109,3 +109,20 @@ def test_owner_path_setting():
     assert _owner_path("off") == "" and _owner_path("") == ""
     with pytest.raises(ValueError):
         _owner_path("/a/b")
+
+
+def test_admin_is_reserved_for_the_honeypot():
+    for bad in ("/admin", "admin", "/Admin/", "/login", "/dashboard"):
+        with pytest.raises(ValueError):
+            _owner_path(bad)
+
+
+def test_customers_get_the_secret_panel_link_not_the_honeypot(cp):  # noqa: F811
+    cid = customer(cp)
+    paid(cp, cid)
+    out = provisioning.provision_server(cp.db, cp.box, cp.settings, cid, "Main", actor="t")
+    assert "/admin" not in out["panel_url"] and re.search(r"/panel-[A-Za-z0-9]{16}$", out["panel_url"])
+    row = cp.db.one("SELECT * FROM servers WHERE id = ?", (out["id"],))
+    assert provisioning.panel_url(cp.settings, row) == out["panel_url"]
+    provisioning.finish_provisioning(cp.db, cp.box, cp.settings, out["id"])        # a re-run keeps the address
+    assert provisioning.panel_url(cp.settings, row) == out["panel_url"]

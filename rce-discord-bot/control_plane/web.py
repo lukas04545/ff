@@ -221,7 +221,8 @@ placeholder="Password (10+)" required> <button>Sign up</button></form></div>""")
         flash = request.query.get("m", "")
         rows = "".join(
             f"<tr><td><b>{esc(s['name'])}</b><br><a href='{esc(settings.url_for(s['slug']))}' target=_blank>"
-            f"{esc(settings.url_for(s['slug']))}</a></td><td>{pill(s['status'])}"
+            f"{esc(settings.url_for(s['slug']))}</a><br><a href='{esc(provisioning.panel_url(settings, s))}' "
+            f"target=_blank>Admin panel</a></td><td>{pill(s['status'])}"
             f"{'<br><span class=muted>' + esc(s['suspend_reason']) + '</span>' if s['suspend_reason'] else ''}</td>"
             f"<td>{'🟢 ' + esc(s['guild_name'] or 'online') if s['discord_ready'] else '⚪'} "
             f"{'· RCON ✅' if s['rcon_connected'] else ''} {'· ' + str(s['players_online']) + ' online' if s['players_online'] else ''}</td>"
@@ -318,7 +319,7 @@ Developer Portal), website, database, kits and settings. Open the server's link 
             return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href=/dashboard>Back</a></div>")
         await changed()
         return page("Server created", f"""<div class=card><h2>✅ {esc(data.get('name'))} created</h2>
-<p>Panel: <a href='{esc(out['url'])}/admin'>{esc(out['url'])}/admin</a></p>
+<p>Panel (secret address – bookmark it; /admin is a trap for intruders): <a href='{esc(out['panel_url'])}'>{esc(out['panel_url'])}</a></p>
 <p>Panel password (shown ONCE – save it): <code>{esc(out['panel_password'])}</code></p>
 <p>Next: create a bot in the Discord Developer Portal, invite it to your Discord and paste its token on the
 dashboard.</p><a href=/dashboard>Back to the dashboard</a></div>""")
