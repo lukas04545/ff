@@ -136,3 +136,21 @@ def test_owner_sets_the_missing_bot_token(cp, old):  # noqa: F811
         finally:
             await c.close()
     asyncio.run(scenario())
+
+
+def test_adopt_puts_everything_on_the_shared_bot(cp, old, capsys, monkeypatch):  # noqa: F811
+    import json as _json
+    monkeypatch.setattr(cli, "Settings", lambda: cp.settings)
+    monkeypatch.setattr(cli, "service_user", lambda: None)
+    monkeypatch.setattr(cli, "old_bot_processes", lambda source: [])
+    cp.settings.shared_bot_token, cp.settings.shared_client_id = "S" * 30 + ".x.y", "999"
+    (old / ".env").write_text((old / ".env").read_text() + "GUILD_ID=111\n")
+    (old / "servers" / "us" / ".env").write_text((old / "servers" / "us" / ".env").read_text() + "GUILD_ID=222\n")
+    (old / "data" / "servers.json").write_text(_json.dumps([{"id": "us", "name": "US", "discord": "own"}]))
+    assert cli.main(["adopt", "--source", str(old)]) == 0
+    out = capsys.readouterr().out
+    assert "on the shared bot (Discord server 111)" in out and "(Discord server 222)" in out
+    rows = cp.db.q("SELECT bot_mode, guild_id, status FROM servers ORDER BY id")
+    assert [(r["bot_mode"], r["guild_id"], r["status"]) for r in rows] == [("shared", "111", "active"),
+                                                                           ("shared", "222", "active")]
+    assert cp.db.one("SELECT COUNT(*) AS n FROM secrets WHERE kind = 'discord_token'")["n"] == 0

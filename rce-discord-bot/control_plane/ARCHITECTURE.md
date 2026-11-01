@@ -115,8 +115,12 @@ Every server runs on one of two bots:
 Connect your own Discord server to the control plane (`control_plane/hq.py`, runs inside `python -m control_plane run`).
 The bot builds everything by itself and repairs it at every start: roles, categories, channels, permissions and panels.
 
+* **One token for everything:** leave `CP_HQ_BOT_TOKEN` empty and HQ runs on the shared bot. It then never leaves
+  other Discords (those are your customers'), only loads the management Discord's members and never answers
+  outside it. A server's bot can't be bound to the management Discord. `CP_HQ_BOT_TOKEN` still gives HQ a bot of
+  its own.
 * **Setup:**
-  1. Create a NEW bot in the Discord Developer Portal (not the shared bot). Switch on its *Message Content* and
+  1. Use the shared bot (above) or create a separate bot in the Discord Developer Portal. Switch on its *Message Content* and
      *Server Members* intents.
   2. Invite it to your management server with *Manage Roles*, *Manage Channels*, *View Channels*, *Send Messages*,
      *Embed Links* and *Read Message History*. Easiest: give it *Administrator* in that private server only.
@@ -372,6 +376,8 @@ python3 -m control_plane run                                        # (or restar
   tenants (seconds).
 * **Extra servers on the main server's bot (`discord: shared`):** they can't share that token as a separate process.
   They're adopted with everything else but wait for their own bot token (owner panel → server → *Set bot token*).
+* **The shared bot:** when it's set up, `adopt` puts every server on it (fenced to the `GUILD_ID` in its settings),
+  so the whole platform runs on ONE bot token. `--own-tokens` keeps each server's own token instead.
 * **Disabled extra servers** are adopted as *stopped*.
 * **Running it twice** skips what's already adopted.
 * **New addresses:** each server's website becomes `<slug>.yourdomain.com` (`python3 -m control_plane links` lists
