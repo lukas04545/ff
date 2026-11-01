@@ -1,6 +1,10 @@
 """python -m control_plane <command>
 
-  init                         new master key + session secret (prints them – put them in the service's env)
+  init [--domain example.com]  first setup: writes /etc/rce-saas.env (master key, session secret, domain) if it
+                               doesn't exist yet and creates the data folders
+
+Settings come from /etc/rce-saas.env (CP_ENV_FILE) – no need to load it by hand. Run as root, every command drops to
+the user that owns the bot folder (e.g. rcebot) after reading it, so files never end up owned by root.
   create-owner <username>      owner account for the owner panel (password + TOTP for an authenticator app)
   run                          supervisor + health checks + Caddy config + portal + owner panel
   import-server ...            MIGRATION: an existing bot folder becomes a tenant server (data, settings, token)
@@ -16,6 +20,7 @@ import argparse
 import asyncio
 import getpass
 import logging
+import os
 import secrets
 import shutil
 import sqlite3
@@ -38,12 +43,90 @@ def _db_and_box(settings: Settings) -> tuple[DB, SecretBox]:
     return DB(settings.db_path), SecretBox.from_env()
 
 
+def env_file() -> Path:
+    return Path(os.environ.get("CP_ENV_FILE", "/etc/rce-saas.env"))
+
+
+def load_env_file(path: Path | None = None) -> bool:
+    """Loads the control plane's settings file into the environment (values already set win)."""
+    from envfile import read_env
+    path = path or env_file()
+    try:
+        values = read_env(path)
+    except OSError:
+        return False
+    for key, value in values.items():
+        os.environ.setdefault(key, value)
+    return bool(values)
+
+
+def write_env_file(path: Path, domain: str = "") -> bool:
+    """First setup: a new settings file with fresh keys (never overwrites one – the keys open every secret)."""
+    if path.exists():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("# RCE hosted control plane – KEEP SECRET (the master key opens every customer's secrets)\n"
+                f"CP_MASTER_KEYS=1:{new_master_key()}\n"
+                f"CP_SESSION_SECRET={secrets.token_urlsafe(48)}\n"
+                f"CP_BASE_DOMAIN={domain or 'example.com'}\n"
+                "# CP_DEEPSEEK_API_KEY=            (AI features)\n"
+                "# CP_SHARED_BOT_TOKEN= CP_SHARED_CLIENT_ID= CP_SHARED_CLIENT_SECRET=   (the shared bot)\n"
+                "# STRIPE_SECRET_KEY= STRIPE_WEBHOOK_SECRET= STRIPE_PRICE_ID=           (billing)\n"
+                "# CP_HQ_BOT_TOKEN= CP_HQ_GUILD_ID= CP_HQ_ADMIN_IDS=                    (management Discord)\n")
+    return True
+
+
+def service_user() -> tuple[int, int] | None:
+    """(uid, gid) of the bot folder's owner when we run as root and it's someone else – else None."""
+    if not hasattr(os, "geteuid") or os.geteuid() != 0 or os.environ.get("CP_RUN_AS_ROOT") == "1":
+        return None
+    st = Settings().bot_dir.stat()
+    return None if st.st_uid == 0 else (st.st_uid, st.st_gid)
+
+
+def _chown_tree(path: Path, uid: int, gid: int) -> None:
+    if not path.exists():
+        return
+    os.chown(path, uid, gid)
+    for root, dirs, files in os.walk(path):
+        for name in dirs + files:
+            try:
+                os.chown(os.path.join(root, name), uid, gid, follow_symlinks=False)
+            except OSError:
+                pass
+
+
+def prepare_and_drop(settings: Settings) -> None:
+    """As root: create the data folders, hand them (and anything root made there earlier) to the bot folder's
+    owner, then continue as that user."""
+    user = service_user()
+    if user is None:
+        return
+    import pwd
+    uid, gid = user
+    for folder in (settings.data_dir, settings.tenants_dir):
+        folder.mkdir(parents=True, exist_ok=True)
+        _chown_tree(folder, uid, gid)
+    pw = pwd.getpwuid(uid)
+    os.initgroups(pw.pw_name, gid)
+    os.setgid(gid)
+    os.setuid(uid)
+    os.environ.update(HOME=pw.pw_dir, USER=pw.pw_name, LOGNAME=pw.pw_name)
+
+
 def cmd_init(args, settings: Settings) -> int:
-    print("Put these into the control plane's environment (systemd EnvironmentFile, NOT the data folder):")
-    print(f"CP_MASTER_KEYS=1:{new_master_key()}")
-    print(f"CP_SESSION_SECRET={secrets.token_urlsafe(48)}")
+    path = env_file()
     DB(settings.db_path).close()
+    if getattr(args, "created_env", False):
+        print(f"Created {path} (only root can read it) with a new master key and session secret.")
+        print("Back it up somewhere safe – without CP_MASTER_KEYS the customers' secrets can't be opened.")
+    else:
+        print(f"{path} already exists – kept it (its keys are in use).")
     print(f"Database: {settings.db_path}")
+    print(f"Next: edit {path} (domain, DeepSeek key, bots, Stripe), then "
+          "`python3 -m control_plane create-owner <name>` and `python3 -m control_plane run`.")
     return 0
 
 
@@ -61,6 +144,7 @@ def cmd_create_owner(args, settings: Settings) -> int:
     db.audit("cli", "owner.create", detail=args.username)
     print("Add this to your authenticator app (it's needed for every owner login):")
     print(otpauth_uri(totp, args.username, "RCE SaaS owner"))
+    print(f"Or type the key in by hand (time-based, 6 digits): {totp}")
     return 0
 
 
@@ -242,7 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     p = argparse.ArgumentParser(prog="python -m control_plane")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("init")
+    ini = sub.add_parser("init")
+    ini.add_argument("--domain", default="", help="your domain, e.g. rcebot.net (can be changed in the file later)")
     o = sub.add_parser("create-owner")
     o.add_argument("username")
     o.add_argument("--password")
@@ -265,7 +350,15 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--email", required=True, help="the customer it belongs to (created if new; comped)")
     i.add_argument("--name", required=True)
     args = p.parse_args(argv)
+    if args.cmd == "init":
+        try:
+            args.created_env = write_env_file(env_file(), args.domain.strip())
+        except PermissionError:
+            print(f"Can't write {env_file()} – run `init` as root (or set CP_ENV_FILE).")
+            return 1
+    load_env_file()
     settings = Settings()
+    prepare_and_drop(settings)
     if args.cmd == "run":
         if len(settings.session_secret) < 32:
             print("Set CP_SESSION_SECRET (see `init`).")

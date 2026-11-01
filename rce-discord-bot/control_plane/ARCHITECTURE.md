@@ -283,14 +283,17 @@ folder and keys, so the owner can restore it. *Purge* (owner, only after remove)
 ## Running it
 
 ```bash
-cd rce-discord-bot && pip install -r requirements.txt   # cryptography, sqlcipher3 already in there
-python -m control_plane init                           # prints CP_MASTER_KEYS + CP_SESSION_SECRET
-# put them + CP_BASE_DOMAIN, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_ID into /etc/rce-saas.env,
-# plus the shared bot (CP_SHARED_BOT_TOKEN, CP_SHARED_CLIENT_ID, CP_SHARED_CLIENT_SECRET – Discord app with the
-# redirect https://portal.yourdomain.com/discord/callback) and CP_DEEPSEEK_API_KEY for the AI add-on
-python -m control_plane create-owner you                # password + authenticator app (TOTP)
-python -m control_plane run                             # systemd service, Restart=always
+cd /home/rcebot/ff/rce-discord-bot && pip install -r requirements.txt   # cryptography, sqlcipher3 already in there
+python3 -m control_plane init --domain yourdomain.com   # writes /etc/rce-saas.env (keys, domain; root-only, 0600)
+nano /etc/rce-saas.env                                  # add CP_DEEPSEEK_API_KEY, the shared bot, Stripe, HQ bot
+python3 -m control_plane create-owner you               # password + authenticator app (TOTP)
+python3 -m control_plane run                            # systemd service, Restart=always
+python3 -m control_plane links                          # where everything is
 ```
+Every command loads `/etc/rce-saas.env` by itself (`CP_ENV_FILE` for another path) – no `set -a`/`sudo -E`
+needed. Started as root, a command reads that file, hands the data folders to the user that owns the bot folder (e.g.
+`rcebot`) and continues as that user, so no file ends up owned by root (`CP_RUN_AS_ROOT=1` turns that off).
+The shared bot's Discord app needs the redirect `https://portal.yourdomain.com/discord/callback`.
 
 Caddy (`/etc/caddy/Caddyfile`):
 ```
