@@ -129,6 +129,23 @@ class RceBot(commands.Bot):
             log.exception("Loading plugins failed")
 
         self.tree.on_error = self.on_app_command_error
+        # Slash-command flood guard (support/command_guard.py): one member can't tie up the bot; admins are exempt
+        from support.command_guard import CommandGuard
+        from utils import is_admin
+        self.command_guard = CommandGuard(getattr(self.config, "ddos_commands_per_30s", 12) or 12)
+
+        async def _guard(interaction: discord.Interaction) -> bool:
+            if not getattr(self.config, "ddos_protection", True) or is_admin(self, interaction.user):
+                return True
+            note = self.command_guard.check(interaction.user.id)
+            if note is None:
+                return True
+            try:
+                await interaction.response.send_message(f"⏳ {note}", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return False
+        self.tree.interaction_check = _guard
         import discord_router
         discord_router.setup(self)        # several servers on one Discord bot: each event to the right server
         synced = await self.sync_commands()
@@ -233,7 +250,9 @@ class RceBot(commands.Bot):
     # Settings that only take effect after a restart (everything else is applied live)
     RESTART_FIELDS = {"discord_token": "Bot token", "guild_id": "Discord server", "database_path": "Database file",
                       "web_enabled": "Web interface on/off", "web_host": "Web interface: reachable from",
-                      "web_port": "Web interface port", "db_encryption": "Encrypt the databases"}
+                      "web_port": "Web interface port", "db_encryption": "Encrypt the databases",
+                      "ddos_protection": "Flood (DDoS) protection", "ddos_requests_per_ip": "Flood protection limit",
+                      "ddos_ban_minutes": "Flood protection ban time"}
 
     async def apply_config(self, new: Config) -> list[str]:
         """Applies changed settings without a restart. Returns what still needs a restart (labels)."""

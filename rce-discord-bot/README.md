@@ -718,6 +718,20 @@ their own. Admins can't change it themselves. The new theme shows the next time 
 
 ### 🔒 Security of the control panel and the website
 
+**🛡️ Flood (DDoS) protection** (`DDOS_PROTECTION`, on): big DDoS floods can't be stopped by a program – they have
+to be absorbed in front of it. That's the **Cloudflare tunnel**: visitors only ever reach Cloudflare, your PC's IP
+stays hidden and nothing listens on the internet (keep *Reachable from* / `WEB_HOST` on `127.0.0.1` so the tunnel is
+the only way in – the panel warns if the port is open directly). What still gets through meets the bot's **shield**
+first, before any page is built: a limit per visitor for every request (`DDOS_REQUESTS_PER_IP`, default 150 per
+10 s; item pictures and site files 8×), **automatic temporary bans** for IPs that keep flooding
+(`DDOS_BAN_MINUTES`, 15), a cap on requests handled at once (the bot stays responsive for Discord and RCON) and an
+automatic **under-attack mode** when the total traffic spikes (anonymous visitors get a fifth of the limit for
+10 minutes; the admin log says so). Logged-in panel users and this PC are never limited. Settings → Web shows the
+traffic, blocked requests, blocked IPs (**Unblock**), recent events, and lets you block an IP by hand. Idle
+connections are closed after 15 s. **Discord:** a member who spams slash commands is slowed down
+(`DDOS_COMMANDS_PER_30S`, default 12) and paused for 5 minutes if they keep going; admins are exempt. The Rust
+server itself is protected by your host (G-Portal) – the bot can't shield the game server.
+
 - **Hidden panel address:** from outside, the panel isn't at `/admin`. It lives at a random secret address
   (`WEB_PANEL_PATH`, e.g. `/panel-Ab3x…`), created at the first start. You'll find it in `PUBLIC_LINK.txt`, the bot
   window and *Settings → Web interface → Secret address of the control panel*, where you can also change it. The

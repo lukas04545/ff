@@ -486,6 +486,19 @@ FIELDS: list[Field] = [
           help="127.0.0.1 = this PC only, 0.0.0.0 = also phone/laptop on your home network. "
                "Never expose it to the internet!"),
     Field("WEB_PORT", "Port", "web", "int", placeholder="8080"),
+    Field("DDOS_PROTECTION", "Flood (DDoS) protection", "web", "bool",
+          help="On (default): every web request first passes a shield – a limit per visitor, automatic temporary "
+               "bans for IPs that keep flooding, a cap on requests handled at once and an automatic “under attack” "
+               "mode when traffic spikes (logged-in admins and this PC are never limited). Discord: members who spam "
+               "slash commands are slowed down/paused (admins exempt). Big floods are stopped by the Cloudflare "
+               "tunnel in front of the bot – keep WEB_HOST on 127.0.0.1 so the tunnel is the only way in. Changes "
+               "apply after a restart."),
+    Field("DDOS_REQUESTS_PER_IP", "Flood protection: web requests per visitor per 10 s", "web", "int",
+          advanced=True, placeholder="150", help="Pictures and site files get 8× this. Under attack: a fifth."),
+    Field("DDOS_BAN_MINUTES", "Flood protection: block flooding IPs for … minutes", "web", "int", advanced=True,
+          placeholder="15"),
+    Field("DDOS_COMMANDS_PER_30S", "Flood protection: slash commands per member per 30 s", "web", "int",
+          advanced=True, placeholder="12"),
     Field("WEB_TUNNEL", "Reachable from the internet (Cloudflare tunnel)", "web", "bool",
           help="On (default) = free, encrypted https:// address that works from anywhere – no router settings "
                "needed. The link is shown in the bot window, in PUBLIC_LINK.txt, on the Overview and in the admin "
