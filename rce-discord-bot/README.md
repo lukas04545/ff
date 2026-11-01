@@ -197,6 +197,7 @@ rce-discord-bot/
 │   ├── aichat.py          # AI chats with members in chosen channels + acts as prison guard
 │   ├── teleports.py       # Location emotes (North … Northwest) teleport to set/captured coordinates
 │   ├── binds_panel.py     # Live emote binds panel: one message, edited when binds change
+│   ├── full_backups.py    # Weekly full backup (code + all databases) and the 🚨 emergency restore
 │   ├── code_changes.py    # AI code changes: apply + reload, ✅ Keep / ↩️ Revert (.bak), /code …
 │   ├── manager_ai.py      # Management AI: staff channel, creates kits, binds emotes, autokits, custom kits (tools)
 │   ├── prison.py          # /prison jail/free/list: lock a member to the prison channel (timed too)
@@ -1771,6 +1772,17 @@ rules* (`AI_ABUSE_INSTRUCTIONS`, e.g. "Admins may spawn building materials durin
   (default 10), it pings `ALERT_ROLE_IDS` (default: admin roles) once in `ALERT_CHANNEL_ID` (default:
   admin log channel) with the last error – and posts again when the server is back, with the
   downtime. `0` = off.
+- **Weekly full backup + 🚨 emergency restore** (`FULL_BACKUP_ENABLED`, on; main server): every week the **whole bot
+  folder** – code, every database (also the extra servers'), settings (`.env`), plugins and uploads – is saved as
+  one ZIP in `data/full_backups/` (not included: the Python environment, git, caches, the tunnel program and the
+  other backups). Each is deleted after a week, but the newest always stays. **🧳 Full backup now** and **🚨 Emergency
+  restore** are in Settings → Alerts & backups (type `RESTORE` to confirm, owner only, password re-check), and in
+  Discord `/emergency-restore backup:<…>` (owner = `ADMIN_USER_IDS`). A restore first saves the current state
+  (`…-pre-restore.zip`, so you can undo it), then the bot restarts and puts the backup in place **before** loading
+  any of its own code – it works even if the code is broken. **Bot doesn't start at all?** Stop it and run
+  `python full_backup.py restore` in the bot folder (newest backup; `python full_backup.py list` shows them,
+  `python full_backup.py restore <name>` picks one). The full backups contain your tokens (.env) – they stay on
+  this PC and aren't downloadable in the panel. The management AI can't restore or touch them.
 - **Backups:** once a day and right before every automatic update, the bot saves the database
   (stats, kits, tickets, links, giveaways, timed roles, purchases), web logins, rules, knowledge base and price
   list as a ZIP in `data/backups/`. Backups older than `BACKUP_KEEP_DAYS` (default 7) are deleted, the newest 3

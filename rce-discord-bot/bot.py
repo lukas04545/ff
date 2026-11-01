@@ -16,6 +16,13 @@ import time
 from collections import deque
 from pathlib import Path
 
+# Emergency restore (full_backup.py): put a requested full backup in place BEFORE any of the bot's own modules are
+# imported – works even if the code is broken – then start bot.py again with the restored files. Main server only.
+if __name__ == "__main__" and not os.environ.get("RCE_SERVER_ID"):
+    import full_backup as _restore_backup
+    if _restore_backup.run_pending():
+        os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve())])
+
 import aiohttp
 import discord
 from discord import app_commands
@@ -40,7 +47,7 @@ BASE_DIR = Path(__file__).resolve().parent
 COGS = ("cogs.status", "cogs.feeds", "cogs.admin", "cogs.stats", "cogs.kits", "cogs.custom_kits", "cogs.tickets",
         "cogs.community", "cogs.moderation", "cogs.giveaways", "cogs.updates", "cogs.timed_roles", "cogs.monitor",
         "cogs.economy", "cogs.wipe", "cogs.schedule", "cogs.reports", "cogs.abuse", "cogs.kit_requests", "cogs.store", "cogs.automod", "cogs.abusewatch",
-        "cogs.webshop", "cogs.aichat", "cogs.manager_ai", "cogs.teleports", "cogs.binds_panel", "cogs.code_changes", "cogs.countdown", "cogs.prison", "cogs.player_accounts",
+        "cogs.webshop", "cogs.aichat", "cogs.manager_ai", "cogs.teleports", "cogs.binds_panel", "cogs.code_changes", "cogs.full_backups", "cogs.countdown", "cogs.prison", "cogs.player_accounts",
         "cogs.multiserver")
 
 # Event class -> Discord event name (listeners are then called on_<name>)
