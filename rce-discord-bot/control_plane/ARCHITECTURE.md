@@ -263,6 +263,9 @@ Cloudflare: `*.yourdomain.com` and `portal` → the VPS (proxied). The Stripe we
 `https://portal.yourdomain.com/stripe/webhook` with the events `checkout.session.completed`,
 `customer.subscription.*`, `invoice.paid` and `invoice.payment_failed`.
 
+**Where is what?** `python -m control_plane links` prints the owner panel's address and every server's website
+and secret admin panel (`--email you@x.io` for one customer).
+
 **Owner panel:** open `https://portal.yourdomain.com/management` (no extra Caddy or DNS entry, it's part of the
 portal). Sign in with your owner username, password and 2FA code.
 * `CP_OWNER_PATH` changes the address (e.g. `/my-secret-panel`); `CP_OWNER_PATH=off` removes it from the website `/admin`

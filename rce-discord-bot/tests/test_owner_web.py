@@ -126,3 +126,17 @@ def test_customers_get_the_secret_panel_link_not_the_honeypot(cp):  # noqa: F811
     assert provisioning.panel_url(cp.settings, row) == out["panel_url"]
     provisioning.finish_provisioning(cp.db, cp.box, cp.settings, out["id"])        # a re-run keeps the address
     assert provisioning.panel_url(cp.settings, row) == out["panel_url"]
+
+
+def test_links_command_shows_the_owner_panel_and_secret_panels(cp, capsys, monkeypatch):  # noqa: F811
+    from control_plane import cli
+    cid = customer(cp)
+    paid(cp, cid)
+    out = provisioning.provision_server(cp.db, cp.box, cp.settings, cid, "Main", actor="t")
+    monkeypatch.setattr(cli, "Settings", lambda: cp.settings)
+    assert cli.main(["links"]) == 0
+    text = capsys.readouterr().out
+    assert f"{cp.settings.portal_url}/management" in text and out["panel_url"] in text
+    assert "/admin" not in text
+    assert cli.main(["links", "--email", "nobody@x.io"]) == 0
+    assert "Servers: none" in capsys.readouterr().out
