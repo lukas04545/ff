@@ -124,6 +124,8 @@ class DB:
             self.conn.execute("ALTER TABLE servers ADD COLUMN bot_mode TEXT NOT NULL DEFAULT 'shared'")
         if "guild_id" not in cols:
             self.conn.execute("ALTER TABLE servers ADD COLUMN guild_id TEXT")
+        if "manager_ai" not in cols:   # the management AI in this server's Discord – only on servers the owner chose
+            self.conn.execute("ALTER TABLE servers ADD COLUMN manager_ai INTEGER NOT NULL DEFAULT 0")
         # One Discord server can be bound to only one shared-bot tenant server
         self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_one_guild_per_shared_server ON servers (guild_id) "
                           "WHERE bot_mode = 'shared' AND status != 'deleted' AND guild_id IS NOT NULL")

@@ -464,6 +464,7 @@ class WebInterface:
         r.add_delete("/api/users/{username}/2fa", self.reset_user_2fa)
         r.add_post("/api/account/password", self.change_own_password)
         r.add_get("/saas/health", self.saas_health)              # hosted mode: also while in setup mode
+        r.add_post("/saas/manage", self.saas_manage)
         if self.setup_mode:
             r.add_post("/api/setup/continue", self.setup_continue)
             return app
@@ -2007,6 +2008,23 @@ class WebInterface:
             return await handler(request)
         finally:
             self.shield.inflight -= 1
+
+    async def saas_manage(self, request: web.Request) -> web.Response:
+        """Hosted mode: the owner panel's management AI for this server (Bearer SAAS_MANAGE_TOKEN)."""
+        import saas_mode
+        if not saas_mode.enabled() or not saas_mode.manage_ok(request.headers.get("Authorization", "")):
+            raise web.HTTPNotFound()
+        cog = self.bot.get_cog("ManagerAI") if self.bot is not None else None
+        if cog is None:
+            return web.json_response({"ok": False, "error": "The bot isn't fully started yet (setup mode?)."},
+                                     status=503)
+        try:
+            data = await request.json()
+        except ValueError:
+            raise web.HTTPBadRequest(text="JSON expected") from None
+        out = await cog.run_for_owner(str(data.get("message") or ""), data.get("history") or [],
+                                      allow_risky=bool(data.get("allow_risky")))
+        return web.json_response(out, headers={"Cache-Control": "no-store"})
 
     async def saas_health(self, request: web.Request) -> web.Response:
         """Hosted mode: a small status for the control plane (Bearer SAAS_HEALTH_TOKEN). No tenant data."""

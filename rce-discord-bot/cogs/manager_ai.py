@@ -17,12 +17,16 @@ Needs the DeepSeek API key and the Message Content intent. Messages in the chann
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import difflib
 import io
 import json
 import logging
+import os
 import re
 from collections import deque
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import discord
@@ -346,6 +350,33 @@ def split_reply(text: str, limit: int = MAX_REPLY, parts: int = MAX_PARTS) -> li
     return out or ["Done."]
 
 
+# Owner-panel runs (hosted mode): no Discord buttons – the owner decides per message whether risky tools may run
+_owner_confirm: contextvars.ContextVar[bool | None] = contextvars.ContextVar("owner_confirm", default=None)
+_owner_asked: contextvars.ContextVar[list | None] = contextvars.ContextVar("owner_asked", default=None)
+
+
+class _Owner:
+    """The platform owner as the "author" of an owner-panel request."""
+    id = 0
+    bot = False
+    roles: list = []
+    name = display_name = "Platform owner"
+    mention = "the platform owner"
+
+    def __str__(self) -> str:
+        return "Platform owner"
+
+
+class _NoChannel:
+    id = -1
+
+    async def send(self, *args, **kwargs):
+        return None
+
+    def typing(self):
+        return contextlib.nullcontext()
+
+
 class ManagerAI(commands.Cog):
     def __init__(self, bot: "RceBot") -> None:
         self.bot = bot
@@ -356,6 +387,16 @@ class ManagerAI(commands.Cog):
 
     @property
     def ai(self):
+        import saas_mode
+        if saas_mode.enabled():                  # hosted: the platform's key, only for the management AI
+            key = os.environ.get("SAAS_OWNER_AI_KEY", "")
+            if not key:
+                return None
+            if getattr(self, "_owner_ai", None) is None or self._owner_ai.api_key != key:
+                from support.deepseek import DeepSeekClient
+                cfg = self.bot.config
+                self._owner_ai = DeepSeekClient(key, model=cfg.deepseek_model, base_url="https://api.deepseek.com")
+            return self._owner_ai
         tickets = self.bot.get_cog("Tickets")
         return tickets.ai if tickets is not None and tickets.ai.enabled else None
 
@@ -399,6 +440,9 @@ class ManagerAI(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
+        import saas_mode
+        if not saas_mode.manager_ai_in_discord():
+            return                                   # hosted server the owner didn't choose: no management AI here
         if (message.author.bot or message.guild is None or message.webhook_id is not None
                 or not self.watching(message.channel.id)):
             return
@@ -510,7 +554,37 @@ class ManagerAI(commands.Cog):
             raise DeepSeekError("The request is too big for one go – ask for it in smaller parts.")
         return reply
 
+    async def run_for_owner(self, text: str, history: list[dict] | None = None, *, allow_risky: bool = False) -> dict:
+        """The owner panel's management AI (hosted mode): runs a request with every tool on this server, without
+        Discord. Risky tools run only if the owner ticked "allow risky actions" for this message."""
+        if self.ai is None:
+            return {"ok": False, "error": "No AI key for the management AI (CP_DEEPSEEK_API_KEY)."}
+        from permcheck import main_guild
+        message = SimpleNamespace(author=_Owner(), channel=_NoChannel(), guild=main_guild(self.bot))
+        clean = [{"role": h["role"], "content": str(h["content"])[:3000]} for h in (history or [])[-HISTORY:]
+                 if isinstance(h, dict) and h.get("role") in ("user", "assistant")]
+        messages = [{"role": "system", "content": self._prompt(False)}, *clean,
+                    {"role": "user", "content": f"Platform owner: {str(text)[:3000]}"}]
+        done: list[str] = []
+        asked: list[str] = []
+        t1, t2 = _owner_confirm.set(bool(allow_risky)), _owner_asked.set(asked)
+        try:
+            answer = await self._run(messages, message, done)
+        except DeepSeekError as exc:
+            return {"ok": False, "error": str(exc), "done": done, "asked": asked}
+        finally:
+            _owner_confirm.reset(t1)
+            _owner_asked.reset(t2)
+        self._audit("the platform owner (owner panel)", f"request – {', '.join(done) or 'no changes'}")
+        return {"ok": True, "answer": (answer or "Done.").strip(), "done": done, "asked": asked}
+
     async def confirm(self, message: discord.Message, text: str, file=None) -> bool:
+        decided = _owner_confirm.get()
+        if decided is not None:                      # owner panel: decided up front by the owner
+            asked = _owner_asked.get()
+            if asked is not None:
+                asked.append(("✅ " if decided else "✖️ not allowed: ") + re.sub(r"[*`]", "", text)[:200])
+            return decided
         view = ConfirmView(message.author.id)
         prompt = await message.channel.send(f"🧠 {message.author.mention} – {text}"[:1990], view=view,
                                             allowed_mentions=discord.AllowedMentions(users=[message.author]),

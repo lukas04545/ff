@@ -231,7 +231,27 @@ def environment(db: DB, box: SecretBox, settings: Settings, server_id: int) -> d
     ai = features.has(db, s["customer_id"], "ai")
     env["SAAS_AI"] = "1" if ai else "0"
     env["DEEPSEEK_API_KEY"] = settings.deepseek_api_key if ai else ""
+    # Management AI: the owner panel can always use it on this server; the server's own Discord only if the owner
+    # chose this server. Its key is separate from the AI add-on's (tickets/chat/moderation).
+    env["SAAS_MANAGER_AI"] = "1" if s["manager_ai"] else "0"
+    env["SAAS_OWNER_AI_KEY"] = settings.deepseek_api_key
+    env["SAAS_MANAGE_TOKEN"] = manage_token(env["SAAS_HEALTH_TOKEN"])
     return env
+
+
+def manage_token(health_token: str) -> str:
+    """The bearer token of POST /saas/manage – derived, so it needs no extra secret row."""
+    import hashlib
+    return hashlib.sha256(f"{health_token}:manage".encode()).hexdigest()
+
+
+def set_manager_ai(db: DB, server_id: int, on: bool, *, actor: str) -> None:
+    """Owner only: the management AI in this server's Discord (a running server restarts with it)."""
+    s = db.one("SELECT customer_id FROM servers WHERE id = ? AND status != 'deleted'", (server_id,))
+    if s is None:
+        raise ProvisionError("No such server.")
+    db.run("UPDATE servers SET manager_ai = ? WHERE id = ?", (int(bool(on)), server_id))
+    db.audit(actor, f"server.manager_ai.{'on' if on else 'off'}", customer_id=s["customer_id"], server_id=server_id)
 
 
 # ------------------------------------------------------------ Status changes
