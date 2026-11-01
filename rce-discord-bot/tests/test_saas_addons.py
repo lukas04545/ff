@@ -261,7 +261,7 @@ def test_owner_switches_addons_and_installs_updates(cp, monkeypatch):
             assert "update available" in page and "new version" in page
             await owner.post("/update/install", data={"csrf": t})
             page = await (await owner.get("/")).text()
-            assert restarted == [1] and "2 server(s) restarted" in page and "Restart the control plane" in page
+            assert restarted == [1] and "2 server(s) restarted" in page and "still runs the old code" in page
         finally:
             await owner.close()
     asyncio.run(scenario())

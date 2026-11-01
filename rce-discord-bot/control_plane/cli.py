@@ -564,13 +564,21 @@ async def _run(settings: Settings) -> None:
 
     runners = []
     ai_history: dict = {}
+    restart_requested = asyncio.Event()             # owner panel → "Restart control plane"
+    from control_plane import updates
+    st = updates.status(db)
+    if st.get("control_plane_restart_needed"):         # this process runs the code that's on disk now
+        st["control_plane_restart_needed"] = False
+        updates._save(db, st)
     portal = build_portal(db, box, settings, changed)
     if settings.owner_path:                              # the owner panel as a website: portal.<domain>/management
         mount_owner(portal, build_owner(db, box, settings, changed, sup, prefix=settings.owner_path,
-                                        allow_ips=settings.owner_allow_ips, ai_history=ai_history),
+                                        allow_ips=settings.owner_allow_ips, ai_history=ai_history,
+                                        restart=restart_requested.set),
                     settings.owner_path)
     for app, host, port in ((portal, settings.portal_host, settings.portal_port),
-                            (build_owner(db, box, settings, changed, sup, ai_history=ai_history),
+                            (build_owner(db, box, settings, changed, sup, ai_history=ai_history,
+                                         restart=restart_requested.set),
                              settings.owner_host, settings.owner_port)):
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -584,7 +592,15 @@ async def _run(settings: Settings) -> None:
     tunnel = cftunnel.start_tunnel(settings)           # every website through the Cloudflare tunnel (if set up)
     try:
         extra = (hq.start(), hq.refresh_forever()) if hq is not None else ()
-        await asyncio.gather(sup.run_forever(), health.poll_forever(db, box, sup), *extra)
+        work = asyncio.ensure_future(asyncio.gather(sup.run_forever(), health.poll_forever(db, box, sup), *extra))
+        stop = asyncio.ensure_future(restart_requested.wait())
+        await asyncio.wait({work, stop}, return_when=asyncio.FIRST_COMPLETED)
+        if work.done():
+            work.result()                             # a crash in the main work: raise it (systemd restarts)
+        else:
+            log.warning("Restart requested from the owner panel – stopping everything, then starting again.")
+            work.cancel()
+            stop.cancel()
     finally:
         if tunnel is not None:
             tunnel.stop()
@@ -593,6 +609,17 @@ async def _run(settings: Settings) -> None:
         await sup.stop_all()
         for r in runners:
             await r.cleanup()
+    if restart_requested.is_set():
+        reexec()
+
+
+def reexec() -> None:
+    """Starts `run` again in this process with the code that's on disk now (works with or without systemd).
+    The settings already loaded stay in the environment, so a root-only settings file needn't be readable."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.chdir(Path(__file__).resolve().parent.parent)  # the bot folder (control_plane is found from here)
+    os.execv(sys.executable, [sys.executable, "-m", "control_plane", "run"])
 
 
 def main(argv: list[str] | None = None) -> int:
