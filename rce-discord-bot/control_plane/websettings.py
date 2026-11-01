@@ -61,6 +61,10 @@ FIELDS = (
           kind="ips", restart=True),
     Field("CP_CF_TUNNEL_TOKEN", "Cloudflare tunnel token (set by the Cloudflare setup)", "Cloudflare", secret=True,
           restart=True, help="Filled in by 'Set up Cloudflare' below – you don't need to paste it yourself."),
+    Field("CP_CF_SAAS_TOKEN", "Optional: token for customers' own domains", "Cloudflare", secret=True,
+          help="Only if you want own domains switched on automatically: a Cloudflare token with ONLY "
+               "Zone › SSL and Certificates › Edit on your domain. Empty = you activate them in the owner panel "
+               "(Domains), pasting a token that isn't saved."),
     Field("CP_UPDATE_REPO", "Update source (GitHub owner/repo)", "Updates"),
     Field("CP_UPDATE_BRANCH", "Update branch", "Updates"),
     Field("CP_TENANT_MEMORY_MB", "Memory limit per server (MB)", "Servers", kind="int"),
@@ -106,7 +110,7 @@ KEY_ATTR = {"CP_BASE_DOMAIN": "base_domain", "CP_DEEPSEEK_API_KEY": "deepseek_ap
             "CP_HQ_ADMIN_IDS": "hq_admin_ids", "CP_HQ_ADMIN_ROLE_ID": "hq_admin_role_id",
             "CP_OWNER_PATH": "owner_path", "CP_OWNER_ALLOW_IPS": "owner_allow_ips", "CP_UPDATE_REPO": "update_repo",
             "CP_UPDATE_BRANCH": "update_branch", "CP_TENANT_MEMORY_MB": "memory_mb",
-            "CP_CF_TUNNEL_TOKEN": "cf_tunnel_token", "CP_SHOP_NAME": "shop_name"}
+            "CP_CF_TUNNEL_TOKEN": "cf_tunnel_token", "CP_SHOP_NAME": "shop_name", "CP_CF_SAAS_TOKEN": "cf_saas_token"}
 
 
 def refresh(settings: Settings, keys=None) -> None:

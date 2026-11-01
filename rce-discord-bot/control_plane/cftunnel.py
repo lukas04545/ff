@@ -53,11 +53,21 @@ async def setup(db: DB, box: SecretBox, settings: Settings, api_token: str, *, a
     aliases = {h: sid for h, sid in old_addresses(db, settings).items()
                if h == zone["name"] or h.endswith("." + zone["name"])}
     ingress = [{"hostname": h, "service": service} for h in sorted(aliases)]
+    # last rule without a hostname: customers' OWN domains (Cloudflare for SaaS) arrive with their own names
     ingress += [{"hostname": f"*.{domain}", "service": service}, {"hostname": domain, "service": service},
-                {"service": "http_status:404"}]
+                {"service": service}]
     await cf._call("PUT", f"/accounts/{account}/cfd_tunnel/{tunnel['id']}/configurations",
                    json={"config": {"ingress": ingress}})
     dns = {f"*.{domain}": await cf.dns(zone["id"], f"*.{domain}", tunnel["id"])}
+    db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('cf_zone_id', ?)", (zone["id"],))
+    # sites.<domain>: where customers point their own domains (the fallback origin of Cloudflare for SaaS)
+    try:
+        dns[f"sites.{domain}"] = await cf.dns(zone["id"], f"sites.{domain}", tunnel["id"])
+        await cf._call("PUT", f"/zones/{zone['id']}/custom_hostnames/fallback_origin",
+                       json={"origin": f"sites.{domain}"})
+        dns["own domains"] = "ready"
+    except CloudflareError as exc:
+        dns["own domains"] = f"not available yet ({exc}) – enable SSL/TLS → Custom Hostnames in Cloudflare first"
     for host, sid in aliases.items():
         try:
             dns[host] = await cf.dns(zone["id"], host, tunnel["id"])
@@ -72,6 +82,37 @@ async def setup(db: DB, box: SecretBox, settings: Settings, api_token: str, *, a
     db.audit("owner", "cloudflare.setup", detail=f"tunnel {how}, dns " + ", ".join(f"{h}: {v}" for h, v in dns.items()))
     log.info("Cloudflare set up for %s (tunnel %s)", domain, how)
     return {"domain": domain, "tunnel": how, "dns": dns, "aliases": aliases}
+
+
+async def request_custom_hostname(db: DB, settings: Settings, token: str, hostname: str, *, api=None) -> str:
+    """Tells Cloudflare to serve a customer's own domain (Cloudflare for SaaS: certificate included). The token only
+    needs Zone › SSL and Certificates › Edit; it isn't stored here."""
+    from support.cloudflare import CloudflareAPI, CloudflareError
+    zone = db.one("SELECT value FROM settings_kv WHERE key = 'cf_zone_id'")
+    if zone is None:
+        raise CloudflareError("Run the Cloudflare setup first (Settings → Set up Cloudflare).")
+    cf = api or CloudflareAPI(token)
+    out = await cf._call("POST", f"/zones/{zone['value']}/custom_hostnames",
+                         json={"hostname": hostname, "ssl": {"method": "http", "type": "dv"}})
+    cf_id = str((out or {}).get("id") or "")
+    db.run("UPDATE domains SET status = 'active', cf_id = ?, note = ? WHERE hostname = ?",
+           (cf_id, "connected at Cloudflare", hostname))
+    db.audit("owner", "domain.activate", detail=hostname)
+    return cf_id
+
+
+async def activate_pending(db: DB, settings: Settings, token: str, *, api=None) -> dict[str, str]:
+    """Every waiting own domain -> Cloudflare. Returns hostname -> result."""
+    from support.cloudflare import CloudflareError
+    results = {}
+    for row in db.q("SELECT hostname FROM domains WHERE status = 'pending' ORDER BY created_at"):
+        try:
+            await request_custom_hostname(db, settings, token, row["hostname"], api=api)
+            results[row["hostname"]] = "connected"
+        except CloudflareError as exc:
+            db.run("UPDATE domains SET note = ? WHERE hostname = ?", (str(exc)[:300], row["hostname"]))
+            results[row["hostname"]] = f"failed: {exc}"
+    return results
 
 
 def start_tunnel(settings: Settings):

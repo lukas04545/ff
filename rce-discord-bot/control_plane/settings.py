@@ -77,6 +77,9 @@ class Settings:
     hq_admin_role_id: int = field(default_factory=lambda: _int("CP_HQ_ADMIN_ROLE_ID", 0))
     # Cloudflare tunnel for every website (python -m control_plane cloudflare) – the API token is never stored
     cf_tunnel_token: str = field(default_factory=lambda: os.environ.get("CP_CF_TUNNEL_TOKEN", ""))
+    # OPTIONAL, only if the owner chooses to save it: a token that can ONLY add customers' own domains
+    # (Zone › SSL and Certificates › Edit on your domain). Without it the owner activates domains by hand.
+    cf_saas_token: str = field(default_factory=lambda: os.environ.get("CP_CF_SAAS_TOKEN", ""))
     # The shop (portal): its name on every page
     shop_name: str = field(default_factory=lambda: os.environ.get("CP_SHOP_NAME", "") or "Rust Console Bot")
     # Updates (owner panel only): where the bot code comes from

@@ -13,7 +13,7 @@ import time
 
 from control_plane.db import DB
 
-FEATURES = {"custom_bot": "Own bot (custom token)", "ai": "AI features"}
+FEATURES = {"custom_bot": "Own bot (custom token)", "ai": "AI features", "custom_domain": "Own domain (website)"}
 
 
 class FeatureError(Exception):

@@ -4,6 +4,7 @@
   portal.<domain> (and <domain>)   -> the portal itself (and the owner panel under /management)
   <slug>.<domain>                  -> that server's own web port on 127.0.0.1 (running), or its "paused" page
   an old address of an adopted server (host_alias:<host> in settings_kv) -> that server
+  a customer's own domain (domains table, paid add-on; arrives via Cloudflare for SaaS) -> that server
 
 X-Forwarded-For is always set to the visitor (the tenant treats 127.0.0.1 WITHOUT it as "this PC" – trusted), and
 the Host header is kept, so the tenant's own same-origin checks see its real address.
@@ -36,8 +37,10 @@ def resolve(db: DB, settings: Settings, host: str) -> tuple[str, dict | None]:
     if not host or host in (portal_host(settings), f"portal.{domain}", domain, "127.0.0.1", "localhost"):
         return "portal", None
     alias = db.one("SELECT value FROM settings_kv WHERE key = ?", (f"host_alias:{host}",))
-    if alias:
-        row = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (int(alias["value"]),))
+    own = None if alias else db.one("SELECT server_id FROM domains WHERE hostname = ? AND status != 'removed'", (host,))
+    if alias or own:                                 # an old address, or the customer's own domain
+        sid = int(alias["value"]) if alias else own["server_id"]
+        row = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (sid,))
     elif host.endswith("." + domain) and "." not in host[:-len(domain) - 1]:
         row = db.one("SELECT * FROM servers WHERE slug = ? AND status != 'deleted'", (host[:-len(domain) - 1],))
     else:

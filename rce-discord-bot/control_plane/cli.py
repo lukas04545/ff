@@ -19,7 +19,7 @@ the user that owns the bot folder (e.g. rcebot) after reading it, so files never
   run                          supervisor + health checks + Caddy config + portal + owner panel
   import-server ...            MIGRATION: an existing bot folder becomes a tenant server (data, settings, token)
   grant <email> <slots>        unlock extra server slots (same as the owner panel)
-  addon <email> <custom_bot|ai> <on|off>   switch an add-on (same as the owner panel)
+  addon <email> <custom_bot|ai|custom_domain> <on|off>   switch an add-on (same as the owner panel)
   update [--install]           check for a new bot version / install it for every server (only way to update)
   rotate-keys                  re-encrypt every secret with the newest master key
   links [--email <email>]      where everything is: the owner panel and every server's (secret) admin panel

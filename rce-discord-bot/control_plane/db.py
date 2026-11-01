@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS health (
 CREATE TABLE IF NOT EXISTS features (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     customer_id INTEGER NOT NULL REFERENCES customers(id),
-    feature TEXT NOT NULL CHECK (feature IN ('custom_bot', 'ai')),
+    feature TEXT NOT NULL CHECK (feature IN ('custom_bot', 'ai', 'custom_domain')),
     granted_by TEXT NOT NULL,
     granted_at INTEGER NOT NULL,
     revoked_by TEXT,
@@ -129,7 +129,17 @@ CREATE TABLE IF NOT EXISTS plans (
     active INTEGER NOT NULL DEFAULT 1,
     stripe_price_id TEXT,
     stripe_price_cents INTEGER,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    custom_domain INTEGER NOT NULL DEFAULT 0
+);
+-- Customers' own domains for their websites (paid add-on "custom_domain"; routed by control_plane/hostproxy.py)
+CREATE TABLE IF NOT EXISTS domains (
+    hostname TEXT PRIMARY KEY,
+    server_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',      -- pending (waiting for Cloudflare / DNS) | active | removed
+    created_at INTEGER NOT NULL,
+    cf_id TEXT,                                   -- Cloudflare custom hostname id
+    note TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS hq_channels (customer_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL);
 """
@@ -153,6 +163,28 @@ class DB:
         if "guild_id" not in cols:
             self.conn.execute("ALTER TABLE servers ADD COLUMN guild_id TEXT")
         subs = {r["name"] for r in self.conn.execute("PRAGMA table_info(subscriptions)")}
+        sql = (self.conn.execute("SELECT sql FROM sqlite_master WHERE name = 'features'").fetchone() or [""])[0]
+        if "custom_domain" not in sql:   # older database: the add-on list in its CHECK was shorter – rebuild it
+            self.conn.executescript("""
+PRAGMA foreign_keys = OFF;
+BEGIN;
+ALTER TABLE features RENAME TO features_old;
+CREATE TABLE features (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    feature TEXT NOT NULL CHECK (feature IN ('custom_bot', 'ai', 'custom_domain')),
+    granted_by TEXT NOT NULL,
+    granted_at INTEGER NOT NULL,
+    revoked_by TEXT,
+    revoked_at INTEGER
+);
+INSERT INTO features SELECT * FROM features_old;
+DROP TABLE features_old;
+COMMIT;
+PRAGMA foreign_keys = ON;""")
+        pcols = {r["name"] for r in self.conn.execute("PRAGMA table_info(plans)")}
+        if "custom_domain" not in pcols:
+            self.conn.execute("ALTER TABLE plans ADD COLUMN custom_domain INTEGER NOT NULL DEFAULT 0")
         if "plan_id" not in subs:      # the customer's package (plans)
             self.conn.execute("ALTER TABLE subscriptions ADD COLUMN plan_id INTEGER")
         if "manager_ai" not in cols:   # the management AI in this server's Discord – only on servers the owner chose

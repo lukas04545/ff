@@ -365,7 +365,39 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
 {'✅' if own_bot else '–'}</p>{switch}</div>
 <div class=card><h2>Servers <span class=muted>({sl['used']} of {sl['limit']} slots)</span></h2>
 <table><tr><th>Server</th><th>Status</th><th>Live</th><th></th></tr>
-{rows or '<tr><td colspan=4 class=muted>No server yet – start with the steps above.</td></tr>'}</table>{add}</div>""")
+{rows or '<tr><td colspan=4 class=muted>No server yet – start with the steps above.</td></tr>'}</table>{add}</div>
+{''.join(website_card(dict(s), hidden, 'custom_domain' in addons) for s in servers)}""")
+
+    def website_card(s: dict, hidden: str, can_domain: bool) -> str:
+        """The server's websites: its address on our domain (changeable), its own domains, the look."""
+        sid, base = s["id"], settings.base_domain
+        own = provisioning.domains(db, sid)
+        rows = "".join(
+            f"<tr><td><a href='https://{esc(d['hostname'])}' target=_blank>{esc(d['hostname'])}</a></td><td>"
+            f"{pill('active' if d['status'] == 'active' else 'waiting')}"
+            f"{'<br><span class=muted>' + esc(d['note']) + '</span>' if d['note'] else ''}</td><td>"
+            f"<form method=post action=/servers/{sid}/domains/remove class=inline>{hidden}<input type=hidden "
+            f"name=hostname value='{esc(d['hostname'])}'><button class='danger small'>Remove</button></form></td></tr>"
+            for d in own)
+        if can_domain:
+            domain_part = (f"<h3>Your own domain</h3><table>{rows}</table>"
+                           f"<form method=post action=/servers/{sid}/domains class=row>{hidden}<input name=hostname "
+                           f"placeholder='www.yourserver.com' required><button>Connect domain</button></form>"
+                           f"<p class=muted>At your domain's DNS add a <b>CNAME</b> record: <code>www</code> (or the "
+                           f"name you entered) → <code>sites.{esc(base)}</code>. The certificate (https) comes by "
+                           f"itself – it can take a few minutes after we've connected it.</p>")
+        else:
+            domain_part = ("<p class=muted>🌐 Want your <b>own domain</b> (e.g. www.yourserver.com)? It's in the "
+                           "bigger packages – <a href=/#plans>see the packages</a>.</p>")
+        return (f"<div class=card><h2>🌐 {esc(s['name'])} – website</h2>"
+                f"<p>Address: <a href='{esc(settings.url_for(s['slug']))}' target=_blank>"
+                f"{esc(settings.url_for(s['slug']))}</a></p>"
+                f"<form method=post action=/servers/{sid}/address class=row>{hidden}<input name=address "
+                f"value='{esc(s['slug'])}' pattern='[a-z0-9-]{{3,30}}' required><span class=muted>.{esc(base)}</span>"
+                f"<button class=ghost>Change address</button></form><p class=muted>The old address keeps working.</p>"
+                f"{domain_part}<p class=muted>🎨 Look: open your <a href='{esc(provisioning.panel_url(settings, s))}' "
+                f"target=_blank>admin panel</a> → Plugins → Website → <b>Look (theme)</b> – logo, colours, texts.</p>"
+                f"</div>")
 
     def bot_cell(s, csrf: str, own_bot: bool) -> str:
         sid = s["id"]
@@ -455,6 +487,45 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
         await changed()
         raise web.HTTPSeeOther("/dashboard?m=Own+bot+saved+–+it+starts+in+a+few+seconds")
 
+    async def change_address(request):
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        data = await sess.form(request)
+        try:
+            new = provisioning.change_address(db, settings, s["id"], str(data.get("address", "")),
+                                              actor=f"customer:{c['id']}")
+        except provisioning.ProvisionError as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
+        await changed()                                  # its website gets the new address (restart)
+        raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(f"New address: {settings.url_for(new)}"))
+
+    async def add_domain(request):
+        from control_plane import cftunnel
+        from support.cloudflare import CloudflareError
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        data = await sess.form(request)
+        try:
+            host = provisioning.add_domain(db, settings, s["id"], str(data.get("hostname", "")),
+                                           actor=f"customer:{c['id']}")
+        except provisioning.ProvisionError as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
+        msg = f"{host} added – now add the CNAME record at your DNS. We connect it shortly."
+        if settings.cf_saas_token:                       # the owner chose automatic connecting
+            try:
+                await cftunnel.request_custom_hostname(db, settings, settings.cf_saas_token, host)
+                msg = f"{host} connected – add the CNAME record at your DNS and it's live in a few minutes."
+            except CloudflareError as exc:
+                db.run("UPDATE domains SET note = ? WHERE hostname = ?", (str(exc)[:300], host))
+        raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(msg))
+
+    async def remove_domain(request):
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        data = await sess.form(request)
+        provisioning.remove_domain(db, s["id"], str(data.get("hostname", "")), actor=f"customer:{c['id']}")
+        raise web.HTTPSeeOther("/dashboard?m=Domain+removed")
+
     async def remove(request):
         c = need(request)
         s = own_server(c, int(request.match_info["sid"]))
@@ -519,6 +590,9 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
 
     app.add_routes([web.get("/", index), web.get("/signup", signup_page), web.get("/login", login_page),
                     web.post("/billing/switch", switch_plan),
+                    web.post(r"/servers/{sid:\d+}/address", change_address),
+                    web.post(r"/servers/{sid:\d+}/domains", add_domain),
+                    web.post(r"/servers/{sid:\d+}/domains/remove", remove_domain),
                     web.post("/signup", signup), web.post("/login", login),
                     web.post("/logout", logout), web.get("/dashboard", dashboard), web.post("/servers", add_server),
                     web.post(r"/servers/{sid:\d+}/token", set_token), web.post(r"/servers/{sid:\d+}/remove", remove),
@@ -681,7 +755,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         running = sum(1 for p in (supervisor.procs.values() if supervisor else []) if p.state == "running")
         return page("Owner", f"""<h1>Owner panel <span class=muted>({esc(who)})</span></h1>
 <p>{len(customers)} customers · {counts['n'] or 0} servers ({counts['a'] or 0} active, {running} processes running)
-· <a href={P}/plans>🛒 packages</a> · <a href={P}/settings>⚙️ settings</a> · <a href={P}/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
+· <a href={P}/plans>🛒 packages</a> · <a href={P}/domains>🌐 domains</a> · <a href={P}/settings>⚙️ settings</a> · <a href={P}/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
 {update_card(request)}
 {f"<div class=card><h2>🤖 Shared bot</h2><p>One bot for every server. Add it to a Discord: <a href='{esc(provisioning.shared_invite(settings))}' target=_blank>invite link</a>. Then press <b>Use the shared bot</b> on that server's row (its Discord server id is filled in when known).</p></div>" if settings.shared_client_id else ""}
 <div class=card><h2>Customers</h2><table><tr><th>Customer</th><th>Account</th><th>Subscription</th><th>Slots
@@ -761,7 +835,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
 
     def plan_form(p: dict | None, request) -> str:
         p = p or {"name": "", "tagline": "", "price_cents": 999, "currency": "eur", "slots": 1, "ai": 0,
-                  "custom_bot": 0, "perks": "", "highlight": 0, "sort": 0, "active": 1}
+                  "custom_bot": 0, "custom_domain": 0, "perks": "", "highlight": 0, "sort": 0, "active": 1}
         action = f"{P}/plans/{p['id']}" if p.get("id") else f"{P}/plans"
         cur = "".join(f"<option value={k}{' selected' if p['currency'] == k else ''}>{k.upper()}</option>"
                       for k in plans.CURRENCIES)
@@ -774,8 +848,43 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
                 f"value={p['sort']} style='width:4rem'><br><input name=tagline value='{esc(p['tagline'])}' "
                 f"placeholder='Short line under the name' style='width:100%'><br><textarea name=perks rows=4 "
                 f"style='width:100%' placeholder='One perk per line'>{esc(p['perks'])}</textarea><br>"
-                f"{chk('ai', 'AI features')}{chk('custom_bot', 'own bot')}{chk('highlight', 'most popular')}"
+                f"{chk('ai', 'AI features')}{chk('custom_bot', 'own bot')}{chk('custom_domain', 'own domain')}"
+                f"{chk('highlight', 'most popular')}"
                 f"{chk('active', 'for sale')}<button>{'Save' if p.get('id') else 'Create package'}</button></form>")
+
+    async def domains_page(request):
+        owner(request)
+        msg = esc(request.query.get("m", ""))
+        rows = db.q("SELECT d.*, s.name, s.slug, c.email FROM domains d JOIN servers s ON s.id = d.server_id "
+                    "JOIN customers c ON c.id = s.customer_id ORDER BY d.status = 'pending' DESC, d.created_at DESC")
+        table = "".join(f"<tr><td><a href='https://{esc(r['hostname'])}' target=_blank>{esc(r['hostname'])}</a></td>"
+                        f"<td>#{r['server_id']} {esc(r['name'])}<br><span class=muted>{esc(r['email'])}</span></td>"
+                        f"<td>{pill(r['status'])}</td><td class=muted>{esc(r['note'])}"
+                        f"{' – remove it in Cloudflare (SSL/TLS → Custom Hostnames)' if r['status'] == 'removed' and r['cf_id'] else ''}"
+                        f"</td></tr>" for r in rows)
+        waiting = sum(1 for r in rows if r["status"] == "pending")
+        return page("Domains", f"""<p><a href={P}/>← owner panel</a></p><h1>🌐 Customers' own domains</h1>
+{f'<p class=muted>{msg}</p>' if msg else ''}<p class=muted>Customers with the <b>own domain</b> add-on point a CNAME
+at <code>sites.{esc(settings.base_domain)}</code>. Cloudflare then has to accept the domain (Cloudflare for SaaS,
+SSL/TLS → Custom Hostnames – enable it once; the first 100 are free).
+{'Automatic: a token for this is saved in Settings.' if settings.cf_saas_token else 'Connect waiting domains here with a Cloudflare token that has <b>Zone › SSL and Certificates › Edit</b> – it is used once and not saved.'}</p>
+<div class=card><form method=post action={P}/domains/activate>{hidden(request)}<input name=token type=password
+autocomplete=off placeholder="Cloudflare API token (not saved)" style="width:60%"> <button>Connect {waiting} waiting
+domain(s)</button></form></div><table><tr><th>Domain</th><th>Server</th><th>State</th><th></th></tr>
+{table or '<tr><td colspan=4>No own domains yet.</td></tr>'}</table>""")
+
+    async def domains_activate(request):
+        from control_plane import cftunnel
+        from support.cloudflare import CloudflareError
+        who = owner(request)
+        data = await sess.form(request)
+        token = str(data.get("token", "")).strip() or settings.cf_saas_token
+        try:
+            results = await cftunnel.activate_pending(db, settings, token)
+        except CloudflareError as exc:
+            raise go("/domains?m=" + quote_plus(str(exc))) from None
+        db.audit(f"owner:{who}", "domains.activate", detail=", ".join(f"{h}: {v}" for h, v in results.items())[:500])
+        raise go("/domains?m=" + quote_plus("; ".join(f"{h}: {v}" for h, v in results.items()) or "Nothing waiting."))
 
     async def plans_page(request):
         owner(request)
@@ -1071,12 +1180,13 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.get("/settings", settings_page), web.post("/settings", settings_save),
                     web.post("/cloudflare", cloudflare_setup),
                     web.get("/plans", plans_page), web.post("/plans", plan_save),
+                    web.get("/domains", domains_page), web.post("/domains/activate", domains_activate),
                     web.post(r"/plans/{id:\d+}", plan_save), web.post(r"/customers/{id:\d+}/plan", customer_plan),
                     web.get("/", dashboard), web.get(r"/customers/{cid:\d+}", customer), web.get("/audit", audit),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post(r"/grants/{id:\d+}/revoke", act),
                     web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act),
-                    web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai}/{on:on|off}", feature_action),
+                    web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai|custom_domain}/{on:on|off}", feature_action),
                     web.post("/update/{action:check|install|restart}", update_action),
                     web.get(r"/servers/{id:\d+}/ai", ai_page), web.post(r"/servers/{id:\d+}/ai", ai_send),
                     web.post(r"/servers/{id:\d+}/ai/clear", ai_clear),
