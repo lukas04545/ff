@@ -68,6 +68,13 @@ class Settings:
     shared_permissions: str = field(default_factory=lambda: os.environ.get("CP_SHARED_PERMISSIONS", "1099780151318"))
     # AI add-on: the platform's DeepSeek key, given only to customers with the 'ai' add-on
     deepseek_api_key: str = field(default_factory=lambda: os.environ.get("CP_DEEPSEEK_API_KEY", ""))
+    # The management Discord (HQ): your own Discord server with a panel channel per customer and the management AI.
+    # Its OWN bot (not the shared bot). Only the listed users / the role / the server's owner can use it.
+    hq_bot_token: str = field(default_factory=lambda: os.environ.get("CP_HQ_BOT_TOKEN", ""))
+    hq_guild_id: int = field(default_factory=lambda: _int("CP_HQ_GUILD_ID", 0))
+    hq_admin_ids: frozenset = field(default_factory=lambda: frozenset(
+        int(x) for x in os.environ.get("CP_HQ_ADMIN_IDS", "").replace(" ", "").split(",") if x.isdigit()))
+    hq_admin_role_id: int = field(default_factory=lambda: _int("CP_HQ_ADMIN_ROLE_ID", 0))
     # Updates (owner panel only): where the bot code comes from
     update_repo: str = field(default_factory=lambda: os.environ.get("CP_UPDATE_REPO", "lukas04545/ff"))
     update_branch: str = field(default_factory=lambda: os.environ.get("CP_UPDATE_BRANCH", "main"))
