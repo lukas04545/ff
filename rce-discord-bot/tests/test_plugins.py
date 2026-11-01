@@ -10,7 +10,8 @@ from aiohttp.test_utils import TestClient, TestServer
 H = {"X-Requested-With": "rce-web"}
 DEFAULT_ON = {"starter_kit", "lowpop_bonus", "early_bird", "bounties", "weekly_recap", "achievements", "wipe_poll"}
 ALL = DEFAULT_ON | {"invites", "website", "filling_ping", "comeback", "casino", "offline_protection", "battlepass", "battle_royale",
-                    "player_count", "streamers"}
+                    "player_count", "streamers", "tp_home", "bank", "market", "clans", "challenges", "auto_events",
+                    "zones", "leaderboard_panels", "raid_alerts"}
 
 HELLO = '''
 from plugin_api import Plugin, Setting
