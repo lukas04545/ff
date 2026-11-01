@@ -42,8 +42,9 @@ class Updates(commands.Cog):
     @property
     def follower(self) -> bool:
         """An extra server (servers.py) shares the main server's code – only the main server updates it."""
+        import saas_mode
         import servers
-        return servers.is_child()
+        return servers.is_child() or saas_mode.enabled()      # hosted: the control plane deploys the code
 
     async def cog_load(self) -> None:
         if self.bot.config.auto_update and not self.follower:

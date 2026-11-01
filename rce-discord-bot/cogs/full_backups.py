@@ -67,14 +67,17 @@ class FullBackups(commands.Cog):
         self.busy = asyncio.Lock()
 
     async def cog_load(self) -> None:
-        if not servers.is_child():
+        import saas_mode
+        if not servers.is_child() and not saas_mode.enabled():
             self.weekly_loop.start()
 
     async def cog_unload(self) -> None:
         self.weekly_loop.cancel()
 
     def enabled(self) -> bool:
-        return bool(getattr(self.bot.config, "full_backup_enabled", True)) and not servers.is_child()
+        import saas_mode
+        return bool(getattr(self.bot.config, "full_backup_enabled", True)) and not servers.is_child() \
+            and not saas_mode.enabled()                         # hosted: the code folder is shared by every tenant
 
     def _audit(self, text: str) -> None:
         self.bot.audit(text)
@@ -111,8 +114,9 @@ class FullBackups(commands.Cog):
 
     async def emergency_restore(self, name: str, *, by: str) -> str:
         """Safety backup of the current state, then restart into the chosen full backup. Returns the safety name."""
-        if servers.is_child():
-            raise ValueError("Restore on the main server – a full backup covers every server.")
+        import saas_mode
+        if servers.is_child() or saas_mode.enabled():
+            raise ValueError("Not available here – a full backup covers the shared code folder.")
         if full_backup.path_of(name) is None:
             raise ValueError("No such full backup.")
         safety = await self.make_now("pre-restore")

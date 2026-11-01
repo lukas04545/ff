@@ -87,7 +87,11 @@ SHARED_SETTINGS = frozenset(servers.SHARED_KEYS + servers.LOGIN_KEYS)   # extra 
 
 
 def locked_settings() -> frozenset[str]:
-    """Settings an extra server takes from the main server (shown, but not changeable on its panel)."""
+    """Settings an extra server takes from the main server (shown, but not changeable on its panel). Hosted
+    (SaaS) tenants: everything the control plane sets or that could reach beyond the tenant's folder."""
+    import saas_mode
+    if saas_mode.enabled():
+        return saas_mode.LOCKED_SETTINGS
     if not servers.is_child():
         return frozenset()
     import discord_router
@@ -459,6 +463,7 @@ class WebInterface:
         r.add_delete("/api/users/{username}", self.delete_user)
         r.add_delete("/api/users/{username}/2fa", self.reset_user_2fa)
         r.add_post("/api/account/password", self.change_own_password)
+        r.add_get("/saas/health", self.saas_health)              # hosted mode: also while in setup mode
         if self.setup_mode:
             r.add_post("/api/setup/continue", self.setup_continue)
             return app
@@ -1107,6 +1112,9 @@ class WebInterface:
         path = request.path
         if not path.startswith("/api/"):
             return await handler(request)
+        import saas_mode
+        if saas_mode.blocked(request.method, path):
+            raise ApiError("Not available on hosted servers.", 403)
         if request.method not in ("GET", "HEAD") and request.headers.get(CSRF_HEADER) != "rce-web":
             raise ApiError("Invalid request.", 403)
         if path == "/api/login":
@@ -1999,6 +2007,26 @@ class WebInterface:
             return await handler(request)
         finally:
             self.shield.inflight -= 1
+
+    async def saas_health(self, request: web.Request) -> web.Response:
+        """Hosted mode: a small status for the control plane (Bearer SAAS_HEALTH_TOKEN). No tenant data."""
+        import saas_mode
+        if not saas_mode.enabled() or not saas_mode.health_ok(request.headers.get("Authorization", "")):
+            raise web.HTTPNotFound()
+        bot = self.bot
+        guild = None
+        if bot is not None:
+            from permcheck import main_guild
+            guild = main_guild(bot)
+        return web.json_response({
+            "ok": True, "setup_mode": self.setup_mode,
+            "discord_ready": bool(bot is not None and bot.is_ready()),
+            "bot_user": str(bot.user) if bot is not None and bot.user else None,
+            "guild_id": str(guild.id) if guild else None, "guild_name": guild.name if guild else None,
+            "rcon_connected": bool(bot is not None and bot.rcon.connected),
+            "players_online": len(bot.online_players) if bot is not None else 0,
+            "latency_ms": round(bot.latency * 1000) if bot is not None and bot.is_ready() else None,
+        }, headers={"Cache-Control": "no-store"})
 
     async def shield_status(self, request: web.Request) -> web.Response:
         """The flood shield: traffic, blocked requests, banned IPs, under-attack mode."""

@@ -1878,6 +1878,16 @@ rules* (`AI_ABUSE_INSTRUCTIONS`, e.g. "Admins may spawn building materials durin
 
 ---
 
+## Selling the bot as a subscription (multi-tenant)
+
+`control_plane/` turns the bot into a hosted product: a **customer portal** (sign up, Stripe subscription, add
+servers, paste each server's own bot token), a **supervisor** that runs every server as its own isolated process
+(own token, folder, SQLCipher database with its own key, web port and `<slug>.yourdomain.com` website), **server
+slots** that only you can unlock (enforced server-side), and an **owner panel** (private listener, password + 2FA)
+with every customer, subscription, slot, server and its health – suspend, reactivate, restart, remove, purge.
+Tenant bots run with `RCE_SAAS=1` (`saas_mode.py`), which switches off everything that could reach beyond the
+tenant's own folder. Design, data model, security and the migration path: **`control_plane/ARCHITECTURE.md`**.
+
 ## Security
 
 - `.env` is listed in `.gitignore`. The token and RCON password never belong in Git or in

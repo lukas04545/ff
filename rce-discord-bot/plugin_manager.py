@@ -227,7 +227,9 @@ class PluginManager:
         built-in with the same name (so an update that adds a built-in called like your plugin can't hide it)."""
         candidates: dict[str, tuple[Path, bool]] = {}
         overrides: set[str] = set()
-        for builtin, folder in ((True, self.builtin_dir), (False, self.user_dir)):
+        import saas_mode
+        folders = ((True, self.builtin_dir),) if saas_mode.enabled() else ((True, self.builtin_dir), (False, self.user_dir))
+        for builtin, folder in folders:
             if not folder.is_dir():
                 continue
             for path in sorted(folder.glob("*.py")):

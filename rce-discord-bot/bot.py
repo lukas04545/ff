@@ -446,8 +446,11 @@ def main() -> None:
     os.chdir(os.environ.get(servers.ENV_HOME) or BASE_DIR)
     disable_console_quick_edit()
     setup_logging()
+    import saas_mode
     if servers.is_child():
         servers.watch_parent()          # an extra server ends with the main bot
+    elif saas_mode.enabled():
+        pass                            # hosted tenant: servers come from the control plane, never from here
     else:
         # The main server starts the extra servers (servers/<id>) and stops them when it stops
         servers.manager = servers.ServerManager()

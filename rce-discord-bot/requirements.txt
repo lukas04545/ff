@@ -7,3 +7,5 @@ tzdata>=2023.3
 Pillow>=10.0
 # Encrypted databases (DB_ENCRYPTION) – SQLCipher
 sqlcipher3>=0.6
+# Control plane (selling the bot as a subscription): AES-GCM for stored bot tokens
+cryptography>=42
