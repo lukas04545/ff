@@ -336,9 +336,9 @@ portal). Sign in with your owner username, password and 2FA code.
 
 **All servers at once (recommended):**
 ```bash
-python3 -m control_plane adopt --email you@example.com --dry-run   # lists main + every servers/<id>
+python3 -m control_plane adopt --dry-run                            # lists main + every servers/<id>
 systemctl stop <the old bot's service>                              # or kill the PIDs `adopt` names
-python3 -m control_plane adopt --email you@example.com
+python3 -m control_plane adopt                                      # prints a one-time login link at the end
 python3 -m control_plane run                                        # (or restart its service)
 ```
 * **What moves:** every server of the old install becomes a tenant of your account. The account is comped and gets

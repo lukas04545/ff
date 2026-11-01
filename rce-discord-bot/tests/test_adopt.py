@@ -1,6 +1,7 @@
 """Moving a running install (main server + its extra servers) into tenants in one go."""
 import asyncio
 import json
+import re
 import sqlite3
 import time
 
@@ -95,9 +96,14 @@ def test_adopt_command_waits_for_the_old_bot(cp, old, capsys, monkeypatch):  # n
     assert cli.main(["adopt", "--email", "me@x.io", "--source", str(old)]) == 1
     assert "PID 4242" in capsys.readouterr().out and cp.db.one("SELECT COUNT(*) AS n FROM servers")["n"] == 0
     monkeypatch.setattr(cli, "old_bot_processes", lambda source: [])
-    assert cli.main(["adopt", "--email", "me@x.io", "--source", str(old)]) == 0
+    assert cli.main(["adopt", "--source", str(old)]) == 0                         # no e-mail needed
     text = capsys.readouterr().out
     assert "EU 2 → server" in text and "give it its own bot token" in text
+    c = cp.db.one("SELECT * FROM customers WHERE email = ?", (cli.OWNER_ACCOUNT,))
+    assert c["name"] == "Your own servers"
+    from control_plane import websettings
+    token = re.search(r"/once/([A-Za-z0-9_-]+)", text)[1]                       # the login link is printed
+    assert websettings.use_login_link(cp.db, token)
     assert cli.old_bot_processes(old) == []                              # nothing runs from that folder
 
 
