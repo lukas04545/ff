@@ -56,9 +56,12 @@ async def apply(db: DB, settings: Settings) -> bool:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
-    if settings.caddy_reload:
-        proc = await asyncio.create_subprocess_exec(*shlex.split(settings.caddy_reload),
-                                                    stdout=asyncio.subprocess.DEVNULL,
-                                                    stderr=asyncio.subprocess.DEVNULL)
-        await proc.wait()
+    if settings.caddy_reload and not settings.cf_tunnel_token:     # the tunnel needs no Caddy (hostproxy.py)
+        try:
+            proc = await asyncio.create_subprocess_exec(*shlex.split(settings.caddy_reload),
+                                                        stdout=asyncio.subprocess.DEVNULL,
+                                                        stderr=asyncio.subprocess.DEVNULL)
+            await proc.wait()
+        except OSError:
+            pass                                    # Caddy isn't installed (yet)
     return True
