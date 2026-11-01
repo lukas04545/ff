@@ -334,28 +334,34 @@ portal). Sign in with your owner username, password and 2FA code.
 
 ## Migration from the current single-bot setup (minimal downtime)
 
-1. **Ship the lockdown first.** `saas_mode.py` is inert without `RCE_SAAS=1`, so the current bot behaves exactly as
-   before.
-2. **Stand up the control plane on the new VPS** (steps above). Create your owner account and test with a throwaway
-   server.
-3. **Prepare each existing server** (the import switches on the own-bot and AI add-ons for your account, so your
-   servers keep their own bots; set `CP_DEEPSEEK_API_KEY` to your DeepSeek key):
-   * if it uses `DB_ENCRYPTION`, turn it off and restart once (the import copies the plaintext database; the tenant
-     re-encrypts it with its own new key on first start);
-   * note its Discord token (it stays the same bot, so no re-invite is needed).
-4. **Import, one server at a time:** `python -m control_plane import-server /path/to/old/bot --email you@… --name
-   "Kryvon"`. For extra servers, use the `servers/<id>` folders.
-   * The import copies the database with SQLite's backup API (consistent while the old bot runs), plus rules,
-     knowledge base, price list, panel logins and 2FA, plugin settings and pictures, and every non-locked setting.
-   * Paths, ports and the token are *not* copied. The token goes into the encrypted store.
-   * The customer is **comped** (your own servers don't pay) and a slot is granted automatically.
-5. **Cut over:**
-   * stop the old process;
-   * within ~5 s the supervisor starts the imported one (the same token, so the same bot shows up in Discord);
-   * point the old domain (or a CNAME) at `<slug>.yourdomain.com`.
+**All servers at once (recommended):**
+```bash
+python3 -m control_plane adopt --email you@example.com --dry-run   # lists main + every servers/<id>
+systemctl stop <the old bot's service>                              # or kill the PIDs `adopt` names
+python3 -m control_plane adopt --email you@example.com
+python3 -m control_plane run                                        # (or restart its service)
+```
+* **What moves:** every server of the old install becomes a tenant of your account. The account is comped and gets
+  the own-bot and AI add-ons, plus one slot per server.
+* **What each tenant keeps:**
+  * its Discord bot token, so the same bot stays in the same Discord with no re-invite;
+  * its database, including an encrypted one (opened with the install's key – `DB_KEY` or the bot user's key file
+    – copied plain, then re-encrypted by the tenant with its own key);
+  * the Discord ↔ game links, rules, knowledge base, prices, panel logins and 2FA, plugin settings and pictures;
+  * every non-locked setting, including its panel's secret address and password.
+* **Safety:** `adopt` refuses to run while the old bot still runs. Copying a changing database and starting the same
+  token twice would both go wrong. Downtime is the time between stopping the old bot and `run` starting the
+  tenants (seconds).
+* **Extra servers on the main server's bot (`discord: shared`):** they can't share that token as a separate process.
+  They're adopted with everything else but wait for their own bot token (owner panel → server → *Set bot token*).
+* **Disabled extra servers** are adopted as *stopped*.
+* **Running it twice** skips what's already adopted.
+* **New addresses:** each server's website becomes `<slug>.yourdomain.com` (`python3 -m control_plane links` lists
+  them). Point old domains there if you had any.
 
-   Downtime is the bot restart, well under a minute. The database copied a moment earlier still holds everything up
-   to the copy. For zero lost writes, stop the old bot *before* running the import (about a minute of downtime).
+**One server at a time:** `python3 -m control_plane import-server /path/to/folder --email you@… --name "Kryvon"` does
+the same for a single folder.
+
 6. **Rollback:** the source folder isn't modified. Remove the imported server in the owner panel and start the old
    bot again.
 7. **After migration:** sell to new communities through the portal. They get one slot; you unlock more in the owner
