@@ -252,6 +252,7 @@ class OfflineProtection(Plugin):
                         "red_at": (zone["offline_since"] + self.setting("offline_minutes") * 60
                                    if zone.get("offline_since") is not None and zone["state"] != "red" else None),
                         "applied": zone.get("applied"), "radius": zone.get("radius") or self.setting("radius"),
+                        "custom_size": bool(zone.get("custom_radius")),
                         "vip": bool(team) and self.team_is_vip(team[0]["leader"] or zone["leader"], members),
                         "x": zone["x"], "y": zone["y"], "z": zone["z"], "placed": zone.get("placed"),
                         "offline_since": zone.get("offline_since"), "expires_at": self.expires_at(zone)})
@@ -320,6 +321,8 @@ class OfflineProtection(Plugin):
         if not zone.get("radius"):                          # zones from before sizes: made with the zone radius
             zone["radius"] = self.setting("radius")
             self._save(team_id, zone)
+        if zone.get("custom_radius"):                       # a size set by an admin stays as it is
+            return
         want = self.wanted_radius(team[0]["leader"] or zone["leader"], team[1])
         old = zone["radius"]
         if want == old:
@@ -424,6 +427,78 @@ class OfflineProtection(Plugin):
         if old is not None:
             return "moved", "your team's protection zone is placed here (moved)."
         return "placed", "your team's protection zone is placed here."
+
+    # ------------------------------------------------------------ For admins (management AI): any spot, custom size
+
+    async def admin_place(self, player: str, *, position: tuple[float, float, float] | None = None,
+                          at_player: str | None = None, radius: int | None = None, via: str = "admin") -> dict:
+        """Places the zone of `player`'s team (any member) at given coordinates, or where `at_player` (default:
+        `player`) stands now. radius: a custom size that the automatic team-size/VIP sizing then leaves alone."""
+        if not str(self.setting("create_command") or "").strip():
+            return {"ok": False, "error": "Protection zones aren't set up (create command is empty)."}
+        team = self.bot.db.team_of(player) or await self._look_up_team(player)
+        if team is None:
+            return {"ok": False, "error": f"{player} isn't in a team – zones are per team (they must make/join one "
+                                          "in game first)."}
+        team_id, members = int(team[0]["team_id"]), list(team[1])
+        leader = team[0]["leader"] or player
+        if position is None:
+            who = self._online_name(at_player or player)
+            if who is None:
+                return {"ok": False, "error": f"{at_player or player} isn't online – give coordinates instead, or "
+                                              "place it at an online player's position."}
+            position = await self._position(who)
+            if position is None:
+                return {"ok": False, "error": "Couldn't read the position from the server."}
+        if radius is not None and not 1 <= int(radius) <= 1000:
+            return {"ok": False, "error": "The size must be between 1 and 1000 m."}
+        old = self.zone(team_id)
+        if old is not None:
+            await self._run("remove_command", self._vars(old))
+        x, y, z = (float(v) for v in position)
+        zone = {"team": team_id, "name": f"{self.setting('zone_prefix')}{team_id}", "leader": leader,
+                "x": x, "y": y, "z": z, "state": "", "offline_since": None, "placed": int(time.time()),
+                "radius": int(radius) if radius else self.wanted_radius(leader, members), "members": sorted(members),
+                "custom_radius": bool(radius)}
+        if not await self._run("create_command", self._vars(zone)):
+            return {"ok": False, "error": "The zone couldn't be created (check the zone commands / RCON)."}
+        self._save(team_id, zone)
+        self.audit(f"Offline protection zone of team {team_id} ({leader}) placed by {via} at {x:.0f} {y:.0f} {z:.0f}, "
+                   f"{zone['radius']} m" + (" (custom size)" if radius else ""))
+        await self._update(team_id)
+        return {"ok": True, "result": "moved" if old else "placed", "team": team_id, "leader": leader,
+                "members": members, "position": [round(x, 1), round(y, 1), round(z, 1)], "radius": zone["radius"],
+                "custom_size": bool(radius)}
+
+    async def admin_resize(self, player: str, radius: int | None) -> dict:
+        """Changes the size of `player`'s team zone (same spot). radius None = back to the automatic size."""
+        team = self.bot.db.team_of(player) or await self._look_up_team(player)
+        zone = self.zone(int(team[0]["team_id"])) if team else None
+        if zone is None:
+            return {"ok": False, "error": f"{player}'s team has no protection zone yet – place one first."}
+        team_id, members = int(team[0]["team_id"]), list(team[1])
+        if radius is not None and not 1 <= int(radius) <= 1000:
+            return {"ok": False, "error": "The size must be between 1 and 1000 m."}
+        old = zone.get("radius") or self.setting("radius")
+        want = int(radius) if radius else self.wanted_radius(team[0]["leader"] or zone["leader"], members)
+        await self._run("remove_command", self._vars(zone))
+        zone["radius"], zone["custom_radius"] = want, bool(radius)
+        if not await self._run("create_command", self._vars(zone)):
+            zone["radius"] = old
+            self._save(team_id, zone)
+            return {"ok": False, "error": "The zone couldn't be created again (check the zone commands / RCON)."}
+        if zone["state"] in ("red", "green") and await self._run(f"{zone['state']}_command", self._vars(zone)):
+            zone["applied"] = time.time()
+        self._save(team_id, zone)
+        self.audit(f"Offline protection zone of team {team_id} resized {old} → {want} m by an admin"
+                   + (" (custom size)" if radius else " (automatic size)"))
+        return {"ok": True, "team": team_id, "old_radius": old, "radius": want, "custom_size": bool(radius)}
+
+    async def admin_remove(self, player: str, via: str = "admin") -> dict:
+        team = self.bot.db.team_of(player) or await self._look_up_team(player)
+        if team is None or not await self.remove_zone(int(team[0]["team_id"]), f"removed by {via}"):
+            return {"ok": False, "error": f"{player}'s team has no protection zone."}
+        return {"ok": True, "team": int(team[0]["team_id"])}
 
     # ------------------------------------------------------------ For the ticket AI (players who struggle)
 

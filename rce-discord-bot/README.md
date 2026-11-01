@@ -1105,6 +1105,12 @@ and it does it with tools:
   required Discord role, pause/resume, delete, list everything.
 - **Custom kits:** create (with items and cooldown), add/remove items, cooldown, switch on/off, delete.
 - **Giving:** a kit to a player, online players, item lookup.
+- **Offline protection zones (ZORP) for players:** "place Bob's zone where he stands", "put Bob's team zone at
+  1200 35 -850", "place it where I'm standing for Bob's team", "make Bob's zone 80 m", "back to the normal size",
+  "remove Bob's zone" (asks first). Any team member's name works – the zone belongs to their in-game team; the spot
+  is a player's current position or coordinates. A **custom size** is only used when an admin says one, and it then
+  stays (the automatic team-size/VIP sizing leaves it alone) until you set it back to automatic. Needs the Offline
+  protection plugin on.
 - **Console** (`MANAGER_AI_CONSOLE`, on): for anything else it may run a Rust console command.
 - **The bot's own code** (`MANAGER_AI_CODE`, on – only for the user IDs in `ADMIN_USER_IDS`, i.e. the owner; if
   that list is empty, every admin; main server only): "add a /ping command", "make the kit list sorted" … It
