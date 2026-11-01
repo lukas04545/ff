@@ -5,7 +5,7 @@
 
   login-link                   one-time link to the owner panel (works once, 15 minutes) – also for the very first
                                login: without an owner account it lets you create yours
-  adopt --email <you>          move EVERY server of this install (main + servers/<id>) into tenants at once –
+  adopt [--email <you>]        move EVERY server of this install (main + servers/<id>) into tenants at once –
                                tokens, databases (also encrypted ones), settings and panel addresses stay
   setup [--port 8099]          first setup in the browser before your domain works: a temporary owner panel on
                                http://<server ip>:8099 with a one-time link (stops after 30 minutes)
@@ -443,6 +443,9 @@ def adopt(db: DB, box: SecretBox, settings: Settings, source: Path, email: str) 
     return results
 
 
+OWNER_ACCOUNT = "owner@servers.local"     # your own servers' account when no e-mail is given (never mailed)
+
+
 def cmd_adopt(args, settings: Settings) -> int:
     source = Path(args.source or settings.bot_dir).resolve()
     found = discover(source)
@@ -456,8 +459,11 @@ def cmd_adopt(args, settings: Settings) -> int:
               "Its databases must not change while they're copied, and one Discord bot token can't run twice.")
         return 1
     db, box = _db_and_box(settings)
+    email = (args.email or OWNER_ACCOUNT).strip().lower()
     try:
-        results = adopt(db, box, settings, source, args.email)
+        results = adopt(db, box, settings, source, email)
+        if email == OWNER_ACCOUNT:
+            db.run("UPDATE customers SET name = 'Your own servers' WHERE email = ? AND name = ''", (email,))
     except (RuntimeError, provisioning.ProvisionError, slots.SlotError) as exc:
         print(f"Stopped: {exc}")
         return 1
@@ -469,7 +475,8 @@ def cmd_adopt(args, settings: Settings) -> int:
                 "(server → Bot token)" if r["shared_bot"] else "")
         print(f"  + {r['name']} → server #{r['id']} {r['url']}  panel: {provisioning.panel_url(settings, {"home_dir": r["home"], "slug": r["slug"]})}{note}")
     print("Start (or restart) the control plane: `python3 -m control_plane run` – the servers come online within "
-          "seconds. Rollback: stop it and start the old bot again (its folder wasn't changed).")
+          "seconds. Rollback: stop it and start the old bot again (its folder wasn't changed).\n")
+    cmd_login_link(args, settings)
     return 0
 
 
@@ -548,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("rotate-keys")
     sub.add_parser("login-link")
     ad = sub.add_parser("adopt")
-    ad.add_argument("--email", required=True, help="your account for these servers (created if new; free)")
+    ad.add_argument("--email", help="optional: the account these servers belong to (default: your own owner account)")
     ad.add_argument("--source", help="the old bot folder (default: this one)")
     ad.add_argument("--dry-run", action="store_true", help="only show what would be adopted")
     ad.add_argument("--force", action="store_true", help="even if the old bot still seems to run")
