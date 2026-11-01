@@ -1156,6 +1156,10 @@ class Storage:
         self._db.commit()
         return int(self.wallet(user_id)["points"])
 
+    def top_wallets(self, limit: int = 10) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT user_id, points FROM wallets WHERE points > 0 ORDER BY points DESC LIMIT ?",
+                                (limit,)).fetchall()
+
     def spend_points(self, user_id: int, cost: int, reason: str) -> int | None:
         """Takes `cost` points if the balance is high enough (atomic). New balance, or None if too few points."""
         self.wallet(user_id)
@@ -1438,6 +1442,10 @@ class Storage:
         elif kind == "promote" and other:
             self._db.execute("UPDATE teams SET leader = ? WHERE team_id = ?", (other, team_id))
         self._db.commit()
+
+    def team_members(self, team_id: int) -> list[str]:
+        return [r["player"] for r in self._db.execute("SELECT player FROM team_members WHERE team_id = ?",
+                                                      (team_id,)).fetchall()]
 
     def team_of(self, player: str) -> tuple[sqlite3.Row, list[str]] | None:
         row = self._db.execute("SELECT t.* FROM team_members m JOIN teams t ON t.team_id = m.team_id "

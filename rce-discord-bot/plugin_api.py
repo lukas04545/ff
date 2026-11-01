@@ -272,6 +272,45 @@ class Plugin(commands.Cog):
             self.log.warning("Kit %s for %s failed: %s", kit, player, exc)
             return False
 
+    async def position(self, player: str) -> tuple[float, float, float] | None:
+        """Where an online player stands (server.printpos, the same command as the teleport capture). None = unknown."""
+        from support import teleports as tp
+        name = self.online_name(player)
+        if name is None:
+            return None
+        command = (getattr(self.bot.config, "teleport_position_command", "") or tp.POSITION_DEFAULT)
+        try:
+            reply = await self.bot.rcon.command(command.format(name=name))
+        except (RconError, KeyError, IndexError, ValueError) as exc:
+            self.log.debug("position of %s failed: %s", name, exc)
+            return None
+        return tp.parse_position(reply)
+
+    async def teleport(self, player: str, x: float, y: float, z: float) -> bool:
+        """Teleports a player (TELEPORT_COMMAND, default global.teleportpos)."""
+        from support import teleports as tp
+        command = (getattr(self.bot.config, "teleport_command", "") or tp.TELEPORT_DEFAULT)
+        try:
+            await self.bot.rcon.command(command.format(x=round(x, 2), y=round(y, 2), z=round(z, 2), name=player),
+                                        expect_response=False)
+            return True
+        except (RconError, KeyError, IndexError, ValueError) as exc:
+            self.log.warning("teleport of %s failed: %s", player, exc)
+            return False
+
+    @staticmethod
+    def emote_raw(text: str) -> str | None:
+        """The quick chat id of an emote setting ("We need beds!", "Building › We need beds!", or the raw id)."""
+        from support import emote_binds
+        return emote_binds.find(text or "")[0]
+
+    def emote_clash(self, raw: str | None) -> str | None:
+        """A kit bound to this emote (it would fire too) – for problems()."""
+        if not raw:
+            return None
+        rules = [r for r in self.bot.db.kit_rules(trigger="quickchat") if r["phrase"] == raw]
+        return rules[0]["kit"] if rules else None
+
     # ------------------------------------------------------------ Points
 
     @property
