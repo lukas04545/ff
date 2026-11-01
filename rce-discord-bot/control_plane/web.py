@@ -16,13 +16,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import re
 import secrets
 import time
 from typing import Awaitable, Callable
 
 from aiohttp import web
 
-from control_plane import actions, billing, features, manage_ai, provisioning, slots, updates
+from control_plane import actions, billing, features, manage_ai, provisioning, slots, updates, websettings
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -434,7 +435,8 @@ def build_owner(db: DB, box: SecretBox, settings: Settings, changed: Callable[[]
         return page("Owner login", f"""<h1>Owner panel</h1>{f'<p class=err>{msg}</p>' if msg else ''}<div class=card>
 <form method=post action={P}/login><input name=username placeholder=Username required> <input name=password
 type=password placeholder=Password required> <input name=code inputmode=numeric placeholder="2FA code" required>
-<button>Sign in</button></form></div>""")
+<button>Sign in</button></form><p class=muted>No login yet, or locked out? On the server run
+<code>python3 -m control_plane login-link</code> – it prints a one-time link.</p></div>""")
 
     async def login(request):
         from web.totp import matching_step
@@ -526,7 +528,7 @@ type=password placeholder=Password required> <input name=code inputmode=numeric 
         running = sum(1 for p in (supervisor.procs.values() if supervisor else []) if p.state == "running")
         return page("Owner", f"""<h1>Owner panel <span class=muted>({esc(who)})</span></h1>
 <p>{len(customers)} customers · {counts['n'] or 0} servers ({counts['a'] or 0} active, {running} processes running)
-· <a href={P}/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
+· <a href={P}/settings>⚙️ settings</a> · <a href={P}/audit>audit log</a> · {button(request, '/logout', 'Sign out')}</p>
 {update_card(request)}
 <div class=card><h2>Customers</h2><table><tr><th>Customer</th><th>Account</th><th>Subscription</th><th>Slots
 (used / limit)</th></tr>{crows or '<tr><td colspan=4>None yet.</td></tr>'}</table></div>
@@ -682,6 +684,102 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         await changed()                                  # the server restarts with it on/off
         raise go("/")
 
+    once_limiter = RateLimiter(10, 900)
+
+    async def once_page(request):
+        token = request.match_info["token"]
+        if not websettings.use_login_link(db, token, consume=False):
+            return page("Link used", "<div class=card><h1>This link doesn't work (any more)</h1><p>A one-time link "
+                                     "works once and for 15 minutes. Make a new one on the server: <code>python3 -m "
+                                     "control_plane login-link</code></p></div>")
+        first = db.one("SELECT 1 FROM owners") is None
+        fields_ = ("<p>No owner account exists yet – create yours (you'll get a 2FA key for your authenticator app):"
+                   "</p><input name=username placeholder=Username required pattern='[A-Za-z0-9_.-]{3,32}'> "
+                   "<input name=password type=password placeholder='Password (16+ characters)' required minlength=16>"
+                   "<br><br>") if first else ""
+        return page("One-time login", f"""<h1>Owner panel – one-time login</h1><div class=card>
+<form method=post action={P}/once/{esc(token)}>{fields_}<button>{'Create account and sign in' if first else 'Sign in'}
+</button></form><p class=muted>The link stops working after this.</p></div>""")
+
+    async def once_use(request):
+        from web.totp import new_secret, otpauth_uri
+        from web.users import hash_password
+        _same_origin(request)
+        ip = _client_ip(request)
+        if once_limiter.hit("once:" + ip) is not None:
+            raise web.HTTPTooManyRequests(text="Too many tries – wait a few minutes.")
+        data = dict(await request.post())
+        first = db.one("SELECT 1 FROM owners") is None
+        username = str(data.get("username", "")).strip()
+        password = str(data.get("password", ""))
+        if first and (not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username) or len(password) < 16):
+            return page("Not possible", "<div class=card><p class=err>Username: 3–32 letters/digits; password: 16+ "
+                                        f"characters.</p><a href={P}/once/{esc(request.match_info['token'])}>Back</a></div>")
+        if not websettings.use_login_link(db, request.match_info["token"]):
+            db.audit("system", "owner.login_link_failed", detail=ip)
+            raise go("/login?e=Link+expired+or+used")
+        extra = ""
+        if first:
+            totp = new_secret()
+            db.run("INSERT INTO owners (username, password_hash, totp_secret) VALUES (?, ?, ?)",
+                   (username, hash_password(password), totp))
+            db.audit(f"owner:{username}", "owner.create", detail=f"one-time link from {ip}")
+            extra = (f"<div class=card><h2>Your 2FA key – add it now</h2><p>Authenticator app → add account → enter "
+                     f"key manually (time-based, 6 digits):</p><p><code style='font-size:1.2rem'>{esc(totp)}</code></p>"
+                     f"<p class=muted>Or open: <code>{esc(otpauth_uri(totp, username, 'RCE SaaS owner'))}</code></p>"
+                     "<p>You need it with your password for every normal login.</p></div>")
+        else:
+            username = db.one("SELECT username FROM owners ORDER BY rowid LIMIT 1")["username"]
+        db.audit(f"owner:{username}", "owner.login", detail=f"one-time link from {ip}")
+        resp = page("Signed in", f"<h1>Signed in as {esc(username)}</h1>{extra}<p><a href={P}/settings>⚙️ Settings"
+                                 f"</a> · <a href={P}/>Owner panel</a></p>")
+        sess.issue(resp, f"o:{username}", request, path=P or "/")
+        return resp
+
+    def settings_form(request, msg: str = "") -> web.Response:
+        insecure = request.headers.get("X-Forwarded-Proto", request.scheme) != "https" and request.host.split(":")[0] \
+            not in ("127.0.0.1", "localhost")
+        groups: dict[str, list[str]] = {}
+        for f in websettings.FIELDS:
+            cur = websettings.shown(f.key)
+            if f.secret:
+                inp = (f"<input name={f.key} type=password autocomplete=off style='width:100%' "
+                       f"placeholder='{esc(cur)} – leave empty to keep'>"
+                       + (f"<label><input type=checkbox name=clear_{f.key} value=1> remove</label>"
+                          if cur != "not set" else ""))
+            else:
+                inp = f"<input name={f.key} value='{esc(cur)}' style='width:100%'>"
+            groups.setdefault(f.group, []).append(
+                f"<p><b>{esc(f.label)}</b>{' <span class="pill warn">restart</span>' if f.restart else ''}<br>{inp}"
+                + (f"<br><span class=muted>{esc(f.help)}</span>" if f.help else "") + "</p>")
+        body = "".join(f"<div class=card><h2>{esc(g)}</h2>{''.join(items)}</div>" for g, items in groups.items())
+        warn = ("<p class=err>⚠️ This page isn't on HTTPS – keys you type travel unencrypted. Prefer the "
+                "https://portal.&lt;domain&gt;/management address once it works.</p>") if insecure else ""
+        return page("Settings", f"""<p><a href={P}/>← owner panel</a></p><h1>⚙️ Settings</h1>{warn}
+{f'<p class=muted>{msg}</p>' if msg else ''}<p class=muted>Saved encrypted in the control plane's database; they win over
+/etc/rce-saas.env. The master key and the session secret stay in that file only.</p>
+<form method=post action={P}/settings>{hidden(request)}{body}<button>Save</button></form>""")
+
+    async def settings_page(request):
+        owner(request)
+        return settings_form(request)
+
+    async def settings_save(request):
+        who = owner(request)
+        data = await sess.form(request)
+        try:
+            changed_keys = websettings.save(db, box, data, actor=f"owner:{who}")
+        except websettings.SettingsError as exc:
+            return page("Not saved", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/settings>Back</a></div>")
+        websettings.refresh(settings, list(websettings.saved(db, box)))
+        await changed()                                  # servers pick up e.g. a new AI key (restart by themselves)
+        restart = [k for k in changed_keys if websettings.BY_KEY[k].restart]
+        msg = ("✅ Saved: " + ", ".join(changed_keys)) if changed_keys else "Nothing changed."
+        if restart:
+            msg += (" – restart the control plane for " + ", ".join(restart) +
+                    " (systemctl restart rce-saas, or stop and start `run`).")
+        return settings_form(request, esc(msg))
+
     async def audit(request):
         owner(request)
         rows = db.q("SELECT * FROM audit_log ORDER BY id DESC LIMIT 300")
@@ -692,6 +790,8 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
                              f"<th>What</th><th>Customer</th><th>Server</th><th>Detail</th></tr>{body}</table>")
 
     app.add_routes([web.get("/login", login_page), web.post("/login", login), web.post("/logout", logout),
+                    web.get("/once/{token}", once_page), web.post("/once/{token}", once_use),
+                    web.get("/settings", settings_page), web.post("/settings", settings_save),
                     web.get("/", dashboard), web.get(r"/customers/{cid:\d+}", customer), web.get("/audit", audit),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post(r"/grants/{id:\d+}/revoke", act),
