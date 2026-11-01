@@ -160,6 +160,10 @@ def adopt_env_key() -> str:
     """The key for this start. A recovery key in DB_KEY (e.g. on a new PC) is saved to this PC's key file, so it
     can be removed from the .env again – the key shouldn't stay in the bot folder."""
     env = (os.environ.get(KEY_ENV) or "").strip().lower()
+    if os.environ.get("RCE_SAAS") == "1":                  # hosted tenant: its own key, only in its environment
+        if not env:
+            raise KeyError_("Hosted mode needs DB_KEY from the control plane.")
+        return load_key()
     if env:
         key = load_key()                                   # checks the format
         path = key_file()

@@ -31,7 +31,8 @@ STATE_FILE = code_edit.ROOT / "data" / "code_changes.json"
 
 def may_edit_code(bot, user) -> bool:
     cfg = bot.config
-    if not getattr(cfg, "manager_ai_code", True) or servers.is_child():
+    import saas_mode
+    if not getattr(cfg, "manager_ai_code", True) or servers.is_child() or saas_mode.enabled():
         return False
     if cfg.admin_user_ids:
         return user.id in cfg.admin_user_ids
