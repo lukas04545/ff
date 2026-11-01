@@ -2186,8 +2186,10 @@ class WebInterface:
         return resp
 
     async def me(self, request: web.Request) -> web.Response:
+        import saas_mode
         return web.json_response({"ok": True, "setup_mode": self.setup_mode, "panel_path": self.panel_path,
                                   "user": request["user"], "role": request["role"],
+                                  "hosted": saas_mode.enabled(), "hidden_views": saas_mode.hidden_views(),
                                   "skin": self.themes.get(request["user"]), "skin_options": self.themes.options(),
                                   **self._tunnel_info()})
 
@@ -2414,12 +2416,16 @@ class WebInterface:
     # ------------------------------------------------------------ Settings
 
     async def get_settings(self, request: web.Request) -> web.Response:
+        import saas_mode
         env = read_env(self.env_path)
         locked = locked_settings()
+        hosted = saas_mode.enabled()
         fields = []
         for f in settings_schema.FIELDS:
             if f.key == servers.OWN_ABUSE_KEY and not servers.is_child():
                 continue                        # only extra servers choose between the main's settings and their own
+            if hosted and f.key in locked:
+                continue                        # hosted: the host's settings (and AI without the add-on) aren't shown
             item = {"key": f.key, "label": f.label, "group": f.group, "kind": f.kind, "help": f.help,
                     "required": f.required, "pick": f.pick, "advanced": f.advanced,
                     "placeholder": f.placeholder, "choices": list(f.choices)}
@@ -2438,8 +2444,9 @@ class WebInterface:
             config_error = None
         except ConfigError as exc:
             config_error = str(exc)
+        used = {f["group"] for f in fields}
         return web.json_response({
-            "groups": [{"id": g, "label": label} for g, label in settings_schema.GROUPS],
+            "groups": [{"id": g, "label": label} for g, label in settings_schema.GROUPS if g in used or not hosted],
             "fields": fields, "setup_mode": self.setup_mode, "setup_error": self.setup_error,
             "setup_fix_url": self.setup_fix_url,
             "config_error": config_error, "restart_required": self.restart_required, "restart_for": self.restart_for,

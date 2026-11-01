@@ -124,6 +124,20 @@ Every server runs on one of two bots:
 * **Themes:** the player website has a *Look (theme)* setting (rust, neon, arctic, jungle, bloodmoon, gold, clean)
   next to the logo, colours and texts. The Halloween look still wins in October.
 
+## Owner panel vs. a server's panel
+
+* **The owner panel** has the same "command centre" look as a server's admin panel (`owner_ui.py`): a sidebar
+  with coloured groups, stat cards (customers, servers, bots online, players, monthly revenue, need attention) and
+  its own pages: Overview, System (the VPS and every server process), Audit log, Customers, Servers, Domains,
+  Packages and Settings.
+* **A hosted server's panel shows only its own things.** Not shown, and their API calls refused:
+  * the Servers page, Create plugin and System;
+  * the host's settings (token, ports, paths, updates, database …);
+  * without the AI add-on: every AI setting and the knowledge base page (`saas_mode.hidden_views()`, AI keys locked).
+* **Knowledge base and ticket learning are per server:** every tenant runs in its own folder (`RCE_HOME`), and the
+  knowledge file is relative and locked there. What the AI learns from tickets is written into that server's
+  file only.
+
 ## Add-ons and updates
 
 * **Add-ons** (`features` table, owner panel → customer → Add-ons, or `python -m control_plane addon …`):
