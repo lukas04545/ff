@@ -8,6 +8,7 @@
   addon <email> <custom_bot|ai> <on|off>   switch an add-on (same as the owner panel)
   update [--install]           check for a new bot version / install it for every server (only way to update)
   rotate-keys                  re-encrypt every secret with the newest master key
+  links [--email <email>]      where everything is: the owner panel and every server's (secret) admin panel
 """
 from __future__ import annotations
 
@@ -97,6 +98,30 @@ def cmd_update(args, settings: Settings) -> int:
         print("Running servers pick it up when restarted – use the owner panel's update button for a rolling restart.")
     else:
         print(asyncio.run(updates.check(db, settings)))
+    return 0
+
+
+def cmd_links(args, settings: Settings) -> int:
+    """Prints the owner panel's address and every server's website + secret admin panel (never /admin – that's
+    the honeypot). Reads only control.db and the tenants' .env files – no keys needed."""
+    db = DB(settings.db_path)
+    print("Owner panel:")
+    if settings.owner_path:
+        print(f"  {settings.portal_url}{settings.owner_path}"
+              + (f"   (only from {', '.join(sorted(settings.owner_allow_ips))})" if settings.owner_allow_ips else ""))
+    print(f"  http://{settings.owner_host}:{settings.owner_port}   (private – ssh -L {settings.owner_port}:"
+          f"127.0.0.1:{settings.owner_port} <vps>)")
+    print(f"Customer portal:\n  {settings.portal_url}")
+    where, params = "s.status != 'deleted'", ()
+    if args.email:
+        where, params = where + " AND c.email = ?", (args.email.strip().lower(),)
+    rows = db.q(f"SELECT s.*, c.email FROM servers s JOIN customers c ON c.id = s.customer_id WHERE {where} "
+                "ORDER BY c.email, s.id", params)
+    print("Servers:" if rows else "Servers: none" + (f" for {args.email}" if args.email else ""))
+    for s in rows:
+        print(f"  #{s['id']} {s['name']} ({s['email']}, {s['status']})\n"
+              f"      website: {settings.url_for(s['slug'])}\n"
+              f"      panel:   {provisioning.panel_url(settings, s)}")
     return 0
 
 
@@ -216,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("slots", type=int)
     g.add_argument("--reason")
     sub.add_parser("rotate-keys")
+    lk = sub.add_parser("links")
+    lk.add_argument("--email", help="only this customer's servers")
     a = sub.add_parser("addon")
     a.add_argument("email")
     a.add_argument("feature", choices=sorted(features.FEATURES))
@@ -235,7 +262,8 @@ def main(argv: list[str] | None = None) -> int:
         asyncio.run(_run(settings))
         return 0
     return {"init": cmd_init, "create-owner": cmd_create_owner, "grant": cmd_grant, "rotate-keys": cmd_rotate,
-            "import-server": cmd_import, "addon": cmd_addon, "update": cmd_update}[args.cmd](args, settings)
+            "import-server": cmd_import, "addon": cmd_addon, "update": cmd_update,
+            "links": cmd_links}[args.cmd](args, settings)
 
 
 if __name__ == "__main__":
