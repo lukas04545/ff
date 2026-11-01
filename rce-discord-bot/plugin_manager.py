@@ -169,7 +169,12 @@ class PluginManager:
     @staticmethod
     def _default_on(info: "PluginInfo | None") -> bool:
         """Built-in plugins (and your own copy replacing one) may be on without the owner switching them on."""
-        return bool(info and info.cls and info.cls.DEFAULT_ENABLED and (info.builtin or info.overrides))
+        if not (info and info.cls and (info.builtin or info.overrides)):
+            return False
+        import saas_mode
+        if saas_mode.enabled() and getattr(info.cls, "HOSTED_DEFAULT", False):
+            return True                       # hosted: free with every server (e.g. the player website)
+        return bool(info.cls.DEFAULT_ENABLED)
 
     # ------------------------------------------------------------ Control panel menu
 

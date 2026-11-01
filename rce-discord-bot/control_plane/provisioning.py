@@ -127,7 +127,7 @@ def finish_provisioning(db: DB, box: SecretBox, settings: Settings, server_id: i
         "WEB_ENABLED": "true", "WEB_HOST": "127.0.0.1", "WEB_PORT": str(s["web_port"]), "WEB_TUNNEL": "false",
         "WEB_PUBLIC_URL": settings.url_for(s["slug"]), "WEB_OPEN_BROWSER": "false",
         "WEB_PASSWORD": hash_password(password), "SERVER_DISPLAY_NAME": s["name"],
-        "DATABASE_PATH": "data/bot.db", "AUTO_UPDATE": "false", "MANAGER_AI_CODE": "false",
+        "DATABASE_PATH": "data/bot.db", "AUTO_UPDATE": "false",
         "FULL_BACKUP_ENABLED": "false", "DB_ENCRYPTION": "true", "BACKUP_COPY_DIR": "",
     })
     if s["status"] == "provisioning":

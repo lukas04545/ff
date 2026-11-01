@@ -20,7 +20,6 @@ import asyncio
 import contextlib
 import contextvars
 import difflib
-import io
 import json
 import logging
 import os
@@ -109,15 +108,6 @@ WEB_ON = """
   tickets, reports, giveaways, plugins, settings, store, status …). Prefer the dedicated tools when they fit. For
   settings: GET /api/settings first, then PUT /api/settings with {"values": {"KEY": "value"}} – only the keys to
   change. Secrets, logins and access settings are off-limits."""
-
-CODE_ON = """
-- You can change the bot's own code (Python cogs/plugins, web panel files) for the owner: list_code_files,
-  read_code_file (read before editing!), edit_code_file. Rules: make small, careful edits with exact old/new text
-  copied from read_code_file; keep the code style; never touch secrets, logins or admin checks (blocked anyway).
-  The owner confirms every edit (they see the diff). The new code is checked (compiles + imports); cogs and plugins
-  reload right away, other Python files need restart_bot. Every original is kept as .bak until the owner clicks
-  ✅ Keep – ↩️ Revert (or revert_code_changes) puts everything back. Tell the owner to test it, then Keep or Revert.
-  Never claim a change works before it was tested."""
 
 CONSOLE_ON = """
 - run_console_command exists for anything your other tools can't do (Rust console commands). Use it only when the
@@ -252,23 +242,6 @@ WEB_TOOLS = [
          "path": {"type": "string", "description": "e.g. /api/shop or /api/schedules/3 (with ?query for GET)"},
          "body": {"type": "object", "description": "JSON body for POST/PUT/DELETE"},
          "why": {"type": "string", "description": "Short reason, shown to the admin"}}, ["method", "path"]),
-]
-CODE_TOOLS = [
-    _fn("list_code_files", "The bot's code files (path, lines). Filter with a word.", {"filter": {"type": "string"}}),
-    _fn("read_code_file", "Reads a code file with line numbers (max 400 lines per call).",
-        {"path": {"type": "string"}, "start": {"type": "integer", "minimum": 1},
-         "count": {"type": "integer", "minimum": 1, "maximum": 400}}, ["path"]),
-    _fn("edit_code_file", "Changes a code file: exact replacements (old text must occur once) or a new file. The "
-                          "owner confirms with the diff; the original is kept as .bak until Keep/Revert.",
-        {"path": {"type": "string"},
-         "edits": {"type": "array", "items": {"type": "object", "properties": {
-             "old": {"type": "string"}, "new": {"type": "string"}}, "required": ["old", "new"]}},
-         "new_file_content": {"type": "string", "description": "Only to create a NEW file"},
-         "why": {"type": "string", "description": "What the change does, for the owner"}}, ["path", "why"]),
-    _fn("code_changes_pending", "The code changes not confirmed yet (files with a .bak)."),
-    _fn("revert_code_changes", "Puts every changed file back to its original (.bak). Owner confirms."),
-    _fn("restart_bot", "Restarts the bot (needed after changing Python files that aren't cogs/plugins). Owner "
-                       "confirms."),
 ]
 CONFIRM_TOOLS = {"reset_autokit_claims", "delete_custom_kit", "give_kit_to_everyone", "run_console_command"}
 
@@ -405,12 +378,7 @@ class ManagerAI(commands.Cog):
 
     def tools(self, user=None) -> list[dict]:
         return (TOOLS + ([CONSOLE_TOOL] if getattr(self.bot.config, "manager_ai_console", True) else [])
-                + (WEB_TOOLS if self._web() is not None else [])
-                + (CODE_TOOLS if user is not None and self._may_code(user) else []))
-
-    def _may_code(self, user) -> bool:
-        from cogs.code_changes import may_edit_code
-        return self.bot.get_cog("CodeChanges") is not None and may_edit_code(self.bot, user)
+                + (WEB_TOOLS if self._web() is not None else []))
 
     def _web(self):
         """The admin website (web interface), if it runs and the AI may use it."""
@@ -430,12 +398,12 @@ class ManagerAI(commands.Cog):
         if feed:
             feed.add_line(f"🧠 Management AI for {who}: {text}")
 
-    def _prompt(self, code: bool = False) -> str:
+    def _prompt(self) -> str:
         cfg = self.bot.config
         extra = getattr(cfg, "manager_ai_instructions", "")
         return SYSTEM.format(name=self._name(), server=cfg.server_display_name or "the server",
                              console=CONSOLE_ON if getattr(cfg, "manager_ai_console", True) else "",
-                             web=(WEB_ON if self._web() is not None else "") + (CODE_ON if code else ""),
+                             web=WEB_ON if self._web() is not None else "",
                              extra=f"\n\nThe owner's own instructions (they take priority):\n{extra}" if extra else "")
 
     @commands.Cog.listener()
@@ -464,7 +432,7 @@ class ManagerAI(commands.Cog):
         channel_id = message.channel.id
         async with self._locks.setdefault(channel_id, asyncio.Lock()):
             history = self._history.setdefault(channel_id, deque(maxlen=HISTORY))
-            messages = [{"role": "system", "content": self._prompt(self._may_code(message.author))}, *history,
+            messages = [{"role": "system", "content": self._prompt()}, *history,
                         {"role": "user", "content": f"{message.author.display_name}: {text[:3000]}"}]
             done: list[str] = []
             try:
@@ -563,7 +531,7 @@ class ManagerAI(commands.Cog):
         message = SimpleNamespace(author=_Owner(), channel=_NoChannel(), guild=main_guild(self.bot))
         clean = [{"role": h["role"], "content": str(h["content"])[:3000]} for h in (history or [])[-HISTORY:]
                  if isinstance(h, dict) and h.get("role") in ("user", "assistant")]
-        messages = [{"role": "system", "content": self._prompt(False)}, *clean,
+        messages = [{"role": "system", "content": self._prompt()}, *clean,
                     {"role": "user", "content": f"Platform owner: {str(text)[:3000]}"}]
         done: list[str] = []
         asked: list[str] = []
@@ -1138,62 +1106,6 @@ class ManagerAI(commands.Cog):
                 if result.get("ok"):
                     result["did"] = f"🌐 {method} {path[:50]}"
             return result
-
-        if name in ("list_code_files", "read_code_file", "edit_code_file", "code_changes_pending",
-                    "revert_code_changes", "restart_bot"):
-            from support import code_edit
-            changes = self.bot.get_cog("CodeChanges")
-            if changes is None or not self._may_code(message.author):
-                return {"ok": False, "error": "Code changes are only for the owner (ADMIN_USER_IDS) with "
-                                              "MANAGER_AI_CODE on, on the main server."}
-            try:
-                if name == "list_code_files":
-                    return {"ok": True, "files": code_edit.list_files(str(args.get("filter") or ""))}
-                if name == "read_code_file":
-                    return {"ok": True, **code_edit.read(str(args.get("path") or ""), args.get("start") or 1,
-                                                         args.get("count") or 200)}
-                if name == "code_changes_pending":
-                    return {"ok": True, **changes.changes.pending()}
-                if name == "revert_code_changes":
-                    if not await self.confirm(message, "Put every changed code file back to its original (.bak)?"):
-                        return {"ok": False, "error": "The admin did not confirm."}
-                    return {"ok": True, "result": await changes.revert(str(message.author)), "did": "↩️ code reverted"}
-                if name == "restart_bot":
-                    if not await self.confirm(message, "Restart the bot now? It's gone for a few seconds."):
-                        return {"ok": False, "error": "The admin did not confirm."}
-                    self._audit(who, "bot restart (code changes)")
-                    self.bot.request_restart()
-                    return {"ok": True, "result": "restarting – back in a few seconds", "did": "🔄 restart"}
-                # edit_code_file
-                path_name = str(args.get("path") or "")
-                create = bool(args.get("new_file_content")) and not (code_edit.ROOT / path_name.lstrip("/")).exists()
-                edits = args.get("edits") if isinstance(args.get("edits"), list) else None
-                content = args.get("new_file_content") if create else None
-                if not create and not edits:
-                    return {"ok": False, "error": "Give edits (exact old/new text). new_file_content is only for new "
-                                                  "files."}
-                path, old, new = code_edit.prepare(path_name, edits=edits, content=content, create=create)
-                rel = code_edit.rel(path)
-                patch = code_edit.diff(rel, old, new)
-                why = str(args.get("why") or "")[:300]
-                added = sum(1 for x in patch.splitlines() if x.startswith("+") and not x.startswith("+++"))
-                removed = sum(1 for x in patch.splitlines() if x.startswith("-") and not x.startswith("---"))
-                if not await self.confirm(
-                        message, f"Change the bot's code: `{rel}` (+{added} / −{removed} lines)\n> {safe_md(why)}\n"
-                                 "The diff is attached. The original is kept as .bak until you click ✅ Keep.",
-                        file=discord.File(io.BytesIO(patch.encode()), filename=rel.replace("/", "_") + ".diff")):
-                    return {"ok": False, "error": "The admin did not confirm."}
-                result = await changes.edit(path_name, edits=edits, content=content, create=create,
-                                            by=f"management AI for {message.author}", why=why)
-                await message.channel.send(changes.summary(), view=changes.view(),
-                                           allowed_mentions=discord.AllowedMentions.none())
-                hint = {"reloaded": "Live now – test it.", "restart needed": "Needs restart_bot to take effect.",
-                        "browser reload": "Reload the panel in the browser (Ctrl+F5).",
-                        "not loaded": "Saved – the plugin isn't running, turn it on to use it."}
-                return {"ok": True, **result, "next": hint.get(result["result"], "Saved."),
-                        "did": f"🧩 {result['file']} ({result['result']})"}
-            except code_edit.CodeEditError as exc:
-                return {"ok": False, "error": str(exc)}
 
         if name == "run_console_command" and getattr(cfg, "manager_ai_console", True):
             command = str(args.get("command") or "").strip().replace("\n", " ")[:300]

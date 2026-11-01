@@ -80,6 +80,8 @@ class Settings:
     # OPTIONAL, only if the owner chooses to save it: a token that can ONLY add customers' own domains
     # (Zone › SSL and Certificates › Edit on your domain). Without it the owner activates domains by hand.
     cf_saas_token: str = field(default_factory=lambda: os.environ.get("CP_CF_SAAS_TOKEN", ""))
+    # The premium add-on: the customer's own domain for their website, per month (e.g. 3.99; empty = not sold)
+    domain_price: str = field(default_factory=lambda: os.environ.get("CP_DOMAIN_PRICE", ""))
     # The shop (portal): its name on every page
     shop_name: str = field(default_factory=lambda: os.environ.get("CP_SHOP_NAME", "") or "Rust Console Bot")
     # Updates (owner panel only): where the bot code comes from

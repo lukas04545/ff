@@ -381,8 +381,5 @@ def test_bot_hosted_mode_lockdown(monkeypatch):
         dbcrypt.adopt_env_key()                                                     # never falls back to a shared file
     monkeypatch.setenv("DB_KEY", "ab" * 32)
     assert dbcrypt.adopt_env_key() == "ab" * 32
-    from cogs.code_changes import may_edit_code
-    bot = NS(config=NS(manager_ai_code=True, admin_user_ids=frozenset({1}), admin_role_ids=frozenset()))
-    assert may_edit_code(bot, NS(id=1)) is False
     monkeypatch.delenv("RCE_SAAS")
     assert locked_settings() == frozenset() and not saas_mode.blocked("POST", "/api/plugins/upload")

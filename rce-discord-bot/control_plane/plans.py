@@ -27,8 +27,8 @@ SLUG = re.compile(r"[^a-z0-9]+")
 DEFAULTS = (   # a starting point for a new shop – the owner edits the prices and texts
     {"name": "Starter", "tagline": "Everything a community server needs", "price_cents": 799, "slots": 1, "ai": 0,
      "custom_bot": 0, "highlight": 0,
-     "perks": "1 Rust Console server\nKits, shop, points, tickets & stats\nAdmin website + player website\n"
-              "Discord bot (ours)"},
+     "perks": "1 Rust Console server\nKits, shop, points, tickets & stats\nFree player website with your own "
+              "pictures\nYour own web shop with PayPal\nDiscord bot (ours)"},
     {"name": "Pro", "tagline": "With the AI that does the admin work", "price_cents": 1499, "slots": 2, "ai": 1,
      "custom_bot": 0, "highlight": 1,
      "perks": "2 Rust Console servers\nEverything in Starter\nAI tickets, AI chat & AI moderation\nPriority support"},
@@ -176,3 +176,95 @@ async def switch_subscription(settings, subscription_id: str, price_id: str) -> 
             data = await resp.json(content_type=None)
             if resp.status != 200:
                 raise PlanError("Stripe: " + (data.get("error") or {}).get("message", f"HTTP {resp.status}"))
+
+
+# ---------------------------------------------------------------- the premium add-on: own domain
+
+ADDON_OWNER = "addon"               # granted_by of a bought add-on (a package change never takes it away)
+
+
+def addon_price(db: DB, settings) -> dict | None:
+    """The own-domain add-on's price: {"cents", "currency", "text"} or None if it isn't for sale."""
+    raw = str(settings.domain_price or "").replace(",", ".").strip()
+    try:
+        cents = round(float(raw) * 100) if raw else 0
+    except ValueError:
+        return None
+    if not 50 <= cents <= 100_000:
+        return None
+    first = db.one("SELECT currency FROM plans WHERE active = 1 ORDER BY sort, id")
+    currency = first["currency"] if first else "eur"
+    return {"cents": cents, "currency": currency,
+            "text": f"{CURRENCIES.get(currency, currency.upper() + ' ')}{cents / 100:.2f}"}
+
+
+async def ensure_addon_stripe_price(db: DB, settings) -> str | None:
+    import json
+    price = addon_price(db, settings)
+    if price is None or not settings.stripe_secret_key:
+        return None
+    row = db.one("SELECT value FROM settings_kv WHERE key = 'addon_domain_price'")
+    saved = json.loads(row["value"]) if row else {}
+    if saved.get("cents") == price["cents"] and saved.get("currency") == price["currency"] and saved.get("id"):
+        return saved["id"]
+    if saved.get("id"):                              # old price: its subscribers keep the add-on
+        db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)",
+               (f"addon_domain_old:{saved['id']}", json.dumps(saved)))
+    form = {"currency": price["currency"], "unit_amount": str(price["cents"]), "recurring[interval]": "month",
+            "product_data[name]": "Own domain add-on", "metadata[addon]": "custom_domain"}
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+        async with session.post("https://api.stripe.com/v1/prices", data=form,
+                                auth=aiohttp.BasicAuth(settings.stripe_secret_key, "")) as resp:
+            data = await resp.json(content_type=None)
+            if resp.status != 200:
+                raise PlanError("Stripe: " + (data.get("error") or {}).get("message", f"HTTP {resp.status}"))
+    db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('addon_domain_price', ?)",
+           (json.dumps({"id": data["id"], "cents": price["cents"], "currency": price["currency"]}),))
+    return data["id"]
+
+
+def addon_price_ids(db: DB) -> set[str]:
+    """Every Stripe price the own-domain add-on ever had (an old price still counts for old subscribers)."""
+    import json
+    ids = set()
+    for row in db.q("SELECT value FROM settings_kv WHERE key = 'addon_domain_price' OR key LIKE 'addon_domain_old:%'"):
+        try:
+            ids.add(json.loads(row["value"])["id"])
+        except (ValueError, KeyError):
+            pass
+    return ids
+
+
+def sync_addon(db: DB, customer_id: int, has_addon: bool, *, actor: str) -> None:
+    """The subscription has (or doesn't have) the own-domain add-on item: grant or take back what it gave."""
+    row = db.one("SELECT granted_by FROM features WHERE customer_id = ? AND feature = 'custom_domain' AND "
+                 "revoked_at IS NULL", (customer_id,))
+    if has_addon and row is None:
+        features.grant(db, customer_id, "custom_domain", owner=ADDON_OWNER)
+        db.audit(actor, "addon.domain.on", customer_id=customer_id)
+    elif not has_addon and row is not None and row["granted_by"] == ADDON_OWNER:
+        features.revoke(db, customer_id, "custom_domain", owner=ADDON_OWNER)
+        db.audit(actor, "addon.domain.off", customer_id=customer_id)
+
+
+async def change_addon(settings, subscription_id: str, price_id: str, add: bool) -> None:
+    """Adds the add-on to a running subscription (prorated) or removes it; the webhook applies the change."""
+    auth = aiohttp.BasicAuth(settings.stripe_secret_key, "")
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+        if add:
+            async with session.post("https://api.stripe.com/v1/subscription_items", auth=auth,
+                                    data={"subscription": subscription_id, "price": price_id, "quantity": "1",
+                                          "proration_behavior": "create_prorations"}) as resp:
+                data = await resp.json(content_type=None)
+        else:
+            async with session.get(f"https://api.stripe.com/v1/subscriptions/{subscription_id}", auth=auth) as resp:
+                sub = await resp.json(content_type=None)
+            item = next((i["id"] for i in (sub.get("items") or {}).get("data", [])
+                         if (i.get("price") or {}).get("id") == price_id), None)
+            if item is None:
+                return
+            async with session.delete(f"https://api.stripe.com/v1/subscription_items/{item}", auth=auth,
+                                      params={"proration_behavior": "create_prorations"}) as resp:
+                data = await resp.json(content_type=None)
+        if resp.status != 200:
+            raise PlanError("Stripe: " + (data.get("error") or {}).get("message", f"HTTP {resp.status}"))

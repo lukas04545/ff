@@ -30,6 +30,7 @@ BOARDS = {"kills": "Kills", "kd": "K/D", "playtime": "Playtime", "teams": "Teams
 CACHE_SECONDS = 20
 SCRIPTS = ("casino.js", "poker.js", "plinko.js")             # scripts served from website_assets/
 HEADER_LOGO = 96
+GALLERY = 6                                                   # server pictures on the home page
 
 # ------------------------------------------------------------ Seasonal theme: Halloween
 # Pure CSS (no images to load): night sky with a moon, a few bats flying past, cobwebs on the cards, a spider on
@@ -229,10 +230,19 @@ class PlayerWebsite(Plugin):
     PUBLIC_PATH = "/"                    # the site root (the control panel is at /admin)
     DESCRIPTION = ("A public website for your players: live status, next wipe, leaderboards, player profiles, the "
                    "points shop with item pictures, rules and how to join. Share the link everywhere.")
+    HOSTED_DEFAULT = True                      # hosted servers: the website is on (and free) from the start
     SETTINGS = (
         Setting("title", "Website title", "text", "", help="Empty = the server name."),
         Setting("logo", "Logo", "image", help="Square picture (PNG/WebP with a transparent background looks best). "
                                               "Empty = the bundled Kryvon logo."),
+        Setting("banner", "Header picture", "image",
+                help="A wide picture of your server behind the logo on the home page (a screenshot works great). "
+                     "Big pictures are made smaller automatically."),
+        Setting("gallery_title", "Gallery title", "text", "Our server",
+                help="Shown above your server pictures on the home page."),
+        *(Setting(f"gallery_{i}", f"Server picture {i}", "image",
+                  help="Screenshots of your bases, events, map … shown in a gallery on the home page." if i == 1
+                  else "") for i in range(1, GALLERY + 1)),
         Setting("tagline", "Tagline", "text", "Rust Console Server",
                 help="Shown under the logo on the home page."),
         Setting("motto", "Motto", "text", "Build · Survive · Dominate", help="Shown in red under the tagline."),
@@ -474,7 +484,12 @@ class PlayerWebsite(Plugin):
         if self.seasonal() == "halloween" and message:
             banner = (f'<div class="card hw-banner"><span class="pk">🎃</span> {esc(message)} '
                       '<span class="pk">🦇</span></div>')
-        body = (banner + f'<section class="hero"><img class="logo" src="{base}/logo?v={self.picture_version()}" '
+        hero_bg = ""
+        if self.file("banner") is not None:
+            hero_bg = (f' style="background:linear-gradient(180deg,rgba(0,0,0,.35),rgba(0,0,0,.75)),'
+                       f'url(\'{base}/banner?v={self._file_version("banner")}\') center/cover;border-radius:var(--cut);'
+                       f'padding:28px 12px"')
+        body = (banner + f'<section class="hero"{hero_bg}><img class="logo" src="{base}/logo?v={self.picture_version()}" '
                 f'alt="{esc(self.site_title())}" width="360" height="360" fetchpriority="high">'
                 f'<h1>{esc(self.site_title())}</h1>'
                 + (f'<div class="kicker">{esc(tagline)}</div>' if tagline else "")
@@ -490,6 +505,15 @@ class PlayerWebsite(Plugin):
         about = self.setting("about").strip()
         if about:
             body += f'<div class="card"><h2>About</h2><div class="pre">{esc(about)}</div></div>'
+        shots = [i for i in range(1, GALLERY + 1) if self.file(f"gallery_{i}") is not None]
+        if shots:
+            pics = "".join(f'<a href="{base}/gallery/{i}?v={self._file_version(f"gallery_{i}")}" target="_blank">'
+                           f'<img src="{base}/gallery/{i}?v={self._file_version(f"gallery_{i}")}" alt="" loading="lazy" '
+                           f'style="width:100%;aspect-ratio:16/10;object-fit:cover;display:block;border-radius:8px">'
+                           f'</a>' for i in shots)
+            body += (f'<div class="card"><h2>📸 {esc(self.setting("gallery_title") or "Our server")}</h2>'
+                     f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">'
+                     f'{pics}</div></div>')
         cols = []
         if self.setting("leaderboards"):
             top = [r for r in self.bot.db.leaderboard("kills", 5) if r["kills"]]
@@ -677,6 +701,14 @@ class PlayerWebsite(Plugin):
         except OSError:
             return ()
 
+    def _file_version(self, key: str) -> str:
+        custom = self.file(key)
+        try:
+            state = (custom.name, custom.stat().st_mtime_ns, custom.stat().st_size) if custom is not None else ()
+        except OSError:
+            state = ()
+        return hashlib.blake2s(repr(state).encode(), digest_size=4).hexdigest()
+
     def picture_version(self) -> str:
         """Changes when another logo is uploaded – the pictures' addresses carry it, so browsers keep them a year."""
         return hashlib.blake2s(repr(self._logo_state()).encode(), digest_size=4).hexdigest()
@@ -716,6 +748,16 @@ class PlayerWebsite(Plugin):
             data, version = self.asset(path)
             return conditional(request, data, "application/javascript",
                                YEAR if request.query.get("v") == version else "no-cache", charset="utf-8",
+                               headers={k: v for k, v in headers.items() if k != "Cache-Control"})
+        if path == "banner" or (path.startswith("gallery/") and path[8:].isdigit()):
+            key = "banner" if path == "banner" else f"gallery_{path[8:]}"
+            custom = self.file(key) if key == "banner" or 1 <= int(path[8:]) <= GALLERY else None
+            if custom is None or not custom.exists():
+                return web.Response(status=404, text="Not found.", headers=headers)
+            from web.item_images import image_type
+            data = custom.read_bytes()
+            return conditional(request, data, image_type(data) or "image/png", YEAR if request.query.get("v")
+                               else "public, max-age=3600",
                                headers={k: v for k, v in headers.items() if k != "Cache-Control"})
         if path in ("logo", "icon"):
             size = HEADER_LOGO if request.query.get("s") == str(HEADER_LOGO) else None
