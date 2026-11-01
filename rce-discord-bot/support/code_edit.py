@@ -26,12 +26,12 @@ EDITABLE = {".py", ".md", ".js", ".css", ".html", ".json", ".txt", ".svg"}
 SKIP_DIRS = {"data", ".git", "venv", ".venv", "env", "__pycache__", "servers", "node_modules", ".pytest_cache"}
 # Never edited by the AI: its own tools and limits, the safety net itself, logins/2FA
 BLOCKED_FILES = {"cogs/manager_ai.py", "cogs/code_changes.py", "support/code_edit.py", "revert_code.py",
-                 "full_backup.py", "cogs/full_backups.py",
+                 "full_backup.py", "cogs/full_backups.py", "dbcrypt.py",
                  "web/users.py", "web/totp.py", "envfile.py"}
 # Lines the AI may not add, change or remove anywhere: the AI's limits on the admin website, secrets, who is admin
 PROTECTED = re.compile(r"AI_BLOCKED|AI_LOCKED|AI_SECRET|AI_USER|AI_MAX|ai_blocked|ai_clean_settings|_ai_redact|_ai_key|"
                        r"admin_user_ids|admin_role_ids|def is_admin|def admin_only|manager_ai_|MANAGER_AI_|"
-                       r"REAUTH_PATHS|OWNER_ONLY_PREFIXES|password_hash|web_secret|_restore_backup|full_backup")
+                       r"REAUTH_PATHS|OWNER_ONLY_PREFIXES|password_hash|web_secret|_restore_backup|full_backup|dbcrypt|DB_KEY|db_encryption")
 # Functions whose code must stay exactly as it is (who is admin, logins/sessions, the AI's limits, servers)
 PROTECTED_FUNCS = {"is_admin", "admin_only", "may_edit_code", "_auth_middleware", "_session_user", "_session_key",
                    "_sign", "_gate_middleware", "_may_see_panel", "_servers_owner", "ai_blocked", "ai_clean_settings",

@@ -1772,6 +1772,19 @@ rules* (`AI_ABUSE_INSTRUCTIONS`, e.g. "Admins may spawn building materials durin
   (default 10), it pings `ALERT_ROLE_IDS` (default: admin roles) once in `ALERT_CHANNEL_ID` (default:
   admin log channel) with the last error – and posts again when the server is back, with the
   downtime. `0` = off.
+- **🔐 Encrypted databases** (`DB_ENCRYPTION`, Settings → Alerts & backups → *Encrypt the databases*, then restart):
+  every database of the bot – all servers and the shared links – is encrypted on disk with **SQLCipher (AES-256)**,
+  journal included. Turning it on converts the existing files (encrypted copy, checked, then swapped in); turning
+  it off converts them back. Daily backups, the Google Drive live copy and the weekly full backups then contain
+  the encrypted database too – a copied bot folder, backup ZIP or stolen disk is unreadable without the key.
+  **The key is not in the bot folder:** Windows: `%APPDATA%\RCE-Discord-Bot\db.key`, locked to your Windows
+  account (DPAPI); Linux/macOS: `~/.config/rce-discord-bot/db.key` (only your user can read it). **Save the
+  recovery key** (🔑 *Show recovery key*, owner + password) in a password manager or on paper: on a new PC or after
+  reinstalling Windows, put `DB_KEY=<recovery key>` into the `.env` once, start the bot (it moves the key to the
+  key file) and remove `DB_KEY` again. Without the recovery key the data and backups can't be opened. Limits: the
+  `.env` (tokens) is a separate file and isn't encrypted; someone who controls the PC *as your Windows user while the
+  bot runs* can read the key the same way the bot does – this protects copies and stolen files, not a fully taken
+  over PC. Needs the `sqlcipher3` package (installed by start.bat/start.sh).
 - **Weekly full backup + 🚨 emergency restore** (`FULL_BACKUP_ENABLED`, on; main server): every week the **whole bot
   folder** – code, every database (also the extra servers'), settings (`.env`), plugins and uploads – is saved as
   one ZIP in `data/full_backups/` (not included: the Python environment, git, caches, the tunnel program and the

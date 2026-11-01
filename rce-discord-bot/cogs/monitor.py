@@ -16,6 +16,7 @@ import discord
 from discord.ext import commands, tasks
 
 import backups
+import dbcrypt
 from utils import format_duration, safe_md
 
 if TYPE_CHECKING:
@@ -193,7 +194,7 @@ class Monitor(commands.Cog):
         try:
             await asyncio.to_thread(backups.write_live, cfg.database_path, cfg.backup_copy_dir,
                                     include_env=cfg.backup_include_env)
-        except (OSError, sqlite3.Error) as exc:
+        except (OSError, *dbcrypt.ERRORS) as exc:
             if self.live_error != str(exc):
                 self.bot.audit(f"⚠️ Live backup to {safe_md(str(cfg.backup_copy_dir))} failed: {safe_md(str(exc))}")
             self.live_error = str(exc)

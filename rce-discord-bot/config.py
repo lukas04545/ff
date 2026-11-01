@@ -250,6 +250,7 @@ class Config:
     server_down_alert_minutes: int        # ping staff after the server is offline this long (0 = off)
     alert_channel_id: int | None          # empty = admin log channel
     alert_role_ids: frozenset[int]        # pinged on alerts (empty = admin roles)
+    db_encryption: bool                    # SQLCipher-encrypted databases (dbcrypt.py)
     full_backup_enabled: bool              # weekly full backup (code + all databases), kept a week
     backup_enabled: bool
     backup_keep_days: int
@@ -488,6 +489,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         alert_role_ids=_id_set("ALERT_ROLE_IDS") or _id_set("ADMIN_ROLE_IDS"),
         backup_enabled=_bool("BACKUP_ENABLED", True),
         full_backup_enabled=_bool("FULL_BACKUP_ENABLED", True),
+        db_encryption=_bool("DB_ENCRYPTION", False),
         backup_keep_days=max(1, _int("BACKUP_KEEP_DAYS", 7)),
         backup_copy_dir=Path(_get("BACKUP_COPY_DIR").strip().strip('"')) if _get("BACKUP_COPY_DIR").strip() else None,
         backup_live_minutes=max(0, min(_int("BACKUP_LIVE_MINUTES", 10), 1440)),

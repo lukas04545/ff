@@ -86,6 +86,9 @@ class RceBot(commands.Bot):
         import servers
         multi = bool(os.environ.get(servers.ENV_SHARED)) or (not servers.is_child() and bool(servers.load_registry()))
         links_path = (servers.shared_data() / "linked_players.db") if multi else None
+        import dbcrypt
+        # DB_ENCRYPTION: databases encrypted with SQLCipher, key outside the bot folder (dbcrypt.py)
+        dbcrypt.enable(dbcrypt.adopt_env_key() if config.db_encryption else None)
         self.db = Storage(config.database_path, links_path=links_path)
         self.rcon = RconClient(config.rcon_host, config.rcon_port, config.rcon_password)
 
@@ -230,7 +233,7 @@ class RceBot(commands.Bot):
     # Settings that only take effect after a restart (everything else is applied live)
     RESTART_FIELDS = {"discord_token": "Bot token", "guild_id": "Discord server", "database_path": "Database file",
                       "web_enabled": "Web interface on/off", "web_host": "Web interface: reachable from",
-                      "web_port": "Web interface port"}
+                      "web_port": "Web interface port", "db_encryption": "Encrypt the databases"}
 
     async def apply_config(self, new: Config) -> list[str]:
         """Applies changed settings without a restart. Returns what still needs a restart (labels)."""
@@ -468,7 +471,14 @@ def main() -> None:
             log.warning(warning)
             log.warning("Fix: %s", fix_url)
 
-        bot = RceBot(config, disabled_intents=disabled, intent_warning=warning, intent_fix_url=fix_url)
+        try:
+            bot = RceBot(config, disabled_intents=disabled, intent_warning=warning, intent_fix_url=fix_url)
+        except Exception as exc:
+            import dbcrypt
+            if not isinstance(exc, dbcrypt.KeyError_):
+                raise
+            setup_error = f"Database encryption: {exc}"      # the panel opens in setup mode with this message
+            continue
         bot._first_start = first_start
         first_start = False
         try:

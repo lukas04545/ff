@@ -50,6 +50,23 @@ def _skip(rel: str) -> bool:
     return rel == REQUEST
 
 
+def _db_copy(path: Path, copy: Path) -> None:
+    """A consistent copy of a database – through dbcrypt (encrypted databases stay encrypted) when the bot runs."""
+    try:
+        import dbcrypt
+    except ImportError:                                    # stand-alone without the bot's modules
+        dbcrypt = None
+    if dbcrypt is not None and dbcrypt.active():
+        dbcrypt.backup_copy(path, copy)
+        return
+    src, dest = sqlite3.connect(path), sqlite3.connect(copy)
+    try:
+        src.backup(dest)
+    finally:
+        dest.close()
+        src.close()
+
+
 def make(label: str = "weekly", root: Path | None = None) -> Path:
     """Writes a full backup ZIP and returns its path. Databases are copied consistently (SQLite backup)."""
     root = root or ROOT
@@ -76,16 +93,11 @@ def make(label: str = "weekly", root: Path | None = None) -> Path:
             if path.suffix == ".db":
                 copy = Path(tmp) / f"{len(zf.namelist())}.db"
                 try:
-                    src, dest = sqlite3.connect(path), sqlite3.connect(copy)
-                    try:
-                        src.backup(dest)                   # consistent even while the bot writes
-                    finally:
-                        dest.close()
-                        src.close()
+                    _db_copy(path, copy)                   # consistent even while the bot writes
                     zf.write(copy, rel)
                     continue
-                except sqlite3.Error:
-                    pass                                   # not a database after all: copy the file
+                except Exception:                          # not a database after all (or locked): copy the file
+                    pass
             try:
                 zf.write(path, rel)
             except OSError:

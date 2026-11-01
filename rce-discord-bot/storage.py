@@ -11,6 +11,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+import dbcrypt
+
 LEADERBOARD_COLUMNS = {
     "kills": "kills DESC, deaths ASC",
     "deaths": "deaths DESC",
@@ -53,9 +55,11 @@ class _Rollback(Exception):
 class Storage:
     def __init__(self, path: Path, *, links_path: Path | None = None) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Small, fast writes – synchronous SQLite is plenty for a single server.
-        self._db = sqlite3.connect(path)
-        self._db.row_factory = sqlite3.Row
+        # Small, fast writes – synchronous SQLite is plenty for a single server. DB_ENCRYPTION: SQLCipher (dbcrypt.py);
+        # the file is converted first if the setting changed.
+        dbcrypt.ensure_state(path)
+        self._db = dbcrypt.connect(path)
+        self._db.row_factory = dbcrypt.row_factory(self._db)
         self._db.executescript(
             """
             CREATE TABLE IF NOT EXISTS players (
@@ -558,8 +562,9 @@ class Storage:
         if links_path is None or links_path == main_path:
             return
         links_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(links_path, timeout=10)
-        conn.row_factory = sqlite3.Row
+        dbcrypt.ensure_state(links_path)
+        conn = dbcrypt.connect(links_path, timeout=10)
+        conn.row_factory = dbcrypt.row_factory(conn)
         conn.execute("PRAGMA journal_mode = WAL")                # several server processes read/write it
         conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute(
@@ -574,7 +579,7 @@ class Storage:
         # whatever is already there. Every server does this once, so the shared store ends up with the union.
         try:
             rows = self._db.execute("SELECT user_id, player, linked_at FROM linked_players").fetchall()
-        except sqlite3.Error:
+        except dbcrypt.ERRORS:
             rows = []
         if rows:
             self._links.executemany(
