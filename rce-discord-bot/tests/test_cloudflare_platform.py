@@ -96,11 +96,12 @@ def test_setup_routes_everything_and_keeps_old_addresses(cp, tmp_path):  # noqa:
     cp.db.run("INSERT INTO settings_kv (key, value) VALUES (?, '7')", (f"adopted:{old}",))
     fake = FakeCF()
     out = asyncio.run(cftunnel.setup(cp.db, cp.box, cp.settings, "x" * 40, api=fake))
-    assert out["dns"] == {"*.kryvon3x.com": "created", "panel.kryvon3x.com": "updated"}
-    ingress = next(c[2] for c in fake.calls if c[0] == "PUT")["config"]["ingress"]
+    assert out["dns"]["*.kryvon3x.com"] == "created" and out["dns"]["panel.kryvon3x.com"] == "updated"
+    assert out["dns"]["sites.kryvon3x.com"] == "created" and out["dns"]["own domains"] == "ready"
+    ingress = next(c[2] for c in fake.calls if c[0] == "PUT" and "configurations" in c[1])["config"]["ingress"]
     hosts = [i.get("hostname") for i in ingress]
     assert hosts == ["panel.kryvon3x.com", "*.kryvon3x.com", "kryvon3x.com", None]
-    assert all(i["service"] == f"http://127.0.0.1:{cp.settings.portal_port}" for i in ingress[:-1])
+    assert all(i["service"] == f"http://127.0.0.1:{cp.settings.portal_port}" for i in ingress)   # own domains too
     assert cp.settings.cf_tunnel_token == "T" * 40                        # only the tunnel token is kept …
     raw = cp.db.one("SELECT value FROM settings_kv WHERE key = 'web_settings'")["value"]
     assert "T" * 40 not in raw and "x" * 40 not in str(cp.db.q("SELECT * FROM settings_kv"))   # … encrypted

@@ -29,7 +29,9 @@ from control_plane.settings import Settings
 
 SLUG = re.compile(r"[^a-z0-9]+")
 TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{20,}$")
-RESERVED = {"www", "admin", "owner", "portal", "app", "api", "mail", "status"}
+RESERVED = {"www", "admin", "owner", "portal", "app", "api", "mail", "status", "sites", "fallback"}
+ADDRESS = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$")
+HOSTNAME = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 PASS_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "SYSTEMROOT", "TEMP", "TMP")   # nothing else of the control plane leaks
 
 
@@ -234,6 +236,72 @@ def bind_guild(db: DB, server_id: int, guild_id: str, *, actor: str) -> None:
             db.audit(actor, "server.guild_bound", customer_id=s["customer_id"], server_id=server_id, detail=guild_id)
     except sqlite3.IntegrityError:
         raise ProvisionError("That Discord server is already connected to another server here.") from None
+
+
+def change_address(db: DB, settings: Settings, server_id: int, new: str, *, actor: str) -> str:
+    """The customer picks their website's address <new>.<domain>. The old address keeps working (an alias)."""
+    new = str(new or "").strip().lower()
+    if not ADDRESS.match(new):
+        raise ProvisionError("3–30 letters, digits or dashes (not at the start or end), e.g. kryvon-eu.")
+    if new in RESERVED:
+        raise ProvisionError("That address is reserved – pick another one.")
+    s = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (server_id,))
+    if s is None:
+        raise ProvisionError("No such server.")
+    if s["slug"] == new:
+        return new
+    old_host, new_host = f"{s['slug']}.{settings.base_domain}", f"{new}.{settings.base_domain}"
+    taken = db.one("SELECT 1 FROM servers WHERE slug = ?", (new,)) or \
+        db.one("SELECT value FROM settings_kv WHERE key = ? AND value != ?", (f"host_alias:{new_host}", str(server_id)))
+    if taken:
+        raise ProvisionError("That address is taken – pick another one.")
+    with db.transaction():
+        db.run("UPDATE servers SET slug = ? WHERE id = ?", (new, server_id))
+        db.run("DELETE FROM settings_kv WHERE key = ?", (f"host_alias:{new_host}",))
+        db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)", (f"host_alias:{old_host}", str(server_id)))
+        db.audit(actor, "server.address", customer_id=s["customer_id"], server_id=server_id, detail=f"{s['slug']} → {new}")
+    write_env(Path(s["home_dir"]), {"WEB_PUBLIC_URL": settings.url_for(new)})
+    return new
+
+
+# ---------------------------------------------------------------- own domains (paid add-on "custom_domain")
+
+MAX_DOMAINS = 3
+
+
+def domains(db: DB, server_id: int) -> list[dict]:
+    return [dict(r) for r in db.q("SELECT * FROM domains WHERE server_id = ? AND status != 'removed' ORDER BY "
+                                  "created_at", (server_id,))]
+
+
+def add_domain(db: DB, settings: Settings, server_id: int, hostname: str, *, actor: str) -> str:
+    """The customer's own domain for this server's websites (needs the add-on). Cloudflare still has to accept it
+    (cftunnel.request_custom_hostname) and the customer points a CNAME at sites.<domain>."""
+    host = str(hostname or "").strip().lower().removeprefix("https://").removeprefix("http://").split("/")[0]
+    if not HOSTNAME.match(host):
+        raise ProvisionError("Enter a domain like www.yourserver.com (no https://, no path).")
+    base = settings.base_domain.lower()
+    if host == base or host.endswith("." + base):
+        raise ProvisionError(f"Addresses on {base} are free – change your address above instead.")
+    s = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (server_id,))
+    if s is None:
+        raise ProvisionError("No such server.")
+    if not features.has(db, s["customer_id"], "custom_domain"):
+        raise ProvisionError("Your own domain is part of a bigger package (or an add-on) – upgrade to use it.")
+    if len(domains(db, server_id)) >= MAX_DOMAINS:
+        raise ProvisionError(f"Up to {MAX_DOMAINS} domains per server.")
+    row = db.one("SELECT server_id, status FROM domains WHERE hostname = ?", (host,))
+    if row is not None and row["status"] != "removed":
+        raise ProvisionError("That domain is already connected.")
+    db.run("INSERT OR REPLACE INTO domains (hostname, server_id, status, created_at, cf_id, note) "
+           "VALUES (?, ?, 'pending', ?, NULL, '')", (host, server_id, _now()))
+    db.audit(actor, "domain.add", customer_id=s["customer_id"], server_id=server_id, detail=host)
+    return host
+
+
+def remove_domain(db: DB, server_id: int, hostname: str, *, actor: str) -> None:
+    db.run("UPDATE domains SET status = 'removed' WHERE hostname = ? AND server_id = ?", (hostname, server_id))
+    db.audit(actor, "domain.remove", server_id=server_id, detail=hostname)
 
 
 def tenant_guild(server: dict) -> str:

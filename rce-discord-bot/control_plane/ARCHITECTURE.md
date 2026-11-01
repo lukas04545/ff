@@ -109,6 +109,21 @@ Every server runs on one of two bots:
 * **Without Stripe:** owner panel → customer → *Set package* (optionally *free / comped*).
 * **Shop name:** Settings → *Shop name* (`CP_SHOP_NAME`).
 
+## Tenant websites: address, own domain, themes
+
+* **Own address:** each server's website is `<address>.<domain>`. The customer can change the address in the
+  portal (Website card), and the old address keeps working as an alias.
+* **Own domain (add-on `custom_domain`):** comes with packages that include it, or the owner switches it on.
+  * The customer enters e.g. `www.theirserver.com` and adds a CNAME to `sites.<domain>`.
+  * Cloudflare for SaaS (SSL/TLS → Custom Hostnames, enabled once on your zone) serves it with a certificate. The
+    Cloudflare setup creates `sites.<domain>` and sets it as the fallback origin.
+  * The tunnel's last rule sends unknown hostnames to the portal listener, which routes them by the `domains` table.
+  * Connecting it at Cloudflare: owner panel → 🌐 Domains with a token used once (*Zone › SSL and Certificates ›
+    Edit*, not saved). Or, only if the owner chooses, a saved token with just that permission
+    (`CP_CF_SAAS_TOKEN`) does it automatically.
+* **Themes:** the player website has a *Look (theme)* setting (rust, neon, arctic, jungle, bloodmoon, gold, clean)
+  next to the logo, colours and texts. The Halloween look still wins in October.
+
 ## Add-ons and updates
 
 * **Add-ons** (`features` table, owner panel → customer → Add-ons, or `python -m control_plane addon …`):

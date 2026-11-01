@@ -99,6 +99,47 @@ NOISE = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16
          "%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E"
          "%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.09'/%3E%3C/svg%3E")
 
+# ------------------------------------------------------------ Looks (themes) the server owner picks
+# Each one only changes colours, the background glow and the heading font – the layout stays the same. The
+# Halloween look (seasonal) still wins in October; a custom "Main colour" wins over a theme's accent.
+THEMES = {
+    "rust": ("Rust (burnt orange)", ""),
+    "neon": ("Neon night", """
+body.theme-neon{--bg:#05040d;--card:rgba(14,10,32,.86);--card2:rgba(26,16,54,.9);--text:#efeaff;--muted:#a59bc9;
+--line:rgba(176,76,255,.3);--red:#c13cff;--orange:#00e5ff;--gold:#ffe66d;--ok:#39ff88}
+body.theme-neon::before{background:radial-gradient(ellipse 80% 50% at 15% -5%,rgba(193,60,255,.35),transparent 70%),
+radial-gradient(ellipse 70% 45% at 90% 0%,rgba(0,229,255,.25),transparent 70%),linear-gradient(180deg,#0b0620,#05040d 60%)}
+body.theme-neon h1{text-shadow:0 0 18px rgba(193,60,255,.6),0 0 40px rgba(0,229,255,.25)}"""),
+    "arctic": ("Arctic (ice blue)", """
+body.theme-arctic{--bg:#04090f;--card:rgba(10,20,32,.86);--card2:rgba(16,32,50,.9);--text:#eaf6ff;--muted:#93aac0;
+--line:rgba(110,190,255,.26);--red:#3aa0ff;--orange:#7fe7ff;--gold:#d6f3ff;--ok:#5ef0b0}
+body.theme-arctic::before{background:radial-gradient(ellipse 90% 55% at 50% -8%,rgba(120,200,255,.3),transparent 70%),
+radial-gradient(ellipse 60% 40% at 10% 15%,rgba(200,240,255,.12),transparent 70%),linear-gradient(180deg,#0a1726,#04090f 60%)}
+body.theme-arctic h1{text-shadow:0 2px 0 #000,0 0 22px rgba(127,231,255,.45)}"""),
+    "jungle": ("Jungle (military green)", """
+body.theme-jungle{--bg:#050805;--card:rgba(14,20,12,.88);--card2:rgba(24,34,20,.9);--text:#eef3e6;--muted:#9fae92;
+--line:rgba(140,190,70,.24);--red:#6fae2c;--orange:#c8d94a;--gold:#e8d36a;--ok:#5fe07a}
+body.theme-jungle::before{background:radial-gradient(ellipse 90% 55% at 50% -8%,rgba(120,170,50,.28),transparent 70%),
+linear-gradient(180deg,#0d150a,#050805 60%)}"""),
+    "bloodmoon": ("Blood moon (deep red)", """
+body.theme-bloodmoon{--bg:#070203;--card:rgba(24,6,9,.88);--card2:rgba(40,10,14,.9);--text:#f6e9ea;--muted:#b49397;
+--line:rgba(220,30,50,.28);--red:#d1112c;--orange:#ff4d5e;--gold:#ffb3a1;--ok:#4be07a}
+body.theme-bloodmoon::before{background:radial-gradient(circle at 82% 16%,rgba(255,80,80,.55) 0 30px,rgba(200,20,40,.25)
+34px,transparent 110px),radial-gradient(ellipse 90% 55% at 50% -8%,rgba(160,10,30,.4),transparent 70%),
+linear-gradient(180deg,#1a0407,#070203 60%)}"""),
+    "gold": ("Royal gold", """
+body.theme-gold{--bg:#070605;--card:rgba(20,17,10,.88);--card2:rgba(34,28,14,.9);--text:#f7f1e3;--muted:#b3a684;
+--line:rgba(230,190,90,.26);--red:#c99a2e;--orange:#ffd36b;--gold:#fff0b8;--ok:#62e08a}
+body.theme-gold::before{background:radial-gradient(ellipse 90% 55% at 50% -8%,rgba(230,180,60,.3),transparent 70%),
+linear-gradient(180deg,#15110a,#070605 60%)}
+body.theme-gold h1{text-shadow:0 2px 0 #000,0 0 24px rgba(255,211,107,.4)}"""),
+    "clean": ("Clean dark (no grit)", """
+body.theme-clean{--bg:#0d1117;--card:#161b22;--card2:#1c2330;--text:#e6edf3;--muted:#8b98a8;--line:#2a3340;
+--red:#ff7a1a;--orange:#ffb15c;--gold:#ffd27a;--cut:8px;--head:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body.theme-clean::before{background:linear-gradient(180deg,#111723,#0d1117 60%)}
+body.theme-clean h1,body.theme-clean h2{text-transform:none;letter-spacing:0;font-weight:800;text-shadow:none}"""),
+}
+
 # Dark, burnt "Rust" look: black background with a sunset glow, rusty red/orange accents, rugged cut corners
 STYLE = """
 :root{--bg:#060606;--card:rgba(18,13,11,.88);--card2:rgba(34,22,17,.9);--text:#f1ebe6;--muted:#a8998f;
@@ -207,7 +248,12 @@ class PlayerWebsite(Plugin):
                 help="Set it up in the web interface → Store and Settings → Store."),
         Setting("shop", "Show the points shop", "bool", True),
         Setting("rules", "Show the rules", "bool", True),
-        Setting("accent", "Main colour", "text", "#e5341c", help="Hex colour, e.g. #e5341c (blends into orange)."),
+        Setting("theme", "Look (theme)", "choice", "rust", choices=tuple(THEMES),
+                help="rust = burnt orange · neon = purple/cyan night · arctic = ice blue · jungle = military green · "
+                     "bloodmoon = deep red · gold = royal gold · clean = calm, no grit. Changes colours, background "
+                     "and headings; the layout stays."),
+        Setting("accent", "Main colour", "text", "#e5341c", help="Hex colour, e.g. #e5341c (blends into orange). "
+                "Leave #e5341c to use the theme's own colour."),
         Setting("season_theme", "Seasonal theme", "choice", "auto", choices=("auto", "halloween", "off"),
                 help="auto = Halloween look (bats, moon, cobwebs, pumpkins) during October; halloween = always; "
                      "off = never."),
@@ -353,7 +399,10 @@ class PlayerWebsite(Plugin):
         motto = f'<div class="motto">{esc(self.setting("motto"))}</div>' if self.setting("motto").strip() else ""
         updated = datetime.fromtimestamp(self.now(), self.tz).strftime("%H:%M")
         season = self.seasonal()
-        extra_css = MENU_CSS + (HALLOWEEN_CSS if season == "halloween" else "")
+        theme = self.setting("theme") if self.setting("theme") in THEMES else "rust"
+        theme_css = THEMES[theme][1] + (f"body.theme-{theme}{{--red:{accent}}}"
+                                        if theme != "rust" and accent.lower() != "#e5341c" else "")
+        extra_css = MENU_CSS + theme_css + (HALLOWEEN_CSS if season == "halloween" else "")
         decor = spider = pumpkins = ""
         if season == "halloween":
             decor = ('<div class="spooky" aria-hidden="true"><span class="bat b1"><i></i></span>'
@@ -365,7 +414,7 @@ class PlayerWebsite(Plugin):
                 f'<title>{esc(title + " – " if title else "")}{esc(site)}</title>'
                 f'<meta name="description" content="{esc(self.setting("tagline"))}">'
                 f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon?v={version}">'
-                f'<style>{self._style[1]}{extra_css}</style></head><body class="{season}">{decor}'
+                f'<style>{self._style[1]}{extra_css}</style></head><body class="{season} theme-{theme}">{decor}'
                 f'<header><div class="bar"><a class="brand" href="{base}/"><img src="{base}/logo?s={HEADER_LOGO}'
                 f'&amp;v={version}" alt="" width="42" height="42" decoding="async">'
                 f'<span class="name">{esc(site)}</span><span class="dot{" on" if live["online"] else ""}" '

@@ -33,8 +33,9 @@ DEFAULTS = (   # a starting point for a new shop – the owner edits the prices 
      "custom_bot": 0, "highlight": 1,
      "perks": "2 Rust Console servers\nEverything in Starter\nAI tickets, AI chat & AI moderation\nPriority support"},
     {"name": "Network", "tagline": "For server networks with their own brand", "price_cents": 2999, "slots": 5,
-     "ai": 1, "custom_bot": 1, "highlight": 0,
-     "perks": "5 Rust Console servers\nEverything in Pro\nYour own bot (name & avatar)\nDirect support"},
+     "ai": 1, "custom_bot": 1, "highlight": 0, "custom_domain": 1,
+     "perks": "5 Rust Console servers\nEverything in Pro\nYour own bot (name & avatar)\nYour own domain for the "
+              "website\nDirect support"},
 )
 
 
@@ -47,10 +48,10 @@ def seed(db: DB) -> None:
     if db.one("SELECT 1 FROM plans"):
         return
     for i, p in enumerate(DEFAULTS):
-        db.run("INSERT INTO plans (slug, name, tagline, price_cents, slots, ai, custom_bot, perks, highlight, sort, "
-               "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        db.run("INSERT INTO plans (slug, name, tagline, price_cents, slots, ai, custom_bot, custom_domain, perks, "
+               "highlight, sort, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                (p["name"].lower(), p["name"], p["tagline"], p["price_cents"], p["slots"], p["ai"], p["custom_bot"],
-                p["perks"], p["highlight"], i, int(time.time())))
+                p.get("custom_domain", 0), p["perks"], p["highlight"], i, int(time.time())))
 
 
 def listed(db: DB, *, all_: bool = False) -> list[dict]:
@@ -94,6 +95,7 @@ def save(db: DB, form: dict, *, actor: str, plan_id: int | None = None) -> int:
     values = {"name": name, "tagline": str(form.get("tagline", "")).strip()[:120], "price_cents": price,
               "currency": currency, "slots": n_slots, "ai": int(bool(form.get("ai"))),
               "custom_bot": int(bool(form.get("custom_bot"))), "highlight": int(bool(form.get("highlight"))),
+              "custom_domain": int(bool(form.get("custom_domain"))),
               "perks": "\n".join(line.strip()[:80] for line in str(form.get("perks", "")).splitlines()
                                  if line.strip())[:1000], "sort": sort, "active": int(bool(form.get("active")))}
     if plan_id is None:
@@ -147,7 +149,7 @@ def apply(db: DB, customer_id: int, plan_id: int, *, actor: str) -> None:
     db.run("INSERT INTO subscriptions (customer_id, status, updated_at, plan_id) VALUES (?, 'none', ?, ?) "
            "ON CONFLICT(customer_id) DO UPDATE SET plan_id = excluded.plan_id", (customer_id, int(time.time()), plan_id))
     db.run("UPDATE customers SET base_slots = ? WHERE id = ?", (plan["slots"], customer_id))
-    for feat in ("ai", "custom_bot"):
+    for feat in ("ai", "custom_bot", "custom_domain"):
         row = db.one("SELECT granted_by FROM features WHERE customer_id = ? AND feature = ? AND revoked_at IS NULL",
                      (customer_id, feat))
         if plan[feat] and row is None:

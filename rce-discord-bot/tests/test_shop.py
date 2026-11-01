@@ -20,7 +20,7 @@ def test_package_sets_slots_and_addons_but_keeps_what_the_owner_gave(cp):  # noq
     starter, pro, network = _plan(cp, "starter"), _plan(cp, "pro"), _plan(cp, "network")
     features.grant(cp.db, cid, "custom_bot", owner="boss")                      # given by the owner by hand
     plans.apply(cp.db, cid, network["id"], actor="t")
-    assert slots.slot_limit(cp.db, cid) == 5 and features.active(cp.db, cid) == {"ai", "custom_bot"}
+    assert slots.slot_limit(cp.db, cid) == 5 and features.active(cp.db, cid) == {"ai", "custom_bot", "custom_domain"}
     plans.apply(cp.db, cid, starter["id"], actor="t")
     assert slots.slot_limit(cp.db, cid) == 1
     assert features.active(cp.db, cid) == {"custom_bot"}                       # AI was the package's, own bot the owner's
