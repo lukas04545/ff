@@ -73,6 +73,7 @@ def test_public_forms_and_pages_resist_xss_and_csrf(shop, monkeypatch):  # noqa:
         tmp = bot.config.database_path.parent
         w = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
         w._public_pages.limit = w._public_total.limit = 10 ** 6         # the crawl isn't a flood
+        w.shield_on = False                                                # nor for the flood shield
         c = TestClient(TestServer(w.app))
         await c.start_server()
         seen, queue, forms, problems = set(), ["/", "/store", "/leaderboard", "/admin", "/account"], [], []

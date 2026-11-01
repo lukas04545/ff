@@ -3059,6 +3059,7 @@ views.settings = async (main) => {
     if (g.id === "discord") card.append(discordTester(inputs));
     if (g.id === "rcon") card.append(rconTester(inputs));
     if (g.id === "web") card.append(ownDomainBox(rows));
+    if (g.id === "web" && !data.setup_mode) card.firstChild.after(shieldBox());
     if (g.id === "updates" && !data.setup_mode) card.firstChild.after(updateStatus());
     if (g.id === "alerts" && !data.setup_mode) card.firstChild.after(backupBox());
     if (g.id === "abuse" && !data.setup_mode) card.firstChild.after(abuseBox());
@@ -3175,6 +3176,34 @@ function abuseBox() {
   let s_cmds = "the approval commands";
   const load = () => api("/api/abuse").then((s) => { s_cmds = (s.approval_commands || []).map((t) => t.replace("{name}", "…")).join(", ") || s_cmds; render(s); })
     .catch((e) => box.replaceChildren(h("span", { class: "error", text: e.message })));
+  load();
+  return box;
+}
+
+// Flood (DDoS) shield: traffic, under-attack mode, blocked IPs (settings page, group "Web")
+function shieldBox() {
+  const box = h("div", { class: "update-box" }, h("span", { class: "muted", text: "Loading flood protection …" }));
+  const load = () => api("/api/shield").then((r) => {
+    const rows = [];
+    rows.push(h("div", { class: "row" }, h("strong", { text: "🛡️ Flood (DDoS) protection " }),
+      h("span", { class: "pill " + (r.enabled ? (r.under_attack ? "warn" : "ok") : "warn"), text: !r.enabled ? "off" : r.under_attack ? "UNDER ATTACK – strict limits" : "active" }),
+      h("span", { class: "muted", text: ` · ${r.requests_last_10s} requests in the last 10 s · ${r.blocked} blocked since start · limit ${r.per_ip}/10 s per visitor` })));
+    if (r.exposed) rows.push(h("div", { class: "error", style: "font-size:.85rem", text: `⚠️ The web port listens on ${r.host} – reachable directly, around Cloudflare. For DDoS protection set "Reachable from" (WEB_HOST) to 127.0.0.1 and use the Cloudflare tunnel as the only way in.` }));
+    else if (!r.tunnel) rows.push(h("div", { class: "muted", style: "font-size:.85rem", text: "Only reachable from this PC (no tunnel) – nothing to attack from the internet." }));
+    else rows.push(h("div", { class: "muted", style: "font-size:.85rem", text: "✅ Only reachable through the Cloudflare tunnel – your PC's IP stays hidden and Cloudflare absorbs big floods." }));
+    if (r.bans.length) rows.push(h("div", { style: "font-size:.85rem" }, h("strong", { text: "Blocked IPs: " }),
+      ...r.bans.map((b) => h("span", { class: "row", style: "display:inline-flex;gap:.3rem;margin-right:.6rem" }, h("code", { text: b.ip }),
+        h("span", { class: "muted", text: `until ${new Date(b.until * 1000).toLocaleTimeString()}` }),
+        h("button", { class: "small", text: "Unblock", onclick: async () => { await act(() => api("/api/shield", { method: "POST", body: { ip: b.ip, unban: true } }), "Unblocked"); load(); } })))));
+    if (r.events.length) rows.push(h("details", { style: "font-size:.85rem" }, h("summary", { text: `Recent events (${r.events.length})` }),
+      ...r.events.slice().reverse().map((e) => h("div", { class: "muted", text: `${new Date(e.at * 1000).toLocaleString()} – ${e.text}` }))));
+    const ipIn = h("input", { type: "text", placeholder: "IP to block", style: "max-width:180px" });
+    rows.push(h("div", { class: "row", style: "margin-top:.3rem" }, ipIn, h("button", { class: "small", text: "Block for 1 h", onclick: async () => {
+      if (!ipIn.value.trim()) return;
+      await act(() => api("/api/shield", { method: "POST", body: { ip: ipIn.value.trim(), minutes: 60 } }), "Blocked"); load();
+    } }), h("button", { class: "small", text: "↻", onclick: load })));
+    box.replaceChildren(...rows);
+  }).catch((e) => box.replaceChildren(h("span", { class: "muted", text: "Flood protection: " + e.message })));
   load();
   return box;
 }

@@ -264,6 +264,10 @@ class Config:
     web_port: int
     web_password: str
     web_open_browser: bool
+    ddos_protection: bool     # flood shield (web) + slash-command flood guard
+    ddos_requests_per_ip: int # web requests per visitor per 10 s
+    ddos_ban_minutes: int     # how long an IP that keeps flooding is blocked
+    ddos_commands_per_30s: int  # slash commands per member per 30 s
     web_tunnel: bool          # reachable from the internet via Cloudflare tunnel
     web_tunnel_token: str     # optional: named tunnel (fixed address)
     web_public_url: str       # optional: fixed address of the named tunnel
@@ -500,6 +504,10 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         web_password=_get("WEB_PASSWORD"),
         web_open_browser=_bool("WEB_OPEN_BROWSER", True),
         web_tunnel=_bool("WEB_TUNNEL", True),
+        ddos_protection=_bool("DDOS_PROTECTION", True),
+        ddos_requests_per_ip=max(20, min(_int("DDOS_REQUESTS_PER_IP", 150), 5000)),
+        ddos_ban_minutes=max(1, min(_int("DDOS_BAN_MINUTES", 15), 10080)),
+        ddos_commands_per_30s=max(3, min(_int("DDOS_COMMANDS_PER_30S", 12), 200)),
         web_tunnel_token=_get("WEB_TUNNEL_TOKEN"),
         web_public_url=_get("WEB_PUBLIC_URL"),
         item_image_url=_get("ITEM_IMAGE_URL") or "https://rustlabs.com/img/items180/{shortname}.png",

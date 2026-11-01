@@ -123,7 +123,7 @@ CSRF_HEADER = "X-Requested-With"
 ROOT_RESERVED = {"api", "static", "img", "hooks", "admin", "auth", "p", "play", "internal"}
 OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/users", "/api/update", "/api/backups",
                        "/api/plugins", "/api/webshop", "/api/item-images", "/api/protection", "/api/br",
-                       "/api/honeypot", "/api/themes", "/api/allplugins")
+                       "/api/honeypot", "/api/themes", "/api/allplugins", "/api/shield")
 # The management AI (cogs/manager_ai.py) uses the panel's own API with a session of its own ("Management AI",
 # owner rights, a per-start secret key – nobody can log in as it). Never for these (any method):
 AI_USER = "Management AI"
@@ -359,6 +359,13 @@ class WebInterface:
         self._revoked: set[str] = set()
         self._login_minute = RateLimiter(LOGIN_ATTEMPTS_PER_MINUTE, 60)
         self._login_failures = RateLimiter(LOGIN_FAILURES_PER_15_MIN, 900)
+        from web.shield import Shield
+        cfg = getattr(bot, "config", None)
+        self.shield_on = bool(getattr(cfg, "ddos_protection", True))
+        self.shield = Shield(per_ip=int(getattr(cfg, "ddos_requests_per_ip", 150) or 150),
+                             ban_minutes=int(getattr(cfg, "ddos_ban_minutes", 15) or 15))
+        if bot is not None:
+            self.shield.on_event = lambda text: bot.audit(text)
         self._public_pages = RateLimiter(PUBLIC_PAGES_PER_MINUTE, 60)
         self._public_images = RateLimiter(PUBLIC_IMAGES_PER_MINUTE, 60)
         self._public_total = RateLimiter(PUBLIC_PAGES_TOTAL_PER_MINUTE, 60)
@@ -397,7 +404,7 @@ class WebInterface:
     # ------------------------------------------------------------ Start/stop
 
     def _build_app(self) -> web.Application:
-        app = web.Application(middlewares=[self._compress_middleware, self._error_middleware, self._host_middleware,
+        app = web.Application(middlewares=[self._shield_middleware, self._compress_middleware, self._error_middleware, self._host_middleware,
                                            self._proxy_middleware, self._gate_middleware, self._origin_middleware, self._auth_middleware],
                               client_max_size=1024 ** 2)
         app.on_response_prepare.append(self._security_headers)
@@ -497,6 +504,8 @@ class WebInterface:
         r.add_get("/api/emote-binds", self.emote_binds)
         r.add_put("/api/emote-binds", self.set_emote_bind)
         r.add_post("/api/emote-binds/roles", self.emote_bind_roles)
+        r.add_get("/api/shield", self.shield_status)
+        r.add_post("/api/shield", self.shield_ban)
         r.add_get("/api/teleports", self.teleports)
         r.add_put("/api/teleports", self.set_teleport)
         r.add_post("/api/teleports/capture", self.capture_teleport)
@@ -587,7 +596,8 @@ class WebInterface:
 
     async def start(self, *, open_browser: bool | None = None) -> bool:
         ws = self.ws
-        self._runner = web.AppRunner(self.app, access_log=None)
+        # keepalive 15 s (not 75): idle connections don't pile up during a flood
+        self._runner = web.AppRunner(self.app, access_log=None, keepalive_timeout=15)
         await self._runner.setup()
         try:
             await web.TCPSite(self._runner, ws.host, ws.port).start()
@@ -1969,6 +1979,43 @@ class WebInterface:
         if wait is not None:
             raise web.HTTPTooManyRequests(text="Too many requests – please wait a moment and reload.",
                                           headers={"Retry-After": str(int(wait) + 1)})
+
+    @web.middleware
+    async def _shield_middleware(self, request: web.Request, handler):
+        """Flood shield (web/shield.py): before anything else – limits, bans, busy cap, under-attack mode."""
+        if not self.shield_on:
+            return await handler(request)
+        local = self._is_local(request)
+        trusted = local or (request.cookies.get(SESSION_COOKIE) and self._session_user(request) is not None)
+        path = request.path
+        asset = path.startswith(("/static/", "/img/", "/favicon"))
+        blocked = self.shield.check(self._client_ip(request), trusted=bool(trusted), asset=asset)
+        if blocked is not None:
+            status, text, retry = blocked
+            error = web.HTTPTooManyRequests if status == 429 else web.HTTPServiceUnavailable
+            raise error(text=text, headers={"Retry-After": str(retry), "Cache-Control": "no-store"})
+        self.shield.inflight += 1
+        try:
+            return await handler(request)
+        finally:
+            self.shield.inflight -= 1
+
+    async def shield_status(self, request: web.Request) -> web.Response:
+        """The flood shield: traffic, blocked requests, banned IPs, under-attack mode."""
+        exposed = self.ws.host not in ("127.0.0.1", "localhost", "::1")
+        return web.json_response({"enabled": self.shield_on, **self.shield.status(),
+                                  "tunnel": bool(self.tunnel), "exposed": exposed, "host": self.ws.host})
+
+    async def shield_ban(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        ip = self._text(data, "ip", limit=64)
+        if data.get("unban"):
+            ok = self.shield.unban(ip)
+            self._audit(f"Flood shield: {ip} unblocked")
+            return web.json_response({"ok": ok})
+        self.shield.ban(ip, self._int(data, "minutes", 60, 1, 10080), why=f"by {_current_user.get()}")
+        self._audit(f"Flood shield: {ip} blocked by hand")
+        return web.json_response({"ok": True})
 
     @staticmethod
     def _client_ip(request: web.Request) -> str:
