@@ -960,6 +960,27 @@ function hoursChart(points) {
   return wrap;
 }
 
+// A small area chart for a stat card (values over time). Colour: the theme's accent.
+function sparkline(values) {
+  const W = 220, H = 56;
+  if (!values || values.length < 2) return null;
+  const max = Math.max(...values, 1), min = Math.min(...values, 0);
+  const span = max - min || 1;
+  const pts = values.map((v, i) => [(i / (values.length - 1)) * W, H - 4 - ((v - min) / span) * (H - 10)]);
+  const line = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const id = "sg" + Math.random().toString(36).slice(2, 8);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("class", "spark");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".55"/>`
+    + `<stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>`
+    + `<path d="${line} L${W} ${H} L0 ${H} Z" fill="url(#${id})"/>`
+    + `<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  return svg;
+}
+
 function populationCard() {
   const card = h("div", { class: "card" });
   const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
@@ -1066,6 +1087,15 @@ views.overview = (main) => {
   const quick = h("div", { class: "quick" }, ...quickLinks.map(([v, icon, label]) =>
     h("a", { href: "#" + v }, h("i", { text: icon }), label)));
 
+  // history for the stat sparklines: players (the bot's 24 h record) and FPS (samples while this page is open)
+  let playerHist = [], fpsHist = [];
+  const loadPlayers = async () => {
+    const r = await api("/api/population?days=1").catch(() => null);
+    if (r && r.points) playerHist = r.points.map((p) => p[1]).slice(-96);
+  };
+  loadPlayers();
+  every(300000, loadPlayers);
+
   main.append(
     h("h1", { text: "Overview" }),
     hero,
@@ -1126,17 +1156,20 @@ views.overview = (main) => {
     heroCount.textContent = s.players != null ? `${now}${cap ? " / " + cap : ""}` : "–";
     heroCount.classList.toggle("skeleton", s.players == null && !!status.rcon_connected);
     heroBar.style.width = cap ? `${Math.min(100, Math.round(100 * now / cap))}%` : "0%";
-    const stat = (icon, label, value, tone) => h("div", { class: "stat " + (tone || "") },
+    if (s.fps != null) { fpsHist.push(Number(s.fps)); if (fpsHist.length > 60) fpsHist.shift(); }
+    const stat = (icon, label, value, tone, spark) => h("div", { class: "stat " + (tone || "") + (spark ? " has-spark" : "") },
       h("div", { class: "label" }, icon, " ", label),
       h("div", { class: "value" + ((value == null || value === "") && status.rcon_connected ? " skeleton" : ""),
-        text: value ?? "–" }));
+        text: value ?? "–" }), spark ? sparkline(spark) : null);
     const hasPlayers = s.players !== undefined && s.players !== null;
     stats.replaceChildren(
       stat("🖥️", "Server", s.name || (status.rcon_connected ? "connected" : "offline"), status.rcon_connected ? "ok" : "bad"),
-      stat("👥", "Players", hasPlayers ? `${s.players} / ${s.max_players}` + (s.queued ? ` (+${s.queued})` : "") : "–", hasPlayers ? "accent" : ""),
+      stat("👥", "Players", hasPlayers ? `${s.players} / ${s.max_players}` + (s.queued ? ` (+${s.queued})` : "") : "–", hasPlayers ? "accent" : "",
+        playerHist.length > 1 ? playerHist.concat(hasPlayers ? [Number(s.players)] : []) : null),
       stat("🗺️", "Map", s.map),
       stat("⏱️", "Uptime", fmtDuration(s.uptime)),
-      stat("⚡", "Server FPS", s.fps, s.fps === undefined || s.fps === null ? "" : s.fps < 20 ? "warn" : "ok"),
+      stat("⚡", "Server FPS", s.fps, s.fps === undefined || s.fps === null ? "" : s.fps < 20 ? "warn" : "ok",
+        fpsHist.length > 1 ? fpsHist : null),
       stat("🎫", "Open tickets", status.tickets_enabled ? status.open_tickets : "off", status.open_tickets ? "warn" : ""),
     );
     playersBody.replaceChildren(...(status.players.length ? status.players.map((p) => h("tr", {},
