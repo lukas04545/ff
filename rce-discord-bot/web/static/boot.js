@@ -7,10 +7,10 @@ try { if (localStorage.getItem("rce-motion") === "on") delete document.documentE
 // The default look (Ember) right away – also on the login page. The account's own theme is applied after login
 // (skins.js); a remembered choice avoids a flash of the wrong one.
 try {
-  const skin = localStorage.getItem("rce-skin") || "ember";
-  if (skin === "ember") {
-    document.documentElement.dataset.skin = "ember"; document.documentElement.dataset.theme = "light";
+  const skin = localStorage.getItem("rce-skin") || "glass";
+  if (skin === "ember" || skin === "glass") {
+    document.documentElement.dataset.skin = skin; document.documentElement.dataset.theme = "light";
     // Ember's motion is light (hover lifts, short reveals): on unless switched off with ✨
     if (localStorage.getItem("rce-motion") !== "off") delete document.documentElement.dataset.motion;
   }
-} catch (e) { document.documentElement.dataset.skin = "ember"; document.documentElement.dataset.theme = "light"; }
+} catch (e) { document.documentElement.dataset.skin = "glass"; document.documentElement.dataset.theme = "light"; }

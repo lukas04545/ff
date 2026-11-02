@@ -5,11 +5,11 @@ from tests.test_web import H, bot, run  # noqa: F401
 def test_owner_picks_a_theme_per_account(bot):  # noqa: F811
     async def scenario(c):
         await c.post("/api/login", json={"password": "secret123"}, headers=H)
-        assert (await (await c.get("/api/me")).json())["skin"] == "ember"
+        assert (await (await c.get("/api/me")).json())["skin"] == "glass"
         r = await c.post("/api/users", json={"username": "Bob", "password": "bobpassword1", "role": "admin"}, headers=H)
         assert r.status == 200
         d = await (await c.get("/api/themes")).json()
-        assert {t["id"] for t in d["themes"]} == {"ember", "neon", "jumpscare", "retro"}
+        assert {t["id"] for t in d["themes"]} == {"glass", "ember", "neon", "jumpscare", "retro"}
         assert [u["username"] for u in d["users"]] == ["owner", "Bob"]
         assert (await c.put("/api/themes", json={"username": "bob", "theme": "retro"}, headers=H)).status == 200
         assert (await c.put("/api/themes", json={"username": "owner", "theme": "jumpscare"}, headers=H)).status == 200
