@@ -587,3 +587,6 @@ border-radius:var(--radius);padding:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
 .quick a:hover { border-color: var(--accent); }
 .quick a i { font-style: normal; width: 2rem; height: 2rem; display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--border); flex: none; }
 @media (max-width: 760px) { .hero-card { grid-template-columns: 1fr; } .hero-card .hero-players { text-align: left; } }
+
+/* stat card sparklines (every theme) */
+.stat .spark { display: block; width: 100%; height: 48px; margin-top: .45rem; }
