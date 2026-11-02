@@ -570,3 +570,20 @@ border-radius:var(--radius);padding:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
 .tp-row input.tp-cd { width: 4.5rem !important; min-width: 0 !important; }
 .tp-opt { display: flex; align-items: center; gap: .25rem; white-space: nowrap; }
 .tp-btns { margin-left: auto; }
+
+/* Overview: server header card + quick actions (every theme) */
+.hero-card { display: grid; grid-template-columns: 1fr auto; gap: 1rem 1.5rem; align-items: center; padding: 1.3rem 1.4rem; }
+.hero-card .hero-name { font-size: 1.6rem; font-weight: 800; letter-spacing: -.02em; display: flex; align-items: center; gap: .6rem; }
+.hero-card .hero-dot { width: .7rem; height: .7rem; border-radius: 50%; background: var(--bad); flex: none; }
+.hero-card .hero-dot.on { background: var(--ok); }
+.hero-card .hero-sub { color: var(--muted); margin-top: .2rem; display: flex; gap: .4rem 1rem; flex-wrap: wrap; font-size: .9rem; }
+.hero-card .hero-players { min-width: 220px; text-align: right; }
+.hero-card .hero-players b { font-size: 2rem; font-weight: 800; letter-spacing: -.02em; }
+.hero-card .hero-meter { height: 8px; border-radius: 99px; background: rgba(127, 127, 127, .18); overflow: hidden; margin-top: .45rem; }
+.hero-card .hero-meter > span { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .6s ease; }
+.quick { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .7rem; margin-bottom: 1.1rem; }
+.quick a { display: flex; align-items: center; gap: .65rem; padding: .75rem .85rem; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel); color: var(--text); text-decoration: none; font-weight: 600; }
+.quick a:hover { border-color: var(--accent); }
+.quick a i { font-style: normal; width: 2rem; height: 2rem; display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--border); flex: none; }
+@media (max-width: 760px) { .hero-card { grid-template-columns: 1fr; } .hero-card .hero-players { text-align: left; } }

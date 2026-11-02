@@ -233,8 +233,25 @@
     applied: null,
     apply(skin, options) {
       // another account (or a new theme) on the same page: start over from a clean page
+      try { localStorage.setItem("rce-skin", skin || "ember"); } catch { /* storage blocked */ }
+      const root0 = document.documentElement;
+      if (skin === "neon" && root0.dataset.skin === "ember") {          // boot.js preset Ember – this account uses Neon
+        delete root0.dataset.skin;
+        let t = null;
+        try { t = localStorage.getItem("rce-theme"); } catch { /* storage blocked */ }
+        if (t === "light" || t === "dark") root0.dataset.theme = t; else delete root0.dataset.theme;
+        return;
+      }
       if (this.applied && this.applied !== skin) { location.reload(); return; }
       if (this.applied || !skin || skin === "neon") return;
+      if (skin === "ember") {                // the default look: just its stylesheet, no extras
+        this.applied = skin;
+        document.documentElement.dataset.skin = "ember";
+        document.documentElement.dataset.theme = "light";   // ember brings its own dark colours
+        const toggle = document.getElementById("theme");
+        if (toggle) toggle.hidden = true;
+        return;
+      }
       this.applied = skin;
       const root = document.documentElement;
       root.dataset.skin = skin;
