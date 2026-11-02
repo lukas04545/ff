@@ -1,0 +1,201 @@
+/* "Rust" – the default panel look, styled after the game Rust's own interface (inventory, crafting, main menu):
+   dark see-through grey panels with almost square corners, off-white text, Rust's brand red, green action buttons
+   like the in-game "Craft"/"Join" buttons, bold condensed UPPERCASE labels, inventory-slot tiles and a health-bar
+   style players meter – over a dark island-at-dusk backdrop with fog and grain.
+   Current web trends on top: a bento grid for the stat tiles, bold condensed type, grain, glass, micro-interactions.
+   modern-web-design skill rules: real backdrop blur only on the sidebar, top bar and server header; text on dark
+   tinted glass (>= 4.5:1); solid fallback without backdrop-filter; prefers-contrast and reduced-motion respected.
+   Scoped to html[data-skin="rustgame"] (key kept for saved choices; shown as "Rust"). */
+
+html[data-skin="rustgame"] {
+  color-scheme: dark;
+  --bg: #0f1012; --sidebar: rgba(18, 18, 18, .72); --panel: rgba(24, 24, 22, .66); --panel-2: rgba(36, 35, 32, .7);
+  --input: rgba(10, 10, 9, .7);
+  --text: #e8e2d9; --muted: #aea69b; --faint: #7d766d;
+  --border: rgba(232, 226, 217, .10); --border-strong: rgba(232, 226, 217, .18);
+  --accent: #cd412b; --accent-hover: #e0553c; --accent-text: #fff;
+  --accent-soft: rgba(205, 65, 43, .16); --accent-ring: rgba(205, 65, 43, .45);
+  --green: #6e8b3d; --green-hi: #86a64a; --green-dark: #4e6428;
+  --ok: #8fb04f; --ok-soft: rgba(143, 176, 79, .16); --warn: #e3a53b; --warn-soft: rgba(227, 165, 59, .16);
+  --bad: #cd412b; --bad-soft: rgba(205, 65, 43, .18); --info: #7aa7c7;
+  --code-bg: rgba(8, 8, 7, .85); --code-text: #e8e2d9;
+  --slot: rgba(232, 226, 217, .06); --slot-hover: rgba(232, 226, 217, .12);
+  --cond: "Roboto Condensed", "Arial Narrow", "Bahnschrift SemiCondensed", "Helvetica Neue Condensed", "Oswald", sans-serif;
+  --radius: 4px; --radius-sm: 3px;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+}
+
+/* ------------------------------------------------------------ Backdrop: the island at dusk (gradients + grain) */
+html[data-skin="rustgame"] body { font-family: "Roboto", "Segoe UI", system-ui, sans-serif; background: #0f1012; }
+html[data-skin="rustgame"] body::before {
+  content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  background:
+    radial-gradient(120% 70% at 50% 120%, rgba(0, 0, 0, .9), transparent 60%),                 /* ground */
+    radial-gradient(60% 35% at 78% 72%, rgba(205, 95, 50, .32), transparent 70%),              /* low sun */
+    radial-gradient(90% 40% at 30% 85%, rgba(150, 160, 150, .10), transparent 70%),            /* sea fog */
+    linear-gradient(180deg, #1a1d22 0%, #23272a 38%, #3b3430 70%, #1c1a18 100%);
+}
+html[data-skin="rustgame"] body::after {            /* film grain + vignette, like the game's menu */
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(0, 0, 0, .65)),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 .85 0 0 0 0 .8 0 0 0 0 .75 0 0 0 .08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+html[data-skin="rustgame"] ::selection { background: rgba(205, 65, 43, .5); color: #fff; }
+html[data-skin="rustgame"] a { color: #e0806b; }
+
+/* bold condensed uppercase type, like Rust's UI */
+html[data-skin="rustgame"] h1, html[data-skin="rustgame"] .top-h1 {
+  font-family: var(--cond); font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  font-size: clamp(1.6rem, 1.25rem + 1.3vw, 2.3rem); color: #f1ece4; }
+html[data-skin="rustgame"] h2 { font-family: var(--cond); text-transform: uppercase; letter-spacing: .04em; color: #f1ece4; font-weight: 700; }
+html[data-skin="rustgame"] .stat .label, html[data-skin="rustgame"] th, html[data-skin="rustgame"] .nav-label, html[data-skin="rustgame"] .nav-head,
+html[data-skin="rustgame"] .eyebrow, html[data-skin="rustgame"] button, html[data-skin="rustgame"] .quick a {
+  font-family: var(--cond); text-transform: uppercase; letter-spacing: .06em; }
+html[data-skin="rustgame"] .stat .value, html[data-skin="rustgame"] .hero-card .hero-name, html[data-skin="rustgame"] .hero-card .hero-players b {
+  font-family: var(--cond); font-weight: 700; }
+
+/* ------------------------------------------------------------ Panels: dark see-through grey, square corners */
+html[data-skin="rustgame"] .card, html[data-skin="rustgame"] .stat, html[data-skin="rustgame"] .server-chip, html[data-skin="rustgame"] .chip,
+html[data-skin="rustgame"] .savebar, html[data-skin="rustgame"] .login-card, html[data-skin="rustgame"] .toast {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 10px 30px -18px rgba(0, 0, 0, .9); color: var(--text);
+}
+html[data-skin="rustgame"] .card { border-top: 2px solid rgba(232, 226, 217, .14); }
+html[data-skin="rustgame"] .stat::before, html[data-skin="rustgame"] .stat::after, html[data-skin="rustgame"] .card::after { display: none; }
+html[data-skin="rustgame"] .stat { padding: .9rem 1rem; }
+html[data-skin="rustgame"] .stat .label { color: var(--muted); font-size: .72rem; }
+html[data-skin="rustgame"] .stat .value { font-size: clamp(1.6rem, 1.25rem + 1.1vw, 2.2rem); color: #f4efe8;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+html[data-skin="rustgame"] .stat.ok { box-shadow: inset 3px 0 0 var(--ok); }
+html[data-skin="rustgame"] .stat.warn { box-shadow: inset 3px 0 0 var(--warn); }
+html[data-skin="rustgame"] .stat.bad { box-shadow: inset 3px 0 0 var(--accent); }
+html[data-skin="rustgame"] .stat.accent { box-shadow: inset 3px 0 0 var(--accent); }
+html[data-skin="rustgame"] .stat.bad .value { color: #ef6a52; }
+html[data-skin="rustgame"] main > .card > h2.card-head::before,
+html[data-skin="rustgame"] main > .card > .card-head > h2::before {
+  color: #f1ece4; border-color: var(--border-strong); background: rgba(232, 226, 217, .06); border-radius: 3px; }
+
+/* ------------------------------------------------------------ Bento grid for the stat tiles */
+html[data-skin="rustgame"] main .grid:has(> .stat) { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+html[data-skin="rustgame"] main .grid:has(> .stat) > .stat:nth-child(1),
+html[data-skin="rustgame"] main .grid:has(> .stat) > .stat:nth-child(2) { grid-column: span 2; }
+html[data-skin="rustgame"] main .grid:has(> .stat) > .stat:nth-child(1) .value,
+html[data-skin="rustgame"] main .grid:has(> .stat) > .stat:nth-child(2) .value { font-size: clamp(2rem, 1.5rem + 1.6vw, 2.8rem); }
+
+/* ------------------------------------------------------------ Real glass – only 3 places */
+html[data-skin="rustgame"] .sidebar, html[data-skin="rustgame"] .topbar, html[data-skin="rustgame"] .hero-card {
+  backdrop-filter: blur(16px) saturate(120%); -webkit-backdrop-filter: blur(16px) saturate(120%); }
+html[data-skin="rustgame"] .sidebar { background: rgba(14, 14, 13, .68); border-right: 1px solid var(--border); }
+html[data-skin="rustgame"] .topbar { background: rgba(14, 14, 13, .55); border-bottom: 1px solid var(--border); }
+html[data-skin="rustgame"] .hero-card { position: relative; background: rgba(22, 22, 20, .55); border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--accent); border-radius: var(--radius); }
+html[data-skin="rustgame"] .hero-card .hero-name { font-size: clamp(1.8rem, 1.3rem + 1.8vw, 2.6rem); text-transform: uppercase; letter-spacing: .02em; }
+html[data-skin="rustgame"] .hero-card .hero-players b { font-size: clamp(2.2rem, 1.6rem + 2vw, 3rem); }
+/* the players bar like the in-game health bar: green fill on a dark track, with a value-style label */
+html[data-skin="rustgame"] .hero-card .hero-meter { height: 14px; border-radius: 2px; background: rgba(0, 0, 0, .55);
+  border: 1px solid rgba(232, 226, 217, .12); }
+html[data-skin="rustgame"] .hero-card .hero-meter > span { border-radius: 0; background: linear-gradient(180deg, var(--green-hi), var(--green)); }
+html[data-skin="rustgame"] .hero-card .hero-dot { border-radius: 2px; }
+html[data-skin="rustgame"] .hero-card .hero-dot.on { background: var(--ok); box-shadow: 0 0 10px rgba(143, 176, 79, .8); }
+
+/* ------------------------------------------------------------ Sidebar */
+html[data-skin="rustgame"] .server-card { background: rgba(22, 22, 20, .7); border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent); border-radius: var(--radius); box-shadow: none; }
+html[data-skin="rustgame"] .server-card .eyebrow { color: #e0806b; }
+html[data-skin="rustgame"] .logo { background: var(--accent); color: #fff; border-radius: 3px; box-shadow: none; }
+html[data-skin="rustgame"] .server-chip.ok .dot { background: var(--ok); box-shadow: 0 0 8px rgba(143, 176, 79, .8); }
+html[data-skin="rustgame"] .nav-head { color: var(--faint); }
+html[data-skin="rustgame"] .nav-group { border: 0; background: transparent; box-shadow: none; padding: .2rem 0 .5rem; }
+html[data-skin="rustgame"] .nav-label { color: var(--faint); font-size: .7rem; }
+html[data-skin="rustgame"] .nav-label .gi { border-color: var(--border); background: transparent; color: var(--muted); border-radius: 3px; }
+html[data-skin="rustgame"] nav a { position: relative; color: #d8d1c7; font-weight: 500; border: 1px solid transparent; border-radius: 3px;
+  margin: 1px 0; padding: .45rem .6rem; background: transparent; }
+html[data-skin="rustgame"] nav a .ico { color: var(--muted); border-color: var(--border); background: var(--slot); border-radius: 3px; }
+html[data-skin="rustgame"] nav a:hover { background: rgba(232, 226, 217, .06); color: #fff; }
+html[data-skin="rustgame"] nav a.active { color: #fff; background: rgba(205, 65, 43, .2); border-color: rgba(205, 65, 43, .5); }
+html[data-skin="rustgame"] nav a.active::before { display: none; }
+html[data-skin="rustgame"] nav a.active .ico { color: #fff; border-color: rgba(205, 65, 43, .6); background: rgba(205, 65, 43, .35); }
+
+/* ------------------------------------------------------------ Top bar */
+html[data-skin="rustgame"] .top-title .eyebrow { color: #e0806b; }
+html[data-skin="rustgame"] .search-box { background: var(--input); border: 1px solid var(--border-strong); border-radius: 3px; color: var(--muted); }
+html[data-skin="rustgame"] .search-box:hover { border-color: rgba(232, 226, 217, .3); color: var(--text); }
+html[data-skin="rustgame"] .search-box .search-icon { color: #e0806b; }
+html[data-skin="rustgame"] .chip { border-radius: 3px; }
+
+/* ------------------------------------------------------------ Buttons: grey like the game, green for actions, red for danger */
+html[data-skin="rustgame"] button { background: rgba(232, 226, 217, .1); border: 1px solid var(--border-strong); color: #f1ece4;
+  border-radius: 3px; font-weight: 700; }
+html[data-skin="rustgame"] button:hover { background: rgba(232, 226, 217, .16); }
+html[data-skin="rustgame"] button.primary { background: linear-gradient(180deg, var(--green-hi), var(--green)); border: 1px solid var(--green-dark);
+  color: #f4f8ec; text-shadow: 0 1px 0 rgba(0, 0, 0, .35); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18); }
+html[data-skin="rustgame"] button.primary:hover { filter: brightness(1.08); }
+html[data-skin="rustgame"] button.danger { background: linear-gradient(180deg, #d24a33, #a8331f); border-color: #7e2516; color: #fff; }
+html[data-skin="rustgame"] button.ghost { background: transparent; }
+html[data-skin="rustgame"] input, html[data-skin="rustgame"] select, html[data-skin="rustgame"] textarea {
+  background: var(--input); border: 1px solid var(--border-strong); border-radius: 3px; color: var(--text); }
+html[data-skin="rustgame"] input:focus, html[data-skin="rustgame"] select:focus, html[data-skin="rustgame"] textarea:focus {
+  border-color: #d8d1c7; box-shadow: 0 0 0 2px rgba(232, 226, 217, .25); outline: none; }
+
+/* ------------------------------------------------------------ Quick actions: inventory slots */
+html[data-skin="rustgame"] .quick { gap: 6px; }
+html[data-skin="rustgame"] .quick a { background: var(--slot); border: 1px solid rgba(232, 226, 217, .08); border-radius: 3px;
+  color: #e8e2d9; font-weight: 700; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .35); }
+html[data-skin="rustgame"] .quick a:hover { background: var(--slot-hover); border-color: rgba(232, 226, 217, .3); }
+html[data-skin="rustgame"] .quick a i { background: rgba(0, 0, 0, .35); border: 1px solid rgba(232, 226, 217, .1); border-radius: 2px; }
+
+/* ------------------------------------------------------------ Tables, console, banners, pills */
+html[data-skin="rustgame"] th { color: var(--muted); background: rgba(232, 226, 217, .05); font-size: .72rem; }
+html[data-skin="rustgame"] td { border-color: var(--border); }
+html[data-skin="rustgame"] tbody tr:hover { background: rgba(232, 226, 217, .05); }
+html[data-skin="rustgame"] .console, html[data-skin="rustgame"] pre.transcript { background: var(--code-bg); border-color: var(--border-strong); border-radius: 3px; }
+html[data-skin="rustgame"] .console .resp { color: #c9d9a5; }
+html[data-skin="rustgame"] .banner { background: rgba(232, 226, 217, .06); border: 1px solid var(--border-strong); border-radius: 3px; }
+html[data-skin="rustgame"] .banner.ok { background: var(--ok-soft); border-color: rgba(143, 176, 79, .45); }
+html[data-skin="rustgame"] .banner.warn { background: var(--warn-soft); border-color: rgba(227, 165, 59, .45); }
+html[data-skin="rustgame"] .banner.bad { background: var(--bad-soft); border-color: rgba(205, 65, 43, .55); }
+html[data-skin="rustgame"] .pill { border-radius: 3px; }
+html[data-skin="rustgame"] .login { background: transparent; }
+
+/* ------------------------------------------------------------ Micro-interactions (transform/opacity, short) */
+html[data-skin="rustgame"] .stat, html[data-skin="rustgame"] .quick a { transition: transform .18s var(--ease-out), background-color .18s ease, border-color .18s ease; }
+html[data-skin="rustgame"] .stat:hover, html[data-skin="rustgame"] .quick a:hover { transform: translateY(-2px); }
+html[data-skin="rustgame"] button { transition: transform .1s ease, filter .18s ease, background-color .18s ease; }
+html[data-skin="rustgame"] button:active:not(:disabled) { transform: scale(.97); }
+@keyframes rg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+html[data-skin="rustgame"] main > *, html[data-skin="rustgame"] .quick a, html[data-skin="rustgame"] main .grid > .stat {
+  animation: rg-in .35s var(--ease-out) both; }
+html[data-skin="rustgame"] .quick a:nth-child(2), html[data-skin="rustgame"] main .grid > .stat:nth-child(2) { animation-delay: .03s; }
+html[data-skin="rustgame"] .quick a:nth-child(3), html[data-skin="rustgame"] main .grid > .stat:nth-child(3) { animation-delay: .06s; }
+html[data-skin="rustgame"] .quick a:nth-child(4), html[data-skin="rustgame"] main .grid > .stat:nth-child(4) { animation-delay: .09s; }
+html[data-skin="rustgame"] .quick a:nth-child(5), html[data-skin="rustgame"] main .grid > .stat:nth-child(5) { animation-delay: .12s; }
+html[data-skin="rustgame"] .quick a:nth-child(6), html[data-skin="rustgame"] main .grid > .stat:nth-child(6) { animation-delay: .15s; }
+@keyframes rg-shimmer { from { background-position: -160px 0; } to { background-position: 160px 0; } }
+html[data-skin="rustgame"] .skeleton { color: transparent !important; border-radius: 2px; min-width: 4ch; display: inline-block;
+  background: linear-gradient(90deg, rgba(232, 226, 217, .05), rgba(232, 226, 217, .13), rgba(232, 226, 217, .05));
+  background-size: 320px 100%; animation: rg-shimmer 1.2s linear infinite; }
+html[data-skin="rustgame"] :focus-visible { outline: 2px solid #e8e2d9; outline-offset: 2px; }
+
+/* ------------------------------------------------------------ Fallbacks, phones & accessibility */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html[data-skin="rustgame"] .sidebar, html[data-skin="rustgame"] .topbar, html[data-skin="rustgame"] .hero-card { background: rgba(18, 18, 17, .95); }
+}
+@media (max-width: 900px) { html[data-skin="rustgame"] main .grid:has(> .stat) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  html[data-skin="rustgame"] .sidebar, html[data-skin="rustgame"] .hero-card { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  html[data-skin="rustgame"] .sidebar { background: rgba(14, 14, 13, .92); }
+  html[data-skin="rustgame"] .hero-card { background: rgba(22, 22, 20, .8); }
+  html[data-skin="rustgame"] nav a { padding: .32rem .7rem .32rem .45rem; min-height: 44px; }
+  html[data-skin="rustgame"] .quick a, html[data-skin="rustgame"] button { min-height: 44px; }
+  html[data-skin="rustgame"] .server-card { border: 0; background: none; padding: 0; }
+}
+@media (prefers-contrast: more) {
+  html[data-skin="rustgame"] { --panel: rgba(18, 18, 17, .96); --border: rgba(232, 226, 217, .45); --muted: #e0d9cf; }
+  html[data-skin="rustgame"] .sidebar, html[data-skin="rustgame"] .topbar, html[data-skin="rustgame"] .hero-card {
+    backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(14, 14, 13, .97); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin="rustgame"] *, html[data-skin="rustgame"] *::before, html[data-skin="rustgame"] *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

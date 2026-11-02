@@ -1,0 +1,186 @@
+/* "Rust" – the default panel look (owner's mockup: "RUST CE DISCOUNT BOT"):
+   charcoal surfaces, one strong orange, bold condensed UPPERCASE headings ("CAMPAIGN CONTROL // DISCOUNT HUB"),
+   a solid orange active menu item, a green "BOT: ONLINE" pill, card headers with orange diagonal stripes, stat cards
+   with orange area sparklines, orange toggles and full-width orange action buttons, a monospace orange activity log.
+   modern-web-design skill rules kept: fluid type, short transform/opacity motion, visible focus, 44 px touch targets,
+   prefers-contrast and reduced-motion respected. Scoped to html[data-skin="rust"] (key kept; shown as "Rust"). */
+
+html[data-skin="rust"] {
+  color-scheme: dark;
+  --bg: #1f1f1f; --sidebar: #191919; --panel: #2a2a2a; --panel-2: #313131; --input: #1b1b1b;
+  --head-bg: #262626;
+  --text: #ece7e1; --muted: #a39d96; --faint: #77716b;
+  --border: #383838; --border-strong: #464646;
+  --accent: #e2592a; --accent-hover: #f06b3a; --accent-text: #fff;
+  --accent-soft: rgba(226, 89, 42, .15); --accent-ring: rgba(226, 89, 42, .4);
+  --ok: #4cc764; --ok-soft: rgba(76, 199, 100, .14); --warn: #f0a33a; --warn-soft: rgba(240, 163, 58, .15);
+  --bad: #e5483a; --bad-soft: rgba(229, 72, 58, .15); --info: #6fa8dc;
+  --code-bg: #141414; --code-text: #e8a27f;
+  --stripes: repeating-linear-gradient(-45deg, rgba(226, 89, 42, .55) 0 7px, transparent 7px 17px);
+  --cond: "Oswald", "Bebas Neue", "Arial Narrow", "Roboto Condensed", "Bahnschrift SemiCondensed", Impact, sans-serif;
+  --radius: 6px; --radius-sm: 4px;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+}
+html[data-skin="rust"] body { font-family: "Inter", "Segoe UI", system-ui, sans-serif; background: #1f1f1f; }
+html[data-skin="rust"] ::selection { background: rgba(226, 89, 42, .5); color: #fff; }
+html[data-skin="rust"] a { color: #f08a5c; }
+
+/* ------------------------------------------------------------ Type: bold condensed uppercase */
+html[data-skin="rust"] h1, html[data-skin="rust"] h2, html[data-skin="rust"] .top-h1, html[data-skin="rust"] .stat .label,
+html[data-skin="rust"] th, html[data-skin="rust"] .nav-label, html[data-skin="rust"] .quick a, html[data-skin="rust"] button,
+html[data-skin="rust"] .hero-card .hero-name, html[data-skin="rust"] .server-chip {
+  font-family: var(--cond); text-transform: uppercase; letter-spacing: .02em; }
+html[data-skin="rust"] h1 { font-weight: 700; font-size: clamp(1.5rem, 1.2rem + 1.1vw, 2.1rem); color: #fff; }
+html[data-skin="rust"] h2 { font-weight: 700; color: #f2ede7; font-size: 1.05rem; letter-spacing: .03em; }
+html[data-skin="rust"] .stat .value, html[data-skin="rust"] .hero-card .hero-players b { font-family: var(--cond); font-weight: 700; }
+
+/* top title: "OVERVIEW // LIVE SERVER OPERATIONS" – page name white, the rest grey after an orange // */
+html[data-skin="rust"] .top-title { display: flex; flex-direction: row-reverse; justify-content: flex-end; align-items: baseline;
+  gap: .55rem; flex-wrap: wrap; }
+html[data-skin="rust"] .top-h1 { font-weight: 700; font-size: clamp(1.25rem, 1rem + .9vw, 1.7rem); color: #fff; }
+html[data-skin="rust"] .top-title .eyebrow { font-family: var(--cond); font-size: clamp(1.05rem, .9rem + .6vw, 1.4rem);
+  font-weight: 500; letter-spacing: .02em; color: #9c968f; text-transform: uppercase; }
+html[data-skin="rust"] .top-title .eyebrow:not(:empty)::before { content: "// "; color: var(--accent); font-weight: 700; }
+
+/* ------------------------------------------------------------ Sidebar */
+html[data-skin="rust"] .sidebar { background: var(--sidebar); border-right: 1px solid #2a2a2a; }
+html[data-skin="rust"] .server-card { background: transparent; border: 0; box-shadow: none; padding: .3rem .2rem .6rem; }
+html[data-skin="rust"] .server-card .eyebrow { color: var(--accent); }
+html[data-skin="rust"] .brand-text strong { font-family: var(--cond); text-transform: uppercase; font-size: 1.35rem; letter-spacing: .01em;
+  line-height: 1; color: #fff; }
+html[data-skin="rust"] .logo { background: var(--accent); color: #fff; border-radius: 4px; box-shadow: none; }
+/* the status pill: green "online" */
+html[data-skin="rust"] .server-chip { background: rgba(76, 199, 100, .08); border: 1px solid rgba(76, 199, 100, .45);
+  border-radius: 4px; color: #7fe08f; font-weight: 600; }
+html[data-skin="rust"] .server-chip.bad { background: rgba(229, 72, 58, .08); border-color: rgba(229, 72, 58, .45); color: #f08a7f; }
+html[data-skin="rust"] .server-chip.ok .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+html[data-skin="rust"] .nav-head { color: var(--faint); }
+html[data-skin="rust"] .nav-group { border: 0; background: transparent; box-shadow: none; padding: .15rem 0 .45rem; }
+html[data-skin="rust"] .nav-label { color: var(--faint); font-size: .74rem; background: transparent; border: 0; box-shadow: none; }
+html[data-skin="rust"] .nav-label .gi { border-color: #333; background: transparent; color: var(--faint); border-radius: 4px; }
+html[data-skin="rust"] nav a { color: #b9b3ac; font-weight: 500; border: 1px solid transparent; border-radius: 5px; margin: 2px 0;
+  padding: .5rem .65rem; background: transparent; }
+html[data-skin="rust"] nav a .ico { color: #8a847d; border: 0; background: transparent; }
+html[data-skin="rust"] nav a:hover { background: #242424; color: #fff; }
+html[data-skin="rust"] nav a.active { background: var(--accent); color: #fff; border-color: var(--accent);
+  box-shadow: 0 6px 16px -8px rgba(226, 89, 42, .8); }
+html[data-skin="rust"] nav a.active::before { display: none; }
+html[data-skin="rust"] nav a.active .ico { color: #fff; background: transparent; }
+
+/* ------------------------------------------------------------ Top bar */
+html[data-skin="rust"] .topbar { background: #1c1c1c; border-bottom: 1px solid #2c2c2c; }
+html[data-skin="rust"] .search-box { background: var(--input); border: 1px solid var(--border); border-radius: 5px; color: var(--muted); }
+html[data-skin="rust"] .search-box:hover { border-color: #555; color: var(--text); }
+html[data-skin="rust"] .search-box .search-icon { color: var(--accent); }
+html[data-skin="rust"] .chip { background: var(--panel); border: 1px solid var(--border); border-radius: 5px; color: #d8d2cb; }
+
+/* ------------------------------------------------------------ Cards: header band with orange diagonal stripes */
+html[data-skin="rust"] .card, html[data-skin="rust"] .stat, html[data-skin="rust"] .savebar, html[data-skin="rust"] .login-card,
+html[data-skin="rust"] .toast {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px -16px rgba(0, 0, 0, .8);
+  color: var(--text); }
+html[data-skin="rust"] .card { padding: 0 1.1rem 1.1rem; overflow: hidden; }
+html[data-skin="rust"] .card > .card-head, html[data-skin="rust"] .card > h2:first-child {
+  position: relative; margin: 0 -1.1rem .9rem; padding: .7rem 1.1rem; background: var(--head-bg); border-bottom: 1px solid var(--border); }
+html[data-skin="rust"] .card > .card-head::after, html[data-skin="rust"] .card > h2:first-child::after {
+  content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: 58%; pointer-events: none; background: var(--stripes);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 40%); mask-image: linear-gradient(90deg, transparent, #000 40%); }
+html[data-skin="rust"] .card > .card-head > *, html[data-skin="rust"] .card > h2:first-child > * { position: relative; z-index: 1; }
+html[data-skin="rust"] .card.collapsed > .card-head { margin-bottom: -1.1rem !important; border-bottom: 0; }
+html[data-skin="rust"] .card > .card-head .chev { border-color: #fff; }
+html[data-skin="rust"] main > .card > h2.card-head::before, html[data-skin="rust"] main > .card > .card-head > h2::before {
+  color: #fff; border-color: rgba(226, 89, 42, .6); background: rgba(226, 89, 42, .2); border-radius: 3px; }
+
+/* ------------------------------------------------------------ Stat cards ("QUICK STATS") with area sparklines */
+html[data-skin="rust"] main .grid:has(> .stat) { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+html[data-skin="rust"] .stat { padding: .85rem 1rem; }
+html[data-skin="rust"] .stat::before, html[data-skin="rust"] .stat::after { display: none; }
+html[data-skin="rust"] .stat .label { color: #d9d3cc; font-size: .8rem; font-weight: 600; }
+html[data-skin="rust"] .stat .value { font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem); color: #fff; font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere; }
+html[data-skin="rust"] .stat.ok { border-bottom: 2px solid var(--ok); }
+html[data-skin="rust"] .stat.warn { border-bottom: 2px solid var(--warn); }
+html[data-skin="rust"] .stat.bad { border-bottom: 2px solid var(--bad); }
+html[data-skin="rust"] .stat.accent { border-bottom: 2px solid var(--accent); }
+html[data-skin="rust"] .stat.bad .value { color: #f06a5c; }
+html[data-skin="rust"] .stat .spark { height: 56px; }
+
+/* ------------------------------------------------------------ Server header card (overview) */
+html[data-skin="rust"] .hero-card { position: relative; padding: 1.1rem 1.2rem 1.1rem 1.4rem; overflow: hidden; }
+html[data-skin="rust"] .hero-card::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 45%; pointer-events: none;
+  background: var(--stripes); opacity: .5; -webkit-mask-image: linear-gradient(90deg, transparent, #000 70%);
+  mask-image: linear-gradient(90deg, transparent, #000 70%); }
+html[data-skin="rust"] .hero-card > * { position: relative; z-index: 1; }
+html[data-skin="rust"] .hero-card { border-left: 4px solid var(--accent); }
+html[data-skin="rust"] .hero-card .hero-name { font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.4rem); font-weight: 700; color: #fff; }
+html[data-skin="rust"] .hero-card .hero-players b { font-size: clamp(2rem, 1.5rem + 1.8vw, 2.8rem); }
+html[data-skin="rust"] .hero-card .hero-meter { background: #1b1b1b; height: 10px; border-radius: 3px; }
+html[data-skin="rust"] .hero-card .hero-meter > span { background: var(--accent); border-radius: 3px; }
+html[data-skin="rust"] .hero-card .hero-dot.on { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+
+/* ------------------------------------------------------------ Quick actions */
+html[data-skin="rust"] .quick a { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); color: #ece7e1;
+  font-weight: 600; }
+html[data-skin="rust"] .quick a:hover { border-color: var(--accent); }
+html[data-skin="rust"] .quick a i { background: #1f1f1f; border: 1px solid #3a3a3a; border-radius: 4px; }
+
+/* ------------------------------------------------------------ Buttons, toggles, inputs */
+html[data-skin="rust"] button { background: #353535; border: 1px solid #444; color: #f2ede7; border-radius: 5px; font-weight: 600; }
+html[data-skin="rust"] button:hover { background: #3e3e3e; border-color: #555; }
+html[data-skin="rust"] button.primary { background: var(--accent); border: 1px solid var(--accent); color: #fff;
+  box-shadow: 0 8px 18px -10px rgba(226, 89, 42, .9); }
+html[data-skin="rust"] button.primary:hover { background: var(--accent-hover); }
+html[data-skin="rust"] button.danger { color: #ff9a8c; border-color: rgba(229, 72, 58, .5); background: rgba(229, 72, 58, .1); }
+html[data-skin="rust"] button.ghost { background: transparent; }
+html[data-skin="rust"] input, html[data-skin="rust"] select, html[data-skin="rust"] textarea {
+  background: var(--input); border: 1px solid var(--border); border-radius: 5px; color: var(--text); }
+html[data-skin="rust"] input:focus, html[data-skin="rust"] select:focus, html[data-skin="rust"] textarea:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); outline: none; }
+/* checkboxes as orange toggles */
+html[data-skin="rust"] input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 2.3rem; height: 1.25rem; border-radius: 999px;
+  background: #3a3a3a; border: 1px solid #4a4a4a; position: relative; cursor: pointer; flex: none; vertical-align: middle; padding: 0; }
+html[data-skin="rust"] input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: calc(1.25rem - 6px);
+  height: calc(1.25rem - 6px); border-radius: 50%; background: #d8d2cb; transition: transform .18s var(--ease-out); }
+html[data-skin="rust"] input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+html[data-skin="rust"] input[type="checkbox"]:checked::after { transform: translateX(1.05rem); background: #fff; }
+
+/* ------------------------------------------------------------ Tables, console (activity feed), banners */
+html[data-skin="rust"] th { color: #b7b1aa; background: transparent; font-size: .78rem; border-bottom: 1px solid var(--border); }
+html[data-skin="rust"] td { border-color: #333; }
+html[data-skin="rust"] tbody tr:hover { background: #303030; }
+html[data-skin="rust"] .console, html[data-skin="rust"] pre.transcript { background: var(--code-bg); color: var(--code-text);
+  border: 1px solid #333; border-radius: 5px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+html[data-skin="rust"] .console .resp { color: #f2b48f; }
+html[data-skin="rust"] .banner { background: #2f2f2f; border: 1px solid var(--border-strong); border-radius: 5px; }
+html[data-skin="rust"] .banner.ok { background: var(--ok-soft); border-color: rgba(76, 199, 100, .45); }
+html[data-skin="rust"] .banner.warn { background: var(--warn-soft); border-color: rgba(240, 163, 58, .45); }
+html[data-skin="rust"] .banner.bad { background: var(--bad-soft); border-color: rgba(229, 72, 58, .5); }
+html[data-skin="rust"] .pill { border-radius: 4px; }
+html[data-skin="rust"] .login { background: #1f1f1f; }
+
+/* ------------------------------------------------------------ Motion (short, transform/opacity) */
+html[data-skin="rust"] .stat, html[data-skin="rust"] .quick a { transition: transform .18s var(--ease-out), border-color .18s ease; }
+html[data-skin="rust"] .stat:hover, html[data-skin="rust"] .quick a:hover { transform: translateY(-2px); }
+html[data-skin="rust"] button { transition: transform .1s ease, background-color .18s ease; }
+html[data-skin="rust"] button:active:not(:disabled) { transform: scale(.97); }
+@keyframes rust-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+html[data-skin="rust"] main > * { animation: rust-in .3s var(--ease-out) both; }
+@keyframes rust-shimmer { from { background-position: -160px 0; } to { background-position: 160px 0; } }
+html[data-skin="rust"] .skeleton { color: transparent !important; border-radius: 3px; min-width: 4ch; display: inline-block;
+  background: linear-gradient(90deg, #303030, #3c3c3c, #303030); background-size: 320px 100%; animation: rust-shimmer 1.2s linear infinite; }
+html[data-skin="rust"] :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 760px) {
+  html[data-skin="rust"] nav a { min-height: 44px; }
+  html[data-skin="rust"] .quick a, html[data-skin="rust"] button { min-height: 44px; }
+  html[data-skin="rust"] .top-title { flex-direction: row-reverse; }
+}
+@media (prefers-contrast: more) {
+  html[data-skin="rust"] { --border: #6a6a6a; --muted: #d6d0c9; }
+  html[data-skin="rust"] .card > .card-head::after, html[data-skin="rust"] .card > h2:first-child::after,
+  html[data-skin="rust"] .hero-card::after { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin="rust"] *, html[data-skin="rust"] *::before, html[data-skin="rust"] *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

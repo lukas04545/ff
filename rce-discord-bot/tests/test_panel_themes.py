@@ -5,11 +5,12 @@ from tests.test_web import H, bot, run  # noqa: F401
 def test_owner_picks_a_theme_per_account(bot):  # noqa: F811
     async def scenario(c):
         await c.post("/api/login", json={"password": "secret123"}, headers=H)
-        assert (await (await c.get("/api/me")).json())["skin"] == "glass"
+        assert (await (await c.get("/api/me")).json())["skin"] == "rust"
         r = await c.post("/api/users", json={"username": "Bob", "password": "bobpassword1", "role": "admin"}, headers=H)
         assert r.status == 200
         d = await (await c.get("/api/themes")).json()
-        assert {t["id"] for t in d["themes"]} == {"glass", "ember", "neon", "jumpscare", "retro"}
+        assert {t["id"] for t in d["themes"]} == {"rust", "rustgame", "rustmetal", "liquid", "waterfall",
+                                                    "ember", "neon", "jumpscare", "retro"}
         assert [u["username"] for u in d["users"]] == ["owner", "Bob"]
         assert (await c.put("/api/themes", json={"username": "bob", "theme": "retro"}, headers=H)).status == 200
         assert (await c.put("/api/themes", json={"username": "owner", "theme": "jumpscare"}, headers=H)).status == 200
@@ -44,3 +45,12 @@ def test_owner_sets_how_many_popups_and_how_often(bot):  # noqa: F811
         await c.post("/api/login", json={"username": "bob", "password": "bobpassword1"}, headers=H)
         assert (await c.put("/api/themes/options", json={"popups_start": 0}, headers=H)).status == 403
     run(bot, scenario)
+
+
+def test_legacy_theme_names_still_load(tmp_path):
+    import json
+    from web.panel_themes import ThemeStore
+    path = tmp_path / "web_themes.json"
+    path.write_text(json.dumps({"Ann": "glass", "bob": "liquid", "eve": "gone"}))
+    store = ThemeStore(path)
+    assert (store.get("ann"), store.get("bob"), store.get("eve")) == ("rust", "liquid", "rust")

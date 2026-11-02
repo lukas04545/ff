@@ -229,13 +229,28 @@
     setInterval(() => { if (Math.random() < 0.5) whisper(); }, 75000);
   }
 
+  // ------------------------------------------------------------------ Liquid glass + waterfall
+  function waterfall() {
+    if (document.querySelector(".glass-scene") || !document.body) return;
+    const scene = el("div", "glass-scene");
+    scene.setAttribute("aria-hidden", "true");
+    scene.innerHTML = '<div class="gs-cliff gs-left"></div><div class="gs-cliff gs-right"></div>'
+      + '<div class="gs-fall"><i class="l1"></i><i class="l2"></i><i class="l3"></i><b class="lip"></b></div>'
+      + '<div class="gs-pool"><i></i><i></i></div><div class="gs-mist"><i></i><i></i><i></i></div>';
+    document.body.prepend(scene);
+  }
+  // stylesheet-only looks (boot.js presets them before the first paint)
+  const SHEET_SKINS = ["ember", "rust", "rustgame", "rustmetal", "liquid", "waterfall"];
+  const canon = (skin) => (skin === "glass" ? "rust" : skin);    // "glass" was the old name of the Rust look
+
   window.RCE_SKINS = {
     applied: null,
     apply(skin, options) {
       // another account (or a new theme) on the same page: start over from a clean page
-      try { localStorage.setItem("rce-skin", skin || "ember"); } catch { /* storage blocked */ }
+      skin = canon(skin);
+      try { localStorage.setItem("rce-skin", skin || "rust"); } catch { /* storage blocked */ }
       const root0 = document.documentElement;
-      if (skin === "neon" && (root0.dataset.skin === "ember" || root0.dataset.skin === "glass")) {          // boot.js preset Ember – this account uses Neon
+      if (skin === "neon" && SHEET_SKINS.includes(root0.dataset.skin)) {   // boot.js preset a look – this account uses Neon
         delete root0.dataset.skin;
         let t = null;
         try { t = localStorage.getItem("rce-theme"); } catch { /* storage blocked */ }
@@ -244,12 +259,13 @@
       }
       if (this.applied && this.applied !== skin) { location.reload(); return; }
       if (this.applied || !skin || skin === "neon") return;
-      if (skin === "ember" || skin === "glass") {   // stylesheet-only looks (no extras)
+      if (SHEET_SKINS.includes(skin)) {   // stylesheet-only looks (the waterfall adds its scene)
         this.applied = skin;
         document.documentElement.dataset.skin = skin;
         document.documentElement.dataset.theme = "light";   // ember brings its own dark colours
         const toggle = document.getElementById("theme");
         if (toggle) toggle.hidden = true;
+        if (skin === "waterfall") waterfall(); else document.querySelector(".glass-scene")?.remove();
         return;
       }
       this.applied = skin;
@@ -263,4 +279,7 @@
       if (skin === "jumpscare") jumpscare();
     },
   };
+  // boot.js preset the waterfall look: show the scene right away (the login page too)
+  const showScene = () => { if (document.documentElement.dataset.skin === "waterfall") waterfall(); };
+  if (document.body) showScene(); else document.addEventListener("DOMContentLoaded", showScene);
 })();
