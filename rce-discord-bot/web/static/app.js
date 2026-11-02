@@ -155,7 +155,7 @@ let motion = false;
 try {
   const saved = localStorage.getItem("rce-motion");
   // Ember's motion is light: on unless switched off; the other looks: off unless switched on
-  motion = saved === "on" || (saved === null && document.documentElement.dataset.skin === "ember");
+  motion = saved === "on" || (saved === null && ["ember", "glass"].includes(document.documentElement.dataset.skin));
 } catch { /* storage blocked */ }
 applyMotion(motion);
 $("#motion").addEventListener("click", () => {

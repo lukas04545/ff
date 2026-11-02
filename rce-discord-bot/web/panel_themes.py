@@ -1,6 +1,6 @@
 """Panel themes ("skins") the owner picks for each account – Users page → Panel themes.
 
-ember: the default look (dark graphite, Rust orange). neon: the earlier violet/teal look. jumpscare: a dark horror look with a scary face and scream now and then. retro: an early-2000s
+glass: the default look (liquid glass over a gradient mesh). ember: dark graphite with Rust orange. neon: the earlier violet/teal look. jumpscare: a dark horror look with a scary face and scream now and then. retro: an early-2000s
 home page with 20 popup ads. The admin can't change their own theme; only the owner can.
 Saved in data/web_themes.json (username in lower case -> theme).
 """
@@ -11,8 +11,9 @@ import os
 import threading
 from pathlib import Path
 
-THEMES = {"ember": "Ember (default)", "neon": "Neon", "jumpscare": "Jump scares 👻", "retro": "Early 2000s 💾"}
-DEFAULT = "ember"
+THEMES = {"glass": "Liquid glass (default)", "ember": "Ember", "neon": "Neon", "jumpscare": "Jump scares 👻",
+          "retro": "Early 2000s 💾"}
+DEFAULT = "glass"
 # Early 2000s: popup ads at login, how often (minutes, 0 = never) and how many come back, at most this many open
 POPUP_OPTIONS = {"popups_start": (20, 0, 100), "popups_every": (3, 0, 120), "popups_wave": (2, 1, 50),
                  "popups_max": (6, 1, 100)}            # key: (default, min, max)
