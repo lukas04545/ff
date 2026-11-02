@@ -1,294 +1,234 @@
-/* "Liquid Glass" – translucent glass panels floating over a slowly drifting gradient mesh.
-   Built with the modern-web-design skill's Glassmorphism 2.0 guidance:
-   * real backdrop blur only where it counts (sidebar, top bar, server header – "2-3 glass elements per viewport");
-     every other card is "light glass": translucency, a specular top edge and a soft inner glow, no blur (cheap);
-   * text stays readable (dark tinted glass, ≥ 4.5:1 contrast), a high-contrast alternative (prefers-contrast),
-     a solid fallback where backdrop-filter isn't supported, and no motion with prefers-reduced-motion.
-   Scoped to html[data-skin="glass"] (skins.js / boot.js set it). */
+/* "Rust glass" – the default panel look: smoked glass panels over a dusty Rust sky.
+   Rust world: oxidised orange metal, rivets, hazard stripes, stencil-style headings, dust in the air, a
+   corrugated-steel horizon. Web design trends (2025): bento grid tiles, bold condensed type, grain texture,
+   glassmorphism, dark mode, micro-interactions.
+   Built with the modern-web-design skill's Glassmorphism 2.0 rules: real backdrop blur only on the sidebar, the top
+   bar and the server header; everything else is "light glass" (translucency + rim light, no blur); text on tinted
+   glass for >= 4.5:1 contrast; solid fallback without backdrop-filter; prefers-contrast and reduced-motion respected.
+   Scoped to html[data-skin="glass"] (boot.js / skins.js set it). */
 
 html[data-skin="glass"] {
   color-scheme: dark;
-  --bg: #070a14; --sidebar: rgba(14, 18, 32, .45); --panel: rgba(22, 27, 46, .42); --panel-2: rgba(30, 36, 60, .45);
-  --input: rgba(8, 11, 22, .55);
-  --text: #f3f5ff; --muted: #b6bdd6; --faint: #8189a6;
-  --border: rgba(255, 255, 255, .14); --border-strong: rgba(255, 255, 255, .22);
-  --accent: #7cc7ff; --accent-hover: #a5dbff; --accent-text: #061424;
-  --accent-soft: rgba(124, 199, 255, .14); --accent-ring: rgba(124, 199, 255, .4);
-  --ok: #5ef0a6; --ok-soft: rgba(94, 240, 166, .14); --warn: #ffd166; --warn-soft: rgba(255, 209, 102, .14);
-  --bad: #ff7a8a; --bad-soft: rgba(255, 122, 138, .15); --info: #7cc7ff;
-  --code-bg: rgba(5, 7, 15, .75); --code-text: #e8ecff;
-  --glass-edge: linear-gradient(180deg, rgba(255, 255, 255, .55), rgba(255, 255, 255, .08) 38%, rgba(255, 255, 255, .02));
-  --glass-shadow: 0 10px 40px -12px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .22),
-    inset 0 -1px 0 rgba(255, 255, 255, .04);
-  --liquid: linear-gradient(135deg, rgba(124, 199, 255, .95), rgba(176, 140, 255, .95) 55%, rgba(255, 128, 196, .95));
-  --radius: 22px; --radius-sm: 14px;
+  --bg: #0d0907; --sidebar: rgba(20, 13, 9, .55); --panel: rgba(28, 19, 14, .52); --panel-2: rgba(36, 25, 18, .55);
+  --input: rgba(10, 7, 5, .6);
+  --text: #f4ece4; --muted: #c2b2a3; --faint: #8f7d6d;
+  --border: rgba(255, 196, 150, .14); --border-strong: rgba(255, 196, 150, .24);
+  --accent: #ff7a2b; --accent-hover: #ff9550; --accent-text: #1c0c03;
+  --accent-soft: rgba(255, 122, 43, .14); --accent-ring: rgba(255, 122, 43, .4);
+  --ok: #8fd16a; --ok-soft: rgba(143, 209, 106, .14); --warn: #ffc23d; --warn-soft: rgba(255, 194, 61, .14);
+  --bad: #ff5a46; --bad-soft: rgba(255, 90, 70, .15); --info: #7cc7ff;
+  --code-bg: rgba(8, 5, 4, .8); --code-text: #f1e2d3;
+  --rust: linear-gradient(135deg, #ff8a3d 0%, #e5532a 50%, #b33a1d 100%);
+  --rust-soft: linear-gradient(135deg, rgba(255, 138, 61, .18), rgba(179, 58, 29, .08));
+  --rim: linear-gradient(180deg, rgba(255, 210, 170, .5), rgba(255, 210, 170, .08) 35%, rgba(255, 210, 170, .02));
+  --glass-shadow: 0 12px 40px -14px rgba(0, 0, 0, .7), inset 0 1px 0 rgba(255, 220, 190, .18);
+  --hazard: repeating-linear-gradient(135deg, #ffc23d 0 8px, #1c130d 8px 16px);
+  --stencil: Impact, "Haettenschweiler", "Arial Narrow Bold", "Oswald", "Bahnschrift Condensed", sans-serif;
+  --radius: 18px; --radius-sm: 12px;
   --ease-out: cubic-bezier(.16, 1, .3, 1);
 }
 
-/* ------------------------------------------------------------ Gradient mesh background (drifts slowly) */
-html[data-skin="glass"] body {
-  font-family: "SF Pro Display", "Inter", "Segoe UI Variable Display", system-ui, sans-serif;
-  background: #070a14;
-}
-html[data-skin="glass"] body::before {
-  content: ""; position: fixed; inset: -20%; z-index: -2; pointer-events: none;
+/* ------------------------------------------------------------ The Rust sky (gradients + one tiny SVG grain) */
+html[data-skin="glass"] body { font-family: "Inter", "Segoe UI Variable Display", system-ui, sans-serif; background: #0d0907; }
+html[data-skin="glass"] body::before {           /* sunset haze and a corrugated steel horizon */
+  content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
   background:
-    radial-gradient(38% 42% at 18% 22%, rgba(80, 140, 255, .55), transparent 70%),
-    radial-gradient(34% 40% at 82% 18%, rgba(200, 90, 255, .45), transparent 70%),
-    radial-gradient(40% 46% at 70% 82%, rgba(255, 110, 160, .38), transparent 70%),
-    radial-gradient(36% 40% at 22% 85%, rgba(40, 210, 200, .40), transparent 70%),
-    linear-gradient(180deg, #0a0f22, #070a14);
-  filter: saturate(1.15);
-  animation: glass-drift 38s ease-in-out infinite alternate;
+    radial-gradient(70% 45% at 72% 108%, rgba(255, 120, 40, .55), transparent 70%),
+    radial-gradient(45% 30% at 72% 100%, rgba(255, 190, 90, .45), transparent 70%),
+    radial-gradient(60% 50% at 10% 0%, rgba(120, 50, 25, .45), transparent 70%),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, .35) 0 6px, rgba(255, 140, 70, .06) 6px 12px) bottom / 100% 9vh no-repeat,
+    linear-gradient(180deg, #120c0a 0%, #1f120c 45%, #3a1b0e 80%, #4a220f 100%);
 }
-html[data-skin="glass"] body::after {          /* fine grain so large glass areas don't band */
-  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .06;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+html[data-skin="glass"] body::after {            /* grain + slowly drifting dust */
+  content: ""; position: fixed; inset: -10%; z-index: -1; pointer-events: none; opacity: .5;
+  background:
+    radial-gradient(circle at 12% 30%, rgba(255, 200, 150, .5) 0 1px, transparent 2px),
+    radial-gradient(circle at 38% 62%, rgba(255, 200, 150, .4) 0 1px, transparent 2px),
+    radial-gradient(circle at 64% 22%, rgba(255, 200, 150, .45) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 82% 70%, rgba(255, 200, 150, .35) 0 1px, transparent 2px),
+    radial-gradient(circle at 26% 84%, rgba(255, 200, 150, .4) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 92% 40%, rgba(255, 200, 150, .3) 0 1px, transparent 2px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 .9 0 0 0 0 .7 0 0 0 0 .55 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 420px 420px, 380px 380px, 460px 460px, 400px 400px, 440px 440px, 360px 360px, 140px 140px;
+  animation: rust-dust 60s linear infinite;
 }
-@keyframes glass-drift { 0% { transform: translate3d(0, 0, 0) rotate(0deg); } 100% { transform: translate3d(-4%, 3%, 0) rotate(8deg); } }
-html[data-skin="glass"] ::selection { background: rgba(124, 199, 255, .45); color: #fff; }
-html[data-skin="glass"] a { color: #a5dbff; }
-html[data-skin="glass"] h1 { font-size: clamp(1.6rem, 1.25rem + 1.2vw, 2.2rem); font-weight: 750; letter-spacing: -.03em; color: #fff; }
-html[data-skin="glass"] h2 { color: #fff; font-weight: 650; }
+@keyframes rust-dust { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-6%, -4%, 0); } }
+html[data-skin="glass"] ::selection { background: rgba(255, 122, 43, .45); color: #fff; }
+html[data-skin="glass"] a { color: #ffab73; }
 
-/* ------------------------------------------------------------ Light glass (most surfaces – no blur) */
+/* bold condensed headings (stencil feel) */
+html[data-skin="glass"] h1, html[data-skin="glass"] .top-h1 {
+  font-family: var(--stencil); font-weight: 400; text-transform: uppercase; letter-spacing: .04em;
+  font-size: clamp(1.7rem, 1.3rem + 1.4vw, 2.4rem); color: #fff; text-shadow: 0 2px 0 #000, 0 0 24px rgba(255, 110, 40, .35); }
+html[data-skin="glass"] h2 { color: #fff; font-weight: 700; letter-spacing: -.01em; }
+html[data-skin="glass"] .stat .value, html[data-skin="glass"] .hero-card .hero-name, html[data-skin="glass"] .hero-card .hero-players b {
+  font-family: var(--stencil); font-weight: 400; letter-spacing: .03em; }
+
+/* ------------------------------------------------------------ Light glass with a rusted rim (no blur) */
 html[data-skin="glass"] .card, html[data-skin="glass"] .stat, html[data-skin="glass"] .quick a,
 html[data-skin="glass"] .server-chip, html[data-skin="glass"] .chip, html[data-skin="glass"] .savebar,
 html[data-skin="glass"] .login-card, html[data-skin="glass"] .toast {
   position: relative; isolation: isolate;
-  background: linear-gradient(160deg, rgba(255, 255, 255, .10), rgba(255, 255, 255, .03) 45%, rgba(255, 255, 255, .05)),
+  background: linear-gradient(160deg, rgba(255, 220, 190, .09), rgba(255, 220, 190, .015) 45%, rgba(255, 150, 90, .04)),
     var(--panel);
   border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--glass-shadow); color: var(--text);
 }
-/* specular rim: a bright top edge that fades down – the "liquid" highlight */
 html[data-skin="glass"] .card::before, html[data-skin="glass"] .stat::before, html[data-skin="glass"] .quick a::before {
   content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none; z-index: -1;
-  background: var(--glass-edge);
+  background: var(--rim);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
 }
+/* rivets in the corners of the cards */
+html[data-skin="glass"] .card::after {
+  content: ""; position: absolute; inset: 7px; pointer-events: none; z-index: -1; border-radius: inherit;
+  background:
+    radial-gradient(circle at 3px 3px, rgba(255, 210, 170, .55) 0 1.4px, rgba(70, 35, 18, .95) 2px, transparent 3px) top left / 8px 8px no-repeat,
+    radial-gradient(circle at 5px 3px, rgba(255, 210, 170, .55) 0 1.4px, rgba(70, 35, 18, .95) 2px, transparent 3px) top right / 8px 8px no-repeat,
+    radial-gradient(circle at 3px 5px, rgba(255, 210, 170, .4) 0 1.4px, rgba(70, 35, 18, .95) 2px, transparent 3px) bottom left / 8px 8px no-repeat,
+    radial-gradient(circle at 5px 5px, rgba(255, 210, 170, .4) 0 1.4px, rgba(70, 35, 18, .95) 2px, transparent 3px) bottom right / 8px 8px no-repeat;
+}
 html[data-skin="glass"] .stat::after { display: none; }
-html[data-skin="glass"] .stat { border-radius: 20px; padding: 1rem 1.15rem; }
-html[data-skin="glass"] .stat .label { color: var(--muted); letter-spacing: .12em; font-size: .68rem; }
-html[data-skin="glass"] .stat .value { font-size: clamp(1.45rem, 1.15rem + 1vw, 1.95rem); font-weight: 750; color: #fff;
-  letter-spacing: -.02em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-html[data-skin="glass"] .stat.ok { box-shadow: var(--glass-shadow), inset 0 -2px 0 rgba(94, 240, 166, .6); }
-html[data-skin="glass"] .stat.warn { box-shadow: var(--glass-shadow), inset 0 -2px 0 rgba(255, 209, 102, .65); }
-html[data-skin="glass"] .stat.bad { box-shadow: var(--glass-shadow), inset 0 -2px 0 rgba(255, 122, 138, .7); }
-html[data-skin="glass"] .stat.accent { box-shadow: var(--glass-shadow), inset 0 -2px 0 rgba(124, 199, 255, .7); }
+html[data-skin="glass"] .stat { border-radius: 16px; padding: 1rem 1.15rem; }
+html[data-skin="glass"] .stat .label { color: var(--muted); letter-spacing: .14em; font-size: .68rem; }
+html[data-skin="glass"] .stat .value { font-size: clamp(1.6rem, 1.25rem + 1.1vw, 2.2rem); color: #fff;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+html[data-skin="glass"] .stat.ok { box-shadow: var(--glass-shadow), inset 0 -3px 0 rgba(143, 209, 106, .65); }
+html[data-skin="glass"] .stat.warn { box-shadow: var(--glass-shadow), inset 0 -3px 0 rgba(255, 194, 61, .7); }
+html[data-skin="glass"] .stat.bad { box-shadow: var(--glass-shadow), inset 0 -3px 0 rgba(255, 90, 70, .75); }
+html[data-skin="glass"] .stat.accent { box-shadow: var(--glass-shadow), inset 0 -3px 0 rgba(255, 122, 43, .8); }
 html[data-skin="glass"] .stat.bad .value { color: var(--bad); }
-html[data-skin="glass"] main .grid:has(> .stat) { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
 html[data-skin="glass"] main > .card > h2.card-head::before,
 html[data-skin="glass"] main > .card > .card-head > h2::before {
-  color: #fff; border-color: rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .08); }
+  color: #ffab73; border-color: rgba(255, 140, 70, .4); background: rgba(255, 122, 43, .1); }
+
+/* ------------------------------------------------------------ Bento grid: stat tiles in different sizes */
+html[data-skin="glass"] main .grid:has(> .stat) { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+html[data-skin="glass"] main .grid:has(> .stat) > .stat:nth-child(1),
+html[data-skin="glass"] main .grid:has(> .stat) > .stat:nth-child(2) { grid-column: span 2; }
+html[data-skin="glass"] main .grid:has(> .stat) > .stat:nth-child(1) .value,
+html[data-skin="glass"] main .grid:has(> .stat) > .stat:nth-child(2) .value { font-size: clamp(2rem, 1.5rem + 1.6vw, 2.8rem); }
 
 /* ------------------------------------------------------------ Real glass (backdrop blur) – only 3 places */
 html[data-skin="glass"] .sidebar, html[data-skin="glass"] .topbar, html[data-skin="glass"] .hero-card {
-  backdrop-filter: blur(22px) saturate(170%); -webkit-backdrop-filter: blur(22px) saturate(170%);
-}
-html[data-skin="glass"] .sidebar { background: rgba(12, 16, 30, .38); border-right: 1px solid var(--border);
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, .06); }
-html[data-skin="glass"] .topbar { background: rgba(10, 14, 28, .32); border-bottom: 1px solid var(--border); }
+  backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%); }
+html[data-skin="glass"] .sidebar { background: rgba(18, 11, 8, .5); border-right: 1px solid var(--border); }
+html[data-skin="glass"] .topbar { background: rgba(14, 9, 6, .45); border-bottom: 1px solid rgba(255, 122, 43, .35); }
 html[data-skin="glass"] .hero-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .04) 60%), rgba(20, 26, 48, .30);
-  border: 1px solid rgba(255, 255, 255, .24); border-radius: 26px;
+  position: relative; overflow: hidden;
+  background: linear-gradient(135deg, rgba(255, 170, 110, .16), rgba(255, 170, 110, .03) 60%), rgba(30, 18, 12, .4);
+  border: 1px solid rgba(255, 170, 110, .28); border-radius: 22px; padding-top: 1.6rem;
 }
-html[data-skin="glass"] .hero-card .hero-meter { background: rgba(255, 255, 255, .14); }
-html[data-skin="glass"] .hero-card .hero-meter > span { background: var(--liquid); box-shadow: 0 0 16px rgba(160, 150, 255, .7); }
+html[data-skin="glass"] .hero-card::before {     /* hazard stripe along the top edge */
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 9px; background: var(--hazard); opacity: .9; }
+html[data-skin="glass"] .hero-card .hero-name { font-size: clamp(1.8rem, 1.3rem + 1.8vw, 2.6rem); text-transform: uppercase; }
+html[data-skin="glass"] .hero-card .hero-players b { font-size: clamp(2.2rem, 1.6rem + 2vw, 3rem); }
+html[data-skin="glass"] .hero-card .hero-meter { background: rgba(255, 220, 190, .12); height: 10px; }
+html[data-skin="glass"] .hero-card .hero-meter > span { background: var(--rust); box-shadow: 0 0 16px rgba(255, 110, 40, .7); }
 html[data-skin="glass"] .hero-card .hero-dot.on { background: var(--ok); box-shadow: 0 0 12px var(--ok); }
 
 /* ------------------------------------------------------------ Sidebar */
-html[data-skin="glass"] .server-card { background: linear-gradient(135deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .04));
-  border: 1px solid rgba(255, 255, 255, .22); border-radius: 20px; box-shadow: var(--glass-shadow); }
-html[data-skin="glass"] .server-card .eyebrow { color: #a5dbff; letter-spacing: .14em; }
-html[data-skin="glass"] .logo { background: var(--liquid); color: #0b0f24; box-shadow: 0 8px 22px -8px rgba(150, 140, 255, .9); }
+html[data-skin="glass"] .server-card { background: var(--rust-soft), rgba(30, 18, 12, .5); border: 1px solid rgba(255, 150, 90, .3);
+  border-radius: 16px; box-shadow: var(--glass-shadow); }
+html[data-skin="glass"] .server-card .eyebrow { color: #ffab73; letter-spacing: .14em; }
+html[data-skin="glass"] .logo { background: var(--rust); color: #1c0c03; box-shadow: 0 8px 22px -8px rgba(255, 100, 40, .9); }
 html[data-skin="glass"] .server-chip.ok .dot { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
 html[data-skin="glass"] .nav-head { color: var(--faint); letter-spacing: .14em; }
 html[data-skin="glass"] .nav-group { border: 0; background: transparent; box-shadow: none; padding: .2rem 0 .5rem; }
 html[data-skin="glass"] .nav-label { color: var(--faint); font-size: .66rem; letter-spacing: .16em; }
-html[data-skin="glass"] .nav-label .gi { border-color: var(--border); background: rgba(255, 255, 255, .04); color: var(--muted); }
-html[data-skin="glass"] nav a { color: #dfe4f7; font-weight: 550; border: 1px solid transparent; border-radius: 14px;
+html[data-skin="glass"] .nav-label .gi { border-color: var(--border); background: rgba(255, 220, 190, .04); color: var(--muted); }
+html[data-skin="glass"] nav a { position: relative; color: #e6d9cc; font-weight: 550; border: 1px solid transparent; border-radius: 12px;
   margin: 1px 0; padding: .46rem .6rem; background: transparent; }
-html[data-skin="glass"] nav a .ico { color: var(--muted); border-color: var(--border); background: rgba(255, 255, 255, .04); border-radius: 10px; }
-html[data-skin="glass"] nav a:hover { background: rgba(255, 255, 255, .07); color: #fff; }
-html[data-skin="glass"] nav a.active { color: #fff; border-color: rgba(255, 255, 255, .28);
-  background: linear-gradient(135deg, rgba(255, 255, 255, .20), rgba(255, 255, 255, .06));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 8px 24px -12px rgba(124, 199, 255, .7); }
-html[data-skin="glass"] nav a.active::before { display: none; }
-html[data-skin="glass"] nav a.active .ico { color: #fff; border-color: rgba(255, 255, 255, .35); background: rgba(255, 255, 255, .12); }
+html[data-skin="glass"] nav a .ico { color: var(--muted); border-color: var(--border); background: rgba(255, 220, 190, .04); border-radius: 9px; }
+html[data-skin="glass"] nav a:hover { background: rgba(255, 170, 110, .08); color: #fff; }
+html[data-skin="glass"] nav a.active { color: #fff; border-color: rgba(255, 150, 90, .35);
+  background: linear-gradient(90deg, rgba(255, 122, 43, .22), rgba(255, 122, 43, .04)); }
+html[data-skin="glass"] nav a.active::before { content: ""; display: block; position: absolute; left: -1px; top: 16%; bottom: 16%;
+  width: 4px; border-radius: 0 3px 3px 0; background: var(--hazard); }
+html[data-skin="glass"] nav a.active .ico { color: #ffab73; border-color: rgba(255, 150, 90, .45); background: rgba(255, 122, 43, .12); }
 
 /* ------------------------------------------------------------ Top bar */
-html[data-skin="glass"] .top-title .eyebrow { color: #a5dbff; }
-html[data-skin="glass"] .top-h1 { color: #fff; }
-html[data-skin="glass"] .search-box { background: rgba(255, 255, 255, .08); border: 1px solid var(--border-strong);
-  border-radius: 999px; color: var(--muted); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15); }
-html[data-skin="glass"] .search-box:hover { background: rgba(255, 255, 255, .12); color: var(--text); }
-html[data-skin="glass"] .search-box .search-icon { color: #a5dbff; }
-html[data-skin="glass"] .chip { border-radius: 999px; }
+html[data-skin="glass"] .top-title .eyebrow { color: #ffab73; }
+html[data-skin="glass"] .search-box { background: rgba(255, 220, 190, .06); border: 1px solid var(--border-strong); border-radius: 12px;
+  color: var(--muted); }
+html[data-skin="glass"] .search-box:hover { background: rgba(255, 220, 190, .1); color: var(--text); }
+html[data-skin="glass"] .search-box .search-icon { color: #ffab73; }
 
-/* ------------------------------------------------------------ Buttons & inputs: liquid pills */
-html[data-skin="glass"] button { background: rgba(255, 255, 255, .10); border: 1px solid var(--border-strong); color: #fff;
-  border-radius: 999px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25); }
-html[data-skin="glass"] button:hover { background: rgba(255, 255, 255, .16); }
-html[data-skin="glass"] button.primary { background: var(--liquid); color: #0b0f24; border: 0; font-weight: 700;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 10px 26px -10px rgba(150, 140, 255, .9); }
-html[data-skin="glass"] button.primary:hover { filter: brightness(1.06) saturate(1.1); }
-html[data-skin="glass"] button.danger { color: #ffd0d6; border-color: rgba(255, 122, 138, .45); background: rgba(255, 122, 138, .12); }
+/* ------------------------------------------------------------ Buttons & inputs */
+html[data-skin="glass"] button { background: rgba(255, 220, 190, .08); border: 1px solid var(--border-strong); color: #fff;
+  border-radius: 10px; box-shadow: inset 0 1px 0 rgba(255, 220, 190, .15); }
+html[data-skin="glass"] button:hover { background: rgba(255, 170, 110, .14); border-color: rgba(255, 150, 90, .45); }
+html[data-skin="glass"] button.primary { background: var(--rust); color: #fff; border: 0; font-weight: 700; text-shadow: 0 1px 0 rgba(0, 0, 0, .3);
+  box-shadow: inset 0 1px 0 rgba(255, 220, 190, .45), 0 10px 26px -10px rgba(255, 90, 30, .9); }
+html[data-skin="glass"] button.primary:hover { filter: brightness(1.08); }
+html[data-skin="glass"] button.danger { color: #ffc7bd; border-color: rgba(255, 90, 70, .45); background: rgba(255, 90, 70, .12); }
 html[data-skin="glass"] button.ghost { background: transparent; box-shadow: none; }
 html[data-skin="glass"] input, html[data-skin="glass"] select, html[data-skin="glass"] textarea {
-  background: var(--input); border: 1px solid var(--border-strong); border-radius: 14px; color: var(--text); }
+  background: var(--input); border: 1px solid var(--border-strong); border-radius: 10px; color: var(--text); }
 html[data-skin="glass"] input:focus, html[data-skin="glass"] select:focus, html[data-skin="glass"] textarea:focus {
   border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); outline: none; }
 
 /* ------------------------------------------------------------ Tables, console, banners, pills */
-html[data-skin="glass"] th { color: var(--muted); background: rgba(255, 255, 255, .05); letter-spacing: .1em; font-size: .7rem; }
+html[data-skin="glass"] th { color: var(--muted); background: rgba(255, 220, 190, .05); letter-spacing: .1em; font-size: .7rem; }
 html[data-skin="glass"] td { border-color: var(--border); }
-html[data-skin="glass"] tbody tr:hover { background: rgba(255, 255, 255, .05); }
-html[data-skin="glass"] .console, html[data-skin="glass"] pre.transcript { background: var(--code-bg); border-color: var(--border);
-  border-radius: 16px; }
-html[data-skin="glass"] .console .resp { color: #a5f3d0; }
-html[data-skin="glass"] .banner { background: rgba(255, 255, 255, .07); border: 1px solid var(--border-strong); border-radius: 16px; }
-html[data-skin="glass"] .banner.ok { background: var(--ok-soft); border-color: rgba(94, 240, 166, .4); }
-html[data-skin="glass"] .banner.warn { background: var(--warn-soft); border-color: rgba(255, 209, 102, .4); }
-html[data-skin="glass"] .banner.bad { background: var(--bad-soft); border-color: rgba(255, 122, 138, .45); }
+html[data-skin="glass"] tbody tr:hover { background: rgba(255, 140, 70, .06); }
+html[data-skin="glass"] .console, html[data-skin="glass"] pre.transcript { background: var(--code-bg); border-color: rgba(255, 140, 70, .3); border-radius: 14px; }
+html[data-skin="glass"] .console .resp { color: #ffc99d; }
+html[data-skin="glass"] .banner { background: rgba(255, 220, 190, .06); border: 1px solid var(--border-strong); border-radius: 14px; }
+html[data-skin="glass"] .banner.ok { background: var(--ok-soft); border-color: rgba(143, 209, 106, .4); }
+html[data-skin="glass"] .banner.warn { background: var(--warn-soft); border-color: rgba(255, 194, 61, .45); }
+html[data-skin="glass"] .banner.bad { background: var(--bad-soft); border-color: rgba(255, 90, 70, .5); }
 html[data-skin="glass"] .pill { border-radius: 999px; }
-html[data-skin="glass"] .quick a i { background: rgba(255, 255, 255, .10); border-color: rgba(255, 255, 255, .22); border-radius: 12px; }
+html[data-skin="glass"] .quick a i { background: var(--rust-soft); border-color: rgba(255, 150, 90, .35); border-radius: 10px; }
+html[data-skin="glass"] .quick a { font-weight: 650; }
 html[data-skin="glass"] .login { background: transparent; }
 
-/* ------------------------------------------------------------ Micro-interactions (transform/opacity, 200 ms) */
+/* ------------------------------------------------------------ Micro-interactions (transform/opacity, ~200 ms) */
 html[data-skin="glass"] .stat, html[data-skin="glass"] .quick a {
-  transition: transform .22s var(--ease-out), box-shadow .22s var(--ease-out), background-color .22s ease; }
-html[data-skin="glass"] .stat:hover, html[data-skin="glass"] .quick a:hover { transform: translateY(-3px);
-  background-color: rgba(30, 38, 66, .55); }
+  transition: transform .22s var(--ease-out), box-shadow .22s var(--ease-out), border-color .22s ease; }
+html[data-skin="glass"] .stat:hover, html[data-skin="glass"] .quick a:hover { transform: translateY(-3px); border-color: rgba(255, 150, 90, .45); }
 html[data-skin="glass"] button { transition: transform .12s ease, filter .2s ease, background-color .2s ease; }
 html[data-skin="glass"] button:active:not(:disabled) { transform: scale(.96); }
-@keyframes glass-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes rust-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
 html[data-skin="glass"] main > *, html[data-skin="glass"] .quick a, html[data-skin="glass"] main .grid > .stat {
-  animation: glass-in .45s var(--ease-out) both; }
+  animation: rust-in .45s var(--ease-out) both; }
 html[data-skin="glass"] .quick a:nth-child(2), html[data-skin="glass"] main .grid > .stat:nth-child(2) { animation-delay: .04s; }
 html[data-skin="glass"] .quick a:nth-child(3), html[data-skin="glass"] main .grid > .stat:nth-child(3) { animation-delay: .08s; }
 html[data-skin="glass"] .quick a:nth-child(4), html[data-skin="glass"] main .grid > .stat:nth-child(4) { animation-delay: .12s; }
 html[data-skin="glass"] .quick a:nth-child(5), html[data-skin="glass"] main .grid > .stat:nth-child(5) { animation-delay: .16s; }
 html[data-skin="glass"] .quick a:nth-child(6), html[data-skin="glass"] main .grid > .stat:nth-child(6) { animation-delay: .2s; }
-@keyframes glass-shimmer { from { background-position: -160px 0; } to { background-position: 160px 0; } }
-html[data-skin="glass"] .skeleton { color: transparent !important; border-radius: 10px; min-width: 4ch; display: inline-block;
-  background: linear-gradient(90deg, rgba(255, 255, 255, .06), rgba(255, 255, 255, .16), rgba(255, 255, 255, .06));
-  background-size: 320px 100%; animation: glass-shimmer 1.2s linear infinite; }
-html[data-skin="glass"] :focus-visible { outline: 2px solid #a5dbff; outline-offset: 2px; border-radius: 10px; }
+@keyframes rust-shimmer { from { background-position: -160px 0; } to { background-position: 160px 0; } }
+html[data-skin="glass"] .skeleton { color: transparent !important; border-radius: 8px; min-width: 4ch; display: inline-block;
+  background: linear-gradient(90deg, rgba(255, 220, 190, .05), rgba(255, 220, 190, .14), rgba(255, 220, 190, .05));
+  background-size: 320px 100%; animation: rust-shimmer 1.2s linear infinite; }
+html[data-skin="glass"] :focus-visible { outline: 2px solid #ffab73; outline-offset: 2px; border-radius: 8px; }
 
-/* ------------------------------------------------------------ Fallbacks & accessibility */
+/* ------------------------------------------------------------ Fallbacks, phones & accessibility */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  html[data-skin="glass"] .sidebar, html[data-skin="glass"] .topbar { background: rgba(12, 16, 30, .92); }
-  html[data-skin="glass"] .hero-card { background: rgba(22, 28, 50, .9); }
+  html[data-skin="glass"] .sidebar, html[data-skin="glass"] .topbar { background: rgba(18, 11, 8, .94); }
+  html[data-skin="glass"] .hero-card { background: rgba(32, 20, 14, .92); }
 }
-@media (prefers-contrast: more) {
-  html[data-skin="glass"] { --panel: rgba(16, 20, 36, .94); --border: rgba(255, 255, 255, .45); --muted: #dfe4f7; }
-  html[data-skin="glass"] .sidebar, html[data-skin="glass"] .topbar, html[data-skin="glass"] .hero-card {
-    backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(12, 16, 30, .96); }
-  html[data-skin="glass"] body::before { opacity: .35; }
+@media (max-width: 900px) {
+  html[data-skin="glass"] main .grid:has(> .stat) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  /* phones: blur is expensive – keep it on the top bar only */
   html[data-skin="glass"] .sidebar, html[data-skin="glass"] .hero-card { backdrop-filter: none; -webkit-backdrop-filter: none; }
-  html[data-skin="glass"] .sidebar { background: rgba(12, 16, 30, .82); }
-  html[data-skin="glass"] .hero-card { background: linear-gradient(135deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, .04)), rgba(20, 26, 48, .6); }
+  html[data-skin="glass"] .sidebar { background: rgba(18, 11, 8, .88); }
+  html[data-skin="glass"] .hero-card { background: linear-gradient(135deg, rgba(255, 170, 110, .14), rgba(255, 170, 110, .03)), rgba(30, 18, 12, .75); }
   html[data-skin="glass"] nav a { border-radius: 999px; padding: .32rem .7rem .32rem .45rem; min-height: 44px; }
+  html[data-skin="glass"] nav a.active::before { display: none; }
   html[data-skin="glass"] .quick a, html[data-skin="glass"] button { min-height: 44px; }
   html[data-skin="glass"] .server-card { border: 0; background: none; box-shadow: none; padding: 0; }
-  html[data-skin="glass"] body::before { animation: none; }
+  html[data-skin="glass"] body::after { animation: none; }
 }
+@media (prefers-contrast: more) {
+  html[data-skin="glass"] { --panel: rgba(20, 13, 9, .95); --border: rgba(255, 210, 170, .5); --muted: #eadccf; }
+  html[data-skin="glass"] .sidebar, html[data-skin="glass"] .topbar, html[data-skin="glass"] .hero-card {
+    backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(18, 11, 8, .97); }
+  html[data-skin="glass"] body::after { display: none; }
+}
+html[data-motion="off"] body::after { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
   html[data-skin="glass"] *, html[data-skin="glass"] *::before, html[data-skin="glass"] *::after {
     animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
-}
-
-/* ------------------------------------------------------------ Waterfall scene + see-through panels
-   A rocky gorge with a waterfall, made of gradients only (no images): three water layers falling at different
-   speeds (parallax), a bright lip at the top, mist and a rippling pool at the bottom. Only transform/opacity move
-   (GPU), it stands still with the ✨ switch off or "reduce motion". Panels are semi-transparent: you see the
-   waterfall through them; a light blur keeps the text readable (desktop – phones skip the blur). */
-html[data-skin="glass"] {
-  --panel: rgba(16, 22, 40, .26); --panel-2: rgba(24, 30, 52, .3); --input: rgba(6, 9, 20, .45);
-  --border: rgba(255, 255, 255, .18); --border-strong: rgba(255, 255, 255, .26);
-}
-html[data-skin="glass"] .card, html[data-skin="glass"] .stat, html[data-skin="glass"] .quick a,
-html[data-skin="glass"] .server-chip, html[data-skin="glass"] .chip, html[data-skin="glass"] .savebar,
-html[data-skin="glass"] .login-card, html[data-skin="glass"] .toast {
-  background: linear-gradient(160deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .02) 50%, rgba(255, 255, 255, .05)),
-    var(--panel);
-  backdrop-filter: blur(9px) saturate(150%); -webkit-backdrop-filter: blur(9px) saturate(150%);
-}
-html[data-skin="glass"] main { text-shadow: 0 1px 2px rgba(0, 0, 0, .45); }
-html[data-skin="glass"] .sidebar { background: rgba(10, 14, 28, .26); }
-html[data-skin="glass"] .topbar { background: rgba(8, 12, 26, .22); }
-html[data-skin="glass"] .hero-card { background: linear-gradient(135deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .03) 60%),
-  rgba(16, 22, 42, .2); }
-
-.glass-scene { display: none; }
-html[data-skin="glass"] .glass-scene { display: block; position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
-/* the gorge: two dark rock walls with mossy highlights, the fall in the gap (the walls fade into the sky) */
-html[data-skin="glass"] .gs-cliff { position: absolute; top: 0; bottom: 0; opacity: .9;
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 100%);
-  mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 100%); }
-html[data-skin="glass"] .gs-left { left: 0; width: 71%;
-  background: radial-gradient(40% 30% at 88% 40%, rgba(70, 140, 110, .28), transparent 70%),
-    linear-gradient(100deg, rgba(8, 12, 22, .2) 0%, rgba(14, 22, 36, .75) 60%, rgba(24, 36, 50, .95) 100%);
-  clip-path: polygon(0 0, 95% 0, 98% 16%, 94% 34%, 98% 52%, 93% 70%, 97% 84%, 91% 100%, 0 100%); }
-html[data-skin="glass"] .gs-right { right: 0; width: 24%;
-  background: radial-gradient(50% 30% at 15% 45%, rgba(70, 140, 110, .25), transparent 70%),
-    linear-gradient(260deg, rgba(8, 12, 22, .2) 0%, rgba(14, 22, 36, .75) 55%, rgba(26, 38, 52, .95) 100%);
-  clip-path: polygon(10% 0, 100% 0, 100% 100%, 6% 100%, 2% 80%, 9% 60%, 3% 40%, 8% 20%); }
-/* the falling water: thin streams of different speeds, soft at the sides, fading into the mist */
-html[data-skin="glass"] .gs-fall { position: absolute; left: 70.5%; width: clamp(120px, 7vw, 200px); top: 4%; bottom: 14%;
-  overflow: hidden; opacity: .8;
-  background: linear-gradient(180deg, rgba(180, 225, 255, .18), rgba(170, 220, 255, .32) 55%, rgba(225, 245, 255, .5));
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent),
-    linear-gradient(180deg, #000 80%, transparent);
-  -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent), linear-gradient(180deg, #000 80%, transparent);
-  mask-composite: intersect;
-  filter: blur(.6px); }
-html[data-skin="glass"] .gs-fall i { position: absolute; left: 0; right: 0; top: -100%; height: 200%; will-change: transform;
-  animation: gs-fall linear infinite;
-  -webkit-mask-image: repeating-linear-gradient(180deg, transparent 0 18%, #000 30%, #000 60%, transparent 75% 100%);
-  mask-image: repeating-linear-gradient(180deg, transparent 0 18%, #000 30%, #000 60%, transparent 75% 100%); }
-html[data-skin="glass"] .gs-fall .l1 { animation-duration: 1.9s; opacity: .75;
-  background: repeating-linear-gradient(90deg, transparent 0 7px, rgba(255, 255, 255, .55) 7px 9px, transparent 9px 19px,
-    rgba(255, 255, 255, .3) 19px 20px, transparent 20px 31px); }
-html[data-skin="glass"] .gs-fall .l2 { animation-duration: 1.3s; opacity: .6;
-  background: repeating-linear-gradient(90deg, transparent 0 4px, rgba(255, 255, 255, .5) 4px 5px, transparent 5px 13px); }
-html[data-skin="glass"] .gs-fall .l3 { animation-duration: 2.8s; opacity: .45;
-  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, .35) 0 2px, transparent 2px 23px, rgba(255, 255, 255, .2) 23px 26px,
-    transparent 26px 41px); }
-html[data-skin="glass"] .gs-fall .lip { position: absolute; left: 0; right: 0; top: 0; height: 16px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, .8), rgba(255, 255, 255, 0)); }
-@keyframes gs-fall { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(0, 25%, 0); } }
-/* the pool and its ripples */
-html[data-skin="glass"] .gs-pool { position: absolute; left: 52%; width: 44%; bottom: 0; height: 22%;
-  background: radial-gradient(50% 60% at 50% 35%, rgba(170, 220, 255, .35), rgba(60, 120, 200, .16) 60%, transparent 75%); }
-html[data-skin="glass"] .gs-pool i { position: absolute; left: 50%; top: 22%; width: 40%; height: 18%; border-radius: 50%;
-  border: 2px solid rgba(220, 245, 255, .45); transform: translate(-50%, 0) scale(.4); opacity: 0;
-  animation: gs-ripple 3.2s ease-out infinite; }
-html[data-skin="glass"] .gs-pool i:nth-child(2) { animation-delay: 1.6s; }
-@keyframes gs-ripple { 0% { transform: translate(-50%, 0) scale(.4); opacity: .8; } 100% { transform: translate(-50%, 0) scale(2.2); opacity: 0; } }
-/* mist rising where the water lands */
-html[data-skin="glass"] .gs-mist i { position: absolute; bottom: 6%; left: 64%; width: 26vw; height: 26vw; max-width: 420px;
-  max-height: 420px; border-radius: 50%; background: radial-gradient(circle, rgba(230, 245, 255, .45), transparent 65%);
-  filter: blur(18px); animation: gs-mist 9s ease-in-out infinite alternate; }
-html[data-skin="glass"] .gs-mist i:nth-child(2) { left: 57%; bottom: 2%; animation-duration: 12s; animation-delay: -3s; }
-html[data-skin="glass"] .gs-mist i:nth-child(3) { left: 72%; bottom: 4%; animation-duration: 10s; animation-delay: -6s; }
-@keyframes gs-mist { from { transform: translate3d(-4%, 0, 0) scale(.9); opacity: .55; } to { transform: translate3d(5%, -8%, 0) scale(1.1); opacity: .9; } }
-
-html[data-motion="off"] .glass-scene *, html[data-motion="off"] .glass-scene *::before { animation: none !important; }
-@media (prefers-reduced-motion: reduce) { html[data-skin="glass"] .glass-scene * { animation: none !important; } }
-@media (max-width: 760px) {
-  html[data-skin="glass"] .card, html[data-skin="glass"] .stat, html[data-skin="glass"] .quick a,
-  html[data-skin="glass"] .server-chip, html[data-skin="glass"] .chip {
-    backdrop-filter: none; -webkit-backdrop-filter: none; background-color: rgba(16, 22, 40, .45); }
-  html[data-skin="glass"] .gs-fall { left: 62%; width: 100px; }
-  html[data-skin="glass"] .gs-left { width: 66%; } html[data-skin="glass"] .gs-right { width: 26%; }
-}
-@media (prefers-contrast: more) {
-  html[data-skin="glass"] .glass-scene { opacity: .25; }
-  html[data-skin="glass"] .card, html[data-skin="glass"] .stat { background: rgba(14, 18, 34, .94); }
 }
