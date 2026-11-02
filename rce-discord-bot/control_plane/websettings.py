@@ -30,7 +30,7 @@ class Field:
     label: str
     group: str
     secret: bool = False
-    kind: str = "text"            # text | int | ids | domain | path | ips
+    kind: str = "text"            # text | int | ids | domain | path | ips | theme
     restart: bool = False
     help: str = ""
 
@@ -43,6 +43,9 @@ FIELDS = (
     Field("CP_DOMAIN_PRICE", "Own domain add-on: price per month", "Basics",
           help="The premium extra customers can add to any package (e.g. 3.99, in your packages' currency). "
                "Empty = not for sale (only packages that include it)."),
+    Field("CP_PANEL_THEME", "Default panel theme", "Panels", kind="theme",
+          help="The look of every server's control panel for accounts that haven't picked their own theme "
+               "(the server's owner can still set one per account under Users → Panel themes). Applies at once."),
     Field("CP_DEEPSEEK_API_KEY", "DeepSeek API key", "AI", secret=True,
           help="For the AI add-on and the management AI."),
     Field("CP_SHARED_BOT_TOKEN", "Shared bot token", "Shared Discord bot", secret=True, restart=True),
@@ -146,6 +149,10 @@ def _check(field: Field, value: str) -> str:
             value = _owner_path(value) or "off"
         except ValueError as exc:
             raise SettingsError(str(exc)) from None
+    if field.kind == "theme":
+        from web.panel_themes import THEMES
+        if value not in THEMES:
+            raise SettingsError(f"{field.label}: pick one of the themes.")
     if field.kind == "ips":
         parts = [p.strip() for p in value.split(",") if p.strip()]
         if not all(re.fullmatch(r"[0-9a-fA-F:.]{2,45}", p) for p in parts):
@@ -197,6 +204,27 @@ def shown(key: str) -> str:
     if BY_KEY[key].secret:
         return f"set ••••{value[-4:]}" if value else "not set"
     return value
+
+
+def panel_theme() -> str:
+    from web.panel_themes import DEFAULT, THEMES
+    value = os.environ.get("CP_PANEL_THEME", "").strip()
+    return value if value in THEMES else DEFAULT
+
+
+def sync_panel_theme(db: DB) -> int:
+    """Writes the global default panel theme into every server's folder (their panels read it live)."""
+    from web.panel_themes import write_default
+    theme, n = panel_theme(), 0
+    for row in db.q("SELECT home_dir FROM servers WHERE status != 'deleted'"):
+        home = Path(row["home_dir"] or "")
+        if row["home_dir"] and home.is_dir():
+            try:
+                write_default(home, theme)
+                n += 1
+            except OSError:
+                pass
+    return n
 
 
 def rotate(db: DB, box: SecretBox) -> bool:

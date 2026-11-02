@@ -143,3 +143,27 @@ def test_blank_fields_keep_the_defaults(cp, tmp_path):  # noqa: F811
     os.environ["CP_PORTAL_URL"] = ""                                             # even if it's set but empty
     assert cp.settings.portal_url == "https://portal.kryvon3x.com"
     assert hostproxy.resolve(cp.db, cp.settings, "portal.kryvon3x.com")[0] == "portal"
+
+
+def test_global_default_panel_theme_reaches_every_server(cp, tmp_path):  # noqa: F811
+    from web.panel_themes import ThemeStore
+    import time as _t
+    cp.db.run("INSERT INTO customers (email, password_hash, created_at) VALUES ('t@x.io', 'x', ?)", (int(_t.time()),))
+    cid = cp.db.one("SELECT id FROM customers WHERE email = 't@x.io'")["id"]
+    homes = []
+    for i in (1, 2):
+        home = tmp_path / f"s{i}"
+        home.mkdir()
+        homes.append(home)
+        cp.db.run("INSERT INTO servers (customer_id, slug, name, home_dir, web_port, status, created_at) "
+                  "VALUES (?, ?, ?, ?, ?, 'active', ?)", (cid, f"srv{i}", f"S{i}", str(home), 9100 + i, int(_t.time())))
+    with pytest.raises(websettings.SettingsError):
+        websettings.save(cp.db, cp.box, {"CP_PANEL_THEME": "evil"}, actor="t")
+    assert websettings.save(cp.db, cp.box, {"CP_PANEL_THEME": "liquid"}, actor="t") == ["CP_PANEL_THEME"]
+    assert websettings.sync_panel_theme(cp.db) == 2
+    store = ThemeStore(homes[0] / "data" / "web_themes.json", homes[0] / "panel_default_theme")
+    assert store.get("anyone") == "liquid"
+    store.set("bob", "neon")                                        # an explicit choice stays
+    websettings.save(cp.db, cp.box, {"CP_PANEL_THEME": "rustgame"}, actor="t")
+    websettings.sync_panel_theme(cp.db)
+    assert (store.get("anyone"), store.get("bob")) == ("rustgame", "neon")   # read live, no restart
