@@ -240,7 +240,7 @@
     document.body.prepend(scene);
   }
   // stylesheet-only looks (boot.js presets them before the first paint)
-  const SHEET_SKINS = ["ember", "rust", "rustgame", "rustmetal", "liquid", "waterfall"];
+  const SHEET_SKINS = ["modern", "ember", "rust", "rustgame", "rustmetal", "liquid", "waterfall"];
   const canon = (skin) => (skin === "glass" ? "rust" : skin);    // "glass" was the old name of the Rust look
 
   window.RCE_SKINS = {
@@ -248,7 +248,7 @@
     apply(skin, options) {
       // another account (or a new theme) on the same page: start over from a clean page
       skin = canon(skin);
-      try { localStorage.setItem("rce-skin", skin || "rust"); } catch { /* storage blocked */ }
+      try { localStorage.setItem("rce-skin", skin || "modern"); } catch { /* storage blocked */ }
       const root0 = document.documentElement;
       if (skin === "neon" && SHEET_SKINS.includes(root0.dataset.skin)) {   // boot.js preset a look – this account uses Neon
         delete root0.dataset.skin;
