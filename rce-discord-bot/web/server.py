@@ -48,7 +48,7 @@ from web.totp import TwoFactorStore, matching_step, new_secret, otpauth_uri
 from web import honeypot
 from web.honeypot import HoneypotLog
 from web.system_stats import SystemMonitor
-from web.panel_themes import THEMES, ThemeStore
+from web.panel_themes import THEMES, ThemeStore, default_file
 from web.users import OWNER, UserError, UserStore, hash_password, is_hashed, same_secret, verify_password
 from cogs.economy import SHOP_KINDS
 from permcheck import check_permissions, explain_forbidden
@@ -353,7 +353,7 @@ class WebInterface:
         self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
         self.honeypot = HoneypotLog(secret_path.parent / "web_honeypot.json")
         self.system = SystemMonitor()                            # CPU / memory for the System page
-        self.themes = ThemeStore(secret_path.parent / "web_themes.json")
+        self.themes = ThemeStore(secret_path.parent / "web_themes.json", default_file())
         self._proxy_session: aiohttp.ClientSession | None = None   # other servers' panels through this address
         self._honeypot_told: dict[str, float] = {}               # ip:kind -> last admin log line (no flooding)
         self._ensure_panel_path()

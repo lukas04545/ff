@@ -1201,6 +1201,12 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
                        f"placeholder='{esc(cur)} – leave empty to keep'>"
                        + (f"<label><input type=checkbox name=clear_{f.key} value=1> remove</label>"
                           if cur != "not set" else ""))
+            elif f.kind == "theme":
+                from web.panel_themes import THEMES
+                cur = websettings.panel_theme()
+                inp = (f"<select name={f.key} style='width:100%'>" + "".join(
+                    f"<option value={k}{' selected' if k == cur else ''}>{esc(label)}</option>"
+                    for k, label in THEMES.items()) + "</select>")
             else:
                 inp = f"<input name={f.key} value='{esc(cur)}' style='width:100%'>"
             groups.setdefault(f.group, []).append(
@@ -1232,6 +1238,8 @@ style="width:100%" placeholder="Cloudflare API token" required><br><br><button>S
         except websettings.SettingsError as exc:
             return page("Not saved", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/settings>Back</a></div>")
         websettings.refresh(settings, list(websettings.saved(db, box)))
+        if "CP_PANEL_THEME" in changed_keys:
+            websettings.sync_panel_theme(db)
         await changed()                                  # servers pick up e.g. a new AI key (restart by themselves)
         restart = [k for k in changed_keys if websettings.BY_KEY[k].restart]
         msg = ("✅ Saved: " + ", ".join(changed_keys)) if changed_keys else "Nothing changed."

@@ -129,6 +129,12 @@ class Supervisor:
         s = self.db.one("SELECT home_dir, slug FROM servers WHERE id = ?", (sid,))
         env, p.env_hash = self._env(sid)
         p.stopping = False
+        try:                                             # the owner's default panel theme (read live by the panel)
+            from web.panel_themes import write_default
+            from control_plane.websettings import panel_theme
+            write_default(Path(s["home_dir"]), panel_theme())
+        except OSError:
+            pass
         try:
             p.process = await self.launcher.start(env, Path(s["home_dir"]))
         except Exception as exc:
