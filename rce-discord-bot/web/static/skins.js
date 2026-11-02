@@ -229,6 +229,18 @@
     setInterval(() => { if (Math.random() < 0.5) whisper(); }, 75000);
   }
 
+  // ------------------------------------------------------------------ Liquid glass: the waterfall scene behind it
+  function waterfall() {
+    if (document.querySelector(".glass-scene") || !document.body) return;
+    const scene = el("div", "glass-scene");
+    scene.setAttribute("aria-hidden", "true");
+    scene.innerHTML = '<div class="gs-cliff gs-left"></div><div class="gs-cliff gs-right"></div>'
+      + '<div class="gs-fall"><i class="l1"></i><i class="l2"></i><i class="l3"></i><b class="lip"></b></div>'
+      + '<div class="gs-pool"><i></i><i></i></div><div class="gs-mist"><i></i><i></i><i></i></div>';
+    document.body.prepend(scene);
+  }
+  if (document.documentElement.dataset.skin === "glass") waterfall();   // also on the login page
+
   window.RCE_SKINS = {
     applied: null,
     apply(skin, options) {
@@ -244,9 +256,10 @@
       }
       if (this.applied && this.applied !== skin) { location.reload(); return; }
       if (this.applied || !skin || skin === "neon") return;
-      if (skin === "ember" || skin === "glass") {   // stylesheet-only looks (no extras)
+      if (skin === "ember" || skin === "glass") {   // stylesheet-only looks (glass adds its waterfall)
         this.applied = skin;
         document.documentElement.dataset.skin = skin;
+        if (skin === "glass") waterfall(); else document.querySelector(".glass-scene")?.remove();
         document.documentElement.dataset.theme = "light";   // ember brings its own dark colours
         const toggle = document.getElementById("theme");
         if (toggle) toggle.hidden = true;
