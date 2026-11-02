@@ -1,6 +1,6 @@
 """Panel themes ("skins") the owner picks for each account – Users page → Panel themes.
 
-glass: the default look (liquid glass over a gradient mesh). ember: dark graphite with Rust orange. neon: the earlier violet/teal look. jumpscare: a dark horror look with a scary face and scream now and then. retro: an early-2000s
+glass: the default look, styled after the game Rust's own interface. ember: dark graphite with Rust orange. neon: the earlier violet/teal look. jumpscare: a dark horror look with a scary face and scream now and then. retro: an early-2000s
 home page with 20 popup ads. The admin can't change their own theme; only the owner can.
 Saved in data/web_themes.json (username in lower case -> theme).
 """
@@ -11,7 +11,7 @@ import os
 import threading
 from pathlib import Path
 
-THEMES = {"glass": "Liquid glass (default)", "ember": "Ember", "neon": "Neon", "jumpscare": "Jump scares 👻",
+THEMES = {"glass": "Rust (default)", "ember": "Ember", "neon": "Neon", "jumpscare": "Jump scares 👻",
           "retro": "Early 2000s 💾"}
 DEFAULT = "glass"
 # Early 2000s: popup ads at login, how often (minutes, 0 = never) and how many come back, at most this many open
