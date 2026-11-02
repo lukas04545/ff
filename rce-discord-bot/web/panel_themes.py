@@ -1,6 +1,7 @@
 """Panel themes ("skins") the owner picks for each account – Users page → Panel themes.
 
-rust: the default look (charcoal, Rust orange, striped card headers). rustgame: styled after the game Rust's own
+modern: the default look – midnight base, aurora colours, gradient accents, a colour per stat card.
+rust: charcoal, Rust orange, striped card headers. rustgame: styled after the game Rust's own
 interface. rustmetal: rusty metal and smoked glass. liquid: liquid glass. waterfall: liquid glass with a waterfall
 behind semi-transparent panels. ember: dark graphite with Rust orange. neon: the earlier violet/teal look. jumpscare: a dark horror look with a scary face and scream now and then. retro: an early-2000s
 home page with 20 popup ads. The admin can't change their own theme; only the owner can.
@@ -13,10 +14,10 @@ import os
 import threading
 from pathlib import Path
 
-THEMES = {"rust": "Rust (default)", "rustgame": "Rust game UI", "rustmetal": "Rusty metal",
+THEMES = {"modern": "Modern ✨ (default)", "rust": "Rust", "rustgame": "Rust game UI", "rustmetal": "Rusty metal",
           "liquid": "Liquid glass", "waterfall": "Liquid glass + waterfall", "ember": "Ember", "neon": "Neon",
           "jumpscare": "Jump scares 👻", "retro": "Early 2000s 💾"}
-DEFAULT = "rust"
+DEFAULT = "modern"
 LEGACY = {"glass": "rust"}                 # old theme names -> current ones
 # Early 2000s: popup ads at login, how often (minutes, 0 = never) and how many come back, at most this many open
 POPUP_OPTIONS = {"popups_start": (20, 0, 100), "popups_every": (3, 0, 120), "popups_wave": (2, 1, 50),

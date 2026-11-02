@@ -5,11 +5,11 @@ from tests.test_web import H, bot, run  # noqa: F401
 def test_owner_picks_a_theme_per_account(bot):  # noqa: F811
     async def scenario(c):
         await c.post("/api/login", json={"password": "secret123"}, headers=H)
-        assert (await (await c.get("/api/me")).json())["skin"] == "rust"
+        assert (await (await c.get("/api/me")).json())["skin"] == "modern"
         r = await c.post("/api/users", json={"username": "Bob", "password": "bobpassword1", "role": "admin"}, headers=H)
         assert r.status == 200
         d = await (await c.get("/api/themes")).json()
-        assert {t["id"] for t in d["themes"]} == {"rust", "rustgame", "rustmetal", "liquid", "waterfall",
+        assert {t["id"] for t in d["themes"]} == {"modern", "rust", "rustgame", "rustmetal", "liquid", "waterfall",
                                                     "ember", "neon", "jumpscare", "retro"}
         assert [u["username"] for u in d["users"]] == ["owner", "Bob"]
         assert (await c.put("/api/themes", json={"username": "bob", "theme": "retro"}, headers=H)).status == 200
@@ -53,4 +53,4 @@ def test_legacy_theme_names_still_load(tmp_path):
     path = tmp_path / "web_themes.json"
     path.write_text(json.dumps({"Ann": "glass", "bob": "liquid", "eve": "gone"}))
     store = ThemeStore(path)
-    assert (store.get("ann"), store.get("bob"), store.get("eve")) == ("rust", "liquid", "rust")
+    assert (store.get("ann"), store.get("bob"), store.get("eve")) == ("rust", "liquid", "modern")
