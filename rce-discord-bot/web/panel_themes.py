@@ -1,6 +1,8 @@
 """Panel themes ("skins") the owner picks for each account – Users page → Panel themes.
 
-glass: the default look, styled after the game Rust's own interface. ember: dark graphite with Rust orange. neon: the earlier violet/teal look. jumpscare: a dark horror look with a scary face and scream now and then. retro: an early-2000s
+rust: the default look (charcoal, Rust orange, striped card headers). rustgame: styled after the game Rust's own
+interface. rustmetal: rusty metal and smoked glass. liquid: liquid glass. waterfall: liquid glass with a waterfall
+behind semi-transparent panels. ember: dark graphite with Rust orange. neon: the earlier violet/teal look. jumpscare: a dark horror look with a scary face and scream now and then. retro: an early-2000s
 home page with 20 popup ads. The admin can't change their own theme; only the owner can.
 Saved in data/web_themes.json (username in lower case -> theme).
 """
@@ -11,9 +13,11 @@ import os
 import threading
 from pathlib import Path
 
-THEMES = {"glass": "Rust (default)", "ember": "Ember", "neon": "Neon", "jumpscare": "Jump scares 👻",
-          "retro": "Early 2000s 💾"}
-DEFAULT = "glass"
+THEMES = {"rust": "Rust (default)", "rustgame": "Rust game UI", "rustmetal": "Rusty metal",
+          "liquid": "Liquid glass", "waterfall": "Liquid glass + waterfall", "ember": "Ember", "neon": "Neon",
+          "jumpscare": "Jump scares 👻", "retro": "Early 2000s 💾"}
+DEFAULT = "rust"
+LEGACY = {"glass": "rust"}                 # old theme names -> current ones
 # Early 2000s: popup ads at login, how often (minutes, 0 = never) and how many come back, at most this many open
 POPUP_OPTIONS = {"popups_start": (20, 0, 100), "popups_every": (3, 0, 120), "popups_wave": (2, 1, 50),
                  "popups_max": (6, 1, 100)}            # key: (default, min, max)
@@ -25,7 +29,8 @@ class ThemeStore:
         self._lock = threading.Lock()
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._themes = {str(k).lower(): str(v) for k, v in data.items() if v in THEMES} \
+            data = {k: LEGACY.get(v, v) for k, v in data.items()} if isinstance(data, dict) else data
+            self._themes = {str(k).lower(): str(v) for k, v in data.items() if v in THEMES and v != DEFAULT} \
                 if isinstance(data, dict) else {}
         except (OSError, ValueError):
             self._themes = {}
