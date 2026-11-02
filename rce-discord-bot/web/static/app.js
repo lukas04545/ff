@@ -152,7 +152,11 @@ function applyMotion(on) {
   $("#motion").title = on ? "Animations: on (click to switch off)" : "Animations: off (click to switch on)";
 }
 let motion = false;
-try { motion = localStorage.getItem("rce-motion") === "on"; } catch { /* storage blocked */ }
+try {
+  const saved = localStorage.getItem("rce-motion");
+  // Ember's motion is light: on unless switched off; the other looks: off unless switched on
+  motion = saved === "on" || (saved === null && document.documentElement.dataset.skin === "ember");
+} catch { /* storage blocked */ }
 applyMotion(motion);
 $("#motion").addEventListener("click", () => {
   motion = !motion;
@@ -1049,8 +1053,23 @@ views.overview = (main) => {
     }
   };
 
+  // Server header: name, live dot, map / uptime / FPS and a players bar – plus quick actions
+  const heroName = h("span", { text: "…" }), heroDot = h("span", { class: "hero-dot" });
+  const heroSub = h("div", { class: "hero-sub" }), heroCount = h("b", { text: "–" }), heroBar = h("span", { style: "width:0%" });
+  const hero = h("div", { class: "card hero-card" },
+    h("div", {}, h("div", { class: "hero-name" }, heroDot, heroName), heroSub),
+    h("div", { class: "hero-players" }, h("div", { class: "muted", style: "font-size:.75rem;letter-spacing:.12em;text-transform:uppercase",
+      text: "Players online" }), heroCount, h("div", { class: "hero-meter" }, heroBar)));
+  const quickLinks = [["console", "⌨️", "Console"], ["kits", "🎒", "Kits"], ["tickets", "🎫", "Tickets"],
+    ["shop", "🪙", "Shop"], ["stats", "🏆", "Stats"], ["settings", "⚙️", "Settings"]]
+    .filter(([v]) => !(me.hidden_views || []).includes(v) && (v !== "settings" || isOwner()));
+  const quick = h("div", { class: "quick" }, ...quickLinks.map(([v, icon, label]) =>
+    h("a", { href: "#" + v }, h("i", { text: icon }), label)));
+
   main.append(
     h("h1", { text: "Overview" }),
+    hero,
+    quick,
     publicCard,
     rconCard,
     intentCard,
@@ -1098,8 +1117,19 @@ views.overview = (main) => {
         d ? renderSteps(d) : h("p", { class: "muted", text: "The automatic diagnosis runs as soon as a connection attempt fails." }));
     }
     const s = status.server || {};
+    heroName.textContent = s.name || (status.rcon_connected ? "Connected" : "Server offline");
+    heroDot.classList.toggle("on", !!status.rcon_connected);
+    heroSub.replaceChildren(...[s.map && `🗺️ ${s.map}`, s.uptime != null && `⏱️ up ${fmtDuration(s.uptime)}`,
+      s.fps != null && `⚡ ${s.fps} FPS`, status.discord_ready === false ? "🔴 Discord offline" : "🟢 Discord"]
+      .filter(Boolean).map((t) => h("span", { text: t })));
+    const cap = Number(s.max_players) || 0, now = Number(s.players) || 0;
+    heroCount.textContent = s.players != null ? `${now}${cap ? " / " + cap : ""}` : "–";
+    heroCount.classList.toggle("skeleton", s.players == null && !!status.rcon_connected);
+    heroBar.style.width = cap ? `${Math.min(100, Math.round(100 * now / cap))}%` : "0%";
     const stat = (icon, label, value, tone) => h("div", { class: "stat " + (tone || "") },
-      h("div", { class: "label" }, icon, " ", label), h("div", { class: "value", text: value ?? "–" }));
+      h("div", { class: "label" }, icon, " ", label),
+      h("div", { class: "value" + ((value == null || value === "") && status.rcon_connected ? " skeleton" : ""),
+        text: value ?? "–" }));
     const hasPlayers = s.players !== undefined && s.players !== null;
     stats.replaceChildren(
       stat("🖥️", "Server", s.name || (status.rcon_connected ? "connected" : "offline"), status.rcon_connected ? "ok" : "bad"),
