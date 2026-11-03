@@ -125,6 +125,21 @@ $("#login-form").addEventListener("submit", async (ev) => {
   }
 });
 
+// Passkey sign-in: no username or password – the device offers the passkeys saved for this address
+if (window.RCE_PASSKEY && RCE_PASSKEY.supported()) $("#login-passkey").classList.remove("hidden");
+$("#login-passkey").addEventListener("click", async () => {
+  $("#login-error").textContent = "";
+  try {
+    const o = await api("/api/login/passkey/options", { method: "POST" });
+    const answer = await RCE_PASSKEY.get(o.publicKey);
+    await api("/api/login/passkey", { method: "POST", body: { challenge_id: o.challenge_id, answer } });
+    $("#login-password").value = $("#login-code").value = "";
+    start();
+  } catch (e) {
+    $("#login-error").textContent = RCE_PASSKEY.friendly(e);
+  }
+});
+
 $("#account").addEventListener("click", () => { location.hash = "#account"; });
 
 // Theme: neon (default) <-> light
@@ -846,8 +861,45 @@ function twoFactorCard() {
   return card;
 }
 
+// Passkeys: sign in with Face ID, a fingerprint, Windows Hello, a phone or a security key
+function passkeyCard() {
+  const card = h("div", { class: "card", style: "max-width:560px" }, h("h2", { text: "🔑 Passkeys" }));
+  const body = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  card.append(body);
+  const load = async () => {
+    const r = await api("/api/passkeys").catch(() => null);
+    if (!r) { body.replaceChildren(h("p", { class: "muted", text: "Not available." })); return; }
+    const ok = window.RCE_PASSKEY && RCE_PASSKEY.supported();
+    const name = h("input", { type: "text", maxlength: 60, placeholder: "Name, e.g. My phone", style: "max-width:16rem" });
+    const add = h("button", { class: "primary", text: "Create a passkey", disabled: !ok, onclick: async () => {
+      try {
+        const o = await api("/api/passkeys/options", { method: "POST" });
+        const answer = await RCE_PASSKEY.create(o.publicKey);
+        await act(() => api("/api/passkeys", { method: "POST", body: { challenge_id: o.challenge_id, answer, name: name.value } }),
+          "Passkey saved – you can sign in with it now");
+        load();
+      } catch (e) { toast(RCE_PASSKEY.friendly(e), true); }
+    } });
+    const rows = r.passkeys.map((k) => h("tr", {},
+      h("td", { text: k.name }), h("td", { class: "muted", text: k.rp_id || "" }),
+      h("td", { class: "muted", text: k.last_used ? "used " + new Date(k.last_used * 1000).toLocaleDateString() : "never used" }),
+      h("td", {}, h("button", { class: "small danger", text: "Remove", onclick: async () => {
+        if (!confirm(`Remove the passkey "${k.name}"? It can't be used to sign in any more.`)) return;
+        await act(() => api(`/api/passkeys/${encodeURIComponent(k.id)}`, { method: "DELETE" }), "Passkey removed").catch(() => {});
+        load();
+      } }))));
+    body.replaceChildren(
+      h("p", { class: "muted", text: "Sign in with Face ID, your fingerprint, Windows Hello, your phone or a security key – no password or code to type, and it can't be phished. A passkey works on the address it was made on (" + location.host + ")." }),
+      rows.length ? h("table", {}, h("tbody", {}, rows)) : h("p", { class: "muted", text: "No passkeys yet." }),
+      ok ? h("div", { class: "row" }, name, add)
+        : h("p", { class: "muted", text: "This browser or address can't make passkeys – open the panel over https (your public link) in a current browser." }));
+  };
+  load();
+  return card;
+}
+
 views.account = async (main) => {
-  main.append(h("h1", { text: "My account" }), twoFactorCard());
+  main.append(h("h1", { text: "My account" }), passkeyCard(), twoFactorCard());
   if (me.user === "owner") { main.append(h("p", { class: "muted", text: "The owner password is WEB_PASSWORD – change it under Settings → Web interface." })); return; }
   const cur = h("input", { type: "password", placeholder: "Current password", autocomplete: "current-password" });
   const npw = h("input", { type: "password", placeholder: "New password (min. 8 characters)", autocomplete: "new-password" });
