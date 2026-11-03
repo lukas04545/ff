@@ -775,9 +775,12 @@ class ManagerAI(commands.Cog):
                 raw, suggestions = emote_binds.find(args.get("emote", ""))
                 if raw is None:
                     return {"ok": False, "error": "Unknown emote.", "did_you_mean": suggestions}
-                rule_id, replaced = emote_binds.bind(db, raw, kit, kit_type=kit_type, cooldown_minutes=cooldown,
-                                                     max_claims=limit, required_role_id=role_id,
-                                                     by=f"management AI ({message.author})")
+                try:
+                    rule_id, replaced = emote_binds.bind(db, raw, kit, kit_type=kit_type, cooldown_minutes=cooldown,
+                                                         max_claims=limit, required_role_id=role_id,
+                                                         by=f"management AI ({message.author})")
+                except ValueError as exc:
+                    return {"ok": False, "error": str(exc)}
                 self._audit(who, f"emote **{safe_md(emote_binds.label(raw))}** → kit **{safe_md(kit)}** "
                                  f"(rule #{rule_id})")
                 return {"ok": True, "rule": self._rule_dict(db.kit_rule(rule_id)), "replaced": replaced,

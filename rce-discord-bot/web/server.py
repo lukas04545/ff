@@ -3350,6 +3350,9 @@ class WebInterface:
         from support import teleports as tp
         if trigger == "quickchat" and tp.is_location(phrase):
             raise ApiError("Location emotes are teleports only – set them under 📍 Teleports.")
+        from support import emote_binds
+        if trigger == "quickchat" and (owner := emote_binds.reserved_by(phrase)):
+            raise ApiError(f"This emote is used by {owner} – it can't give kits.")
         if kit_type == "custom":
             row = self.bot.db.custom_kit(kit)
             if row is None:
@@ -3398,7 +3401,7 @@ class WebInterface:
         bound = {}
         for b in eb.binds(self.bot.db):
             bound.setdefault(b["raw"], b)
-        emotes = [{**e, "bind": bound.get(e["raw"])} for e in eb.emotes()]
+        emotes = [{**e, "bind": bound.get(e["raw"]), "reserved": eb.reserved_by(e["raw"])} for e in eb.emotes()]
         return web.json_response({"emotes": emotes, "binds": len(bound)})
 
     async def emote_bind_roles(self, request: web.Request) -> web.Response:
@@ -3434,10 +3437,13 @@ class WebInterface:
             if row is None:
                 raise ApiError("Custom kit not found.", 404)
             kit = row["name"]
-        rule_id, replaced = eb.bind(self.bot.db, raw, kit, kit_type=kit_type,
-                                    cooldown_minutes=self._int(data, "cooldown", 0, 0, 525600),
-                                    max_claims=self._int(data, "max_claims", 0, 0, 10000),
-                                    required_role_id=self._role_id(data), by="Web interface")
+        try:
+            rule_id, replaced = eb.bind(self.bot.db, raw, kit, kit_type=kit_type,
+                                        cooldown_minutes=self._int(data, "cooldown", 0, 0, 525600),
+                                        max_claims=self._int(data, "max_claims", 0, 0, 10000),
+                                        required_role_id=self._role_id(data), by="Web interface")
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
         self._audit(f"Emote {eb.label(raw)} → kit {kit} (autokit #{rule_id})")
         return web.json_response({"ok": True, "id": rule_id, "replaced": replaced})
 

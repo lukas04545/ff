@@ -78,6 +78,32 @@ def find(query: str) -> tuple[str | None, list[str]]:
     return None, suggestions
 
 
+# Emotes a running feature uses for itself (e.g. Dial-a-ride's combos): owner name -> function returning raw ids.
+# They can't be bound to kits, and kits already bound to them don't fire.
+_RESERVERS: dict = {}
+
+
+def reserve(owner: str, provider) -> None:
+    _RESERVERS[owner] = provider
+
+
+def release(owner: str) -> None:
+    _RESERVERS.pop(owner, None)
+
+
+def reserved_by(raw: str | None) -> str | None:
+    """The feature that keeps this emote for itself, else None."""
+    if not raw:
+        return None
+    for owner, provider in list(_RESERVERS.items()):
+        try:
+            if raw in provider():
+                return owner
+        except Exception:                                # a broken provider never blocks kits
+            continue
+    return None
+
+
 def label(raw: str) -> str:
     return f"{category(raw)} › {quickchat.translate(raw)}"
 
@@ -101,6 +127,9 @@ def bind(db, raw: str, kit: str, *, kit_type: str = "ingame", cooldown_minutes: 
     Location emotes are teleports only: ValueError."""
     if teleports.is_location(raw):
         raise ValueError("Location emotes are teleports only – they can't give kits.")
+    if owner := reserved_by(raw):
+        raise ValueError(f"{label(raw)} is used by {owner} – it can't give kits. Pick another emote or change it "
+                         f"in {owner}'s settings.")
     replaced = []
     for old in bound_to(db, raw):
         replaced.append(old["kit"])

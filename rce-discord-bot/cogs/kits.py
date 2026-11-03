@@ -396,6 +396,10 @@ class Kits(commands.Cog):
                     "📍 Location emotes are teleports only – set them with `/teleport set` or `/teleport here`.",
                     ephemeral=True)
                 return
+            if owner := emote_binds.reserved_by(phrase):
+                await interaction.response.send_message(
+                    f"⛔ This emote is used by {safe_md(owner)} – it can't give kits.", ephemeral=True)
+                return
             if phrase not in self.phrases:
                 notes.append("⚠️ Unknown phrase – it must appear exactly like this in the console log.")
             clash = [r for r in self.bot.db.kit_rules(trigger="quickchat") if r["phrase"] == phrase]
@@ -611,10 +615,14 @@ class Kits(commands.Cog):
             known = await self.kit_names.get(max_wait=3)
             if known and name.lower() not in (k.lower() for k in known):
                 notes.append(f"⚠️ Kit **{safe_md(name)}** was not found in `kit list`.")
-        rule_id, replaced = emote_binds.bind(self.bot.db, raw, name, kit_type=kit_type,
-                                             cooldown_minutes=cooldown_minutes, max_claims=max_per_player,
-                                             required_role_id=required_role.id if required_role else None,
-                                             by=str(interaction.user))
+        try:
+            rule_id, replaced = emote_binds.bind(self.bot.db, raw, name, kit_type=kit_type,
+                                                 cooldown_minutes=cooldown_minutes, max_claims=max_per_player,
+                                                 required_role_id=required_role.id if required_role else None,
+                                                 by=str(interaction.user))
+        except ValueError as exc:
+            await interaction.followup.send(f"⛔ {safe_md(str(exc))}", ephemeral=True)
+            return
         rule = self.bot.db.kit_rule(rule_id)
         if replaced:
             notes.append("♻️ Replaced: " + ", ".join(f"**{safe_md(k)}**" for k in replaced))
@@ -752,6 +760,8 @@ class Kits(commands.Cog):
             return
         if tp.is_location(ev.raw):
             return                       # Location emotes are teleports (cogs/teleports.py), never kits
+        if emote_binds.reserved_by(ev.raw):
+            return                       # kept by a feature (e.g. Dial-a-ride combos) – never a kit
         for rule in self.bot.db.kit_rules(enabled_only=True, trigger="quickchat"):
             if rule["phrase"] == ev.raw:
                 await self._try_claim(rule, ev.player, "quickchat")
