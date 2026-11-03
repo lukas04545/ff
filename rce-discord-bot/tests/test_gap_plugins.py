@@ -193,3 +193,28 @@ def test_leaderboards_and_raid_alerts(pb, monkeypatch):  # noqa: F811
     assert len(dms) == 1                                                                 # not subscribed
     bad = plug(pb, "raid_alerts", patterns="(unclosed", watch="", cooldown=5, channel=None)
     assert any("Pattern" in p for p in bad.problems())
+
+
+def test_rcon_repeater(pb):  # noqa: F811
+    from plugins.rcon_repeater import parse, seconds_of
+    assert (seconds_of("10s"), seconds_of("every 5m"), seconds_of("2h"), seconds_of("x")) == (10, 300, 7200, None)
+    loops, errors = parse("30s | server.save | Save\n# 10s | off\n2s | too fast\nbad\n5m | say a ;; say b")
+    assert [l["name"] for l in loops] == ["Save", "Line 5"] and loops[1]["commands"] == ["say a", "say b"]
+    assert len(errors) == 2
+    r = plug(pb, "rcon_repeater", loops="30s | server.save | Save", log_runs=False)
+    t0 = time.time()
+    assert run(r.tick(t0)) == ["Save"] and pb.said == ["server.save"]          # starts right away
+    assert run(r.tick(t0 + 10)) == []
+    assert run(r.tick(t0 + 30)) == ["Save"]
+    qid = r.start_quick('global.killplayer "Bob"', 5, 2, now=t0)
+    pb.said.clear()
+    run(r.tick(t0 + 31))
+    run(r.tick(t0 + 36))
+    assert pb.said == ['global.killplayer "Bob"', 'global.killplayer "Bob"'] and qid not in r.quick   # 2 times, done
+    endless = r.start_quick("say hi", 5, None, now=t0)
+    for i in range(5):
+        run(r.tick(t0 + 40 + i * 5))
+    assert endless in r.quick and r.status()["Quick loops running"] == 1
+    import pytest
+    with pytest.raises(ValueError):
+        r.start_quick("say hi", 1, None)
