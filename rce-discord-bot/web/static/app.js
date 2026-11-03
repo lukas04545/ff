@@ -2475,8 +2475,10 @@ function emoteBindsCard(data, reload) {
         };
         sel.addEventListener("change", save);
         cd.addEventListener("change", () => { if (sel.value) save(); });
-        const row = h("div", { class: "eb-row" + (b ? " bound" : "") }, h("span", { class: "eb-text", text: "💬 " + e.text }), sel,
-          h("label", { class: "muted eb-cdl", title: "Cooldown (minutes)" }, "⏱️", cd));
+        if (e.reserved) { sel.disabled = true; cd.disabled = true; sel.title = `Used by ${e.reserved} – can't give kits`; }
+        const row = h("div", { class: "eb-row" + (b ? " bound" : "") }, h("span", { class: "eb-text", text: "💬 " + e.text }),
+          e.reserved ? h("span", { class: "pill warn", text: "🔒 " + e.reserved, title: "This emote is used by " + e.reserved + " – it can't give kits" }) : sel,
+          e.reserved ? null : h("label", { class: "muted eb-cdl", title: "Cooldown (minutes)" }, "⏱️", cd));
         row.dataset.text = (cat + " " + e.text).toLowerCase();
         row.dataset.kit = b ? b.kit.toLowerCase() : "";
         rows.push(row);
