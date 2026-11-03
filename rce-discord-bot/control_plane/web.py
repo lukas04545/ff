@@ -47,7 +47,7 @@ button{background:#f7931e;color:#111;border:0;font-weight:600;cursor:pointer}but
 .pill{padding:.1rem .5rem;border-radius:99px;font-size:.8rem;background:#2a2f36}.ok{background:#1e7e34}
 .warn{background:#9a6a00}.bad{background:#a12a2a}form.inline{display:inline}.muted{color:#999}.err{color:#ff8a80}
 code{background:#0e1114;padding:.1rem .3rem;border-radius:4px}"""
-OK_STATES = {"active", "running", "trialing", "comped"}
+OK_STATES = {"active", "running", "trialing", "comped", "trial"}
 
 
 def esc(value) -> str:
@@ -318,7 +318,13 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
             f"<button class=small>Choose {esc(p['name'])}</button></form>"))
         steps = "".join([
             shop_ui.step(1, state(0), "Choose your package",
-                         (f"{esc(plan['name'])} – {esc(plans.price_text(plan))} / month" if plan and paid_ok else
+                         (f"Free trial{' of ' + esc(plan['name']) if plan else ''} until "
+                          f"{time.strftime('%Y-%m-%d', time.gmtime(sub['current_period_end']))} – pick a package "
+                          "before it ends to keep your servers running."
+                          if paid_ok and sub and sub["status"] == "trial" else
+                          f"{esc(plan['name'])} – {esc(plans.price_text(plan))} / month" if plan and paid_ok else
+                          "Your free trial has ended – pick a package to switch your servers on again."
+                          if sub and sub["status"] == "trial" else
                           "Pick a package – you pay securely with Stripe."), pick),
             shop_ui.step(2, state(1), "Create your server", "Give it a name – you get its own admin website.",
                          f"<form method=post action=/servers class=row>{hidden}<input name=name required "
@@ -896,11 +902,20 @@ server run <code>python3 -m control_plane login-link</code> – it prints a one-
         return "".join(
             f"<tr><td><a href={P}/customers/{c['id']}>#{c['id']} {esc(c['email'])}</a><br><span class=muted>"
             f"{esc(c['name'])}</span></td><td>{pill(c['status'])}</td><td>{pill(c['sub_status'] or 'none')}"
+            f"{trial_note(c)}"
             f"{'<br><span class=muted>' + esc(c['plan_name']) + '</span>' if c['plan_name'] else ''}</td>"
             f"<td>{slots.slots_used(db, c['id'])} / {slots.slot_limit(db, c['id'])}</td></tr>" for c in customers)
 
+    def trial_note(c) -> str:
+        if c["sub_status"] != "trial" or not c["trial_until"]:
+            return ""
+        left = (c["trial_until"] - time.time()) / 86400
+        return (f"<br><span class=muted>until {time.strftime('%Y-%m-%d', time.gmtime(c['trial_until']))}"
+                f"{f' ({left:.0f} days left)' if left > 0 else ' – ended'}</span>")
+
     def all_customers():
-        return db.q("SELECT c.*, s.status AS sub_status, s.grace_until, p.name AS plan_name FROM customers c "
+        return db.q("SELECT c.*, s.status AS sub_status, s.grace_until, s.current_period_end AS trial_until, "
+                    "p.name AS plan_name FROM customers c "
                     "LEFT JOIN subscriptions s ON s.customer_id = c.id LEFT JOIN plans p ON p.id = s.plan_id "
                     "WHERE c.status != 'deleted' ORDER BY c.id")
 
@@ -939,11 +954,75 @@ style="font-size:1rem">· {esc(who)}</span></h1>
 <a href={P}/customers>All customers →</a></div>
 <div class=card><h2>All servers</h2>{server_rows(request, "WHERE s.status != 'deleted'")}</div>""")
 
+    def plan_options(empty: str = "") -> str:
+        return ((f"<option value=0>{esc(empty)}</option>" if empty else "") + "".join(
+            f"<option value={p['id']}>{esc(p['name'])} – {esc(plans.price_text(p))} ({p['slots']} servers)</option>"
+            for p in plans.listed(db, all_=True)))
+
     async def customers_page(request):
         owner(request)
-        return page("Customers", f"""<div class=kicker>CUSTOMERS</div><h1>Customers</h1><div class=card><table>
+        return page("Customers", f"""<div class=kicker>CUSTOMERS</div><h1>Customers</h1>
+<div class=card><h2>➕ New customer</h2><p class=muted>For free trials, friends or customers who pay you another way.
+They sign in on the shop with this e-mail and password and set up their server themselves.</p>
+<form method=post action={P}/customers/new>{hidden(request)}<input name=email type=email placeholder=E-mail required>
+<input name=name placeholder="Community name (optional)"> <input name=password placeholder="Password (empty = make one)"
+minlength=10 autocomplete=off><br><br><select name=plan>{plan_options("No package")}</select>
+<select name=access><option value=trial>Free trial</option><option value=comped>Free (no end)</option>
+<option value=none>Pays with Stripe</option></select> <input name=days type=number min=1 max=365 value=14
+style="width:5rem"> days (trial) <button>Create customer</button></form></div>
+<div class=card><table>
 <tr><th>Customer</th><th>Account</th><th>Package</th><th>Slots (used / limit)</th></tr>
 {customer_rows(all_customers()) or '<tr><td colspan=4>None yet.</td></tr>'}</table></div>""")
+
+    async def customer_new(request):
+        who = owner(request)
+        data = await sess.form(request)
+        actor = f"owner:{who}"
+        password = str(data.get("password") or "").strip()
+        made = not password
+        if made:
+            password = secrets.token_urlsafe(12)
+        try:
+            cid = provisioning.create_customer(db, str(data.get("email", "")), password, str(data.get("name", "")),
+                                               actor=actor)
+            plan_id = int(data.get("plan") or 0)
+            if plan_id:
+                plans.apply(db, cid, plan_id, actor=actor)
+            access = str(data.get("access") or "none")
+            until = None
+            if access == "trial":
+                until = billing.start_trial(db, cid, int(data.get("days") or 14), actor=actor)
+            elif access == "comped":
+                db.run("UPDATE subscriptions SET status = 'comped', updated_at = ? WHERE customer_id = ?",
+                       (int(time.time()), cid))
+                db.audit(actor, "subscription.comped", customer_id=cid)
+        except (provisioning.ProvisionError, plans.PlanError, ValueError) as exc:
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/customers>Back</a>"
+                                        "</div>")
+        await changed()
+        c = db.one("SELECT email FROM customers WHERE id = ?", (cid,))
+        access_text = (f"free trial until {time.strftime('%Y-%m-%d', time.gmtime(until))}" if until else
+                       "free (no end)" if access == "comped" else "pays with Stripe (picks a package after signing in)")
+        return page("Customer created", f"""<p><a href={P}/customers>← customers</a></p><h1>✅ Customer #{cid} created</h1>
+<div class=card><p>Send them this (the password is shown only now{' – it was made for them' if made else ''}):</p>
+<pre style="white-space:pre-wrap">Sign in: {esc(settings.portal_url)}/login
+E-mail: {esc(c['email'])}
+Password: {esc(password)}</pre><p class=muted>Access: {esc(access_text)}.</p>
+<p><a class=btn href={P}/customers/{cid}>Open the customer</a></p></div>""")
+
+    async def customer_trial(request):
+        who = owner(request)
+        data = await sess.form(request)
+        cid = int(request.match_info["id"])
+        if db.one("SELECT 1 FROM customers WHERE id = ?", (cid,)) is None:
+            raise web.HTTPNotFound()
+        try:
+            billing.start_trial(db, cid, int(data.get("days") or 14), actor=f"owner:{who}")
+        except ValueError as exc:
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/customers/{cid}>Back</a>"
+                                        "</div>")
+        await changed()
+        raise go(f"/customers/{cid}")
 
     async def servers_page(request):
         owner(request)
@@ -995,8 +1074,12 @@ style="font-size:1rem">· {esc(who)}</span></h1>
 <div class=card>Account {pill(c['status'])} {esc(c['suspend_reason'] or '')} · Subscription
 {pill(sub['status'] if sub else 'none')} {esc(sub['stripe_subscription_id'] or '') if sub else ''}
 {('· grace until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['grace_until']))) if sub and sub['grace_until'] else ''}
+{('· trial until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['current_period_end'])) + ' UTC') if sub and sub['status'] == 'trial' and sub['current_period_end'] else ''}
 <br><br>{acct} {comp} {button(request, f'/customers/{cid}/remove', 'Remove customer', danger=True,
-                                       confirm='Remove the customer and all their servers?')}</div>
+                                       confirm='Remove the customer and all their servers?')}
+<form method=post action={P}/customers/{cid}/trial class=inline>{hidden(request)}<input name=days type=number min=1
+max=365 value=14 style="width:5rem"> days <button>{'Extend' if sub and sub['status'] == 'trial' else 'Start'} free trial
+</button></form></div>
 <div class=card><h2>Package</h2><p>{esc((plans.current(db, cid) or {}).get('name') or 'none')}
 <span class=muted>– sets the server slots and the add-ons below (paid packages come from Stripe by themselves)</span></p>
 <form method=post action={P}/customers/{cid}/plan>{hidden(request)}<select name=plan>{''.join(f"<option value={p['id']}>{esc(p['name'])} – {esc(plans.price_text(p))} ({p['slots']} servers)</option>" for p in plans.listed(db, all_=True))}</select>
@@ -1400,6 +1483,7 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.get("/customers", customers_page), web.get("/servers", servers_page),
                     web.get("/system", system_page),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
+                    web.post("/customers/new", customer_new), web.post(r"/customers/{id:\d+}/trial", customer_trial),
                     web.post(r"/grants/{id:\d+}/revoke", act),
                     web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act),
                     web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai|custom_domain}/{on:on|off}", feature_action),

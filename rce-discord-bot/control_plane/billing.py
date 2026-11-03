@@ -2,6 +2,8 @@
 
 Run / suspend rules (applied by the supervisor's reconcile loop – nothing is ever deleted by billing):
   active, trialing                      -> servers run
+  trial (a free trial the owner gave)   -> servers run until current_period_end, then stop until they buy
+  comped (free, set by the owner)       -> servers run
   past_due                              -> keep running until grace_until (CP_GRACE_DAYS after it went past due)
   canceled, unpaid, incomplete_expired  -> suspended (processes stopped, data kept)
   paid again / new subscription         -> runs again automatically (reactivation restores everything)
@@ -48,12 +50,28 @@ def verify_signature(payload: bytes, header: str, secret: str, now: float | None
 
 
 def subscription_ok(db: DB, customer_id: int, now: float | None = None) -> bool:
-    row = db.one("SELECT status, grace_until FROM subscriptions WHERE customer_id = ?", (customer_id,))
+    row = db.one("SELECT status, grace_until, current_period_end FROM subscriptions WHERE customer_id = ?",
+                 (customer_id,))
     if row is None:
         return False
     if row["status"] in RUNNING or row["status"] == "comped":         # comped: granted by the owner, no Stripe
         return True
+    if row["status"] == "trial":                                      # the owner's free trial, until its end
+        return (row["current_period_end"] or 0) > (now or time.time())
     return row["status"] == "past_due" and (row["grace_until"] or 0) > (now or time.time())
+
+
+def start_trial(db: DB, customer_id: int, days: int, *, actor: str) -> int:
+    """A free trial from the owner: the servers run for `days` days from now (no Stripe). Returns its end."""
+    days = int(days)
+    if not 1 <= days <= 365:
+        raise ValueError("A trial is 1 to 365 days.")
+    until = int(time.time()) + days * 86400
+    db.run("INSERT INTO subscriptions (customer_id, status, current_period_end, updated_at) VALUES (?, 'trial', ?, ?) "
+           "ON CONFLICT(customer_id) DO UPDATE SET status = 'trial', current_period_end = excluded.current_period_end, "
+           "grace_until = NULL, updated_at = excluded.updated_at", (customer_id, until, int(time.time())))
+    db.audit(actor, "subscription.trial", customer_id=customer_id, detail=f"{days} days")
+    return until
 
 
 def _set(db: DB, customer_id: int, status: str, *, sub_id: str | None, period_end: int | None,
