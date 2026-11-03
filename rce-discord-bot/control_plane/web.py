@@ -17,9 +17,11 @@ import asyncio
 import hashlib
 import hmac
 import html
+import json
 import re
 import secrets
 import time
+from pathlib import Path
 from typing import Awaitable, Callable
 
 from aiohttp import web
@@ -31,6 +33,8 @@ from control_plane import (actions, billing, features, hostproxy, manage_ai, own
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
+from web.passkeys import (Challenges, PasskeyError, PasskeyStore, authentication_options, registration_options,
+                          verify_authentication, verify_registration)
 from web.ratelimit import RateLimiter
 
 SESSION_TTL = 12 * 3600
@@ -686,8 +690,115 @@ def build_owner(db: DB, box: SecretBox, settings: Settings, changed: Callable[[]
         return page("Owner login", f"""<h1>Owner panel</h1>{f'<p class=err>{msg}</p>' if msg else ''}<div class=card>
 <form method=post action={P}/login><input name=username placeholder=Username required> <input name=password
 type=password placeholder=Password required> <input name=code inputmode=numeric placeholder="2FA code" required>
-<button>Sign in</button></form><p class=muted>No login yet, or locked out? On the server run
-<code>python3 -m control_plane login-link</code> – it prints a one-time link.</p></div>""")
+<button>Sign in</button></form>
+<form class=passkey-form><p><button type=button data-passkey=login data-passkey-url="{P}/login/passkey">🔑 Sign in with
+a passkey</button> <span class="passkey-msg err"></span></p></form><p class=muted>No login yet, or locked out? On the
+server run <code>python3 -m control_plane login-link</code> – it prints a one-time link.</p></div>""")
+
+    # ------------------------------------------------------------ Passkeys (web/passkeys.py)
+
+    def _pk_load():
+        row = db.one("SELECT value FROM settings_kv WHERE key = 'owner_passkeys'")
+        return json.loads(row["value"]) if row else {}
+
+    def _pk_save(data):
+        db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('owner_passkeys', ?)", (json.dumps(data),))
+
+    passkeys = PasskeyStore(load=_pk_load, save=_pk_save)
+    challenges = Challenges()
+
+    def pk_site(request) -> tuple[str, set[str]]:
+        host = request.host or ""
+        https = request.secure or request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https"
+        return host.split(":")[0].lower(), {f"{'https' if https else 'http'}://{host}"}
+
+    def pk_error(text: str, status: int = 400) -> web.Response:
+        return web.json_response({"error": text}, status=status, headers={"Cache-Control": "no-store"})
+
+    async def passkey_js(request):
+        path = Path(__file__).resolve().parent.parent / "web" / "static" / "passkey.js"
+        return web.Response(text=path.read_text(encoding="utf-8"), content_type="application/javascript",
+                            headers={"Cache-Control": "public, max-age=3600"})
+
+    async def passkey_login_options(request):
+        _same_origin(request)
+        if limiter.hit("pk:" + _client_ip(request)) is not None:
+            return pk_error("Too many attempts – try later.", 429)
+        rp_id, _ = pk_site(request)
+        cid, challenge = challenges.new("login")
+        return web.json_response({"challenge_id": cid,
+                                  "publicKey": authentication_options(rp_id=rp_id, challenge=challenge)})
+
+    async def passkey_login(request):
+        _same_origin(request)
+        ip = _client_ip(request)
+        if limiter.hit("pk:" + ip) is not None:
+            return pk_error("Too many attempts – try later.", 429)
+        data = dict(await request.post())
+        rp_id, origins = pk_site(request)
+        try:
+            answer = json.loads(str(data.get("answer") or "{}"))
+            challenge = challenges.take(str(data.get("challenge_id") or ""), "login")
+            found = passkeys.find(str(answer.get("id") or "")) if isinstance(answer, dict) else None
+            if found is None:
+                raise PasskeyError("This passkey isn't saved here (any more) – sign in with your password.")
+            user, cred, handle = found
+            count = verify_authentication(answer, challenge=challenge, origins=origins, rp_id=rp_id,
+                                          credential=cred, user_handle=handle)
+        except (PasskeyError, ValueError) as exc:
+            db.audit("system", "owner.login_failed", detail=f"{ip} (passkey)")
+            return pk_error(str(exc), 401)
+        row = db.one("SELECT username FROM owners WHERE lower(username) = ?", (user,))
+        if row is None:
+            return pk_error("This account doesn't exist any more.", 401)
+        passkeys.used(user, cred["id"], count)
+        db.audit(f"owner:{row['username']}", "owner.login", detail=f"{ip} (passkey: {cred.get('name')})"[:200])
+        resp = web.json_response({"ok": True, "next": (P or "") + "/"})
+        sess.issue(resp, f"o:{row['username']}", request, path=P or "/")
+        return resp
+
+    def passkey_card(request, who: str) -> str:
+        rows = "".join(
+            f"<tr><td>{esc(k['name'])}</td><td class=muted>{esc(k.get('rp_id') or '')}</td><td class=muted>"
+            f"{time.strftime('%Y-%m-%d', time.gmtime(k['last_used'])) if k.get('last_used') else 'never used'}</td>"
+            f"<td>{button(request, '/passkeys/' + k['id'] + '/remove', 'Remove', danger=True)}</td></tr>"
+            for k in passkeys.keys(who))
+        return (f"<div class=card><h2>🔑 Passkeys</h2><p class=muted>Sign in with Face ID, a fingerprint, Windows "
+                f"Hello, your phone or a security key instead of password + 2FA code. A passkey works on the address "
+                f"it was made on.</p>{f'<table>{rows}</table>' if rows else '<p class=muted>No passkeys yet.</p>'}"
+                f"<form>{hidden(request)}<p><input name=passkey_name maxlength=60 placeholder='Name, e.g. My phone'> "
+                f"<button type=button data-passkey=register data-passkey-url='{P}/passkeys'>Create a passkey</button> "
+                f"<span class='passkey-msg err'></span></p></form></div>")
+
+    async def passkey_register_options(request):
+        who = owner(request)
+        await sess.form(request)
+        rp_id, _ = pk_site(request)
+        cid, challenge = challenges.new("register", who.lower())
+        return web.json_response({"challenge_id": cid, "publicKey": registration_options(
+            rp_id=rp_id, rp_name=f"{settings.shop_name or 'RCE'} owner panel", user_handle=passkeys.handle(who),
+            username=who, challenge=challenge, exclude=[k["id"] for k in passkeys.keys(who)])})
+
+    async def passkey_register(request):
+        who = owner(request)
+        data = await sess.form(request)
+        rp_id, origins = pk_site(request)
+        try:
+            challenge = challenges.take(str(data.get("challenge_id") or ""), "register", who.lower())
+            cred = verify_registration(json.loads(str(data.get("answer") or "{}")), challenge=challenge,
+                                       origins=origins, rp_id=rp_id)
+            key = passkeys.add(who, cred, str(data.get("name") or ""), rp_id)
+        except (PasskeyError, ValueError) as exc:
+            return pk_error(str(exc))
+        db.audit(f"owner:{who}", "owner.passkey_added", detail=key["name"])
+        return web.json_response({"ok": True, "next": f"{P}/settings"})
+
+    async def passkey_remove(request):
+        who = owner(request)
+        await sess.form(request)
+        if passkeys.remove(who, request.match_info["cid"]):
+            db.audit(f"owner:{who}", "owner.passkey_removed")
+        raise go("/settings")
 
     async def login(request):
         from web.totp import matching_step
@@ -1218,6 +1329,7 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         return page("Settings", f"""<p><a href={P}/>← owner panel</a></p><h1>⚙️ Settings</h1>{warn}
 {f'<p class=muted>{msg}</p>' if msg else ''}<p class=muted>Saved encrypted in the control plane's database; they win over
 /etc/rce-saas.env. The master key and the session secret stay in that file only.</p>
+{passkey_card(request, owner(request))}
 <form method=post action={P}/settings>{hidden(request)}{body}<button>Save</button></form>
 <div class=card><h2>☁️ Set up Cloudflare (every website through one tunnel)</h2><p class=muted>Paste a Cloudflare API
 token with <b>Account › Cloudflare Tunnel › Edit</b>, <b>Zone › DNS › Edit</b> and <b>Zone › Zone › Read</b>. It's used
@@ -1274,6 +1386,10 @@ starts the tunnel and every website is online at its address.</p></div>""")
                              f"<th>What</th><th>Customer</th><th>Server</th><th>Detail</th></tr>{body}</table>")
 
     app.add_routes([web.get("/login", login_page), web.post("/login", login), web.post("/logout", logout),
+                    web.get("/passkey.js", passkey_js), web.post("/login/passkey/options", passkey_login_options),
+                    web.post("/login/passkey", passkey_login), web.post("/passkeys/options", passkey_register_options),
+                    web.post("/passkeys", passkey_register), web.post(r"/passkeys/{cid:[A-Za-z0-9_-]{1,1400}}/remove",
+                                                                      passkey_remove),
                     web.get("/once/{token}", once_page), web.post("/once/{token}", once_use),
                     web.get("/settings", settings_page), web.post("/settings", settings_save),
                     web.post("/cloudflare", cloudflare_setup),

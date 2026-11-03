@@ -1,7 +1,7 @@
 """The owner panel's look – the same "command centre" style as a server's admin panel (web/static/neon.css):
 midnight navy, a sidebar with coloured menu groups, stat cards with a lime-to-teal edge, pastel gradient buttons.
 
-Inline CSS only (the owner panel's Content-Security-Policy allows no scripts or external files).
+Inline CSS only; the only script is the panel's own passkey.js (Content-Security-Policy: script-src 'self').
 """
 from __future__ import annotations
 
@@ -105,9 +105,12 @@ def owner_frame(title: str, body: str, *, prefix: str = "", shop: str = "") -> w
     return web.Response(
         text=f"<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport "
              f"content='width=device-width,initial-scale=1'><title>{esc(title)} · Owner</title><style>{OWNER_CSS}"
-             f"</style></head><body>{inner}</body></html>", content_type="text/html",
+             f"</style><script src='{prefix}/passkey.js?v=1' defer></script></head><body>{inner}</body></html>",
+        content_type="text/html",
         headers={"Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-                 "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' "
+                 # scripts: only the panel's own passkey.js (sign in with a passkey) – no inline scripts
+                 "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; "
+                                            "connect-src 'self'; form-action 'self' "
                                             "https://checkout.stripe.com https://billing.stripe.com; "
                                             "frame-ancestors 'none'"})
 

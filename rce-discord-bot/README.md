@@ -757,6 +757,11 @@ server itself is protected by your host (G-Portal) – the bot can't shield the 
   search of the player website lands on the control panel and logs in as usual. Nothing on the website shows that this
   exists; every other search is a normal player search. Pick something nobody would search for, and type `off` to
   switch it off. It is off until you set it.
+- **Passkeys:** *🔐 My account* → **Create a passkey** (asks for your password once), then **🔑 Sign in with a
+  passkey** on the login page – Face ID, a fingerprint, Windows Hello, your phone or a security key instead of
+  password + code. Phishing-proof: a passkey only works on the address it was made on (make one per address, e.g.
+  your public link). Up to 10 per account; remove lost ones in the same place. The owner panel has the same under
+  *Settings → 🔑 Passkeys*. Only the public key is stored (`data/web_passkeys.json`).
 - **Two-factor login (2FA):** *🔐 My account* → **Set up two-factor login** – then logging in needs your password
   **and** the 6-digit code from an authenticator app (Google/Microsoft Authenticator, Authy, 1Password, Bitwarden …).
   Strongly recommended for everyone, especially with the public link. Each code works once. Lost phone: the owner

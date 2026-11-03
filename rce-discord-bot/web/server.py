@@ -45,6 +45,8 @@ from web.caching import YEAR, conditional, maybe_compress
 from web.item_images import THUMB_SIZES, WAIT_FOR_DOWNLOAD
 from web.ratelimit import RateLimiter
 from web.totp import TwoFactorStore, matching_step, new_secret, otpauth_uri
+from web.passkeys import (Challenges, PasskeyError, PasskeyStore, authentication_options, registration_options,
+                          verify_authentication, verify_registration)
 from web import honeypot
 from web.honeypot import HoneypotLog
 from web.system_stats import SystemMonitor
@@ -76,6 +78,8 @@ PUBLIC_LINK_FILE = "PUBLIC_LINK.txt"  # current public address (Cloudflare tunne
 SESSION_TTL = 12 * 3600
 SERVER_COOKIE = "rce_server"      # which server the panel shows (its server drop-down, several servers)
 MAIN_ONLY_API = frozenset({"/api/switch", "/api/login", "/api/logout",   # never passed on to the other server
+                           "/api/login/passkey", "/api/login/passkey/options", "/api/passkeys",
+                           "/api/passkeys/options",
                            "/api/system"})                     # one PC: the main bot sees every server's process
 HOP_HEADERS = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
                          "transfer-encoding", "upgrade", "host"})
@@ -105,6 +109,7 @@ REAUTH_SECONDS = 15 * 60          # after logging in / confirming the password, 
 REAUTH_PATHS = (("POST", "/api/plugins/upload"), ("POST", "/api/allplugins/copy"), ("POST", "/api/servers"), ("DELETE", "/api/servers"), ("PUT", "/api/settings"), ("POST", "/api/users"),
                 ("PUT", "/api/users"), ("DELETE", "/api/users"), ("POST", "/api/restart"), ("POST", "/api/update"),
                 ("POST", "/api/backups"), ("DELETE", "/api/plugins"), ("POST", "/api/2fa/disable"),
+                ("POST", "/api/passkeys/options"), ("DELETE", "/api/passkeys"),
                 ("POST", "/api/webshop/giftcards"))
 # The control panel: only its own scripts/styles/pictures, never framed by another site
 PANEL_CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
@@ -131,7 +136,8 @@ OWNER_ONLY_PREFIXES = ("/api/settings", "/api/restart", "/api/setup", "/api/user
 # The management AI (cogs/manager_ai.py) uses the panel's own API with a session of its own ("Management AI",
 # owner rights, a per-start secret key – nobody can log in as it). Never for these (any method):
 AI_USER = "Management AI"
-AI_BLOCKED = ("/api/login", "/api/logout", "/api/reauth", "/api/2fa", "/api/account", "/api/users", "/api/restart",
+AI_BLOCKED = ("/api/login", "/api/logout", "/api/reauth", "/api/2fa", "/api/passkeys", "/api/account", "/api/users",
+              "/api/restart",
               "/api/update", "/api/backups", "/api/setup", "/api/honeypot", "/api/switch", "/api/command")
 # … and these only for reading (no changes): servers, the domain, gift cards (money), plugin code/files
 AI_BLOCKED_WRITES = ("/api/servers", "/api/settings/cloudflare-domain", "/api/webshop/giftcards", "/api/plugins/upload",
@@ -351,6 +357,8 @@ class WebInterface:
         self._secret = self._load_secret(secret_path)
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
         self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
+        self.passkeys = PasskeyStore(secret_path.parent / "web_passkeys.json")
+        self._passkey_challenges = Challenges()
         self.honeypot = HoneypotLog(secret_path.parent / "web_honeypot.json")
         self.system = SystemMonitor()                            # CPU / memory for the System page
         self.themes = ThemeStore(secret_path.parent / "web_themes.json", default_file())
@@ -442,6 +450,12 @@ class WebInterface:
         r.add_get("/img/bot-avatar.png", self.bot_avatar)          # public: the Discord bot's picture (panel logo)
         r.add_get("/auth", self.auth_link)
         r.add_post("/api/login", self.login)
+        r.add_post("/api/login/passkey/options", self.passkey_login_options)
+        r.add_post("/api/login/passkey", self.passkey_login)
+        r.add_get("/api/passkeys", self.passkeys_list)
+        r.add_post("/api/passkeys/options", self.passkey_register_options)
+        r.add_post("/api/passkeys", self.passkey_register)
+        r.add_delete("/api/passkeys/{cid}", self.passkey_delete)
         r.add_post("/api/logout", self.logout)
         r.add_post("/api/reauth", self.reauth)
         r.add_get("/api/2fa", self.two_factor_state)
@@ -1118,7 +1132,7 @@ class WebInterface:
             raise ApiError("Not available on hosted servers.", 403)
         if request.method not in ("GET", "HEAD") and request.headers.get(CSRF_HEADER) != "rce-web":
             raise ApiError("Invalid request.", 403)
-        if path == "/api/login":
+        if path in ("/api/login", "/api/login/passkey", "/api/login/passkey/options"):
             return await handler(request)
         session = self._session_user(request)
         if session is None:
@@ -2132,6 +2146,90 @@ class WebInterface:
         self._sudo[request.cookies.get(SESSION_COOKIE, "")] = time.time() + REAUTH_SECONDS
         return web.json_response({"ok": True})
 
+    # Passkeys: sign in with Face ID, a fingerprint, Windows Hello or a security key (web/passkeys.py)
+
+    def _passkey_site(self, request: web.Request) -> tuple[str, set[str]]:
+        """(RP ID, allowed origins): the address this panel was opened on."""
+        host = (request.host or "").strip()
+        if not host:
+            raise ApiError("Passkeys need the panel's address.")
+        scheme = "https" if self._is_https(request) else "http"
+        rp_id = host.lower() if host.startswith("[") else host.split(":")[0].lower()
+        return rp_id, {f"{scheme}://{host}"}
+
+    async def passkey_login_options(self, request: web.Request) -> web.Response:
+        self._rate_limit("pk:" + self._client_ip(request))      # one counted attempt per passkey sign-in
+        rp_id, _ = self._passkey_site(request)
+        cid, challenge = self._passkey_challenges.new("login")
+        return web.json_response({"challenge_id": cid,
+                                  "publicKey": authentication_options(rp_id=rp_id, challenge=challenge)})
+
+    async def passkey_login(self, request: web.Request) -> web.Response:
+        ip = self._client_ip(request)
+        wait = self._login_blocked(ip, "pk:" + ip, count=False)
+        if wait is not None:
+            raise ApiError(f"Too many attempts – please wait {max(1, round(wait / 60))} minute(s).", 429)
+        data = await self._json(request)
+        answer = data.get("answer") if isinstance(data.get("answer"), dict) else {}
+        rp_id, origins = self._passkey_site(request)
+        found = self.passkeys.find(str(answer.get("id") or ""))
+        try:
+            challenge = self._passkey_challenges.take(str(data.get("challenge_id") or ""), "login")
+            if found is None:
+                raise PasskeyError("This passkey isn't saved here (any more) – sign in with your password.")
+            user, cred, handle = found
+            count = verify_authentication(answer, challenge=challenge, origins=origins, rp_id=rp_id,
+                                          credential=cred, user_handle=handle)
+        except PasskeyError as exc:
+            self._login_failed(ip, "pk:" + ip)
+            log.warning("Failed passkey login from %s: %s", ip, exc)
+            raise ApiError(str(exc), 401) from None
+        username = OWNER if user == OWNER else (self.users.get(user) or {}).get("username")
+        if not username or (username != OWNER and self.users.session_key(username) is None):
+            self._login_failed(ip)
+            raise ApiError("This account doesn't exist or is switched off.", 401)
+        self.passkeys.used(user, cred["id"], count)
+        self._login_ok(ip, "user:" + username.lower())
+        resp = web.json_response({"ok": True})
+        self._set_session_cookie(resp, username, request)
+        log.info("Web login (passkey): %s from %s", username, ip)
+        if self.bot is not None:
+            self.bot.audit(f"🌐 Web interface: **{username}** logged in with a passkey "
+                           f"({cred.get('name') or 'Passkey'}) from {ip}")
+        return resp
+
+    async def passkeys_list(self, request: web.Request) -> web.Response:
+        return web.json_response({"passkeys": [PasskeyStore.public(k) for k in self.passkeys.keys(request["user"])]})
+
+    async def passkey_register_options(self, request: web.Request) -> web.Response:
+        user = request["user"]
+        rp_id, _ = self._passkey_site(request)
+        cid, challenge = self._passkey_challenges.new("register", user)
+        name = (self.bot.config.server_display_name if self.bot is not None else "") or "RCE Bot"
+        return web.json_response({"challenge_id": cid, "publicKey": registration_options(
+            rp_id=rp_id, rp_name=f"{name} panel", user_handle=self.passkeys.handle(user), username=user,
+            challenge=challenge, exclude=[k["id"] for k in self.passkeys.keys(user)])})
+
+    async def passkey_register(self, request: web.Request) -> web.Response:
+        user = request["user"]
+        data = await self._json(request)
+        rp_id, origins = self._passkey_site(request)
+        try:
+            challenge = self._passkey_challenges.take(str(data.get("challenge_id") or ""), "register", user)
+            cred = verify_registration(data.get("answer") if isinstance(data.get("answer"), dict) else {},
+                                       challenge=challenge, origins=origins, rp_id=rp_id)
+            key = self.passkeys.add(user, cred, self._text(data, "name", required=False, limit=60), rp_id)
+        except PasskeyError as exc:
+            raise ApiError(str(exc)) from None
+        self._audit(f"passkey added ({key['name']})")
+        return web.json_response({"ok": True, "passkey": PasskeyStore.public(key)})
+
+    async def passkey_delete(self, request: web.Request) -> web.Response:
+        if not self.passkeys.remove(request["user"], request.match_info["cid"]):
+            raise ApiError("Passkey not found.", 404)
+        self._audit("passkey removed")
+        return web.json_response({"ok": True})
+
     # Two-factor login (authenticator app) for the logged-in account
 
     async def two_factor_state(self, request: web.Request) -> web.Response:
@@ -2390,6 +2488,7 @@ class WebInterface:
         if not self.users.delete(username):
             raise ApiError("User not found.", 404)
         self.two_factor.disable(username)
+        self.passkeys.remove_user(username)
         self._audit(f"Account **{username}** deleted")
         return web.json_response({"ok": True})
 
