@@ -472,10 +472,14 @@ def test_kits_added_automatically_hidden_until_priced(shop, monkeypatch):
     order = run(s.complete(r["token"]))
     assert order["status"] == "waiting" and "next time you're on the server" in shop.dms[-1]
     assert not any(c.startswith("kit givetoplayer") for c in said)
+    # the buyer gets the kit's Discord role right away (a role is made for it and linked)
+    vip_role = next(r for r in shop.env.buyer.roles if r.name == "vip")
+    assert db.ingame_kit_role("vip")["role_id"] == vip_role.id and "its Discord role" in shop.dms[-1]
     bot.online_players = {"Gamer7": {}}
     assert run(s.deliver_waiting()) == 1
     order = db.store_order(order["id"])
-    assert order["status"] == "delivered" and order["result"] == "vip" and order["request_id"] is None
+    assert order["status"] == "delivered" and order["result"] == "vip + role vip" and order["request_id"] is None
+    assert [r.name for r in shop.env.buyer.roles].count("vip") == 1                       # the role once
     assert 'kit givetoplayer "vip" "Gamer7"' in said and "given to you in-game" in shop.dms[-1]
     assert run(s.deliver_waiting()) == 0                                                # given once
 
@@ -749,7 +753,7 @@ def test_kits_for_one_server_or_several(shop, monkeypatch, tmp_path):
     remote["online"] = ["Gamer7"]                                             # now on Two
     assert run(s.deliver_waiting()) == 1
     order = db.store_order(order["id"])
-    assert order["status"] == "delivered" and order["result"] == "vip – given on Main server, Two"
+    assert order["status"] == "delivered" and order["result"] == "vip – given on Main server, Two + role vip"
     assert remote["gave"] == [("two", "Gamer7", "vip")] and said.count('kit givetoplayer "vip" "Gamer7"') == 1
     # a bot kit for Two only: copied there; on this server claiming says where it's for
     ak = db.store_kit(shop.kit_id)

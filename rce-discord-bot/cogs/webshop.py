@@ -4,7 +4,8 @@ What can be bought
   * Kits for sale – staff-made bot kits (kit builder) and the server's in-game kits are added automatically (hidden
     until an owner sets a price in the web interface → Store); owners can also add kits by hand. Bot kits give the
     kit's claim role (optionally for N days), in-game kits are given in-game once (right away if the buyer is
-    online, otherwise when they next join).
+    online, otherwise when they next join). The buyer always gets the kit's Discord role right after paying (a
+    missing role is made) – with it they can claim the kit again with /customkit claim.
   * Own custom kit – players pick items on the website, priced by the price list (prices.txt, STORE_CUSTOM_KITS).
   * Gift cards – values from STORE_GIFTCARD_VALUES; owners also create gift cards in the web interface.
 
@@ -844,9 +845,10 @@ class WebShop(commands.Cog):
 
     async def _give_ingame(self, order, skit) -> str | None:
         """Gives an in-game kit to the buyer – on every server it's for, once each. None = still waiting for the
-        buyer to be online somewhere (the order waits)."""
+        buyer to be online somewhere (the order waits). The kit's Discord role comes right away (once)."""
         import servers
         me = servers.server_id()
+        role_text = await self._give_kit_role(order, skit)
         targets = self.kit_servers(skit)
         done = [s for s in (order["servers_done"] or "").split(",") if s] if "servers_done" in order.keys() else []
         given: dict[str, str] = {}
@@ -869,11 +871,14 @@ class WebShop(commands.Cog):
             if self.bot.db.move_store_order(order["id"], "paid", "waiting",
                                             result=f"waiting – given when the player is online on {where}") and first:
                 await self._dm(order["user_id"], f"✅ Thanks for your purchase! **{safe_md(order['title'])}** is "
-                                                 f"paid – you get it in-game the next time you're on {where}.")
+                                                 f"paid – you get it in-game the next time you're on {where}."
+                                                 + (f" You already have its Discord role{role_text}."
+                                                    if role_text else ""))
             return None
+        role_text = role_text or self.bot.db.get_value(f"store_role_text:{order['id']}") or ""
         if targets == [me]:
-            return skit["kit"] + given.get(me, "")
-        return skit["kit"] + " – given on " + ", ".join(servers.server_name(s) for s in targets)
+            return skit["kit"] + role_text
+        return skit["kit"] + " – given on " + ", ".join(servers.server_name(s) for s in targets) + role_text
 
     async def _give_ingame_here(self, order, skit) -> str | None:
         """The in-game kit on this server, if the buyer is online here. None = not now."""
@@ -886,34 +891,65 @@ class WebShop(commands.Cog):
                                         expect_response=False)
         except RconError:
             return None
-        return await self._give_kit_role(order, skit, name)
+        if order["user_id"]:                  # counts as a claim: the kit role's cooldown starts now
+            self.bot.db.record_ingame_claim(skit["kit"], name, int(order["user_id"]), f"store order #{order['id']}")
+        return ""
 
-    async def _give_kit_role(self, order, skit, player: str) -> str:
-        """KIT_ROLES: the buyer also gets the kit's Discord role (for the store kit's days, else for good) – with it
-        they can claim the kit again with /customkit claim. Once, when the kit was given in-game."""
+    async def _ingame_kit_role(self, guild: discord.Guild, kit: str) -> discord.Role:
+        """The in-game kit's Discord role: its linked role, else a role with the kit's name, else a new one – and
+        links it (like a bought bot kit's claim role, cogs/kit_requests.py)."""
+        db = self.bot.db
+        row = db.ingame_kit_role(kit)
+        if row is not None and (role := guild.get_role(int(row["role_id"]))) is not None:
+            return role
+        role = discord.utils.find(lambda r: r.name.lower() == kit.lower(), guild.roles)
+        if role is None:
+            role = await guild.create_role(name=kit[:100], reason=f"Role for the in-game kit {kit} (store purchase)")
+            db.record_created_role(role.id, kit)
+        db.set_ingame_kit_role(kit, role.id)
+        self.bot.audit(f"🛒 In-game kit **{safe_md(kit)}** is now claimable with the role {role.mention}")
+        return role
+
+    async def _give_kit_role(self, order, skit) -> str:
+        """The buyer always gets the kit's Discord role (for the store kit's days, else for good) – right after the
+        payment, also while they're offline; with it they can claim the kit again (/customkit claim). Once per
+        order. Never fails the order: a problem is logged for staff."""
         from cogs.timed_roles import TimedRoleError
+        if not order["user_id"]:
+            return ""
+        marker = f"store_role_text:{order['id']}"
+        if self.bot.db.get_value(marker) is not None:
+            return ""                                    # given already (a retry or the later in-game delivery)
         custom = self.bot.get_cog("CustomKits")
-        if not self.bot.config.kit_roles or custom is None or not order["user_id"]:
+        guild = custom._guild() if custom is not None else None
+        if guild is None:
+            gid = self.bot.config.guild_id
+            guild = self.bot.get_guild(gid) if gid else (self.bot.guilds[0] if self.bot.guilds else None)
+        if guild is None:
             return ""
-        guild = custom._guild()
-        role = custom.kit_role(guild, skit["kit"])
-        member = guild.get_member(int(order["user_id"])) if guild is not None and role is not None else None
-        if member is None:
-            return ""
-        days = int(skit["days"] or 0)
         try:
+            role = custom.kit_role(guild, skit["kit"]) if custom is not None else None
+            role = role or await self._ingame_kit_role(guild, skit["kit"])
+            member = guild.get_member(int(order["user_id"]))
+            if member is None:
+                member = await guild.fetch_member(int(order["user_id"]))
+            days = int(skit["days"] or 0)
             if days:
                 timed = self.bot.get_cog("TimedRoles")
                 if timed is None:
-                    return ""
+                    raise TimedRoleError("timed roles are not available")
                 await timed.grant(member, role, days * 1440, reason=f"store order #{order['id']}", by="store")
-            else:
+            elif role not in getattr(member, "roles", []):
                 await member.add_roles(role, reason=f"Store order #{order['id']}: {skit['kit']}")
         except (discord.HTTPException, TimedRoleError) as exc:
-            log.warning("Kit role %s for store order #%s: %s", role.name, order["id"], exc)
+            log.warning("Kit role for store order #%s (%s): %s", order["id"], skit["kit"], exc)
+            await self._log(f"⚠️ Store order #{order['id']}: <@{order['user_id']}> paid for **{safe_md(skit['kit'])}** "
+                            f"but didn't get its Discord role ({safe_md(str(exc))[:200]}) – give it by hand "
+                            "(the bot needs Manage Roles and its role above the kit role).", alert=True)
             return ""
-        self.bot.db.record_ingame_claim(skit["kit"], player, int(order["user_id"]), f"store order #{order['id']}")
-        return f" + role {role.name}" + (f" for {days} days" if days else "")
+        text = f" + role {role.name}" + (f" for {days} days" if days else "")
+        self.bot.db.set_value(marker, text)
+        return text
 
     async def deliver_waiting(self, player: str | None = None) -> int:
         """Gives in-game kits that wait for their buyer (only `player`, or everyone online – here or, for kits for

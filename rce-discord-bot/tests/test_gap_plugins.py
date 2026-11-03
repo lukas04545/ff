@@ -142,7 +142,7 @@ def test_auto_events(pb):  # noqa: F811
     assert entries[1]["commands"] == ["heli.call", "say hi"]
     a = plug(pb, "auto_events", entries="every 30m | Save | server.save\n20:00 | Heli | heli.call | 🚁 Heli!",
              warn_minutes=5, channel=None)
-    t0 = time.time()
+    t0 = datetime.now(a.tz).replace(hour=10, minute=0, second=0, microsecond=0).timestamp()   # far from 20:00
     assert run(a.tick(t0)) == []                                                          # first start: no fire
     assert run(a.tick(t0 + 1801)) == ["Save"] and "server.save" in pb.said
     assert run(a.tick(t0 + 1830)) == []                                                   # not twice
