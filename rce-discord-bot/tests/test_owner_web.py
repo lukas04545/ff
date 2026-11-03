@@ -171,3 +171,61 @@ def test_restart_control_plane_button(cp):  # noqa: F811
         finally:
             await c.close()
     asyncio.run(scenario())
+
+
+def test_owner_creates_a_customer_with_a_free_trial(cp, monkeypatch):  # noqa: F811
+    import asyncio
+    import re as _re
+    import time as _time
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from control_plane import billing, websettings
+    from control_plane.web import build_owner
+    from tests.test_control_plane import csrf_of
+
+    async def changed():
+        pass
+
+    async def scenario():
+        c = TestClient(TestServer(build_owner(cp.db, cp.box, cp.settings, changed)))
+        await c.start_server()
+        try:
+            token = websettings.new_login_link(cp.db)
+            await c.post(f"/once/{token}", data={"username": "boss", "password": "owner-password-123"})
+            page = await (await c.get("/customers")).text()
+            assert "New customer" in page
+            t = csrf_of(page)
+            plan = cp.db.one("SELECT id FROM plans ORDER BY id LIMIT 1")["id"]
+            r = await c.post("/customers/new", data={"csrf": t, "email": "Trial@Example.com", "name": "Trial clan",
+                                                     "password": "", "plan": str(plan), "access": "trial",
+                                                     "days": "7"})
+            page = await r.text()
+            assert "Customer #" in page and "trial@example.com" in page
+            password = _re.search(r"Password: ([^<\s]+)", page)[1]
+            cid = cp.db.one("SELECT id FROM customers WHERE email = 'trial@example.com'")["id"]
+            from web.users import verify_password
+            assert verify_password(password, cp.db.one("SELECT password_hash FROM customers WHERE id = ?",
+                                                       (cid,))["password_hash"])
+            sub = cp.db.one("SELECT * FROM subscriptions WHERE customer_id = ?", (cid,))
+            assert sub["status"] == "trial" and sub["plan_id"] == plan
+            assert abs(sub["current_period_end"] - (_time.time() + 7 * 86400)) < 60
+            assert billing.subscription_ok(cp.db, cid)                               # servers may run …
+            assert not billing.subscription_ok(cp.db, cid, now=_time.time() + 8 * 86400)   # … until it ends
+            assert "until" in await (await c.get("/customers")).text()
+            # extend it from the customer page; a bad e-mail / duplicate is refused
+            r = await c.post(f"/customers/{cid}/trial", data={"csrf": t, "days": "30"}, allow_redirects=False)
+            assert r.status == 303
+            assert cp.db.one("SELECT current_period_end FROM subscriptions WHERE customer_id = ?",
+                             (cid,))["current_period_end"] > _time.time() + 29 * 86400
+            r = await c.post("/customers/new", data={"csrf": t, "email": "trial@example.com", "access": "comped"})
+            assert "exists already" in await r.text()
+            r = await c.post("/customers/new", data={"csrf": t, "email": "free@example.com", "password": "a-long-password",
+                                                     "plan": "0", "access": "comped"})
+            assert "a-long-password" in await r.text()
+            assert cp.db.one("SELECT s.status FROM subscriptions s JOIN customers c ON c.id = s.customer_id "
+                             "WHERE c.email = 'free@example.com'")["status"] == "comped"
+            assert (await c.post("/customers/new", data={"email": "x@example.com"})).status == 403   # CSRF
+        finally:
+            await c.close()
+    asyncio.run(scenario())

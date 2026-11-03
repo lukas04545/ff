@@ -247,7 +247,7 @@ class HQ:
     def overview(self) -> tuple[discord.Embed, discord.ui.View]:
         n = self.db.one("SELECT COUNT(*) AS n, SUM(status = 'active') AS a FROM customers WHERE status != 'deleted'")
         s = self.db.one("SELECT COUNT(*) AS n, SUM(status = 'active') AS a FROM servers WHERE status != 'deleted'")
-        subs = self.db.one("SELECT SUM(status IN ('active','trialing','comped')) AS ok, "
+        subs = self.db.one("SELECT SUM(status IN ('active','trialing','comped','trial')) AS ok, "
                            "SUM(status IN ('past_due','unpaid')) AS late FROM subscriptions")
         online = self.db.one("SELECT SUM(discord_ready) AS d, SUM(rcon_connected) AS r, SUM(players_online) AS p "
                              "FROM health h JOIN servers s ON s.id = h.server_id WHERE s.status = 'active'")
@@ -276,7 +276,7 @@ class HQ:
         sub = self.db.one("SELECT * FROM subscriptions WHERE customer_id = ?", (cid,))
         on = features.active(self.db, cid)
         sl = slots.summary(self.db, cid)
-        tone = "bad" if c["status"] != "active" else ("ok" if sub and sub["status"] in ("active", "trialing",
+        tone = "bad" if c["status"] != "active" else ("ok" if sub and sub["status"] in ("active", "trialing", "trial",
                                                                                           "comped") else "warn")
         e = discord.Embed(title=f"👤 #{cid} {c['email']}", description=c["name"] or None, color=COLORS[tone])
         e.add_field(name="Account", value=c["status"] + (f" – {c['suspend_reason']}" if c["suspend_reason"] else ""))
