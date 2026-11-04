@@ -233,7 +233,7 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
         if me(request):
             raise web.HTTPSeeOther("/dashboard")
         return shop(request, "Sign in", f"""<div class=auth>{flash(request)}<div class=card><h2>Sign in</h2>
-<form method=post action=/login><label>E-mail<input name=email type=email required autocomplete=email></label>
+<form method=post action=/login><label>E-mail or username<input name=email required autocomplete=username></label>
 <label>Password<input name=password type=password required autocomplete=current-password></label>
 <button style="width:100%">Sign in</button></form><p class=muted>New here? <a href=/signup>Create an account</a></p>
 </div></div>""")
@@ -278,7 +278,7 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
             raise web.HTTPSeeOther("/login?e=Too+many+attempts,+try+later")
         row = db.one("SELECT id, password_hash FROM customers WHERE email = ? AND status != 'deleted'", (email,))
         if row is None or not verify_password(str(data.get("password", "")), row["password_hash"]):
-            raise web.HTTPSeeOther("/login?e=Wrong+e-mail+or+password")
+            raise web.HTTPSeeOther("/login?e=Wrong+login+or+password")
         resp = web.HTTPSeeOther("/dashboard")
         sess.issue(resp, f"c{row['id']}", request)
         raise resp
@@ -963,8 +963,10 @@ style="font-size:1rem">· {esc(who)}</span></h1>
         owner(request)
         return page("Customers", f"""<div class=kicker>CUSTOMERS</div><h1>Customers</h1>
 <div class=card><h2>➕ New customer</h2><p class=muted>For free trials, friends or customers who pay you another way.
-They sign in on the shop with this e-mail and password and set up their server themselves.</p>
-<form method=post action={P}/customers/new>{hidden(request)}<input name=email type=email placeholder=E-mail required>
+They sign in on the shop with this username (or e-mail) and password and set up their server themselves – no
+e-mail needed.</p>
+<form method=post action={P}/customers/new>{hidden(request)}<input name=email placeholder="Username or e-mail" required
+autocomplete=off>
 <input name=name placeholder="Community name (optional)"> <input name=password placeholder="Password (empty = make one)"
 minlength=10 autocomplete=off><br><br><select name=plan>{plan_options("No package")}</select>
 <select name=access><option value=trial>Free trial</option><option value=comped>Free (no end)</option>
@@ -984,7 +986,7 @@ style="width:5rem"> days (trial) <button>Create customer</button></form></div>
             password = secrets.token_urlsafe(12)
         try:
             cid = provisioning.create_customer(db, str(data.get("email", "")), password, str(data.get("name", "")),
-                                               actor=actor)
+                                               actor=actor, allow_username=True)
             plan_id = int(data.get("plan") or 0)
             if plan_id:
                 plans.apply(db, cid, plan_id, actor=actor)
@@ -1006,7 +1008,7 @@ style="width:5rem"> days (trial) <button>Create customer</button></form></div>
         return page("Customer created", f"""<p><a href={P}/customers>← customers</a></p><h1>✅ Customer #{cid} created</h1>
 <div class=card><p>Send them this (the password is shown only now{' – it was made for them' if made else ''}):</p>
 <pre style="white-space:pre-wrap">Sign in: {esc(settings.portal_url)}/login
-E-mail: {esc(c['email'])}
+{'E-mail' if '@' in c['email'] else 'Username'}: {esc(c['email'])}
 Password: {esc(password)}</pre><p class=muted>Access: {esc(access_text)}.</p>
 <p><a class=btn href={P}/customers/{cid}>Open the customer</a></p></div>""")
 

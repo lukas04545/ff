@@ -168,7 +168,7 @@ async def checkout_url(settings, customer: dict, success_url: str, cancel_url: s
         form["subscription_data[metadata][plan_id]"] = str(plan_id)
     if customer.get("stripe_customer_id"):
         form["customer"] = customer["stripe_customer_id"]
-    else:
+    elif "@" in str(customer.get("email") or ""):            # a username-only account: Stripe asks for it
         form["customer_email"] = customer["email"]
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
         async with session.post("https://api.stripe.com/v1/checkout/sessions", data=form,

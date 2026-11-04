@@ -45,10 +45,19 @@ def _now() -> int:
 
 # ------------------------------------------------------------ Customers
 
-def create_customer(db: DB, email: str, password: str, name: str = "", *, actor: str = "signup") -> int:
+USERNAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,31}$")
+
+
+def create_customer(db: DB, email: str, password: str, name: str = "", *, actor: str = "signup",
+                    allow_username: bool = False) -> int:
+    """A customer account. Its sign-in name is the e-mail – or, when the owner makes the account
+    (allow_username=True), a plain username without an e-mail (3–32 letters, digits, _ . -)."""
     from web.users import hash_password
     email = email.strip().lower()
-    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) or len(email) > 200:
+    if allow_username and "@" not in email:
+        if not USERNAME.match(email):
+            raise ProvisionError("Username: 3–32 letters, digits, _ . or - (or enter an e-mail address).")
+    elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) or len(email) > 200:
         raise ProvisionError("Enter a valid e-mail address.")
     if len(password) < 10:
         raise ProvisionError("The password needs at least 10 characters.")
