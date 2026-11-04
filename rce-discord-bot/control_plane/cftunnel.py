@@ -7,7 +7,10 @@ and, through the Cloudflare API (support/cloudflare.py):
   3. routes *.<domain> through it to the portal listener – which passes each <slug>.<domain> on to that server
      (control_plane/hostproxy.py) – plus the old addresses of adopted servers, so their links keep working,
   4. creates the DNS record *.<domain> -> the tunnel (proxied) and moves old addresses that pointed at a tunnel,
-  5. saves only the TUNNEL token (encrypted, like the other website settings). The API token is NOT stored.
+  5. own domains of servers that are in YOUR Cloudflare account (e.g. your own server's old domain after moving
+     the platform to a new one) go through the same tunnel too: a hostname rule and a DNS record in their zone.
+     Customers' domains in other accounts use Cloudflare for SaaS instead (activate_pending).
+  6. saves only the TUNNEL token (encrypted, like the other website settings). The API token is NOT stored.
 `run` then starts cloudflared with that tunnel token. No Caddy, no certificates, no open ports needed.
 
 API token permissions: Account › Cloudflare Tunnel › Edit, Zone › DNS › Edit, Zone › Zone › Read.
@@ -52,7 +55,19 @@ async def setup(db: DB, box: SecretBox, settings: Settings, api_token: str, *, a
     service = f"http://127.0.0.1:{settings.portal_port}"
     aliases = {h: sid for h, sid in old_addresses(db, settings).items()
                if h == zone["name"] or h.endswith("." + zone["name"])}
-    ingress = [{"hostname": h, "service": service} for h in sorted(aliases)]
+    # own domains of servers whose zone is in this Cloudflare account: through the tunnel as well
+    own_zone: dict[str, dict] = {}
+    for row in db.q("SELECT hostname FROM domains WHERE status != 'removed'"):
+        host = row["hostname"]
+        if host == domain or host.endswith("." + domain):
+            continue
+        try:
+            z = await cf.find_zone(host)
+        except CloudflareError:
+            continue                                   # not in this account: Cloudflare for SaaS handles it
+        if (z.get("account") or {}).get("id") == account:
+            own_zone[host] = z
+    ingress = [{"hostname": h, "service": service} for h in sorted(set(aliases) | set(own_zone))]
     # last rule without a hostname: customers' OWN domains (Cloudflare for SaaS) arrive with their own names
     ingress += [{"hostname": f"*.{domain}", "service": service}, {"hostname": domain, "service": service},
                 {"service": service}]
@@ -72,6 +87,13 @@ async def setup(db: DB, box: SecretBox, settings: Settings, api_token: str, *, a
         try:
             dns[host] = await cf.dns(zone["id"], host, tunnel["id"])
             db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)", (f"host_alias:{host}", str(sid)))
+        except CloudflareError as exc:
+            dns[host] = f"skipped: {exc}"
+    for host, z in own_zone.items():
+        try:
+            dns[host] = await cf.dns(z["id"], host, tunnel["id"])
+            db.run("UPDATE domains SET status = 'active', note = ? WHERE hostname = ?",
+                   ("in your Cloudflare account – through the platform's tunnel", host))
         except CloudflareError as exc:
             dns[host] = f"skipped: {exc}"
     token = tunnel.get("token") or await cf._call("GET", f"/accounts/{account}/cfd_tunnel/{tunnel['id']}/token")

@@ -135,6 +135,10 @@ class Supervisor:
             write_default(Path(s["home_dir"]), panel_theme())
         except OSError:
             pass
+        try:                                             # its public address follows the platform's domain
+            provisioning.sync_public_url(self.db, self.settings, sid, s["slug"], Path(s["home_dir"]))
+        except OSError as exc:
+            log.warning("server %s: couldn't update its address: %s", sid, exc)
         try:
             p.process = await self.launcher.start(env, Path(s["home_dir"]))
         except Exception as exc:

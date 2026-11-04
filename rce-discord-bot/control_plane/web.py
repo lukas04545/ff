@@ -1295,10 +1295,26 @@ max=365 value=14 style="width:5rem"> days <button>{'Extend' if sub and sub['stat
 at <code>sites.{esc(settings.base_domain)}</code>. Cloudflare then has to accept the domain (Cloudflare for SaaS,
 SSL/TLS → Custom Hostnames – enable it once; the first 100 are free).
 {'Automatic: a token for this is saved in Settings.' if settings.cf_saas_token else 'Connect waiting domains here with a Cloudflare token that has <b>Zone › SSL and Certificates › Edit</b> – it is used once and not saved.'}</p>
+<div class=card><h2>➕ Give a server a domain</h2><p class=muted>For example your own server's domain when the
+platform moves to a new one. A domain in <b>your</b> Cloudflare account is connected by the next
+<a href={P}/settings>Set up Cloudflare</a> (the token then needs DNS rights for that domain too); others wait for
+the customer's CNAME + the button below.</p><form method=post action={P}/domains/add>{hidden(request)}<select
+name=server>{''.join(f"<option value={s['id']}>#{s['id']} {esc(s['name'])} ({esc(s['slug'])})</option>" for s in db.q("SELECT id, name, slug FROM servers WHERE status != 'deleted' ORDER BY id"))}</select>
+<input name=hostname placeholder="e.g. kryvon3x.com or www.kryvon3x.com" required> <button>Add domain</button></form></div>
 <div class=card><form method=post action={P}/domains/activate>{hidden(request)}<input name=token type=password
 autocomplete=off placeholder="Cloudflare API token (not saved)" style="width:60%"> <button>Connect {waiting} waiting
 domain(s)</button></form></div><table><tr><th>Domain</th><th>Server</th><th>State</th><th></th></tr>
 {table or '<tr><td colspan=4>No own domains yet.</td></tr>'}</table>""")
+
+    async def domains_add(request):
+        who = owner(request)
+        data = await sess.form(request)
+        try:
+            host = provisioning.add_domain(db, settings, int(data.get("server") or 0), str(data.get("hostname", "")),
+                                           actor=f"owner:{who}", owner=True)
+        except (provisioning.ProvisionError, ValueError) as exc:
+            raise go("/domains?m=" + quote_plus(f"Not added: {exc}")) from None
+        raise go("/domains?m=" + quote_plus(f"{host} added – run Set up Cloudflare (Settings) to connect it."))
 
     async def domains_activate(request):
         from control_plane import cftunnel
@@ -1814,6 +1830,7 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.post("/cloudflare", cloudflare_setup),
                     web.get("/plans", plans_page), web.post("/plans", plan_save),
                     web.get("/domains", domains_page), web.post("/domains/activate", domains_activate),
+                    web.post("/domains/add", domains_add),
                     web.post(r"/plans/{id:\d+}", plan_save), web.post(r"/customers/{id:\d+}/plan", customer_plan),
                     web.get("/", dashboard), web.get(r"/customers/{cid:\d+}", customer), web.get("/audit", audit),
                     web.get("/customers", customers_page), web.get("/servers", servers_page),
