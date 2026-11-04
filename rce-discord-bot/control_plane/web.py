@@ -847,6 +847,9 @@ server run <code>python3 -m control_plane login-link</code> – it prints a one-
                 elif s["status"] == "active":
                     acts.append(button(request, f"/servers/{sid}/suspend", "Suspend"))
                     acts.append(button(request, f"/servers/{sid}/restart", "Restart"))
+                if s["status"] == "active":
+                    acts.append(f"<form method=post action='{P}/servers/{sid}/open' class=inline target=_blank>"
+                                f"{hidden(request)}<button>🔑 Open panel</button></form>")
                 acts.append(f"<a href={P}/servers/{sid}/ai>🧠 Management AI</a>")
                 acts.append(button(request, f"/servers/{sid}/manager-ai/{'off' if s['manager_ai'] else 'on'}",
                                    ("Discord AI: on → switch off" if s["manager_ai"] else "Discord AI: off → switch on")))
@@ -1215,6 +1218,28 @@ price makes a new Stripe price; current subscribers keep theirs. Packages are ne
             return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
         await changed()
         raise go(f"/customers/{cid}")
+
+    async def open_panel(request):
+        """Signs the owner into this server's control panel (as its owner account) – a one-time, 60-second link."""
+        import saas_mode
+        who = owner(request)
+        await sess.form(request)
+        sid = int(request.match_info["id"])
+        s = db.one("SELECT slug, status, customer_id FROM servers WHERE id = ?", (sid,))
+        health = provisioning.get_secret(db, box, sid, "health_token") if s else None
+        if s is None or s["status"] != "active" or not health:
+            return page("Not possible", f"<div class=card><p class=err>This server isn't running.</p>"
+                                        f"<a href={P}/servers>Back</a></div>")
+        token = saas_mode.owner_login_token(provisioning.manage_token(health), who)
+        db.audit(f"owner:{who}", "server.open_panel", customer_id=s["customer_id"], server_id=sid)
+        url = f"{settings.url_for(s['slug'])}/saas/login?t={token}"
+        # a page with a link, not a redirect: the panel's form-action CSP doesn't allow posting on to another site
+        return web.Response(text=f'<!doctype html><meta charset=utf-8><meta http-equiv="refresh" content="0;url='
+                                 f'{esc(url)}"><title>Opening the panel …</title><p>Opening the panel … '
+                                 f'<a href="{esc(url)}">continue</a> (the link works once, for a minute)</p>',
+                            content_type="text/html",
+                            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                                     "Content-Security-Policy": "default-src 'none'"})
 
     async def update_action(request):
         who = owner(request)
@@ -1635,7 +1660,8 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.post(r"/servers/{id:\d+}/ai/clear", ai_clear),
                     web.post(r"/servers/{id:\d+}/manager-ai/{on:on|off}", manager_toggle),
                     web.post(r"/servers/{id:\d+}/token", set_token),
-                    web.post(r"/servers/{id:\d+}/shared-bot", shared_bot)])
+                    web.post(r"/servers/{id:\d+}/shared-bot", shared_bot),
+                    web.post(r"/servers/{id:\d+}/open", open_panel)])
     return app
 
 

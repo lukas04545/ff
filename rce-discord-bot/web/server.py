@@ -479,6 +479,7 @@ class WebInterface:
         r.add_post("/api/account/password", self.change_own_password)
         r.add_get("/saas/health", self.saas_health)              # hosted mode: also while in setup mode
         r.add_post("/saas/manage", self.saas_manage)
+        r.add_get("/saas/login", self.saas_owner_login)          # hosted: the platform owner opens this panel
         if self.setup_mode:
             r.add_post("/api/setup/continue", self.setup_continue)
             return app
@@ -2039,6 +2040,30 @@ class WebInterface:
         out = await cog.run_for_owner(str(data.get("message") or ""), data.get("history") or [],
                                       allow_risky=bool(data.get("allow_risky")))
         return web.json_response(out, headers={"Cache-Control": "no-store"})
+
+    async def saas_owner_login(self, request: web.Request) -> web.Response:
+        """Hosted mode: the platform owner's one-time sign-in from the owner panel (saas_mode.check_owner_login).
+        Signs in as this panel's owner account and opens the panel."""
+        import saas_mode
+        who = saas_mode.check_owner_login(request.query.get("t", ""))
+        if who is None:
+            raise web.HTTPNotFound(text="This sign-in link expired or was used – open the panel again from the owner "
+                                        "panel.")
+        target = self.panel_path + "/"
+        # a small page instead of a redirect: the session cookie is SameSite=Strict, and this request came from
+        # the owner panel's site – the next one (from here) is same-site, so the panel sees the cookie
+        resp = web.Response(text=f'<!doctype html><meta charset=utf-8><meta http-equiv="refresh" content="0;url='
+                                 f'{target}"><title>Opening the panel …</title><p>Opening the panel … '
+                                 f'<a href="{target}">continue</a></p>', content_type="text/html",
+                            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                                     "Content-Security-Policy": "default-src 'none'"})
+        self._set_session_cookie(resp, OWNER, request)
+        resp.set_cookie(GATE_COOKIE, self._gate_value(), max_age=GATE_TTL, httponly=True, samesite="Strict",
+                        secure=self._is_https(request), path="/")
+        log.info("Platform owner %s signed in from the owner panel (%s)", who, self._client_ip(request))
+        if self.bot is not None:
+            self.bot.audit(f"🛡️ Web interface: the platform owner (**{who}**) signed in from the owner panel")
+        return resp
 
     async def saas_health(self, request: web.Request) -> web.Response:
         """Hosted mode: a small status for the control plane (Bearer SAAS_HEALTH_TOKEN). No tenant data."""
