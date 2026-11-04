@@ -1475,12 +1475,17 @@ class WebInterface:
     # ------------------------------------------------------------ Item pictures
 
     async def bot_avatar(self, request: web.Request) -> web.Response:
-        """The Discord bot's profile picture (128 px PNG) – the control panel's logo. Fetched once per picture and
-        kept in memory, so browsers never load it from Discord. 404 while the bot isn't logged in to Discord."""
+        """The Discord server's icon (else the bot's profile picture), 128 px PNG – the control panel's logo.
+        Fetched once per picture and kept in memory, so browsers never load it from Discord. 404 while the bot isn't logged in to Discord."""
         user = getattr(self.bot, "user", None) if self.bot is not None else None
         if user is None:
             raise web.HTTPNotFound()
-        asset = user.display_avatar.replace(size=128, format="png")
+        from permcheck import main_guild
+        guild = main_guild(self.bot)
+        icon = getattr(guild, "icon", None) if guild is not None else None
+        # the Discord server's icon (its own picture – on the shared bot every server has the same avatar),
+        # else the bot's profile picture
+        asset = (icon or user.display_avatar).replace(size=128, format="png")
         cached = getattr(self, "_avatar", None)
         if cached is None or cached[0] != asset.url:
             try:
