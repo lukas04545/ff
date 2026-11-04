@@ -88,7 +88,10 @@ def test_control_plane_switch_and_owner_chat(cp, monkeypatch):
     s = provisioning.provision_server(cp.db, cp.box, cp.settings, cid, "Main", actor="t")
     provisioning.set_bot_token(cp.db, cp.box, s["id"], TOKEN, actor="t")
     env_ = provisioning.environment(cp.db, cp.box, cp.settings, s["id"])
-    assert env_["SAAS_MANAGER_AI"] == "0" and env_["SAAS_OWNER_AI_KEY"] == "platform-key"
+    assert env_["SAAS_MANAGER_AI"] == "1" and env_["SAAS_OWNER_AI_KEY"] == "platform-key"   # on by default
+    from control_plane import actions
+    actions.manager_ai(cp.db, s["id"], False, actor="t")                         # the owner can switch it off
+    assert provisioning.environment(cp.db, cp.box, cp.settings, s["id"])["SAAS_MANAGER_AI"] == "0"
     assert env_["SAAS_MANAGE_TOKEN"] == provisioning.manage_token(env_["SAAS_HEALTH_TOKEN"])
     assert env_["SAAS_MANAGE_TOKEN"] != env_["SAAS_HEALTH_TOKEN"] and env_["SAAS_AI"] == "0"
     secret = new_secret()

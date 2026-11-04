@@ -499,3 +499,58 @@ def test_test_bind_shows_the_servers_answer(mgr, monkeypatch):
     assert t["outcome"] == "given"
     [t] = asyncio.run(kits.test_bind(THANKS, "Bob"))
     assert t["outcome"] == "cooldown"
+
+
+def test_management_ai_creates_roles_and_channels(mgr):  # noqa: F811
+    import discord as _discord
+
+    class O:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    class G:
+        def __init__(self):
+            self.id, self.name, self.roles, self.categories, self.channels = 1, "Srv", [], [], []
+            self.default_role, self.me = O(id=1, name="@everyone", is_default=lambda: True, managed=False), O(id=2)
+
+        def get_role(self, rid):
+            return next((r for r in self.roles if r.id == rid), None)
+
+        async def create_role(self, name, colour=None, permissions=None, hoist=False, mentionable=False, reason=None):
+            r = NS(id=100 + len(self.roles), name=name, permissions=permissions, hoist=hoist, is_default=lambda: False,
+                   managed=False)
+            self.roles.append(r)
+            return r
+
+        async def create_category(self, name, overwrites=None, reason=None):
+            c = NS(name=name, overwrites=overwrites, channels=[])
+            self.categories.append(c)
+            return c
+
+        async def create_text_channel(self, name, category=None, overwrites=None, topic=None, reason=None):
+            ch = NS(name=name.lower().replace(" ", "-"), category=category, overwrites=overwrites, mention=f"#{name}")
+            (category.channels if category is not None else self.channels).append(ch)
+            return ch
+
+        async def create_voice_channel(self, name, category=None, overwrites=None, reason=None):
+            return await self.create_text_channel(name, category, overwrites)
+
+    g = G()
+    msg = mgr.message("set up my discord")
+    msg.guild, msg.id = g, 4242
+    mgr.bot.config = replace(mgr.bot.config, admin_role_ids=frozenset())
+    r = asyncio.run(mgr.cog.run_tool("create_role", {"name": "VIP", "color": "#ff8800", "show_separately": True}, msg))
+    assert r["ok"] and g.roles[0].permissions == _discord.Permissions.none() and g.roles[0].hoist   # no powers
+    assert asyncio.run(mgr.cog.run_tool("create_role", {"name": "vip"}, msg))["existed"]            # not twice
+    assert not asyncio.run(mgr.cog.run_tool("create_role", {"name": "@everyone"}, msg))["ok"]
+    r = asyncio.run(mgr.cog.run_tool("create_channel", {"name": "announcements", "category": "Info",
+                                                        "access": "read_only"}, msg))
+    assert r["ok"] and g.categories[0].name == "Info"
+    ch = g.categories[0].channels[0]
+    assert ch.overwrites[g.default_role].send_messages is False
+    r = asyncio.run(mgr.cog.run_tool("create_channel", {"name": "staff-chat", "access": "staff"}, msg))
+    assert g.channels[0].overwrites[g.default_role].view_channel is False
+    out = asyncio.run(mgr.cog.run_tool("list_discord_structure", {}, msg))
+    assert out["roles"] == ["VIP"] and out["categories"][0]["channels"] == ["announcements"]
+    mgr.cog._creates[4242] = 25
+    assert "At most" in asyncio.run(mgr.cog.run_tool("create_role", {"name": "More"}, msg))["error"]   # capped

@@ -88,6 +88,10 @@ How to work:
   current position, at another online player's position, or at coordinates x/y/z), resize_protection_zone,
   remove_protection_zone. Zones belong to the player's in-game team. Only give a custom size (radius) when the
   admin says a size – otherwise leave it out so the automatic team-size/VIP size is used.
+- Discord setup: list_discord_structure shows categories, channels and roles; create_role makes a role (never
+  with permissions), create_channel makes a text/voice channel or category (access everyone / read_only / staff).
+  The bot's own channels (status, events, chat, logs, tickets) are settings – after creating one, set its id in
+  the settings through the admin website (PUT /api/settings).
 - If something is ambiguous (two kits match, no amount given for a big item list …) ask one short question instead
   of guessing. Small details you can sensibly default (amount 1, container from the item type, no cooldown) – do it
   and say what you chose.
@@ -230,6 +234,22 @@ TOOLS = [
          "required_role": {"type": "string"}, "enabled": {"type": "boolean"}}, ["location"]),
     _fn("clear_teleport", "Removes a Location emote's teleport.", {"location": {"type": "string"}}, ["location"]),
 ]
+DISCORD_TOOLS = [
+    _fn("list_discord_structure", "The Discord server's categories with their channels, and its roles."),
+    _fn("create_role", "Creates a Discord role (no permissions – it's a label for kits, staff lists, colours). "
+                       "Existing role with that name: returns it instead.",
+        {"name": {"type": "string"}, "color": {"type": "string", "description": "Hex like #ff8800 (optional)"},
+         "show_separately": {"type": "boolean", "description": "Shown separately in the member list"}}, ["name"]),
+    _fn("create_channel", "Creates a text or voice channel, or a category. Existing one with that name: returns it.",
+        {"name": {"type": "string"},
+         "type": {"type": "string", "enum": ["text", "voice", "category"]},
+         "category": {"type": "string", "description": "Category to put it in (made if missing), optional"},
+         "access": {"type": "string", "enum": ["everyone", "read_only", "staff"],
+                    "description": "everyone = members can write, read_only = members only read, staff = only the "
+                                   "admins/support roles see it"},
+         "topic": {"type": "string"}}, ["name"]),
+]
+MAX_DISCORD_CREATES = 25                     # per request
 CONSOLE_TOOL = _fn("run_console_command", "Runs a Rust console command on the server. Admin must confirm.",
                    {"command": {"type": "string"}, "why": {"type": "string", "description": "Short reason"}},
                    ["command"])
@@ -355,6 +375,102 @@ class ManagerAI(commands.Cog):
         self.bot = bot
         self._history: dict[int, deque] = {}
         self._locks: dict[int, asyncio.Lock] = {}
+        self._creates: dict[int, int] = {}       # request (message id) -> roles/channels made
+
+    # ------------------------------------------------------------ Discord: roles and channels
+
+    def _staff_roles(self, guild) -> list:
+        cfg = self.bot.config
+        ids = set(cfg.admin_role_ids) | set(getattr(cfg, "support_role_ids", ()) or ())
+        return [r for r in (guild.get_role(i) for i in ids) if r is not None]
+
+    def _access(self, guild, access: str) -> dict:
+        everyone = {"read_only": discord.PermissionOverwrite(view_channel=True, send_messages=False),
+                    "staff": discord.PermissionOverwrite(view_channel=False)}.get(access)
+        ow = {guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True,
+                                                    read_message_history=True, embed_links=True)}
+        if everyone is not None:
+            ow[guild.default_role] = everyone
+        if access == "staff":
+            for role in self._staff_roles(guild):
+                ow[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True,
+                                                       read_message_history=True)
+        return ow
+
+    async def _discord_tool(self, name: str, args: dict, message, who: str) -> dict:
+        from permcheck import explain_forbidden, main_guild
+        guild = getattr(message, "guild", None) or main_guild(self.bot)
+        if guild is None:
+            return {"ok": False, "error": "The bot isn't in the Discord server yet."}
+        if name == "list_discord_structure":
+            cats = [{"category": c.name, "channels": [ch.name for ch in c.channels][:40]}
+                    for c in guild.categories[:40]]
+            loose = [ch.name for ch in guild.channels if getattr(ch, "category", None) is None
+                     and not isinstance(ch, discord.CategoryChannel)][:40]
+            roles = [r.name for r in reversed(guild.roles) if not r.is_default() and not r.managed][:80]
+            return {"ok": True, "categories": cats, "without_category": loose, "roles": roles}
+        key = getattr(message, "id", 0)
+        if len(self._creates) > 500:
+            self._creates.clear()
+        made = self._creates.get(key, 0)
+        if made >= MAX_DISCORD_CREATES:
+            return {"ok": False, "error": f"At most {MAX_DISCORD_CREATES} new roles/channels per request."}
+        title = re.sub(r"\s+", " ", str(args.get("name") or "")).strip()[:100]
+        if not title or title.lstrip("@").lower() in ("everyone", "here"):
+            return {"ok": False, "error": "A name is needed."}
+        try:
+            if name == "create_role":
+                found = discord.utils.find(lambda r: r.name.lower() == title.lower(), guild.roles)
+                if found is not None:
+                    return {"ok": True, "role": found.name, "existed": True}
+                colour = discord.Colour.default()
+                raw = str(args.get("color") or "").strip().lstrip("#")
+                if re.fullmatch(r"[0-9a-fA-F]{6}", raw):
+                    colour = discord.Colour(int(raw, 16))
+                role = await guild.create_role(name=title, colour=colour, permissions=discord.Permissions.none(),
+                                               hoist=bool(args.get("show_separately")), mentionable=False,
+                                               reason=f"Management AI for {getattr(message, 'author', 'owner')}")
+                self._creates[key] = made + 1
+                self._audit(who, f"role **{safe_md(title)}** created")
+                return {"ok": True, "role": role.name, "did": f"🏷️ role {role.name}"}
+            kind = str(args.get("type") or "text")
+            access = str(args.get("access") or "everyone")
+            if kind == "category":
+                found = discord.utils.find(lambda c: c.name.lower() == title.lower(), guild.categories)
+                if found is not None:
+                    return {"ok": True, "category": found.name, "existed": True}
+                cat = await guild.create_category(title, overwrites=self._access(guild, access),
+                                                  reason="Management AI")
+                self._creates[key] = made + 1
+                self._audit(who, f"category **{safe_md(title)}** created")
+                return {"ok": True, "category": cat.name, "did": f"📁 {cat.name}"}
+            category = None
+            cat_name = str(args.get("category") or "").strip()[:100]
+            if cat_name:
+                category = discord.utils.find(lambda c: c.name.lower() == cat_name.lower(), guild.categories)
+                if category is None:
+                    category = await guild.create_category(cat_name, overwrites=self._access(guild, access),
+                                                           reason="Management AI")
+                    made += 1
+            pool = category.channels if category is not None else guild.channels
+            slug = title.lower().replace(" ", "-") if kind == "text" else title.lower()
+            found = discord.utils.find(lambda c: c.name.lower() in (title.lower(), slug), pool)
+            if found is not None:
+                return {"ok": True, "channel": found.name, "existed": True}
+            ow = self._access(guild, access)
+            if kind == "voice":
+                ch = await guild.create_voice_channel(title, category=category, overwrites=ow, reason="Management AI")
+            else:
+                ch = await guild.create_text_channel(title, category=category, overwrites=ow,
+                                                     topic=str(args.get("topic") or "")[:1000] or None,
+                                                     reason="Management AI")
+            self._creates[key] = made + 1
+            self._audit(who, f"channel **#{safe_md(ch.name)}** created ({access})")
+            return {"ok": True, "channel": ch.name, "mention": getattr(ch, "mention", ""), "did": f"#{ch.name}"}
+        except discord.Forbidden as exc:
+            return {"ok": False, "error": "Not allowed: " + explain_forbidden(exc, self.bot)}
+        except discord.HTTPException as exc:
+            return {"ok": False, "error": f"Discord refused it: {exc}"}
 
     # ------------------------------------------------------------ Plumbing
 
@@ -377,7 +493,7 @@ class ManagerAI(commands.Cog):
         return channel_id in getattr(self.bot.config, "manager_ai_channel_ids", frozenset())
 
     def tools(self, user=None) -> list[dict]:
-        return (TOOLS + ([CONSOLE_TOOL] if getattr(self.bot.config, "manager_ai_console", True) else [])
+        return (TOOLS + DISCORD_TOOLS + ([CONSOLE_TOOL] if getattr(self.bot.config, "manager_ai_console", True) else [])
                 + (WEB_TOOLS if self._web() is not None else []))
 
     def _web(self):
@@ -956,6 +1072,9 @@ class ManagerAI(commands.Cog):
         if name == "online_players":
             players = sorted(self.bot.online_players)
             return {"ok": True, "count": len(players), "players": players[:200]}
+
+        if name in ("list_discord_structure", "create_role", "create_channel"):
+            return await self._discord_tool(name, args, message, who)
 
         if name == "find_member":
             guild = message.guild

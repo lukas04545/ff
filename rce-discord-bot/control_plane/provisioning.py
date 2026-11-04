@@ -107,8 +107,9 @@ def provision_server(db: DB, box: SecretBox, settings: Settings, customer_id: in
         slots.reserve(db, customer_id)                    # raises SlotError when all slots are used
         slug, port = _slug(db, name), _free_port(db, settings)
         home = (settings.tenants_dir / f"c{customer_id}" / slug).resolve()
-        cur = db.run("INSERT INTO servers (customer_id, slug, name, status, home_dir, web_port, created_at) "
-                     "VALUES (?, ?, ?, 'provisioning', ?, ?, ?)", (customer_id, slug, name, str(home), port, _now()))
+        cur = db.run("INSERT INTO servers (customer_id, slug, name, status, home_dir, web_port, created_at, manager_ai) "
+                     "VALUES (?, ?, ?, 'provisioning', ?, ?, ?, 1)",          # the management AI: on by default
+                     (customer_id, slug, name, str(home), port, _now()))
         sid = int(cur.lastrowid)
         db.audit(actor, "server.create", customer_id=customer_id, server_id=sid, detail=f"{slug} port {port}")
     password = finish_provisioning(db, box, settings, sid)

@@ -40,6 +40,12 @@ CHANNELS = (
     ("TICKET_LOG_CHANNEL_ID", "ticket_log_channel_id", "📁・ticket-log", "staff", "staff"),
 )
 TICKET_CATEGORY = ("TICKET_CATEGORY_ID", "ticket_category_id", "🎫 Tickets")
+MANAGER_CHANNEL = ("MANAGER_AI_CHANNEL_IDS", "manager_ai_channel_ids", "🧠・bot-setup")
+
+
+def manager_ai_here() -> bool:
+    import saas_mode
+    return saas_mode.manager_ai_in_discord()
 
 
 def enabled() -> bool:
@@ -126,6 +132,26 @@ class AutoSetup(commands.Cog):
                                                           overwrites=self._overwrites(guild, mode),
                                                           reason="RCE bot: first-run setup")
                 made.append(f"#{ch_name}")
+            updates[key] = str(channel.id)
+        key, attr, ch_name = MANAGER_CHANNEL                # the management AI's channel (staff only)
+        if manager_ai_here() and not any(self._exists(guild, i) for i in (getattr(cfg, attr, None) or ())):
+            if "staff" not in cats:
+                cats["staff"] = await self._category(guild, *groups["staff"])
+            channel = discord.utils.get(getattr(cats["staff"], "text_channels", []), name=ch_name)
+            if channel is None:
+                channel = await guild.create_text_channel(ch_name, category=cats["staff"],
+                                                          overwrites=self._overwrites(guild, "staff"),
+                                                          topic="Tell the management AI what to set up – kits, "
+                                                                "settings, roles, channels …",
+                                                          reason="RCE bot: management AI channel")
+                made.append(f"#{ch_name}")
+                try:
+                    await channel.send("🧠 **Management AI** – tell me what to set up, e.g. *\"make a VIP role and a "
+                                       "read-only #announcements channel\"*, *\"bind the Starter kit to the Thanks "
+                                       "emote\"* or *\"set the wipe to every Thursday 19:00\"*. Changes to settings "
+                                       "ask for a ✅ first. Only admins can use this channel.")
+                except discord.HTTPException:
+                    pass
             updates[key] = str(channel.id)
         key, attr, cat_name = TICKET_CATEGORY
         if not self._exists(guild, getattr(cfg, attr, None)):
