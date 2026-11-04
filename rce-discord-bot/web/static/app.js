@@ -2613,7 +2613,8 @@ views.tickets = async (main) => {
 
   api("/api/ai").then((r) => {
     const kids = [h("h2", { text: "🤖 AI (DeepSeek)" })];
-    if (!r.enabled) kids.push(h("p", { class: "muted", text: "No DEEPSEEK_API_KEY – tickets go straight to staff." }));
+    if (r.hosted) kids.push(h("p", {}, h("span", { class: "pill ok", text: "On" }), " The AI answers new tickets first and calls staff when it can't help."));
+    else if (!r.enabled) kids.push(h("p", { class: "muted", text: "No DEEPSEEK_API_KEY – tickets go straight to staff." }));
     else {
       kids.push(h("p", {}, "Model: ", h("code", { text: r.model })));
       if (r.error) kids.push(h("p", { class: "error", text: r.error }));
