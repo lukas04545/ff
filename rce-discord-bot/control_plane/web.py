@@ -406,7 +406,18 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
 <div class=card><h2>Servers <span class=muted>({sl['used']} of {sl['limit']} slots)</span></h2>
 <table><tr><th>Server</th><th>Status</th><th>Live</th><th></th></tr>
 {rows or '<tr><td colspan=4 class=muted>No server yet – start with the steps above.</td></tr>'}</table>{add}</div>
-{''.join(website_card(dict(s), hidden, 'custom_domain' in addons) for s in servers)}""")
+{''.join(website_card(dict(s), hidden, 'custom_domain' in addons) for s in servers)}
+{support_card(c)}""")
+
+    def support_card(c) -> str:
+        """The code to link their Discord account in the support Discord (customer tickets, hq_tickets.py)."""
+        if not settings.hq_guild_id:
+            return ""
+        from control_plane.hq_tickets import link_code
+        return (f"<div class=card><h2>💬 Discord support</h2><p>Open a ticket in our support Discord (#get-started) – "
+                f"the assistant sets up your bot with you. Your link code:</p><p><code style='font-size:1.2rem;"
+                f"user-select:all'>{esc(link_code(settings, c['id']))}</code></p><p class=muted>Only give it to the "
+                f"assistant in your own ticket – it links your Discord account to this account.</p></div>")
 
     def website_card(s: dict, hidden: str, can_domain: bool) -> str:
         """The server's websites: its address on our domain (changeable), its own domains, the look."""
@@ -1032,6 +1043,10 @@ style="font-size:1rem">· {esc(who)}</span></h1>
 {serverless_card(request)}
 <div class=card><h2>All servers</h2>{server_rows(request, "WHERE s.status != 'deleted'")}</div>""")
 
+    def hq_link_code(cid: int) -> str:
+        from control_plane.hq_tickets import link_code
+        return link_code(settings, cid)
+
     def plan_options(empty: str = "") -> str:
         return ((f"<option value=0>{esc(empty)}</option>" if empty else "") + "".join(
             f"<option value={p['id']}>{esc(p['name'])} – {esc(plans.price_text(p))} ({p['slots']} servers)</option>"
@@ -1166,6 +1181,9 @@ max=365 value=14 style="width:5rem"> days <button>{'Extend' if sub and sub['stat
 <form method=post action={P}/customers/{cid}/plan>{hidden(request)}<select name=plan>{''.join(f"<option value={p['id']}>{esc(p['name'])} – {esc(plans.price_text(p))} ({p['slots']} servers)</option>" for p in plans.listed(db, all_=True))}</select>
 <label><input type=checkbox name=comp value=1 checked> free (comped – no Stripe)</label> <button>Set package</button></form></div>
 <div class=card><h2>Add-ons</h2>{addon_rows}</div>
+<div class=card><h2>💬 Support Discord</h2><p>Link code (the customer gives it to the assistant in their HQ ticket):
+<code style="user-select:all">{esc(hq_link_code(cid))}</code></p>
+<p class=muted>Linked Discord accounts: {esc(', '.join(str(r['discord_id']) for r in db.q("SELECT discord_id FROM hq_links WHERE customer_id = ?", (cid,))) or 'none')}</p></div>
 <div class=card><h2>Slots: {sl['used']} used of {sl['limit']} ({c['base_slots']} in the plan)</h2>
 <form method=post action={P}/customers/{cid}/grant>{hidden(request)}<input name=slots type=number min=1 max=100 value=1>
 <input name=reason placeholder="Reason (e.g. paid add-on)"> <button>Unlock slots</button></form>

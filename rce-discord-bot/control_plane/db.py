@@ -142,6 +142,13 @@ CREATE TABLE IF NOT EXISTS domains (
     note TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS hq_channels (customer_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL);
+-- HQ customer tickets: a private channel per Discord user; links: which Discord user belongs to which customer
+CREATE TABLE IF NOT EXISTS hq_tickets (channel_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL UNIQUE,
+                                       created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS hq_trials (discord_id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL,
+                                      claimed_at INTEGER NOT NULL);     -- one free week per Discord account
+CREATE TABLE IF NOT EXISTS hq_links (discord_id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id),
+                                     linked_at INTEGER NOT NULL);
 """
 
 
