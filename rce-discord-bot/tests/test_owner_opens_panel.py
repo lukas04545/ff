@@ -178,3 +178,45 @@ def test_hosted_panel_hides_the_platforms_ai_model_and_balance(bot, monkeypatch)
         hosted = await (await c.get("/api/ai")).json()
         assert hosted == {"enabled": True, "hosted": True}                              # hosted: nothing of it
     run(bot, scenario)
+
+
+def test_owner_opens_a_customers_dashboard(cp):  # noqa: F811
+    import asyncio
+    import html as _html
+    import re
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from control_plane import provisioning, websettings
+    from control_plane.web import build_owner, build_portal
+
+    cid = provisioning.create_customer(cp.db, "a@x.io", "password1234", "Alex clan")
+
+    async def changed():
+        pass
+
+    async def scenario():
+        o = TestClient(TestServer(build_owner(cp.db, cp.box, cp.settings, changed)))
+        await o.start_server()
+        p = TestClient(TestServer(build_portal(cp.db, cp.box, cp.settings, changed)))
+        await p.start_server()
+        try:
+            token = websettings.new_login_link(cp.db)
+            await o.post(f"/once/{token}", data={"username": "boss", "password": "owner-password-123"})
+            page = await (await o.get(f"/customers/{cid}")).text()
+            assert "Open dashboard" in page
+            assert (await o.post(f"/customers/{cid}/dashboard", data={})).status == 403        # CSRF
+            r = await o.post(f"/customers/{cid}/dashboard", data={"csrf": csrf_of(page)})
+            url = _html.unescape(re.search(r'href="([^"]+)"', await r.text())[1])
+            path = "/" + url.split("/", 3)[3]
+            assert path.startswith("/as-customer?t=")
+            r = await p.get(path, allow_redirects=False)
+            assert r.status == 303 and r.headers["Location"].startswith("/dashboard")
+            assert "Alex clan" in await (await p.get("/dashboard")).text()                    # signed in as them
+            p.session.cookie_jar.clear()
+            assert (await p.get(path, allow_redirects=False)).status == 404                    # used up
+            assert cp.db.one("SELECT 1 FROM audit_log WHERE action = 'customer.dashboard_opened'")
+        finally:
+            await p.close()
+            await o.close()
+    asyncio.run(scenario())
