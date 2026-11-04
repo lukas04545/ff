@@ -77,11 +77,11 @@ NAV = (
     ("Customers", "violet", (("customers", "👤", "Customers", "/customers"), ("servers", "🛰️", "Servers", "/servers"),
                              ("domains", "🌐", "Domains", "/domains"))),
     ("Shop", "teal", (("plans", "🛒", "Packages", "/plans"),)),
-    ("Admin", "amber", (("settings", "⚙️", "Settings", "/settings"),)),
+    ("Admin", "amber", (("settings", "⚙️", "Settings", "/settings"), ("owners", "🛡️", "Owners", "/owners"))),
 )
-BARE = {"Owner login", "One-time login", "Link used", "Signed in", "Restarting"}
+BARE = {"Owner login", "One-time login", "Link used", "Signed in", "Restarting", "Owner invite", "Welcome"}
 ACTIVE = {"Owner": "overview", "System": "system", "Audit": "audit", "Customers": "customers", "Servers": "servers",
-          "Domains": "domains", "Packages": "plans", "Settings": "settings"}
+          "Domains": "domains", "Packages": "plans", "Settings": "settings", "Owners": "owners"}
 
 
 def esc(value) -> str:

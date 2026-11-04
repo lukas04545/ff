@@ -264,3 +264,53 @@ def test_customer_with_a_username_instead_of_an_email(cp):  # noqa: F811
         finally:
             await c.close()
     asyncio.run(scenario())
+
+
+def test_owner_invites_another_owner_and_removes_them(cp):  # noqa: F811
+    import asyncio
+    import re as _re
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from control_plane import websettings
+    from control_plane.web import build_owner
+    from tests.test_control_plane import csrf_of
+
+    async def changed():
+        pass
+
+    async def scenario():
+        boss = TestClient(TestServer(build_owner(cp.db, cp.box, cp.settings, changed)))
+        await boss.start_server()
+        mate = TestClient(boss.server)
+        try:
+            token = websettings.new_login_link(cp.db)
+            await boss.post(f"/once/{token}", data={"username": "boss", "password": "owner-password-123"})
+            page = await (await boss.get("/owners")).text()
+            assert "boss" in page and "Add a person" in page
+            t = csrf_of(page)
+            assert (await boss.post("/owners/invite", data={"username": "mate"})).status == 403    # CSRF
+            page = await (await boss.post("/owners/invite", data={"csrf": t, "username": "mate"})).text()
+            link = _re.search(r"(http://\S+/invite/[A-Za-z0-9_-]+)", page)[1]
+            path = link.split(str(boss.server.port), 1)[1]
+            assert "already invited" in await (await boss.post("/owners/invite", data={"csrf": t, "username": "Mate"})).text()
+            assert "Welcome, mate" in await (await mate.get(path)).text()
+            assert "16+" in await (await mate.post(path, data={"password": "short"})).text()
+            page = await (await mate.post(path, data={"password": "mates-password-1234"})).text()
+            assert "You're in, mate" in page and "2FA key" in page
+            assert (await mate.get("/settings", allow_redirects=False)).status == 200             # signed in
+            assert "doesn't work" in await (await mate.get(path)).text()                           # used up
+            assert cp.db.one("SELECT 1 FROM owners WHERE username = 'mate'")
+            # mate can't remove themselves; boss removes mate -> mate's session ends at once
+            page = await (await mate.get("/owners")).text()
+            assert "can't remove yourself" in await (await mate.post("/owners/mate/remove",
+                                                                     data={"csrf": csrf_of(page)})).text()
+            r = await boss.post("/owners/mate/remove", data={"csrf": t}, allow_redirects=False)
+            assert r.status == 303 and cp.db.one("SELECT 1 FROM owners WHERE username = 'mate'") is None
+            assert (await mate.get("/settings", allow_redirects=False)).status == 303
+            assert "last owner" in await (await boss.post("/owners/boss/remove", data={"csrf": t})).text() or \
+                "yourself" in await (await boss.post("/owners/boss/remove", data={"csrf": t})).text()
+        finally:
+            await mate.close()
+            await boss.close()
+    asyncio.run(scenario())
