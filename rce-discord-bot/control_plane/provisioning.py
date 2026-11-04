@@ -167,6 +167,28 @@ def panel_url(settings: Settings, server: dict) -> str:
     return f"{settings.url_for(server['slug'])}/{path}" if path else settings.url_for(server["slug"])
 
 
+def public_url(db: DB, settings: Settings, server_id: int, slug: str) -> str:
+    """Where the server's websites live: its own (active) domain, else <slug>.<the platform's domain>."""
+    own = db.one("SELECT hostname FROM domains WHERE server_id = ? AND status = 'active' ORDER BY created_at LIMIT 1",
+                 (server_id,))
+    return f"https://{own['hostname']}" if own else settings.url_for(slug)
+
+
+def sync_public_url(db: DB, settings: Settings, server_id: int, slug: str, home: Path) -> bool:
+    """The server's WEB_PUBLIC_URL follows public_url() – e.g. after the owner changed the platform's domain, a
+    server with its own domain keeps it, the others move. Returns True if it changed."""
+    from envfile import read_env
+    want = public_url(db, settings, server_id, slug)
+    try:
+        current = (read_env(Path(home) / ".env").get("WEB_PUBLIC_URL") or "").strip()
+    except OSError:
+        current = ""
+    if current == want or not (Path(home) / ".env").exists():
+        return False
+    write_env(Path(home), {"WEB_PUBLIC_URL": want})
+    return True
+
+
 def write_env(home: Path, values: dict[str, str]) -> None:
     """The tenant's .env: only non-secret, control-plane-owned values (the panel can't change them – SaaS lock).
     The bot token, database key and health token are NEVER written here – they're passed in the environment."""
@@ -284,7 +306,7 @@ def domains(db: DB, server_id: int) -> list[dict]:
                                   "created_at", (server_id,))]
 
 
-def add_domain(db: DB, settings: Settings, server_id: int, hostname: str, *, actor: str) -> str:
+def add_domain(db: DB, settings: Settings, server_id: int, hostname: str, *, actor: str, owner: bool = False) -> str:
     """The customer's own domain for this server's websites (needs the add-on). Cloudflare still has to accept it
     (cftunnel.request_custom_hostname) and the customer points a CNAME at sites.<domain>."""
     host = str(hostname or "").strip().lower().removeprefix("https://").removeprefix("http://").split("/")[0]
@@ -296,7 +318,7 @@ def add_domain(db: DB, settings: Settings, server_id: int, hostname: str, *, act
     s = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (server_id,))
     if s is None:
         raise ProvisionError("No such server.")
-    if not features.has(db, s["customer_id"], "custom_domain"):
+    if not owner and not features.has(db, s["customer_id"], "custom_domain"):
         raise ProvisionError("Your own domain is part of a bigger package (or an add-on) – upgrade to use it.")
     if len(domains(db, server_id)) >= MAX_DOMAINS:
         raise ProvisionError(f"Up to {MAX_DOMAINS} domains per server.")

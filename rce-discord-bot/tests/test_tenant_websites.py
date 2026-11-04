@@ -91,3 +91,24 @@ def test_a_server_waiting_for_its_bot_is_routed_to_its_panel(cp):  # noqa: F811
     assert kind == "tenant" and found["id"] == s["id"]                          # its panel, not "paused"
     provisioning.set_server_status(cp.db, s["id"], "suspended", actor="t")
     assert hostproxy.resolve(cp.db, cp.settings, f"{s['slug']}.kryvon3x.com")[0] == "paused"
+
+
+def test_server_address_follows_a_new_domain(cp):  # noqa: F811
+    from envfile import read_env
+    from pathlib import Path
+    cid, s = _server(cp, "Rusty")
+    home = Path(cp.db.one("SELECT home_dir FROM servers WHERE id = ?", (s["id"],))["home_dir"])
+    assert read_env(home / ".env")["WEB_PUBLIC_URL"].endswith(".kryvon3x.com")
+    cp.settings.base_domain = "consolecorrosion.org"
+    assert provisioning.sync_public_url(cp.db, cp.settings, s["id"], s["slug"], home)
+    assert read_env(home / ".env")["WEB_PUBLIC_URL"] == f"https://{s['slug']}.consolecorrosion.org"
+    assert not provisioning.sync_public_url(cp.db, cp.settings, s["id"], s["slug"], home)   # nothing twice
+    # the owner's own server keeps its old domain: an own domain (no add-on needed for the owner)
+    with pytest.raises(provisioning.ProvisionError):
+        provisioning.add_domain(cp.db, cp.settings, s["id"], "kryvon3x.com", actor="customer")     # add-on needed
+    provisioning.add_domain(cp.db, cp.settings, s["id"], "kryvon3x.com", actor="owner", owner=True)
+    cp.db.run("UPDATE domains SET status = 'active' WHERE hostname = 'kryvon3x.com'")
+    assert provisioning.sync_public_url(cp.db, cp.settings, s["id"], s["slug"], home)
+    assert read_env(home / ".env")["WEB_PUBLIC_URL"] == "https://kryvon3x.com"
+    assert hostproxy.resolve(cp.db, cp.settings, "kryvon3x.com")[1]["id"] == s["id"]
+    assert hostproxy.resolve(cp.db, cp.settings, f"{s['slug']}.consolecorrosion.org")[1]["id"] == s["id"]

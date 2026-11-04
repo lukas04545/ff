@@ -129,3 +129,31 @@ def test_cli_cloudflare_asks_for_the_token_and_prints_links(cp, capsys, monkeypa
     out = capsys.readouterr().out
     assert "systemctl restart rce-saas" in out and re.search(r"/once/[A-Za-z0-9_-]+", out)
     assert "https://portal.kryvon3x.com/management" in out
+
+
+def test_moving_the_platform_keeps_the_owners_server_on_its_old_domain(cp):  # noqa: F811
+    """The platform moves to consolecorrosion.org; your own server keeps kryvon3x.com (own domain in the same
+    Cloudflare account → through the same tunnel). A customer's domain in another account is left to SaaS."""
+    from support.cloudflare import CloudflareError
+    cp.settings.base_domain = "consolecorrosion.org"
+    cid = customer(cp)
+    paid(cp, cid)
+    s = provisioning.provision_server(cp.db, cp.box, cp.settings, cid, "Kryvon Empire", actor="t")
+    provisioning.add_domain(cp.db, cp.settings, s["id"], "kryvon3x.com", actor="owner", owner=True)
+    provisioning.add_domain(cp.db, cp.settings, s["id"], "www.someone-else.net", actor="owner", owner=True)
+
+    class Two(FakeCF):
+        async def find_zone(self, host):
+            if host.endswith("consolecorrosion.org"):
+                return {"id": "zc", "name": "consolecorrosion.org", "account": {"id": "acc"}}
+            if host.endswith("kryvon3x.com"):
+                return {"id": "zk", "name": "kryvon3x.com", "account": {"id": "acc"}}
+            raise CloudflareError("not in this account")
+    fake = Two()
+    out = asyncio.run(cftunnel.setup(cp.db, cp.box, cp.settings, "x" * 40, api=fake))
+    ingress = next(c[2] for c in fake.calls if c[0] == "PUT" and "configurations" in c[1])["config"]["ingress"]
+    hosts = [i.get("hostname") for i in ingress]
+    assert hosts[:3] == ["kryvon3x.com", "*.consolecorrosion.org", "consolecorrosion.org"]
+    assert out["dns"]["kryvon3x.com"] == "created" and "www.someone-else.net" not in out["dns"]
+    rows = {r["hostname"]: r["status"] for r in cp.db.q("SELECT hostname, status FROM domains")}
+    assert rows == {"kryvon3x.com": "active", "www.someone-else.net": "pending"}
