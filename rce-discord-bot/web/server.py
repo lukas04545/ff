@@ -486,6 +486,10 @@ class WebInterface:
         r.add_post("/saas/password", self.saas_password_set)
         if self.setup_mode:
             r.add_post("/api/setup/continue", self.setup_continue)
+            if PANEL_PATH.match(self.ws.panel_path or ""):
+                # the panel's secret address works in setup mode too (hosted: a server waiting for its bot)
+                r.add_get("/" + self.ws.panel_path, self._panel)
+                r.add_get("/" + self.ws.panel_path + "/", self._panel)
             return app
         r.add_post("/api/restart", self.restart)
         r.add_get("/api/update", self.update_info)

@@ -275,3 +275,23 @@ def test_required_intents():
     cfg.ticket_category_id, cfg.auto_role_id = 5, 7
     need = required_intents(cfg)
     assert need["message_content"] == ["Support tickets"] and need["members"] == ["Auto role"]
+
+
+def test_setup_mode_serves_the_panel_at_its_secret_address(tmp_path, monkeypatch):
+    """Hosted server waiting for its bot: setup mode, reached through its panel address (not only /admin locally)."""
+    from web.server import WebInterface, WebSettings
+    env = _env(tmp_path, RCON_HOST="1.2.3.4")
+
+    async def scenario():
+        w = WebInterface(None, web_settings=WebSettings(password="pw", panel_path="panel-abcdefgh12"),
+                         setup_error="Your bot isn't in your Discord yet", env_path=env,
+                         secret_path=tmp_path / "s.key")
+        c = await _client(w)
+        try:
+            for path in ("/panel-abcdefgh12", "/panel-abcdefgh12/"):
+                r = await c.get(path, headers={"X-Forwarded-For": "8.8.8.8"})
+                assert r.status == 200, path
+            assert (await c.get("/panel-wrong12345")).status == 404
+        finally:
+            await c.close()
+    asyncio.run(scenario())
