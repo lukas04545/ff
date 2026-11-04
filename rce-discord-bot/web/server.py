@@ -3500,6 +3500,30 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
         self._audit(f"Autokit #{rule_id} created ({kit}, {trigger})")
         return web.json_response({"ok": True, "id": rule_id})
 
+    def _bind_role(self, data: dict, raw: str, kit: str, kit_type: str) -> int | None:
+        """The role an emote bind needs: "role" = "" (everyone), "kit" (the kit's own Discord role) or a role id.
+        Without "role" (or required_role_id) the bind keeps the role it had."""
+        if "role" not in data:
+            if "required_role_id" in data:
+                return self._role_id(data)
+            from support import emote_binds as eb
+            old = eb.bound_to(self.bot.db, raw)
+            return old[0]["required_role_id"] if old else None
+        choice = str(data.get("role") or "").strip()
+        if not choice:
+            return None
+        if choice == "kit":
+            from permcheck import main_guild
+            kits, guild = self._cog("Kits"), main_guild(self.bot)
+            role = kits.kit_own_role(guild, kit, kit_type) if kits is not None and guild is not None else None
+            if role is None:
+                raise ApiError(f"The kit {kit} has no Discord role yet – pick a role, or create the kit's role "
+                               "first (Kit roles).")
+            return role.id
+        if not choice.isdigit():
+            raise ApiError("Invalid role.")
+        return int(choice)
+
     @staticmethod
     def _role_id(data: dict) -> int | None:
         raw = str(data.get("required_role_id") or "").strip()
@@ -3572,11 +3596,12 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
             if row is None:
                 raise ApiError("Custom kit not found.", 404)
             kit = row["name"]
+        role_id = self._bind_role(data, raw, kit, kit_type)
         try:
             rule_id, replaced = eb.bind(self.bot.db, raw, kit, kit_type=kit_type,
                                         cooldown_minutes=self._int(data, "cooldown", 0, 0, 525600),
                                         max_claims=self._int(data, "max_claims", 0, 0, 10000),
-                                        required_role_id=self._role_id(data), by="Web interface")
+                                        required_role_id=role_id, by="Web interface")
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         self._audit(f"Emote {eb.label(raw)} → kit {kit} (autokit #{rule_id})")

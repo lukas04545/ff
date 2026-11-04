@@ -554,3 +554,35 @@ def test_management_ai_creates_roles_and_channels(mgr):  # noqa: F811
     assert out["roles"] == ["VIP"] and out["categories"][0]["channels"] == ["announcements"]
     mgr.cog._creates[4242] = 25
     assert "At most" in asyncio.run(mgr.cog.run_tool("create_role", {"name": "More"}, msg))["error"]   # capped
+
+
+def test_each_emote_bind_decides_its_own_role(bot, monkeypatch):  # noqa: F811
+    from support import emote_binds as eb
+    hello = eb.find("Hello")[0]
+
+    async def scenario(c):
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+
+        async def put(**body):
+            return await c.put("/api/emote-binds", json=body, headers=H)
+
+        assert (await put(emote="thanks", kit="Starter", role="555")).status == 200           # role-only
+        assert (await put(emote="hello", kit="Raid", role="")).status == 200                  # everyone
+        rules = {r["phrase"]: r for r in bot.db.kit_rules(trigger="quickchat")}
+        assert rules[THANKS]["required_role_id"] == 555 and rules[hello]["required_role_id"] is None
+        assert (await put(emote="thanks", kit="Starter", cooldown=30)).status == 200          # role is kept
+        rule = eb.bound_to(bot.db, THANKS)[0]
+        assert rule["required_role_id"] == 555 and rule["cooldown_minutes"] == 30
+        assert (await put(emote="thanks", kit="Starter", role="")).status == 200              # back to everyone
+        assert eb.bound_to(bot.db, THANKS)[0]["required_role_id"] is None
+        assert (await put(emote="thanks", kit="Starter", role="abc")).status == 400
+        # "the kit's own role"
+        kits = NS(kit_own_role=lambda guild, kit, kit_type: NS(id=777) if kit == "Starter" else None)
+        real = bot.get_cog
+        monkeypatch.setattr(bot, "get_cog", lambda n: kits if n == "Kits" else real(n))
+        monkeypatch.setattr("permcheck.main_guild", lambda b: NS(id=1))
+        assert (await put(emote="thanks", kit="Starter", role="kit")).status == 200
+        assert eb.bound_to(bot.db, THANKS)[0]["required_role_id"] == 777
+        r = await put(emote="hello", kit="Raid", role="kit")
+        assert r.status == 400 and "no Discord role" in (await r.json())["error"]
+    run(bot, scenario)
