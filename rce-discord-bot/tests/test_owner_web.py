@@ -314,3 +314,38 @@ def test_owner_invites_another_owner_and_removes_them(cp):  # noqa: F811
             await mate.close()
             await boss.close()
     asyncio.run(scenario())
+
+
+def test_customers_without_a_server_show_and_get_one(cp):  # noqa: F811
+    import asyncio
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from control_plane import billing, websettings
+    from control_plane import provisioning as prov
+    from control_plane.web import build_owner
+    from tests.test_control_plane import csrf_of
+
+    cid = prov.create_customer(cp.db, "newbie", "a-long-password", allow_username=True)
+    billing.start_trial(cp.db, cid, 7, actor="test")
+
+    async def changed():
+        pass
+
+    async def scenario():
+        c = TestClient(TestServer(build_owner(cp.db, cp.box, cp.settings, changed)))
+        await c.start_server()
+        try:
+            token = websettings.new_login_link(cp.db)
+            await c.post(f"/once/{token}", data={"username": "boss", "password": "owner-password-123"})
+            for path in ("/", "/servers"):
+                page = await (await c.get(path)).text()
+                assert "without a server yet (1)" in page and "newbie" in page, path
+            r = await c.post(f"/customers/{cid}/server", data={"csrf": csrf_of(page), "name": "Newbie EU"})
+            page = await r.text()
+            assert "is created" in page and "Panel password" in page
+            assert cp.db.one("SELECT name FROM servers WHERE customer_id = ?", (cid,))["name"] == "Newbie EU"
+            assert "without a server yet" not in await (await c.get("/servers")).text()
+        finally:
+            await c.close()
+    asyncio.run(scenario())

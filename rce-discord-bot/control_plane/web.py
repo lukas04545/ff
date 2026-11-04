@@ -880,6 +880,47 @@ server run <code>python3 -m control_plane login-link</code> – it prints a one-
         return ("<table><tr><th>Server</th><th>Customer</th><th>State</th><th>Health</th><th></th></tr>"
                 + ("".join(out) or "<tr><td colspan=5>None.</td></tr>") + "</table>")
 
+    def serverless_card(request) -> str:
+        """Customers who have no server yet (e.g. just added by hand) – with a quick "create one for them"."""
+        rows = db.q("SELECT c.*, s.status AS sub_status, s.current_period_end AS trial_until, p.name AS plan_name "
+                    "FROM customers c LEFT JOIN subscriptions s ON s.customer_id = c.id LEFT JOIN plans p ON "
+                    "p.id = s.plan_id WHERE c.status != 'deleted' AND NOT EXISTS (SELECT 1 FROM servers v WHERE "
+                    "v.customer_id = c.id AND v.status != 'deleted') ORDER BY c.id DESC")
+        if not rows:
+            return ""
+        body = "".join(
+            f"<tr><td><a href={P}/customers/{c['id']}>#{c['id']} {esc(c['email'])}</a><br><span class=muted>"
+            f"{esc(c['name'])}</span></td><td>{pill(c['status'])}</td><td>{pill(c['sub_status'] or 'none')}"
+            f"{trial_note(c)}{'<br><span class=muted>' + esc(c['plan_name']) + '</span>' if c['plan_name'] else ''}"
+            f"</td><td>{new_server_form(request, c['id'])}</td></tr>" for c in rows)
+        return (f"<div class=card><h2>🕓 Customers without a server yet ({len(rows)})</h2><p class=muted>They signed "
+                f"up or you added them, but no server exists yet – they create it on their dashboard, or you do it "
+                f"here.</p><table><tr><th>Customer</th><th>Account</th><th>Package</th><th>Create a server for them"
+                f"</th></tr>{body}</table></div>")
+
+    def new_server_form(request, cid: int) -> str:
+        return (f"<form method=post action='{P}/customers/{cid}/server' class=inline>{hidden(request)}<input "
+                f"name=name required minlength=2 maxlength=60 placeholder='Server name' size=16> <button>Create "
+                f"server</button></form>")
+
+    async def customer_server(request):
+        who = owner(request)
+        data = await sess.form(request)
+        cid = int(request.match_info["id"])
+        try:
+            out = provisioning.provision_server(db, box, settings, cid, str(data.get("name", "")),
+                                                actor=f"owner:{who}")
+        except (slots.SlotError, provisioning.ProvisionError) as exc:
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/customers/{cid}>"
+                                        "Back</a></div>")
+        await changed()
+        return page("Server created", f"""<p><a href={P}/customers/{cid}>← customer</a></p><h1>✅ {esc(data.get('name'))}
+is created</h1><div class=card><p><b>Admin panel</b> (secret address):<br><a href='{esc(out['panel_url'])}'
+target=_blank>{esc(out['panel_url'])}</a></p><p><b>Panel password</b> (owner account) – shown only this once:<br>
+<code style="font-size:1.15rem">{esc(out['panel_password'])}</code></p><p class=muted>Send both to the customer – or
+open it yourself with 🔑 Open panel on the server's row. It still needs its Discord bot and the RCON details.</p>
+<a class=btn href={P}/customers/{cid}>Open the customer</a></div>""")
+
     def update_card(request) -> str:
         st = updates.status(db)
         cur, latest, last = st.get("current") or {}, st.get("latest") or {}, st.get("last_install") or {}
@@ -955,6 +996,7 @@ style="font-size:1rem">· {esc(who)}</span></h1>
 <div class=card><h2>Newest customers</h2><table><tr><th>Customer</th><th>Account</th><th>Package</th><th>Slots</th></tr>
 {customer_rows(list(customers)[-5:][::-1]) or '<tr><td colspan=4>None yet.</td></tr>'}</table>
 <a href={P}/customers>All customers →</a></div>
+{serverless_card(request)}
 <div class=card><h2>All servers</h2>{server_rows(request, "WHERE s.status != 'deleted'")}</div>""")
 
     def plan_options(empty: str = "") -> str:
@@ -1033,6 +1075,7 @@ Password: {esc(password)}</pre><p class=muted>Access: {esc(access_text)}.</p>
         owner(request)
         return page("Servers", f"""<div class=kicker>CUSTOMERS</div><h1>Servers</h1>
 <div class=card><h2>All servers</h2>{server_rows(request, "WHERE s.status != 'deleted'")}</div>
+{serverless_card(request)}
 <div class=card><h2>Removed (restorable until purged)</h2>{server_rows(request, "WHERE s.status = 'deleted'")}</div>""")
 
     async def system_page(request):
@@ -1094,7 +1137,8 @@ max=365 value=14 style="width:5rem"> days <button>{'Extend' if sub and sub['stat
 <form method=post action={P}/customers/{cid}/grant>{hidden(request)}<input name=slots type=number min=1 max=100 value=1>
 <input name=reason placeholder="Reason (e.g. paid add-on)"> <button>Unlock slots</button></form>
 <table><tr><th>Grant</th><th>Slots</th><th>Reason</th><th>Granted</th><th></th></tr>{grows or '<tr><td colspan=5>No extra slots.</td></tr>'}</table></div>
-<div class=card><h2>Servers</h2>{server_rows(request, "WHERE s.customer_id = ?", (cid,))}</div>""")
+<div class=card><h2>Servers</h2>{server_rows(request, "WHERE s.customer_id = ?", (cid,))}
+<p>{new_server_form(request, cid)}</p></div>""")
 
     async def act(request):
         who = owner(request)
@@ -1651,7 +1695,7 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.get("/customers", customers_page), web.get("/servers", servers_page),
                     web.get("/system", system_page),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
-                    web.post("/customers/new", customer_new), web.post(r"/customers/{id:\d+}/trial", customer_trial),
+                    web.post("/customers/new", customer_new), web.post(r"/customers/{id:\d+}/server", customer_server), web.post(r"/customers/{id:\d+}/trial", customer_trial),
                     web.post(r"/grants/{id:\d+}/revoke", act),
                     web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act),
                     web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai|custom_domain}/{on:on|off}", feature_action),
