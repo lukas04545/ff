@@ -1386,6 +1386,143 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         sess.issue(resp, f"o:{username}", request, path=P or "/")
         return resp
 
+    # ------------------------------------------------------------ More owners (invites)
+
+    INVITE_TTL = 48 * 3600
+
+    def _invites() -> dict:
+        row = db.one("SELECT value FROM settings_kv WHERE key = 'owner_invites'")
+        data = json.loads(row["value"]) if row else {}
+        now = time.time()
+        return {h: v for h, v in data.items() if v.get("until", 0) > now}
+
+    def _save_invites(data: dict) -> None:
+        db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('owner_invites', ?)", (json.dumps(data),))
+
+    def _invite(token: str) -> tuple[str, dict] | None:
+        key = hashlib.sha256(str(token or "").encode()).hexdigest()
+        found = _invites().get(key)
+        return (key, found) if found else None
+
+    def base_url(request) -> str:
+        proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() or request.scheme
+        return f"{proto}://{request.host}{P}"
+
+    async def owners_page(request, msg: str = ""):
+        who = owner(request)
+        rows = "".join(
+            f"<tr><td><b>{esc(o['username'])}</b>{' <span class=muted>(you)</span>' if o['username'] == who else ''}"
+            f"</td><td>{passkeys.count(o['username'])} passkey(s)</td><td>"
+            + ("" if o["username"] == who else button(request, f"/owners/{o['username']}/remove", "Remove", danger=True,
+                                                      confirm=f"Remove {o['username']} from the owner panel?"))
+            + "</td></tr>" for o in db.q("SELECT username FROM owners ORDER BY rowid"))
+        pending = "".join(
+            f"<tr><td>{esc(v['username'])}</td><td class=muted>by {esc(v.get('by', ''))}, until "
+            f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(v['until']))} UTC</td><td>"
+            + button(request, f"/owners/invites/{k[:16]}/cancel", "Cancel", danger=True) + "</td></tr>"
+            for k, v in _invites().items())
+        return page("Owners", f"""<div class=kicker>ADMIN</div><h1>Owners</h1>{msg}
+<p class=muted>Everyone here can do everything in the owner panel (customers, servers, billing, settings). Only add
+people you fully trust.</p>
+<div class=card><h2>People with access</h2><table>{rows}</table></div>
+<div class=card><h2>➕ Add a person</h2><p class=muted>You get a one-time link (48 hours). They open it, choose their
+password and add the 2FA key to their authenticator app – you never see their password.</p>
+<form method=post action={P}/owners/invite>{hidden(request)}<input name=username placeholder="Their username"
+required pattern="[A-Za-z0-9_.-]{{3,32}}"> <button>Create invite link</button></form>
+{f'<h3>Open invites</h3><table>{pending}</table>' if pending else ''}</div>""")
+
+    async def owners_get(request):
+        return await owners_page(request)
+
+    async def owner_invite(request):
+        who = owner(request)
+        data = await sess.form(request)
+        username = str(data.get("username") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
+            return await owners_page(request, "<p class=err>Username: 3–32 letters, digits, _ . or -</p>")
+        if db.one("SELECT 1 FROM owners WHERE lower(username) = ?", (username.lower(),)) or any(
+                v["username"].lower() == username.lower() for v in _invites().values()):
+            return await owners_page(request, "<p class=err>That username exists or is already invited.</p>")
+        token = secrets.token_urlsafe(32)
+        invites = _invites()
+        invites[hashlib.sha256(token.encode()).hexdigest()] = {"username": username, "by": who,
+                                                               "until": int(time.time()) + INVITE_TTL}
+        _save_invites(invites)
+        db.audit(f"owner:{who}", "owner.invite", detail=username)
+        link = f"{base_url(request)}/invite/{token}"
+        return await owners_page(request, f"""<div class=card><h2>✅ Invite for {esc(username)}</h2><p>Send them this
+link – it works once, for 48 hours (shown only now):</p><pre style="white-space:pre-wrap;user-select:all">{esc(link)}</pre>
+</div>""")
+
+    async def invite_cancel(request):
+        who = owner(request)
+        await sess.form(request)
+        invites = _invites()
+        for key in [k for k in invites if k.startswith(request.match_info["key"])]:
+            db.audit(f"owner:{who}", "owner.invite_cancel", detail=invites.pop(key)["username"])
+        _save_invites(invites)
+        raise go("/owners")
+
+    async def owner_remove(request):
+        who = owner(request)
+        await sess.form(request)
+        name = request.match_info["name"]
+        if name == who:
+            return await owners_page(request, "<p class=err>You can't remove yourself.</p>")
+        if db.one("SELECT 1 FROM owners WHERE username = ?", (name,)) is None:
+            raise go("/owners")
+        if (db.one("SELECT COUNT(*) AS n FROM owners")["n"] or 0) <= 1:
+            return await owners_page(request, "<p class=err>The last owner can't be removed.</p>")
+        db.run("DELETE FROM owners WHERE username = ?", (name,))
+        passkeys.remove_user(name)
+        db.audit(f"owner:{who}", "owner.remove", detail=name)
+        raise go("/owners")                              # their sessions end at once (owner() checks the table)
+
+    async def invite_page(request):
+        found = _invite(request.match_info["token"])
+        if found is None:
+            return page("Link used", "<div class=card><h1>This invite doesn't work (any more)</h1><p>An invite works "
+                                     "once and for 48 hours – ask for a new one.</p></div>")
+        return page("Owner invite", f"""<h1>Welcome, {esc(found[1]['username'])}</h1><div class=card>
+<p>You were invited to the owner panel by {esc(found[1].get('by', ''))}. Choose your password (16+ characters):</p>
+<form method=post action={P}/invite/{esc(request.match_info['token'])}><input name=password type=password
+minlength=16 required autocomplete=new-password placeholder="Password (16+ characters)"> <button>Create my login</button>
+</form><p class=muted>Next you get a 2FA key for your authenticator app.</p></div>""")
+
+    async def invite_use(request):
+        from web.totp import new_secret, otpauth_uri
+        from web.users import hash_password
+        _same_origin(request)
+        ip = _client_ip(request)
+        if once_limiter.hit("invite:" + ip) is not None:
+            raise web.HTTPTooManyRequests(text="Too many tries – wait a few minutes.")
+        data = dict(await request.post())
+        password = str(data.get("password") or "")
+        found = _invite(request.match_info["token"])
+        if found is None:
+            raise go("/login?e=Invite+expired+or+used")
+        if len(password) < 16:
+            return page("Owner invite", f"<div class=card><p class=err>The password needs 16+ characters.</p>"
+                                        f"<a href={P}/invite/{esc(request.match_info['token'])}>Back</a></div>")
+        key, inv = found
+        invites = _invites()
+        invites.pop(key, None)
+        _save_invites(invites)                           # used up, whatever happens next
+        username = inv["username"]
+        if db.one("SELECT 1 FROM owners WHERE lower(username) = ?", (username.lower(),)):
+            raise go("/login?e=That+username+exists+already")
+        totp = new_secret()
+        db.run("INSERT INTO owners (username, password_hash, totp_secret) VALUES (?, ?, ?)",
+               (username, hash_password(password), totp))
+        db.audit(f"owner:{username}", "owner.create", detail=f"invited by {inv.get('by', '')} from {ip}")
+        resp = page("Welcome", f"""<h1>✅ You're in, {esc(username)}</h1><div class=card><h2>Your 2FA key – add it now</h2>
+<p>Authenticator app → add account → enter key manually (time-based, 6 digits):</p><p><code
+style='font-size:1.2rem'>{esc(totp)}</code></p><p class=muted>Or open: <code>{esc(otpauth_uri(totp, username,
+'RCE SaaS owner'))}</code></p><p>You need it with your password for every normal login – or create a passkey under
+Settings.</p></div><p><a href={P}/>Open the owner panel</a></p>""")
+        sess.issue(resp, f"o:{username}", request, path=P or "/")
+        return resp
+
     def settings_form(request, msg: str = "") -> web.Response:
         insecure = request.headers.get("X-Forwarded-Proto", request.scheme) != "https" and request.host.split(":")[0] \
             not in ("127.0.0.1", "localhost")
@@ -1476,6 +1613,10 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.post("/passkeys", passkey_register), web.post(r"/passkeys/{cid:[A-Za-z0-9_-]{1,1400}}/remove",
                                                                       passkey_remove),
                     web.get("/once/{token}", once_page), web.post("/once/{token}", once_use),
+                    web.get("/owners", owners_get), web.post("/owners/invite", owner_invite),
+                    web.post(r"/owners/invites/{key:[0-9a-f]{16}}/cancel", invite_cancel),
+                    web.post(r"/owners/{name:[A-Za-z0-9_.-]{3,32}}/remove", owner_remove),
+                    web.get("/invite/{token}", invite_page), web.post("/invite/{token}", invite_use),
                     web.get("/settings", settings_page), web.post("/settings", settings_save),
                     web.post("/cloudflare", cloudflare_setup),
                     web.get("/plans", plans_page), web.post("/plans", plan_save),
