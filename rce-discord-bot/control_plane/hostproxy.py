@@ -47,7 +47,8 @@ def resolve(db: DB, settings: Settings, host: str) -> tuple[str, dict | None]:
         return "portal", None                       # any other name: the portal answers as usual
     if row is None:
         return "unknown", None
-    return ("tenant" if row["status"] == "active" else "paused"), dict(row)
+    # waiting for its bot ("awaiting_token") runs too: its control panel works before the bot is in a Discord
+    return ("tenant" if row["status"] in ("active", "awaiting_token") else "paused"), dict(row)
 
 
 def middleware(db: DB, settings: Settings):
