@@ -81,3 +81,13 @@ def test_website_themes():
         assert label and (key == "rust" or f"body.theme-{key}" in css)
     theme = next(s for s in PlayerWebsite.SETTINGS if s.key == "theme")
     assert set(theme.choices) == set(THEMES) and theme.default == "rust"
+
+
+def test_a_server_waiting_for_its_bot_is_routed_to_its_panel(cp):  # noqa: F811
+    cid, s = _server(cp, "Lgh")
+    row = cp.db.one("SELECT status FROM servers WHERE id = ?", (s["id"],))
+    assert row["status"] == "awaiting_token"                                   # not in a Discord yet
+    kind, found = hostproxy.resolve(cp.db, cp.settings, f"{s['slug']}.kryvon3x.com")
+    assert kind == "tenant" and found["id"] == s["id"]                          # its panel, not "paused"
+    provisioning.set_server_status(cp.db, s["id"], "suspended", actor="t")
+    assert hostproxy.resolve(cp.db, cp.settings, f"{s['slug']}.kryvon3x.com")[0] == "paused"

@@ -17,7 +17,7 @@ import shlex
 from control_plane.db import DB
 from control_plane.settings import Settings
 
-RUNNING = ("active",)
+RUNNING = ("active", "awaiting_token")          # awaiting_token: only its control panel runs (no bot yet)
 
 
 def render(db: DB, settings: Settings) -> str:
