@@ -2464,21 +2464,34 @@ function emoteBindsCard(data, reload) {
         const b = e.bind;
         const sel = kitOptions(b ? `${b.kit_type}:${b.kit}` : "");
         const cd = h("input", { type: "number", min: 0, value: b ? b.cooldown_minutes : 0, title: "Cooldown in minutes (0 = none)", class: "eb-cd" });
-        const save = async () => {
+        // who may use it: everyone, the kit's own Discord role, or any role
+        const role = h("select", { class: "eb-role", title: "Who gets the kit from this emote (linked players with that role)" },
+          h("option", { value: "", text: "👥 Everyone" }), h("option", { value: "kit", text: "🔑 Kit's own role" }),
+          ...(data.roles || []).map((r) => h("option", { value: String(r.id), text: "@" + r.name })));
+        role.value = b && b.required_role_id ? String(b.required_role_id) : "";
+        if (role.value && role.selectedIndex < 0) role.append(h("option", { value: role.value, text: "missing role" })), role.value = String(b.required_role_id);
+        role.disabled = !b;
+        const save = async (withRole = false) => {
           const v = sel.value;
           const kitType = v.split(":")[0], kit = v.slice(v.indexOf(":") + 1);
-          await act(() => api("/api/emote-binds", { method: "PUT", body: v
-            ? { emote: e.raw, kit, kit_type: kitType, cooldown: Number(cd.value) || 0 }
-            : { emote: e.raw, kit: "" } }), v ? `${e.text} → ${kit}` : `${e.text}: unbound`);
+          const body = v ? { emote: e.raw, kit, kit_type: kitType, cooldown: Number(cd.value) || 0 } : { emote: e.raw, kit: "" };
+          if (v && withRole) body.role = role.value;
+          const r = await act(() => api("/api/emote-binds", { method: "PUT", body }),
+            v ? `${e.text} → ${kit}` + (withRole ? (role.value ? " (role needed)" : " (everyone)") : "") : `${e.text}: unbound`).catch(() => null);
+          if (!r && withRole) { role.value = b && b.required_role_id ? String(b.required_role_id) : ""; return; }
           row.classList.toggle("bound", !!v);
           row.dataset.kit = kit.toLowerCase();
+          role.disabled = !v;
+          if (!v) role.value = "";
         };
-        sel.addEventListener("change", save);
-        cd.addEventListener("change", () => { if (sel.value) save(); });
+        sel.addEventListener("change", () => save(false));
+        cd.addEventListener("change", () => { if (sel.value) save(false); });
+        role.addEventListener("change", () => { if (sel.value) save(true); });
         if (e.reserved) { sel.disabled = true; cd.disabled = true; sel.title = `Used by ${e.reserved} – can't give kits`; }
         const row = h("div", { class: "eb-row" + (b ? " bound" : "") }, h("span", { class: "eb-text", text: "💬 " + e.text }),
           e.reserved ? h("span", { class: "pill warn", text: "🔒 " + e.reserved, title: "This emote is used by " + e.reserved + " – it can't give kits" }) : sel,
-          e.reserved ? null : h("label", { class: "muted eb-cdl", title: "Cooldown (minutes)" }, "⏱️", cd));
+          e.reserved ? null : h("label", { class: "muted eb-cdl", title: "Cooldown (minutes)" }, "⏱️", cd),
+          e.reserved ? null : role);
         row.dataset.text = (cat + " " + e.text).toLowerCase();
         row.dataset.kit = b ? b.kit.toLowerCase() : "";
         rows.push(row);
@@ -2495,7 +2508,7 @@ function emoteBindsCard(data, reload) {
     search.addEventListener("input", filter);
     onlyBound.addEventListener("change", filter);
     holder.replaceChildren(h("h2", { text: "🎭 Emote kits" }),
-      h("p", { class: "muted", text: `Pick a kit next to an emote – players get it when they use that emote (quick chat) in game. One emote gives one kit; picking another replaces it. ${res.binds} bound. Discord: /kit bind, /kit binds. More options (max per player, required role) in the autokit list below.` }),
+      h("p", { class: "muted", text: `Pick a kit next to an emote – players get it when they use that emote (quick chat) in game. One emote gives one kit; picking another replaces it. Next to each bind choose who gets it: 👥 everyone, or only linked players with a role (🔑 the kit's own role, or any role) – so some binds can be for everyone and others role-only. ${res.binds} bound. Discord: /kit bind, /kit binds.` }),
       h("div", { class: "row" }, search, h("label", { class: "muted" }, onlyBound, " only bound emotes"),
         h("button", { class: "small", text: "🎖️ Each kit only for its role", title: "Every emote bind gets its kit's own Discord role as required role (linked kit role, else the role named like the kit)", onclick: async () => {
           if (!confirm("Set every emote bind to need its kit's own Discord role?\n\nAfterwards ONLY players who linked their account (/customkit link) AND have that kit's role get it from the emote.")) return;
