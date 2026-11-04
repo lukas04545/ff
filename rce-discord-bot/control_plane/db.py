@@ -196,6 +196,10 @@ PRAGMA foreign_keys = ON;""")
             self.conn.execute("ALTER TABLE subscriptions ADD COLUMN plan_id INTEGER")
         if "manager_ai" not in cols:   # the management AI in this server's Discord – only on servers the owner chose
             self.conn.execute("ALTER TABLE servers ADD COLUMN manager_ai INTEGER NOT NULL DEFAULT 0")
+        if self.conn.execute("SELECT 1 FROM settings_kv WHERE key = 'manager_ai_for_all'").fetchone() is None:
+            # every customer gets the management AI in their own Discord (the owner can still switch it off)
+            self.conn.execute("UPDATE servers SET manager_ai = 1")
+            self.conn.execute("INSERT INTO settings_kv (key, value) VALUES ('manager_ai_for_all', '1')")
         # One Discord server can be bound to only one shared-bot tenant server
         self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_one_guild_per_shared_server ON servers (guild_id) "
                           "WHERE bot_mode = 'shared' AND status != 'deleted' AND guild_id IS NOT NULL")

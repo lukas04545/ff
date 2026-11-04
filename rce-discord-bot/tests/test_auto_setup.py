@@ -17,8 +17,11 @@ class Role:
 class Chan:
     def __init__(self, guild, name, category=None, overwrites=None):
         self.id, self.name, self.category, self.overwrites = next(ids), name, category, overwrites
-        self.text_channels = []
+        self.text_channels, self.sent = [], []
         guild.all[self.id] = self
+
+    async def send(self, text):
+        self.sent.append(text)
 
 
 class FakeGuild:
@@ -38,7 +41,7 @@ class FakeGuild:
         self.categories.append(c)
         return c
 
-    async def create_text_channel(self, name, category=None, overwrites=None, reason=None):
+    async def create_text_channel(self, name, category=None, overwrites=None, reason=None, topic=None):
         ch = Chan(self, name, category, overwrites)
         category.text_channels.append(ch)
         return ch
@@ -54,7 +57,8 @@ def test_missing_channels_are_created_and_saved(pb, monkeypatch, tmp_path):  # n
     pb.bot.config = replace(pb.bot.config, server_display_name="Rusty Outpost", chat_channel_id=keep.id,
                             admin_role_ids=frozenset({5}), status_channel_id=None, events_channel_id=None,
                             killfeed_channel_id=None, admin_log_channel_id=None, console_log_channel_id=None,
-                            ticket_log_channel_id=None, ticket_category_id=None)
+                            ticket_log_channel_id=None, ticket_category_id=None,
+                            manager_ai_channel_ids=frozenset())
     applied = []
 
     async def apply_config(new):
@@ -75,6 +79,9 @@ def test_missing_channels_are_created_and_saved(pb, monkeypatch, tmp_path):  # n
     status = guild.categories[0].text_channels[0]
     assert status.overwrites[guild.default_role].send_messages is False
     assert applied                                                                # applied without a restart
+    ai = next(c for c in staff.text_channels if c.name == "🧠・bot-setup")         # the management AI's channel
+    assert env["MANAGER_AI_CHANNEL_IDS"] == str(ai.id) and "Management AI" in ai.sent[0]
+    assert ai.overwrites[guild.default_role].view_channel is False
 
 
 def test_default_knowledge_only_when_empty(pb, tmp_path):  # noqa: F811

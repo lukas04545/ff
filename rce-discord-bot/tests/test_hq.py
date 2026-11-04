@@ -253,7 +253,7 @@ def test_sync_builds_private_channels_and_panels_once(world):
     srv = ch.sent[1]
     assert srv.embed.title == f"🖥️ #{w.sid} Main" and "/panel-" in srv.embed.url and "/admin" not in srv.embed.url
     ids_ = [c.custom_id for c in srv.view.children]
-    assert f"hq:s:restart:{w.sid}" in ids_ and f"hq:m:on:{w.sid}" in ids_
+    assert f"hq:s:restart:{w.sid}" in ids_ and f"hq:m:off:{w.sid}" in ids_       # the AI is on by default
     assert all(m.edits == 0 for m in ch.sent)
 
 
