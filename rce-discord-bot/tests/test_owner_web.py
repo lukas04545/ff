@@ -229,3 +229,38 @@ def test_owner_creates_a_customer_with_a_free_trial(cp, monkeypatch):  # noqa: F
         finally:
             await c.close()
     asyncio.run(scenario())
+
+
+def test_customer_with_a_username_instead_of_an_email(cp):  # noqa: F811
+    import asyncio
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from control_plane import provisioning as prov
+    from control_plane.web import build_portal
+
+    with pytest.raises(prov.ProvisionError):
+        prov.create_customer(cp.db, "kryvonfriend", "a-long-password")               # the public sign-up: e-mail
+    for bad in ("ab", "has space", "x" * 40):
+        with pytest.raises(prov.ProvisionError):
+            prov.create_customer(cp.db, bad, "a-long-password", allow_username=True)
+    cid = prov.create_customer(cp.db, "KryvonFriend", "a-long-password", allow_username=True, actor="owner:boss")
+    assert cp.db.one("SELECT email FROM customers WHERE id = ?", (cid,))["email"] == "kryvonfriend"
+
+    async def changed():
+        pass
+
+    async def scenario():
+        c = TestClient(TestServer(build_portal(cp.db, cp.box, cp.settings, changed)))
+        await c.start_server()
+        try:
+            assert "E-mail or username" in await (await c.get("/login")).text()
+            r = await c.post("/login", data={"email": "kryvonfriend", "password": "wrong-password"},
+                             allow_redirects=False)
+            assert "Wrong" in r.headers["Location"]
+            r = await c.post("/login", data={"email": "KryvonFriend", "password": "a-long-password"},
+                             allow_redirects=False)
+            assert r.headers["Location"] == "/dashboard"
+        finally:
+            await c.close()
+    asyncio.run(scenario())
