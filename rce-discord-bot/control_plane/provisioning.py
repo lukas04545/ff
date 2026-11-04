@@ -362,7 +362,11 @@ def environment(db: DB, box: SecretBox, settings: Settings, server_id: int) -> d
         "SAAS_HEALTH_TOKEN": get_secret(db, box, server_id, "health_token") or "",
         "WEB_PORT": str(s["web_port"]), "WEB_HOST": "127.0.0.1",
     })
-    if s["bot_mode"] == "custom":
+    if not slots.bot_ready(db, server_id):
+        # no bot yet (no token / not added to a Discord): only the control panel runs – no Discord connection at
+        # all. Once the bot is set up the environment changes and the supervisor restarts it with the bot.
+        env.update({"DISCORD_TOKEN": "", "SAAS_SHARED_BOT": "0", "SAAS_WAITING_DISCORD": "1"})
+    elif s["bot_mode"] == "custom":
         env.update({"DISCORD_TOKEN": get_secret(db, box, server_id, "discord_token") or "", "SAAS_SHARED_BOT": "0"})
     else:                                   # the platform's bot, fenced to this server's one Discord (saas_fence.py)
         env.update({"DISCORD_TOKEN": settings.shared_bot_token, "SAAS_SHARED_BOT": "1",
@@ -440,13 +444,15 @@ def purge_server(db: DB, settings: Settings, server_id: int, *, actor: str) -> N
 
 
 def runnable(db: DB, server_id: int, settings: Settings | None = None) -> bool:
-    """Should this server's process run right now? (server active + customer active + paid or in grace + its bot
-    set up; a shared-bot server also needs the platform's shared bot token configured)"""
+    """Should this server's process run right now? (server active – or still waiting for its bot: then only its
+    control panel runs, without Discord – + customer active + paid or in grace; a shared-bot server also needs the
+    platform's shared bot token configured)"""
     from control_plane.billing import subscription_ok
     s = db.one("SELECT s.status, s.customer_id, s.bot_mode, c.status AS cstatus FROM servers s JOIN customers c "
                "ON c.id = s.customer_id WHERE s.id = ?", (server_id,))
-    if s is None or s["status"] != "active" or s["cstatus"] != "active" or not slots.bot_ready(db, server_id):
+    if s is None or s["status"] not in ("active", "awaiting_token") or s["cstatus"] != "active":
         return False
-    if s["bot_mode"] == "shared" and settings is not None and not settings.shared_bot_token:
+    ready = slots.bot_ready(db, server_id)
+    if ready and s["bot_mode"] == "shared" and settings is not None and not settings.shared_bot_token:
         return False
     return subscription_ok(db, s["customer_id"])

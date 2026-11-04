@@ -45,7 +45,8 @@ def test_tools_only_ever_touch_the_linked_customer(cp):  # noqa: F811
     assert out["ok"] and out["running"] and t.customer == mine
     sid = run(t.run("create_server", {"name": "My EU"}))["server_id"]
     assert "discord.com/oauth2" in run(t.run("bot_invite_link", {}))["invite"]
-    assert not run(t.run("login_link", {"server_id": sid}))["ok"]                         # not set up yet
+    early = run(t.run("login_link", {"server_id": sid}))                                # the panel runs already
+    assert early["ok"] and early["link"].endswith(f"T{sid}")
     assert "isn't one of yours" in run(t.run("connect_discord", {"server_id": theirs["id"],
                                                                   "discord_server_id": "4242"}))["error"]
     assert "isn't one of yours" in run(t.run("login_link", {"server_id": theirs["id"]}))["error"]

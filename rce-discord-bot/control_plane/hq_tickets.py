@@ -158,8 +158,8 @@ TOOLS = [
                                                         "discord_server_id": {"type": "string"}},
                        "required": ["server_id", "discord_server_id"]}}},
     {"type": "function", "function": {"name": "login_link", "description":
-        "A one-time link (48 h) where they choose the password of a server's control panel and sign in. Only for "
-        "a server that's set up (connected to their Discord).",
+        "A one-time link (48 h) where they choose the password of a server's control panel and sign in. Works "
+        "before the bot is in their Discord too (the panel runs already).",
         "parameters": {"type": "object", "properties": {"server_id": {"type": "integer"}}, "required": ["server_id"]}}},
 ]
 
@@ -176,7 +176,8 @@ def system_prompt(settings: Settings, linked: bool) -> str:
         f"{settings.portal_url}/dashboard – no account yet? they sign up at {settings.portal_url}/signup), "
         "2) a package or trial must be active, 3) create a server, 4) add the bot to their Discord (bot_invite_link) "
         "and connect it with their Discord server id (Discord: right-click the server → Copy Server ID; needs "
-        "Developer Mode), 5) give them their one-time login link, then they set the RCON details in the panel.\n"
+        "Developer Mode), 5) give them their one-time login link, then they set the RCON details in the panel. "
+        "The panel works right after creating the server – they can get the login link before step 4 too.\n"
         + ("Their Discord account is linked." if linked else "Their Discord account is NOT linked yet – start there.")
         + " Staff can join the ticket for anything you can't do."
     )
@@ -254,10 +255,8 @@ class TicketTools:
                 return {"ok": True, "connected": gid, "next": "It starts in a moment; then give the login link."}
             if name == "login_link":
                 s = self._server(cid, args.get("server_id"))
-                ready = s["status"] == "active" and (s["bot_mode"] == "custom" or (s["bot_mode"] == "shared"
-                                                                                  and s["guild_id"]))
-                if not ready:
-                    return {"ok": False, "error": "Set this server up first (connect it to their Discord)."}
+                if s["status"] not in ("active", "awaiting_token"):
+                    return {"ok": False, "error": f"This server is {s['status']} – staff will help."}
                 link = self.password_link(s["id"], self.actor) if self.password_link else None
                 if not link:
                     return {"ok": False, "error": "The server is still starting – try again in a minute."}
