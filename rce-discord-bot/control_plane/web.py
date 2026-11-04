@@ -111,6 +111,33 @@ class Sessions:
         return data
 
 
+OWNER_VIEW_TTL = 60
+
+
+def owner_view_token(db: DB, customer_id: int, owner: str) -> str:
+    """The owner panel → a one-time token (60 s) that signs the owner into this customer's shop dashboard."""
+    token = secrets.token_urlsafe(32)
+    row = db.one("SELECT value FROM settings_kv WHERE key = 'owner_view'")
+    data = json.loads(row["value"]) if row else {}
+    now = time.time()
+    data = {h: v for h, v in data.items() if v.get("until", 0) > now}
+    data[hashlib.sha256(token.encode()).hexdigest()] = {"cid": int(customer_id), "by": owner,
+                                                        "until": int(now) + OWNER_VIEW_TTL}
+    db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('owner_view', ?)", (json.dumps(data),))
+    return token
+
+
+def use_owner_view_token(db: DB, token: str) -> dict | None:
+    """Portal side: {"cid", "by"} once, if the token is fresh – it's used up either way."""
+    row = db.one("SELECT value FROM settings_kv WHERE key = 'owner_view'")
+    if not row or not token:
+        return None
+    data = json.loads(row["value"])
+    found = data.pop(hashlib.sha256(str(token).encode()).hexdigest(), None)
+    db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('owner_view', ?)", (json.dumps(data),))
+    return found if found and found.get("until", 0) >= time.time() else None
+
+
 def password_link(db: DB, box: SecretBox, settings: Settings, server_id: int, made_by: str) -> str | None:
     """A one-time link (48 h) where the customer chooses their server panel's owner password – first login or
     forgotten. None when the server has no running setup yet."""
@@ -185,6 +212,20 @@ def build_portal(db: DB, box: SecretBox, settings: Settings, changed: Callable[[
         if row is None:
             raise web.HTTPNotFound(text="No such server.")
         return dict(row)
+
+    async def owner_view(request):
+        """The platform owner opens this customer's dashboard from the owner panel (one-time token)."""
+        found = use_owner_view_token(db, request.query.get("t", ""))
+        if found is None or db.one("SELECT 1 FROM customers WHERE id = ? AND status != 'deleted'",
+                                   (found["cid"],)) is None:
+            raise web.HTTPNotFound(text="This link expired or was used – open the dashboard again from the owner "
+                                        "panel.")
+        db.audit(f"owner:{found['by']}", "customer.dashboard_opened", customer_id=found["cid"],
+                 detail=_client_ip(request))
+        resp = web.HTTPSeeOther("/dashboard?m=" + quote_plus(f"Signed in as this customer by the owner "
+                                                             f"({found['by']})."))
+        sess.issue(resp, f"c{found['cid']}", request)
+        raise resp
 
     async def customer_password_link(request):
         c = need(request)
@@ -686,7 +727,8 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                     web.post("/stripe/webhook", stripe_webhook), web.get("/paused/{slug}", paused),
                     web.get(r"/servers/{sid:\d+}/discord", discord_install), web.get("/discord/callback", discord_callback),
                     web.post(r"/servers/{sid:\d+}/shared", use_shared),
-                    web.post(r"/servers/{sid:\d+}/password-link", customer_password_link)])
+                    web.post(r"/servers/{sid:\d+}/password-link", customer_password_link),
+                    web.get("/as-customer", owner_view)])
     return app
 
 
@@ -1171,7 +1213,8 @@ Password: {esc(password)}</pre><p class=muted>Access: {esc(access_text)}.</p>
 {pill(sub['status'] if sub else 'none')} {esc(sub['stripe_subscription_id'] or '') if sub else ''}
 {('· grace until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['grace_until']))) if sub and sub['grace_until'] else ''}
 {('· trial until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['current_period_end'])) + ' UTC') if sub and sub['status'] == 'trial' and sub['current_period_end'] else ''}
-<br><br>{acct} {comp} {button(request, f'/customers/{cid}/remove', 'Remove customer', danger=True,
+<br><br><form method=post action={P}/customers/{cid}/dashboard class=inline target=_blank>{hidden(request)}<button>
+🔑 Open dashboard</button></form> {acct} {comp} {button(request, f'/customers/{cid}/remove', 'Remove customer', danger=True,
                                        confirm='Remove the customer and all their servers?')}
 <form method=post action={P}/customers/{cid}/trial class=inline>{hidden(request)}<input name=days type=number min=1
 max=365 value=14 style="width:5rem"> days <button>{'Extend' if sub and sub['status'] == 'trial' else 'Start'} free trial
@@ -1313,6 +1356,21 @@ price makes a new Stripe price; current subscribers keep theirs. Packages are ne
             return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
         await changed()
         raise go(f"/customers/{cid}")
+
+    async def open_dashboard(request):
+        """Signs the owner into this customer's shop dashboard (a one-time, 60-second link)."""
+        who = owner(request)
+        await sess.form(request)
+        cid = int(request.match_info["id"])
+        if db.one("SELECT 1 FROM customers WHERE id = ? AND status != 'deleted'", (cid,)) is None:
+            raise web.HTTPNotFound()
+        url = f"{settings.portal_url}/as-customer?t={owner_view_token(db, cid, who)}"
+        # a page with a link, not a redirect: the panel's form-action CSP doesn't allow posting on to another site
+        return web.Response(text=f'<!doctype html><meta charset=utf-8><meta http-equiv="refresh" content="0;url='
+                                 f'{esc(url)}"><title>Opening …</title><p>Opening the dashboard … <a href="'
+                                 f'{esc(url)}">continue</a></p>', content_type="text/html",
+                            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                                     "Content-Security-Policy": "default-src 'none'"})
 
     async def owner_password_link(request):
         who = owner(request)
@@ -1772,7 +1830,8 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.post(r"/servers/{id:\d+}/token", set_token),
                     web.post(r"/servers/{id:\d+}/shared-bot", shared_bot),
                     web.post(r"/servers/{id:\d+}/open", open_panel),
-                    web.post(r"/servers/{id:\d+}/password-link", owner_password_link)])
+                    web.post(r"/servers/{id:\d+}/password-link", owner_password_link),
+                    web.post(r"/customers/{id:\d+}/dashboard", open_dashboard)])
     return app
 
 
