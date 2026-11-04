@@ -113,7 +113,20 @@ def health_ok(header: str) -> bool:
 # The owner panel makes a one-time sign-in link: "<payload>.<HMAC>", keyed with a key derived from this server's
 # SAAS_MANAGE_TOKEN (only the control plane and this process know it). Valid for OWNER_LOGIN_TTL seconds, once.
 OWNER_LOGIN_TTL = 60
+PASSWORD_LINK_TTL = 48 * 3600          # "choose your panel password" links (customer: first login / forgot it)
 _used_logins: dict[str, float] = {}
+
+
+def _memory_used(nonce: str, until: float) -> bool:
+    """Records a used link in memory. False = it was used before."""
+    import time
+    now = time.time()
+    for n in [n for n, u in _used_logins.items() if u < now]:
+        _used_logins.pop(n, None)
+    if nonce in _used_logins:
+        return False
+    _used_logins[nonce] = until
+    return True
 
 
 def _login_key(manage_token: str) -> bytes:
@@ -121,22 +134,27 @@ def _login_key(manage_token: str) -> bytes:
     return hashlib.sha256(f"{manage_token}:owner-login".encode()).digest()
 
 
-def owner_login_token(manage_token: str, owner: str, *, now: float | None = None) -> str:
-    """Control plane side: a one-time sign-in token for this server's panel."""
+def owner_login_token(manage_token: str, owner: str, *, now: float | None = None, purpose: str = "login",
+                      ttl: int | None = None) -> str:
+    """Control plane side: a one-time token for this server's panel – purpose "login" (the owner signs in,
+    OWNER_LOGIN_TTL) or "password" (the customer chooses a new panel password, PASSWORD_LINK_TTL)."""
     import base64
     import hashlib
     import json
     import secrets
     import time
     payload = base64.urlsafe_b64encode(json.dumps({
-        "o": owner[:64], "e": int((now or time.time()) + OWNER_LOGIN_TTL), "n": secrets.token_urlsafe(12),
+        "o": owner[:64], "p": purpose, "n": secrets.token_urlsafe(12),
+        "e": int((now or time.time()) + (ttl or (PASSWORD_LINK_TTL if purpose == "password" else OWNER_LOGIN_TTL))),
     }).encode()).decode().rstrip("=")
     sig = hmac.new(_login_key(manage_token), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
 
-def check_owner_login(token: str, *, now: float | None = None) -> str | None:
-    """Tenant side: the platform owner's name if the token is valid, fresh and unused – else None."""
+def check_owner_login(token: str, *, now: float | None = None, purpose: str = "login", consume: bool = True,
+                      used=None) -> str | None:
+    """Tenant side: who made the token if it's valid, fresh, for this purpose and unused – else None.
+    consume=False only looks (the form page); used(nonce, until) -> bool records it (default: in memory)."""
     import base64
     import hashlib
     import json
@@ -153,12 +171,14 @@ def check_owner_login(token: str, *, now: float | None = None) -> str | None:
     except (ValueError, TypeError):
         return None
     now = now or time.time()
-    if not isinstance(data, dict) or int(data.get("e") or 0) < now:
+    if not isinstance(data, dict) or int(data.get("e") or 0) < now or data.get("p", "login") != purpose:
         return None
-    for nonce in [n for n, until in _used_logins.items() if until < now]:
-        _used_logins.pop(nonce, None)
     nonce = str(data.get("n") or "")
-    if not nonce or nonce in _used_logins:
+    if not nonce:
         return None
-    _used_logins[nonce] = now + OWNER_LOGIN_TTL + 5
+    record = used or _memory_used
+    if consume and not record(nonce, int(data["e"]) + 5):
+        return None
+    if not consume and (used is None and nonce in _used_logins):
+        return None
     return str(data.get("o") or "owner")[:64]

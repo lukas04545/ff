@@ -16,6 +16,7 @@ import asyncio
 import contextvars
 import hashlib
 import hmac
+import html
 import json
 import logging
 import os
@@ -358,6 +359,7 @@ class WebInterface:
         self.users = UserStore(users_path or secret_path.parent / "web_users.json")
         self.two_factor = TwoFactorStore(secret_path.parent / "web_2fa.json")
         self.passkeys = PasskeyStore(secret_path.parent / "web_passkeys.json")
+        self._secret_dir = secret_path.parent
         self._passkey_challenges = Challenges()
         self.honeypot = HoneypotLog(secret_path.parent / "web_honeypot.json")
         self.system = SystemMonitor()                            # CPU / memory for the System page
@@ -480,6 +482,8 @@ class WebInterface:
         r.add_get("/saas/health", self.saas_health)              # hosted mode: also while in setup mode
         r.add_post("/saas/manage", self.saas_manage)
         r.add_get("/saas/login", self.saas_owner_login)          # hosted: the platform owner opens this panel
+        r.add_get("/saas/password", self.saas_password_page)     # hosted: one-time "choose your panel password"
+        r.add_post("/saas/password", self.saas_password_set)
         if self.setup_mode:
             r.add_post("/api/setup/continue", self.setup_continue)
             return app
@@ -2063,6 +2067,103 @@ class WebInterface:
         log.info("Platform owner %s signed in from the owner panel (%s)", who, self._client_ip(request))
         if self.bot is not None:
             self.bot.audit(f"🛡️ Web interface: the platform owner (**{who}**) signed in from the owner panel")
+        return resp
+
+    # One-time "choose your panel password" links (from the owner panel or the customer's dashboard)
+
+    def _used_links_path(self) -> Path:
+        return self._secret_dir / "saas_used_links.json"
+
+    def _link_used(self, nonce: str, until: float) -> bool:
+        """Records a used password link on disk (a restart mustn't make it work again). False = used before."""
+        path, now = self._used_links_path(), time.time()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        data = {n: u for n, u in (data.items() if isinstance(data, dict) else []) if u > now}
+        if nonce in data:
+            return False
+        data[nonce] = until
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(tmp, path)
+        return True
+
+    def _link_seen(self, token: str) -> bool:
+        import base64
+        try:
+            payload = token.rsplit(".", 1)[0]
+            nonce = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))).get("n", "")
+            return nonce in json.loads(self._used_links_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError, AttributeError, TypeError):
+            return False
+
+    @staticmethod
+    def _plain_page(title: str, body: str, status: int = 200) -> web.Response:
+        return web.Response(
+            text=f"<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport "
+                 f"content='width=device-width,initial-scale=1'><title>{html.escape(title)}</title><style>"
+                 "body{font-family:system-ui,sans-serif;background:#0b0e1a;color:#eef0fb;display:grid;place-items:center;"
+                 "min-height:100vh;margin:0}.card{background:#161a2e;border:1px solid #2a3058;border-radius:16px;"
+                 "padding:28px;max-width:420px;width:calc(100% - 32px)}input{width:100%;box-sizing:border-box;"
+                 "padding:10px;margin:6px 0 12px;border-radius:10px;border:1px solid #2a3058;background:#10142a;"
+                 "color:#eef0fb}button{width:100%;padding:11px;border:0;border-radius:10px;color:#fff;font-weight:700;"
+                 "background:linear-gradient(120deg,#ff8a3d,#ff4d8d,#a855f7)}.err{color:#fd7d97}.muted{color:#a2a8c8}"
+                 f"</style></head><body><div class=card>{body}</div></body></html>", status=status,
+            content_type="text/html", headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                                               "Content-Security-Policy": "default-src 'none'; style-src "
+                                               "'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"})
+
+    def _password_form(self, token: str, error: str = "") -> web.Response:
+        name = (self.bot.config.server_display_name if self.bot is not None else "") or "your server"
+        return self._plain_page("Choose your password", f"""<h2>🔑 Choose your panel password</h2>
+<p class=muted>For the control panel of <b>{html.escape(name)}</b> – you sign in with the username <b>owner</b> and
+this password. This link works once.</p>{f'<p class=err>{html.escape(error)}</p>' if error else ''}
+<form method=post action="/saas/password"><input type=hidden name=t value="{html.escape(token)}">
+<label>New password (10+ characters)<input name=password type=password minlength=10 required
+autocomplete=new-password></label><label>Once more<input name=confirm type=password minlength=10 required
+autocomplete=new-password></label><button>Save and sign in</button></form>""")
+
+    async def saas_password_page(self, request: web.Request) -> web.Response:
+        import saas_mode
+        token = request.query.get("t", "")
+        if saas_mode.check_owner_login(token, purpose="password", consume=False) is None or self._link_seen(token):
+            return self._plain_page("Link expired", "<h2>This link doesn't work (any more)</h2><p class=muted>A "
+                                                    "password link works once and for 48 hours – ask for a new one "
+                                                    "(or make one on your dashboard).</p>", status=404)
+        return self._password_form(token)
+
+    async def saas_password_set(self, request: web.Request) -> web.Response:
+        import saas_mode
+        ip = self._client_ip(request)
+        self._rate_limit("pwlink:" + ip)
+        data = await request.post()
+        token, password = str(data.get("t") or ""), str(data.get("password") or "")
+        if saas_mode.check_owner_login(token, purpose="password", consume=False) is None or self._link_seen(token):
+            return self._plain_page("Link expired", "<h2>This link doesn't work (any more)</h2>", status=404)
+        if len(password) < 10 or len(password) > 256:
+            return self._password_form(token, "The password needs 10 to 256 characters.")
+        if password != str(data.get("confirm") or ""):
+            return self._password_form(token, "The two passwords aren't the same.")
+        who = saas_mode.check_owner_login(token, purpose="password", used=self._link_used)
+        if who is None:
+            return self._plain_page("Link expired", "<h2>This link doesn't work (any more)</h2>", status=404)
+        hashed = await asyncio.to_thread(hash_password, password)
+        update_env(self.env_path, {"WEB_PASSWORD": hashed}, template=ENV_TEMPLATE)
+        self.ws.password = self.password_hash = hashed           # old sessions end (their signature used the old one)
+        self.password = None
+        target = self.panel_path + "/"
+        resp = self._plain_page("Password saved", f'<h2>✅ Password saved</h2><p>Opening your panel … <a href='
+                                                  f'"{target}">continue</a></p><meta http-equiv="refresh" '
+                                                  f'content="1;url={target}">')
+        self._set_session_cookie(resp, OWNER, request)
+        resp.set_cookie(GATE_COOKIE, self._gate_value(), max_age=GATE_TTL, httponly=True, samesite="Strict",
+                        secure=self._is_https(request), path="/")
+        log.info("Panel password set with a one-time link (made by %s) from %s", who, ip)
+        if self.bot is not None:
+            self.bot.audit(f"🔑 Web interface: the owner password was set with a one-time link (made by {who}) "
+                           f"from {ip}")
         return resp
 
     async def saas_health(self, request: web.Request) -> web.Response:
