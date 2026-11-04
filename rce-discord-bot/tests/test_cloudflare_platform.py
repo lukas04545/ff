@@ -157,3 +157,21 @@ def test_moving_the_platform_keeps_the_owners_server_on_its_old_domain(cp):  # n
     assert out["dns"]["kryvon3x.com"] == "created" and "www.someone-else.net" not in out["dns"]
     rows = {r["hostname"]: r["status"] for r in cp.db.q("SELECT hostname, status FROM domains")}
     assert rows == {"kryvon3x.com": "active", "www.someone-else.net": "pending"}
+
+
+def test_own_account_domains_are_found_for_the_tunnel(cp):  # noqa: F811
+    from support.cloudflare import CloudflareError
+    cp.settings.base_domain = "consolecorrosion.org"
+    cid = customer(cp)
+    s = provisioning.provision_server(cp.db, cp.box, cp.settings, cid, "Kryvon Empire", actor="t")
+    provisioning.add_domain(cp.db, cp.settings, s["id"], "kryvon-empire.kryvon3x.com", actor="o", owner=True)
+    provisioning.add_domain(cp.db, cp.settings, s["id"], "www.other.net", actor="o", owner=True)
+
+    class Two(FakeCF):
+        async def find_zone(self, host):
+            if host.endswith("consolecorrosion.org") or host.endswith("kryvon3x.com"):
+                return {"id": "z", "name": host, "account": {"id": "acc"}}
+            raise CloudflareError("no")
+    own = asyncio.run(cftunnel.own_account_pending(cp.db, cp.settings, "t", api=Two()))
+    assert own == ["kryvon-empire.kryvon3x.com"]
+

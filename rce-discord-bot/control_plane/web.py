@@ -1322,8 +1322,14 @@ domain(s)</button></form></div><table><tr><th>Domain</th><th>Server</th><th>Stat
         who = owner(request)
         data = await sess.form(request)
         token = str(data.get("token", "")).strip() or settings.cf_saas_token
+        results: dict[str, str] = {}
         try:
-            results = await cftunnel.activate_pending(db, settings, token)
+            # domains in YOUR Cloudflare account go through the platform's tunnel (the Cloudflare setup routes them)
+            own = await cftunnel.own_account_pending(db, settings, token)
+            if own:
+                out = await cftunnel.setup(db, box, settings, token)
+                results.update({h: f"connected through the tunnel ({out['dns'].get(h, 'ok')})" for h in own})
+            results.update(await cftunnel.activate_pending(db, settings, token))
         except CloudflareError as exc:
             raise go("/domains?m=" + quote_plus(str(exc))) from None
         db.audit(f"owner:{who}", "domains.activate", detail=", ".join(f"{h}: {v}" for h, v in results.items())[:500])

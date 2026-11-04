@@ -74,6 +74,9 @@ class CloudflareAPI:
         if not isinstance(data, dict) or not data.get("success"):
             errors = (data.get("errors") if isinstance(data, dict) else None) or []
             text = "; ".join(str(e.get("message", e)) for e in errors if e) or f"HTTP {status}"
+            if "quota" in text.lower() and "allocated" in text.lower():
+                raise CloudflareError("Cloudflare for SaaS (SSL/TLS → Custom Hostnames) isn't switched on for your "
+                                      "domain – needed only for customers' domains in other Cloudflare accounts.")
             if status in (401, 403) or any(str(e.get("code")) in ("10000", "9109") for e in errors if isinstance(e, dict)):
                 raise CloudflareError(f"Cloudflare refused the API token ({text}). It needs these permissions: "
                                       f"{PERMISSIONS}.")
