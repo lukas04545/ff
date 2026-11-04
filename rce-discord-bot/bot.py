@@ -468,6 +468,11 @@ def main() -> None:
     first_start = True
     forced_off: set[str] = set()  # intents Discord rejected despite the check
     while True:
+        if setup_error is None and saas_mode.enabled() and os.environ.get("SAAS_WAITING_DISCORD") == "1":
+            # hosted, bot not added to a Discord yet: the panel works already (settings, RCON …), Discord later
+            setup_error = ("Your bot isn't in your Discord yet – add it from your dashboard (\"Add the bot to "
+                           "Discord\"). Everything else can be set up here already; the bot starts by itself once "
+                           "it's added.")
         if setup_error is None:
             try:
                 config = load_config()

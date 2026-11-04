@@ -84,7 +84,7 @@ class Supervisor:
     # ------------------------------------------------------------ Reconcile
 
     def wanted(self) -> set[int]:
-        rows = self.db.q("SELECT id FROM servers WHERE status = 'active' AND node = 'local'")
+        rows = self.db.q("SELECT id FROM servers WHERE status IN ('active', 'awaiting_token') AND node = 'local'")
         return {r["id"] for r in rows if provisioning.runnable(self.db, r["id"], self.settings)}
 
     def _env(self, sid: int) -> tuple[dict, str]:

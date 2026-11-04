@@ -889,7 +889,7 @@ server run <code>python3 -m control_plane login-link</code> – it prints a one-
                 elif s["status"] == "active":
                     acts.append(button(request, f"/servers/{sid}/suspend", "Suspend"))
                     acts.append(button(request, f"/servers/{sid}/restart", "Restart"))
-                if s["status"] == "active":
+                if s["status"] in ("active", "awaiting_token"):
                     acts.append(f"<form method=post action='{P}/servers/{sid}/password-link' class=inline>"
                                 f"{hidden(request)}<button>🔗 Password link</button></form>")
                     acts.append(f"<form method=post action='{P}/servers/{sid}/open' class=inline target=_blank>"
@@ -1337,7 +1337,7 @@ working when they use it.</p><pre style="white-space:pre-wrap;user-select:all">{
         sid = int(request.match_info["id"])
         s = db.one("SELECT slug, status, customer_id FROM servers WHERE id = ?", (sid,))
         health = provisioning.get_secret(db, box, sid, "health_token") if s else None
-        if s is None or s["status"] != "active" or not health:
+        if s is None or s["status"] not in ("active", "awaiting_token") or not health:
             return page("Not possible", f"<div class=card><p class=err>This server isn't running.</p>"
                                         f"<a href={P}/servers>Back</a></div>")
         token = saas_mode.owner_login_token(provisioning.manage_token(health), who)

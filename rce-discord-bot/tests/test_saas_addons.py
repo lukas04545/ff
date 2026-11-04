@@ -109,12 +109,16 @@ def test_shared_bot_by_default_own_bot_only_as_addon(cp):
     s = provisioning.provision_server(cp.db, cp.box, cp.settings, cid, "Main", actor="t")
     with pytest.raises(provisioning.ProvisionError, match="add-on"):
         provisioning.set_bot_token(cp.db, cp.box, s["id"], TOKEN, actor="customer")
-    assert not provisioning.runnable(cp.db, s["id"], cp.settings)              # not in a Discord yet
+    assert provisioning.runnable(cp.db, s["id"], cp.settings)                  # not in a Discord yet: panel only
+    env = provisioning.environment(cp.db, cp.box, cp.settings, s["id"])
+    assert env["DISCORD_TOKEN"] == "" and env["SAAS_SHARED_BOT"] == "0" and env["SAAS_WAITING_DISCORD"] == "1"
+    assert "SAAS_GUILD_ID" not in env                                          # no Discord connection at all
     provisioning.bind_guild(cp.db, s["id"], str(GUILD), actor="customer")
     assert provisioning.runnable(cp.db, s["id"], cp.settings)
     env = provisioning.environment(cp.db, cp.box, cp.settings, s["id"])
     assert env["DISCORD_TOKEN"] == cp.settings.shared_bot_token and env["SAAS_SHARED_BOT"] == "1"
     assert env["SAAS_GUILD_ID"] == str(GUILD) and env["SAAS_AI"] == "0" and env["DEEPSEEK_API_KEY"] == ""
+    assert "SAAS_WAITING_DISCORD" not in env                                   # the bot starts (env changed)
     other = customer(cp, "b@x.io", own_bot=False)
     s2 = provisioning.provision_server(cp.db, cp.box, cp.settings, other, "Theirs", actor="t")
     with pytest.raises(provisioning.ProvisionError, match="already connected"):
