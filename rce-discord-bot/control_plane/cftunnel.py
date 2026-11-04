@@ -123,6 +123,27 @@ async def request_custom_hostname(db: DB, settings: Settings, token: str, hostna
     return cf_id
 
 
+async def own_account_pending(db: DB, settings: Settings, token: str, *, api=None) -> list[str]:
+    """Waiting own domains whose zone is in the same Cloudflare account as the platform's domain (they go through
+    the tunnel – setup() – not Cloudflare for SaaS)."""
+    from support.cloudflare import CloudflareAPI, CloudflareError
+    rows = db.q("SELECT hostname FROM domains WHERE status = 'pending'")
+    if not rows:
+        return []
+    cf = api or CloudflareAPI(token)
+    main = await cf.find_zone(settings.base_domain.lower())
+    account = (main.get("account") or {}).get("id")
+    out = []
+    for row in rows:
+        try:
+            z = await cf.find_zone(row["hostname"])
+        except CloudflareError:
+            continue
+        if (z.get("account") or {}).get("id") == account:
+            out.append(row["hostname"])
+    return out
+
+
 async def activate_pending(db: DB, settings: Settings, token: str, *, api=None) -> dict[str, str]:
     """Every waiting own domain -> Cloudflare. Returns hostname -> result."""
     from support.cloudflare import CloudflareError
