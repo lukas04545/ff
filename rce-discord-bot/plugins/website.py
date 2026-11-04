@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
+from discord.ext import tasks
+
 from plugin_api import Plugin, Setting
 from web.caching import YEAR, conditional
 from utils import format_duration, strip_rich_text
@@ -234,7 +236,8 @@ class PlayerWebsite(Plugin):
     SETTINGS = (
         Setting("title", "Website title", "text", "", help="Empty = the server name."),
         Setting("logo", "Logo", "image", help="Square picture (PNG/WebP with a transparent background looks best). "
-                                              "Empty = the bundled Kryvon logo."),
+                                              "Empty = your Discord server's icon (the bundled logo if it "
+                                              "has none)."),
         Setting("banner", "Header picture", "image",
                 help="A wide picture of your server behind the logo on the home page (a screenshot works great). "
                      "Big pictures are made smaller automatically."),
@@ -697,9 +700,43 @@ class PlayerWebsite(Plugin):
     def _logo_state(self) -> tuple:
         custom = self.file("logo")
         try:
-            return (custom.name, custom.stat().st_mtime_ns, custom.stat().st_size) if custom is not None else ()
+            if custom is not None:
+                return (custom.name, custom.stat().st_mtime_ns, custom.stat().st_size)
         except OSError:
-            return ()
+            pass
+        icon = getattr(self, "_guild_icon", None)
+        return ("discord", icon[0]) if icon else ()
+
+    # ------------------------------------------------------------ the Discord server's icon (the default logo)
+
+    @tasks.loop(minutes=20)
+    async def guild_icon_loop(self) -> None:
+        await self.refresh_guild_icon()
+
+    @guild_icon_loop.before_loop
+    async def _icon_wait(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @Plugin.listener()
+    async def on_guild_update(self, before, after) -> None:
+        if self.guild is not None and after.id == self.guild.id:
+            await self.refresh_guild_icon()
+
+    async def refresh_guild_icon(self) -> None:
+        """Keeps the Discord server's icon in memory – the website's logo when none was uploaded."""
+        guild = self.guild
+        icon = getattr(guild, "icon", None) if guild is not None else None
+        if icon is None:
+            self._guild_icon = None
+            return
+        asset = icon.replace(size=512, format="png")
+        current = getattr(self, "_guild_icon", None)
+        if current and current[0] == asset.key:
+            return
+        try:
+            self._guild_icon = (asset.key, await asset.read())
+        except Exception as exc:                       # Discord unreachable: keep what we had
+            self.log.debug("Server icon: %s", exc)
 
     def _file_version(self, key: str) -> str:
         custom = self.file(key)
@@ -729,6 +766,10 @@ class PlayerWebsite(Plugin):
         custom = self.file("logo")
         if custom is not None:
             data = custom.read_bytes()
+            kind = image_type(data)
+        icon = getattr(self, "_guild_icon", None)
+        if not kind and icon:                          # no own logo: the Discord server's icon
+            data = icon[1]
             kind = image_type(data)
         if not kind:
             data = (ASSETS / ("icon.png" if which == "icon" else "logo.webp")).read_bytes()

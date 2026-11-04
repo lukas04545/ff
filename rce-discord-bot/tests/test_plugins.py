@@ -589,3 +589,33 @@ def test_player_count_channel(pb, monkeypatch):  # noqa: F811
         await pb.bot.rcon.close()
     asyncio.run(main())
     assert renames == ["🟢 Online: 13/50", "🔴 Server offline", "👥 3 online · 4 queued", "👥 3 online · 4 queued"]
+
+
+def test_website_logo_is_the_discord_servers_icon(pb, monkeypatch):  # noqa: F811
+    import asyncio as _asyncio
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (200, 10, 10)).save(buf, "PNG")
+    png = buf.getvalue()
+    w = plug(pb, "website")
+    bundled = w.picture("logo")[0]
+    v0 = w.picture_version()
+
+    class Asset:
+        key = "abc123"
+
+        def replace(self, **kw):
+            return self
+
+        async def read(self):
+            return png
+    guild = NS(id=1, icon=Asset())
+    monkeypatch.setattr(type(w), "guild", property(lambda self: guild))
+    _asyncio.run(w.refresh_guild_icon())
+    assert w.picture("logo")[0] == png and w.picture("logo")[0] != bundled       # the server's own picture
+    assert w.picture_version() != v0                                             # browsers load the new one
+    guild.icon = None
+    _asyncio.run(w.refresh_guild_icon())
+    assert w.picture("logo")[0] == bundled                                       # no icon: the bundled logo
