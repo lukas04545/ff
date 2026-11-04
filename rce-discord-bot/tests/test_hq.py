@@ -42,7 +42,7 @@ class Channel:
     async def edit(self, overwrites=None, reason=None):
         self.overwrites, self.repaired = overwrites, self.repaired + 1
 
-    async def send(self, content=None, embed=None, view=None):
+    async def send(self, content=None, embed=None, view=None, **kw):
         m = Msg(self, content, embed, view)
         self.sent.append(m)
         return m
@@ -55,6 +55,16 @@ class Channel:
 
     def typing(self):
         return Typing()
+
+    async def delete(self, reason=None):
+        self.deleted = True
+        if self.category is not None:
+            self.category.text_channels.remove(self)
+        self.guild.all.pop(self.id, None)
+
+    @property
+    def mention(self):
+        return f"<#{self.id}>"
 
 
 class Category:
@@ -84,6 +94,7 @@ class Obj:
 class Member:
     def __init__(self, guild, id, name):
         self.id, self.guild, self.display_name, self.bot, self.roles = id, guild, name, False, []
+        self.mention = f"<@{id}>"
 
     async def add_roles(self, *roles, reason=None):
         for r in roles:
@@ -111,7 +122,7 @@ class Guild:
     async def fetch_member(self, uid):
         raise hqmod.discord.NotFound(NS(status=404, reason="x"), "unknown member")
 
-    async def create_role(self, name, colour=None, mentionable=False, reason=None):
+    async def create_role(self, name, colour=None, mentionable=False, reason=None, **kw):
         role = Obj(next(ids), name)
         self.roles.append(role)
         return role
@@ -229,9 +240,12 @@ def test_sync_builds_private_channels_and_panels_once(world):
         await w.hq.sync()                                         # nothing changed: no new messages, no edits
     asyncio.run(go())
     names = [c.name for c in w.guild.categories]
-    assert names == [hqmod.HQ_CATEGORY, hqmod.CUSTOMER_CATEGORY]
-    for cat in w.guild.categories:                               # hidden from @everyone
+    assert names == [hqmod.HQ_CATEGORY, hqmod.CUSTOMER_CATEGORY, hqmod.hq_tickets.SUPPORT_CATEGORY]
+    for cat in w.guild.categories[:2]:                           # hidden from @everyone
         assert cat.overwrites[w.guild.default_role].view_channel is False
+    start = _channel(w, hqmod.hq_tickets.START_CHANNEL)          # #get-started: everyone reads, nobody writes
+    assert start.overwrites[w.guild.default_role].view_channel is True
+    assert start.overwrites[w.guild.default_role].send_messages is False and len(start.sent) == 1
     overview = _channel(w, "hq-overview")
     assert len(overview.sent) == 1 and "overview" in overview.sent[0].embed.title
     ch = _channel(w, hqmod.channel_name(w.cid, "a@x.io"))   # customer() uses this e-mail
@@ -340,7 +354,8 @@ def member(w, uid, name, key=None):
 def test_roles_and_every_channel_are_created_and_repaired(world):
     w = world
     asyncio.run(w.hq.sync())
-    assert sorted(r.name for r in w.guild.roles) == ["HQ Admin", "HQ Support", "HQ Viewer"]
+    assert sorted(r.name for r in w.guild.roles if r.name.startswith("HQ ")) == ["HQ Admin", "HQ Support",
+                                                                                  "HQ Viewer"]
     hq_cat = w.guild.categories[0]
     assert [c.name for c in hq_cat.text_channels] == list(hqmod.CHANNELS)
     roles = {k: w.guild.get_role(v) for k, v in w.hq.role_ids.items()}
@@ -353,7 +368,8 @@ def test_roles_and_every_channel_are_created_and_repaired(world):
     # somebody opens the audit channel to everyone → repaired; the roles aren't made twice
     audit.overwrites = {}
     asyncio.run(w.hq.sync())
-    assert audit.repaired == 1 and len(w.guild.roles) == 3
+    assert audit.repaired == 1 and len([r for r in w.guild.roles if r.name.startswith("HQ ")]) == 3
+    assert len(w.guild.roles) == len({r.name for r in w.guild.roles})                     # nothing made twice
     assert "HQ Support" in _channel(w, "hq-staff").sent[0].embed.fields[1].name
 
 

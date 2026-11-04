@@ -10,6 +10,9 @@ The shared bot of every server (or, with CP_HQ_BOT_TOKEN, a bot of its own) buil
     #hq-alerts       new customers/servers, crashes, bots offline, RCON lost, late payments
     #hq-audit        every action from the portal, the owner panel and here (HQ Admin only)
     #hq-staff        give or take the HQ roles with a user picker (HQ Admin only)
+  💬 Support         (everyone) #get-started: [🎫 Open my customer ticket] – customers set up their bot there with an
+                    AI assistant, link their account and get a one-time login link (control_plane/hq_tickets.py);
+                    linked customers get a role named after their package
   👥 Customers       (private category; "Customers 2", … after 50 channels)
     #12-alex         one channel per customer who bought the bot: a customer panel (account, subscription, slots,
                      add-ons + buttons) and one panel per server (health + Restart / Suspend / Discord AI on/off).
@@ -29,11 +32,12 @@ import json
 import logging
 import re
 import secrets
+import time
 from typing import Awaitable, Callable
 
 import discord
 
-from control_plane import actions, features, manage_ai, provisioning, slots, updates
+from control_plane import actions, features, hq_tickets, manage_ai, provisioning, slots, updates
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -96,6 +100,8 @@ class HQ:
         self.client = client or discord.Client(intents=intents, allowed_mentions=discord.AllowedMentions.none(),
                                                chunk_guilds_at_startup=False)
         self.history: dict[tuple[int, int], list[dict]] = {}       # (channel, server) -> AI conversation
+        self.ticket_history: dict[int, list[dict]] = {}            # ticket channel -> the assistant's conversation
+        self._ai = None                                            # DeepSeek client for the ticket assistant
         self.retries: dict[str, tuple[int, int, str]] = {}         # token -> (channel, server, text)
         self._last: dict[tuple[str, int], str] = {}                # panel -> hash of what's shown (no needless edits)
         self._lock = asyncio.Lock()
@@ -473,6 +479,10 @@ class HQ:
             await self._show(chans[STAFF_CHANNEL], "staff", 0, self.staff_panel(guild))
             for c in self.db.q("SELECT id FROM customers WHERE status != 'deleted' ORDER BY id"):
                 await self.refresh_customer(c["id"], guild)
+            try:
+                await self.sync_tickets(guild)
+            except discord.HTTPException as exc:
+                log.warning("HQ customer tickets: %s", exc)
             await self._post(chans[ALERTS_CHANNEL], self.alerts())
             await self._post(chans[AUDIT_CHANNEL], self.audit_lines())
 
@@ -492,6 +502,9 @@ class HQ:
         if not cid_.startswith("hq:") or getattr(interaction, "guild_id", None) != self.settings.hq_guild_id:
             return                                     # never answers in a customer's Discord (shared bot)
         parts = cid_.split(":")
+        if parts[1] == "t":                            # customer tickets: for everyone in the HQ Discord
+            await self.ticket_button(interaction, parts)
+            return
         need = NEEDS.get(tuple(parts[1:3]), ADMIN)
         have = self.level(interaction.user)
         if have < need:
@@ -607,6 +620,11 @@ class HQ:
     async def on_message(self, message) -> None:
         if message.author.bot or message.guild is None or message.guild.id != self.settings.hq_guild_id:
             return
+        ticket = self.db.one("SELECT user_id FROM hq_tickets WHERE channel_id = ?", (message.channel.id,))
+        if ticket is not None:                                # a customer ticket: the assistant answers its owner
+            if message.author.id == ticket["user_id"]:
+                await self.ticket_message(message)
+            return
         if self.level(message.author) < SUPPORT:              # viewers read, they don't ask
             return
         if not (self._is_ai_channel(message.channel) or self.channel_customer(message.channel.id) is not None):
@@ -664,6 +682,213 @@ class HQ:
         if len(hist) >= 2 and hist[-2].get("content") == job[2]:
             del hist[-2:]                                          # replace the refused round
         await self._ask(interaction.channel, interaction.user, job[1], job[2], allow_risky=True)
+
+    # ------------------------------------------------------------------ customer tickets (hq_tickets.py)
+
+    def _public_overwrites(self, guild) -> dict:
+        return {guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False,
+                                                                read_message_history=True),
+                guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True,
+                                                      read_message_history=True, manage_channels=True)}
+
+    def ticket_panel(self) -> tuple[discord.Embed, discord.ui.View]:
+        e = discord.Embed(title="🎫 Get your bot running", color=COLORS["info"], description=(
+            "Bought the bot, on a free trial, or want to? Open your own private ticket – an assistant sets "
+            "everything up with you: link your account, create your server, connect your Discord and get your "
+            f"login link. Staff can join any time.\n\nShop: {self.settings.portal_url}"))
+        v = discord.ui.View(timeout=None)
+        v.add_item(discord.ui.Button(label="Open my customer ticket", custom_id="hq:t:open", emoji="🎫",
+                                     style=discord.ButtonStyle.success))
+        return e, v
+
+    async def sync_tickets(self, guild) -> None:
+        """#get-started with its button, the private ticket category and the package roles of linked customers."""
+        ow = self._public_overwrites(guild)
+        cat = next((c for c in guild.categories if c.name == hq_tickets.SUPPORT_CATEGORY), None)
+        if cat is None:
+            cat = await guild.create_category(hq_tickets.SUPPORT_CATEGORY, overwrites=ow, reason="RCE HQ")
+        ch = next((c for c in cat.text_channels if c.name == hq_tickets.START_CHANNEL), None)
+        if ch is None:
+            ch = await cat.create_text_channel(hq_tickets.START_CHANNEL, overwrites=ow, reason="RCE HQ",
+                                               topic="Open your own customer ticket – set up your bot there.")
+        elif ch.overwrites != ow:
+            await ch.edit(overwrites=ow, reason="RCE HQ: repair permissions")
+        await self._show(ch, "tickets", 0, self.ticket_panel())
+        await self.sync_sub_roles(guild)
+
+    async def _ticket_category(self, guild):
+        return await self._category(guild, hq_tickets.TICKET_CATEGORY, CUSTOMER_ACCESS)
+
+    async def sync_sub_roles(self, guild) -> None:
+        """Every linked customer's Discord account gets the role of their package (and loses the old one)."""
+        row = self.db.one("SELECT value FROM settings_kv WHERE key = 'hq_sub_roles'")
+        known: dict[str, int] = json.loads(row["value"]) if row else {}
+        mine = {}
+        for link in self.db.q("SELECT discord_id, customer_id FROM hq_links"):
+            mine[link["discord_id"]] = hq_tickets.subscription_label(self.db, link["customer_id"])
+        changed = False
+        for label in dict.fromkeys(hq_tickets.all_role_labels(self.db) + [lbl for lbl in mine.values() if lbl]):
+            role = guild.get_role(known.get(label, 0)) or discord.utils.get(guild.roles, name=label)
+            if role is None:
+                role = await guild.create_role(name=label, colour=discord.Colour(hq_tickets.SUB_ROLE_COLOUR),
+                                               mentionable=False, hoist=True, reason="RCE HQ: customer package")
+            if known.get(label) != role.id:
+                known[label], changed = role.id, True
+        if changed:
+            self.db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES ('hq_sub_roles', ?)",
+                        (json.dumps(known),))
+        all_roles = {rid for rid in known.values()}
+        for uid, label in mine.items():
+            member = guild.get_member(uid)
+            if member is None:
+                continue
+            want = guild.get_role(known.get(label, 0)) if label else None
+            drop = [r for r in member.roles if r.id in all_roles and r != want]
+            if drop:
+                await member.remove_roles(*drop, reason="RCE HQ: package changed")
+            if want is not None and want not in member.roles:
+                await member.add_roles(want, reason="RCE HQ: customer package")
+
+    async def ticket_button(self, interaction, parts: list[str]) -> None:
+        guild, user = self.guild, interaction.user
+        if parts[2] == "open":
+            row = self.db.one("SELECT channel_id FROM hq_tickets WHERE user_id = ?", (user.id,))
+            ch = guild.get_channel(row["channel_id"]) if row else None
+            if ch is not None:
+                await interaction.response.send_message(f"Your ticket is here: {ch.mention}", ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            async with self._lock:
+                cat = await self._ticket_category(guild)
+                ow = dict(cat.overwrites)
+                ow[user] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True,
+                                                       attach_files=True)
+                name = "ticket-" + (re.sub(r"[^a-z0-9]+", "-", user.name.lower()).strip("-") or str(user.id))
+                ch = await cat.create_text_channel(name[:90], overwrites=ow, reason="RCE HQ: customer ticket",
+                                                   topic=f"Customer ticket of {user} ({user.id})")
+                self.db.run("INSERT OR REPLACE INTO hq_tickets (channel_id, user_id, created_at) VALUES (?, ?, ?)",
+                            (ch.id, user.id, int(time.time())))
+            linked = hq_tickets.linked_customer(self.db, user.id)
+            v = discord.ui.View(timeout=None)
+            if not linked and not self.db.one("SELECT 1 FROM hq_trials WHERE discord_id = ?", (user.id,)):
+                v.add_item(discord.ui.Button(label=f"Start my free week", custom_id="hq:t:trial", emoji="🎁",
+                                             style=discord.ButtonStyle.success))
+            v.add_item(discord.ui.Button(label="Close ticket", custom_id="hq:t:close", emoji="🔒",
+                                         style=discord.ButtonStyle.secondary))
+            v.stop()
+            await ch.send(f"👋 Hi {user.mention}! I'm the setup assistant – tell me what you need, e.g. "
+                          "*\"set up my bot\"*. " + ("Your account is linked already." if linked else
+                          f"Already a customer? Send me your **link code** – it's on your shop dashboard "
+                          f"({self.settings.portal_url}/dashboard). New here? Press **🎁 Start my free week** – "
+                          f"{hq_tickets.TRIAL_DAYS} days free, no payment details."),
+                          view=v, allowed_mentions=discord.AllowedMentions(users=[user]))
+            self.db.audit(f"discord:{user.id}", "hq.ticket_open")
+            await interaction.followup.send(f"✅ Your ticket: {ch.mention}", ephemeral=True)
+            return
+        if parts[2] == "trial":
+            row = self.db.one("SELECT user_id FROM hq_tickets WHERE channel_id = ?", (interaction.channel.id,))
+            if row is None or row["user_id"] != user.id:
+                await interaction.response.send_message("Press it in your own ticket.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True)
+            out = hq_tickets.claim_trial(self.db, self.box, self.settings, user.id, getattr(user, "name", "") or "")
+            if not out.get("ok"):
+                await interaction.followup.send(f"❌ {out['error']}")
+                return
+            await self.changed()
+            await interaction.followup.send(self._trial_text(out))
+            try:
+                async with self._lock:
+                    await self.sync_sub_roles(self.guild)
+            except discord.HTTPException as exc:
+                log.warning("HQ package roles: %s", exc)
+            return
+        if parts[2] == "close":
+            row = self.db.one("SELECT user_id FROM hq_tickets WHERE channel_id = ?", (interaction.channel.id,))
+            if row is None or (row["user_id"] != user.id and self.level(user) < SUPPORT):
+                await interaction.response.send_message("Not your ticket.", ephemeral=True)
+                return
+            await interaction.response.send_message("🔒 Closing …")
+            self.db.run("DELETE FROM hq_tickets WHERE channel_id = ?", (interaction.channel.id,))
+            self.ticket_history.pop(interaction.channel.id, None)
+            self.db.audit(f"discord:{user.id}", "hq.ticket_close")
+            await interaction.channel.delete(reason="RCE HQ: ticket closed")
+
+    @staticmethod
+    def _trial_text(out: dict) -> str:
+        return (f"🎁 **Your free week is on** – until **{out['until']}**.\n"
+                f"Your shop login (save it – the password is shown only now): {out['shop']}\n"
+                f"Username: `{out['username']}` · Password: `{out['password']}`\n"
+                "Next: tell me *\"create my server\"* and we set it up together.")
+
+    async def verify_guild(self, guild_id: str, user_id: int) -> str | None:
+        """None if the bot is in that Discord server and the user owns it or has Manage Server there."""
+        if not self.on_shared:
+            return ("Use 'Add the bot to Discord' on your shop dashboard – it connects your Discord server "
+                    "automatically.")
+        g = self.client.get_guild(int(guild_id))
+        if g is None:
+            return "The bot isn't in that Discord server yet – add it with the invite link first, then try again."
+        if g.id == self.settings.hq_guild_id:
+            return "That's this support Discord – use your own server's id."
+        if g.owner_id == user_id:
+            return None
+        try:
+            member = g.get_member(user_id) or await g.fetch_member(user_id)
+        except discord.HTTPException:
+            member = None
+        if member is None or not member.guild_permissions.manage_guild:
+            return "You need to own that Discord server or have Manage Server there."
+        return None
+
+    def _ticket_ai(self):
+        if self._ai is None and self.settings.deepseek_api_key:
+            import os
+            from support.deepseek import DeepSeekClient
+            self._ai = DeepSeekClient(self.settings.deepseek_api_key,
+                                      model=os.environ.get("CP_DEEPSEEK_MODEL", "deepseek-chat"),
+                                      base_url="https://api.deepseek.com")
+        return self._ai
+
+    async def ticket_message(self, message) -> None:
+        from support.deepseek import DeepSeekError
+        client = self._ticket_ai()
+        if client is None:
+            await message.reply("The assistant isn't switched on – a staff member will help you here.",
+                                mention_author=False)
+            return
+        if hq_tickets.ai_turns.hit(f"ai:{message.author.id}") is not None:
+            await message.reply("Slow down a little – try again in a few minutes.", mention_author=False)
+            return
+        from control_plane.web import password_link
+        async def on_trial(out: dict) -> None:
+            await message.channel.send(self._trial_text(out))
+        tools = hq_tickets.TicketTools(self.db, self.box, self.settings, message.author.id,
+                                       verify_guild=self.verify_guild, changed=self.changed, on_trial=on_trial,
+                                       user_name=getattr(message.author, "name", "") or "",
+                                       password_link=lambda sid, by: password_link(self.db, self.box, self.settings,
+                                                                                   sid, by))
+        hist = self.ticket_history.setdefault(message.channel.id, [])
+        text = message.content or ""
+        try:
+            async with message.channel.typing():
+                reply = await hq_tickets.answer(client, tools, hist, text)
+        except DeepSeekError as exc:
+            log.warning("HQ ticket assistant: %s", exc)
+            reply = "The assistant can't answer right now – a staff member will help you here."
+        hist += [{"role": "user", "content": text[:1500]}, {"role": "assistant", "content": reply[:1500]}]
+        del hist[:-16]
+        for i, part in enumerate(_chunks(reply)):
+            if i == 0:
+                await message.reply(part, mention_author=False)
+            else:
+                await message.channel.send(part)
+        if tools.customer is not None:                       # linked / changed: their role and their panels
+            try:
+                async with self._lock:
+                    await self.sync_sub_roles(self.guild)
+            except discord.HTTPException as exc:
+                log.warning("HQ package roles: %s", exc)
 
 
 def enabled(settings: Settings) -> bool:
