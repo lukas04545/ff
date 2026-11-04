@@ -77,3 +77,85 @@ def test_owner_panel_open_button(cp, monkeypatch):  # noqa: F811
         finally:
             await c.close()
     asyncio.run(scenario())
+
+
+def test_password_link_lets_the_customer_choose_the_panel_password(bot, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("RCE_SAAS", "1")
+    monkeypatch.setenv("SAAS_MANAGE_TOKEN", "p" * 64)
+    link = saas_mode.owner_login_token("p" * 64, "boss", purpose="password")
+    assert saas_mode.check_owner_login(link) is None                         # not a sign-in link
+    assert saas_mode.check_owner_login(saas_mode.owner_login_token("p" * 64, "boss"), purpose="password") is None
+
+    async def scenario(c):
+        r = await c.get(f"/saas/password?t={link}")
+        assert r.status == 200 and "Choose your panel password" in await r.text()
+        assert (await c.get(f"/saas/password?t={link}")).status == 200          # looking doesn't use it up
+        r = await c.post("/saas/password", data={"t": link, "password": "short", "confirm": "short"})
+        assert "10 to 256" in await r.text()
+        r = await c.post("/saas/password", data={"t": link, "password": "new-panel-pass", "confirm": "other-pass1"})
+        assert "passwords aren" in await r.text() and "the same" in await r.text()
+        r = await c.post("/saas/password", data={"t": link, "password": "new-panel-pass", "confirm": "new-panel-pass"})
+        assert "Password saved" in await r.text()
+        assert (await (await c.get("/api/me")).json())["user"] == "owner"         # signed in
+        await c.post("/api/logout", headers=H)
+        assert (await c.post("/api/login", json={"password": "secret123"}, headers=H)).status == 401   # old one
+        assert (await c.post("/api/login", json={"password": "new-panel-pass"}, headers=H)).status == 200
+        assert (await c.get(f"/saas/password?t={link}")).status == 404          # used up
+        saas_mode._used_logins.clear()                                          # a restart: still used up (on disk)
+        r = await c.post("/saas/password", data={"t": link, "password": "another-pass1", "confirm": "another-pass1"})
+        assert r.status == 404
+    run(bot, scenario)
+
+
+def test_owner_and_customer_make_password_links(cp, monkeypatch):  # noqa: F811
+    import asyncio
+    import html as _html
+    import re
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from control_plane import provisioning, websettings
+    from control_plane.web import build_owner, build_portal
+
+    cid = provisioning.create_customer(cp.db, "a@x.io", "password1234")
+    other = provisioning.create_customer(cp.db, "b@x.io", "password1234")
+    cp.db.run("INSERT INTO servers (customer_id, slug, name, status, home_dir, web_port, created_at) "
+              "VALUES (?, 'kryvon', 'Kryvon', 'active', ?, 21001, ?)", (cid, str(cp.tmp / "h"), int(time.time())))
+    sid = cp.db.one("SELECT id FROM servers WHERE slug = 'kryvon'")["id"]
+    provisioning.put_secret(cp.db, cp.box, sid, "health_token", "h" * 40)
+    monkeypatch.setenv("RCE_SAAS", "1")
+    monkeypatch.setenv("SAAS_MANAGE_TOKEN", provisioning.manage_token("h" * 40))
+
+    async def changed():
+        pass
+
+    async def scenario():
+        o = TestClient(TestServer(build_owner(cp.db, cp.box, cp.settings, changed)))
+        await o.start_server()
+        p = TestClient(TestServer(build_portal(cp.db, cp.box, cp.settings, changed)))
+        await p.start_server()
+        try:
+            token = websettings.new_login_link(cp.db)
+            await o.post(f"/once/{token}", data={"username": "boss", "password": "owner-password-123"})
+            page = await (await o.get("/servers")).text()
+            assert "Password link" in page
+            r = await o.post(f"/servers/{sid}/password-link", data={"csrf": csrf_of(page)})
+            link = _html.unescape(re.search(r"(https://kryvon\.rust\.test/saas/password\?t=\S+?)<", await r.text())[1])
+            assert saas_mode.check_owner_login(link.split("t=", 1)[1], purpose="password", consume=False) == "boss"
+            # the customer makes one for their own server – never for someone else's
+            await p.post("/login", data={"email": "a@x.io", "password": "password1234"})
+            dash = await (await p.get("/dashboard")).text()
+            assert "Panel password" in dash
+            t = re.search(r"name=csrf value=([0-9a-f]+)", dash)[1]
+            r = await p.post(f"/servers/{sid}/password-link", data={"csrf": t})
+            assert "/saas/password?t=" in await r.text()
+            p.session.cookie_jar.clear()
+            await p.post("/login", data={"email": "b@x.io", "password": "password1234"})
+            dash = await (await p.get("/dashboard")).text()
+            t = re.search(r"name=csrf value=([0-9a-f]+)", dash)[1]
+            assert (await p.post(f"/servers/{sid}/password-link", data={"csrf": t})).status == 404
+            assert other
+        finally:
+            await p.close()
+            await o.close()
+    asyncio.run(scenario())

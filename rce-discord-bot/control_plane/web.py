@@ -111,6 +111,18 @@ class Sessions:
         return data
 
 
+def password_link(db: DB, box: SecretBox, settings: Settings, server_id: int, made_by: str) -> str | None:
+    """A one-time link (48 h) where the customer chooses their server panel's owner password – first login or
+    forgotten. None when the server has no running setup yet."""
+    import saas_mode
+    s = db.one("SELECT slug, status FROM servers WHERE id = ?", (server_id,))
+    health = provisioning.get_secret(db, box, server_id, "health_token") if s else None
+    if s is None or s["status"] == "deleted" or not health:
+        return None
+    token = saas_mode.owner_login_token(provisioning.manage_token(health), made_by, purpose="password")
+    return f"{settings.url_for(s['slug'])}/saas/password?t={token}"
+
+
 def _same_origin(request: web.Request) -> None:
     """Forms that work without a session (sign in / sign up) only from this site – no login CSRF."""
     origin = request.headers.get("Origin")
@@ -173,6 +185,21 @@ def build_portal(db: DB, box: SecretBox, settings: Settings, changed: Callable[[
         if row is None:
             raise web.HTTPNotFound(text="No such server.")
         return dict(row)
+
+    async def customer_password_link(request):
+        c = need(request)
+        await sess.form(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        link = password_link(db, box, settings, s["id"], f"customer {c['email']}")
+        if link is None:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus("This server isn't set up yet – try again in a minute."))
+        db.audit(f"customer:{c['id']}", "server.password_link", customer_id=c["id"], server_id=s["id"])
+        # a page with a link, not a redirect: the shop's form-action CSP doesn't allow posting on to another site
+        return web.Response(text=f'<!doctype html><meta charset=utf-8><meta http-equiv="refresh" content="0;url='
+                                 f'{esc(link)}"><title>Opening …</title><p>Opening … <a href="{esc(link)}">continue</a></p>',
+                            content_type="text/html",
+                            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                                     "Content-Security-Policy": "default-src 'none'"})
 
     def shop(request, title: str, body: str) -> web.Response:
         c = me(request)
@@ -348,6 +375,9 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
             f"{' · RCON ✅' if s['rcon_connected'] else ''}"
             f"{' · ' + str(s['players_online']) + ' online' if s['players_online'] else ''}</td>"
             f"<td>{bot_cell(s, csrf, own_bot)}"
+            f"<form method=post action=/servers/{s['id']}/password-link class=inline target=_blank>{hidden}<button "
+            f"class='ghost small' title='First login or forgot it? Choose your panel password'>🔑 Panel password"
+            f"</button></form> "
             f"<form method=post action=/servers/{s['id']}/remove class=inline onsubmit=\"return confirm('Remove "
             f"this server? Its data is kept for a while.')\">{hidden}<button class='danger small'>Remove</button>"
             f"</form></td></tr>"
@@ -644,7 +674,8 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                     web.post("/billing/checkout", checkout), web.post("/billing/portal", billing_portal),
                     web.post("/stripe/webhook", stripe_webhook), web.get("/paused/{slug}", paused),
                     web.get(r"/servers/{sid:\d+}/discord", discord_install), web.get("/discord/callback", discord_callback),
-                    web.post(r"/servers/{sid:\d+}/shared", use_shared)])
+                    web.post(r"/servers/{sid:\d+}/shared", use_shared),
+                    web.post(r"/servers/{sid:\d+}/password-link", customer_password_link)])
     return app
 
 
@@ -848,6 +879,8 @@ server run <code>python3 -m control_plane login-link</code> – it prints a one-
                     acts.append(button(request, f"/servers/{sid}/suspend", "Suspend"))
                     acts.append(button(request, f"/servers/{sid}/restart", "Restart"))
                 if s["status"] == "active":
+                    acts.append(f"<form method=post action='{P}/servers/{sid}/password-link' class=inline>"
+                                f"{hidden(request)}<button>🔗 Password link</button></form>")
                     acts.append(f"<form method=post action='{P}/servers/{sid}/open' class=inline target=_blank>"
                                 f"{hidden(request)}<button>🔑 Open panel</button></form>")
                 acts.append(f"<a href={P}/servers/{sid}/ai>🧠 Management AI</a>")
@@ -1262,6 +1295,21 @@ price makes a new Stripe price; current subscribers keep theirs. Packages are ne
             return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
         await changed()
         raise go(f"/customers/{cid}")
+
+    async def owner_password_link(request):
+        who = owner(request)
+        await sess.form(request)
+        sid = int(request.match_info["id"])
+        link = password_link(db, box, settings, sid, who)
+        if link is None:
+            return page("Not possible", f"<div class=card><p class=err>This server isn't set up yet.</p>"
+                                        f"<a href={P}/servers>Back</a></div>")
+        s = db.one("SELECT name, customer_id FROM servers WHERE id = ?", (sid,))
+        db.audit(f"owner:{who}", "server.password_link", customer_id=s["customer_id"], server_id=sid)
+        return page("Password link", f"""<p><a href={P}/servers>← servers</a></p><h1>🔗 Password link for
+{esc(s['name'])}</h1><div class=card><p>Send this to the customer. They open it, choose the password for their control
+panel (username <b>owner</b>) and are signed in. It works <b>once</b>, for <b>48 hours</b> – the old password stops
+working when they use it.</p><pre style="white-space:pre-wrap;user-select:all">{esc(link)}</pre></div>""")
 
     async def open_panel(request):
         """Signs the owner into this server's control panel (as its owner account) – a one-time, 60-second link."""
@@ -1705,7 +1753,8 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.post(r"/servers/{id:\d+}/manager-ai/{on:on|off}", manager_toggle),
                     web.post(r"/servers/{id:\d+}/token", set_token),
                     web.post(r"/servers/{id:\d+}/shared-bot", shared_bot),
-                    web.post(r"/servers/{id:\d+}/open", open_panel)])
+                    web.post(r"/servers/{id:\d+}/open", open_panel),
+                    web.post(r"/servers/{id:\d+}/password-link", owner_password_link)])
     return app
 
 
