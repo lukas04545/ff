@@ -107,3 +107,58 @@ def health_ok(header: str) -> bool:
     expected = os.environ.get(HEALTH_TOKEN_ENV, "")
     given = header[7:] if header.startswith("Bearer ") else ""
     return bool(expected) and hmac.compare_digest(given.encode(), expected.encode())
+
+
+# ---------------------------------------------------------------- The platform owner opens this server's panel
+# The owner panel makes a one-time sign-in link: "<payload>.<HMAC>", keyed with a key derived from this server's
+# SAAS_MANAGE_TOKEN (only the control plane and this process know it). Valid for OWNER_LOGIN_TTL seconds, once.
+OWNER_LOGIN_TTL = 60
+_used_logins: dict[str, float] = {}
+
+
+def _login_key(manage_token: str) -> bytes:
+    import hashlib
+    return hashlib.sha256(f"{manage_token}:owner-login".encode()).digest()
+
+
+def owner_login_token(manage_token: str, owner: str, *, now: float | None = None) -> str:
+    """Control plane side: a one-time sign-in token for this server's panel."""
+    import base64
+    import hashlib
+    import json
+    import secrets
+    import time
+    payload = base64.urlsafe_b64encode(json.dumps({
+        "o": owner[:64], "e": int((now or time.time()) + OWNER_LOGIN_TTL), "n": secrets.token_urlsafe(12),
+    }).encode()).decode().rstrip("=")
+    sig = hmac.new(_login_key(manage_token), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
+
+
+def check_owner_login(token: str, *, now: float | None = None) -> str | None:
+    """Tenant side: the platform owner's name if the token is valid, fresh and unused – else None."""
+    import base64
+    import hashlib
+    import json
+    import time
+    manage = os.environ.get("SAAS_MANAGE_TOKEN", "")
+    if not enabled() or not manage or "." not in str(token or ""):
+        return None
+    payload, sig = str(token).rsplit(".", 1)
+    expected = hmac.new(_login_key(manage), payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (ValueError, TypeError):
+        return None
+    now = now or time.time()
+    if not isinstance(data, dict) or int(data.get("e") or 0) < now:
+        return None
+    for nonce in [n for n, until in _used_logins.items() if until < now]:
+        _used_logins.pop(nonce, None)
+    nonce = str(data.get("n") or "")
+    if not nonce or nonce in _used_logins:
+        return None
+    _used_logins[nonce] = now + OWNER_LOGIN_TTL + 5
+    return str(data.get("o") or "owner")[:64]
