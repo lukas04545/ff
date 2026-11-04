@@ -159,3 +159,22 @@ def test_owner_and_customer_make_password_links(cp, monkeypatch):  # noqa: F811
             await p.close()
             await o.close()
     asyncio.run(scenario())
+
+
+def test_hosted_panel_hides_the_platforms_ai_model_and_balance(bot, monkeypatch):  # noqa: F811
+    from types import SimpleNamespace as NS
+
+    async def balance():
+        return {"is_available": True, "balance_infos": [{"currency": "USD", "total_balance": "6.58"}]}
+    ai = NS(enabled=True, model="deepseek-flash", balance=balance)
+    real = bot.get_cog
+    monkeypatch.setattr(bot, "get_cog", lambda name: NS(ai=ai) if name == "Tickets" else real(name))
+
+    async def scenario(c):
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        own = await (await c.get("/api/ai")).json()
+        assert own["model"] == "deepseek-flash" and own["balance"]["is_available"]       # own install: shown
+        monkeypatch.setenv("RCE_SAAS", "1")
+        hosted = await (await c.get("/api/ai")).json()
+        assert hosted == {"enabled": True, "hosted": True}                              # hosted: nothing of it
+    run(bot, scenario)

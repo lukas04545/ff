@@ -3780,6 +3780,9 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
         tickets_cog = self.bot.get_cog("Tickets")
         if tickets_cog is None or not tickets_cog.ai.enabled:
             return web.json_response({"enabled": False})
+        import saas_mode
+        if saas_mode.enabled():           # hosted: the platform's DeepSeek account – no model, no balance for customers
+            return web.json_response({"enabled": True, "hosted": True})
         result = {"enabled": True, "model": tickets_cog.ai.model}
         try:
             result["balance"] = await tickets_cog.ai.balance()
