@@ -403,3 +403,45 @@ def test_staff_accounts_can_only_look_after_customers(cp):  # noqa: F811
             await mate.close()
             await boss.close()
     asyncio.run(scenario())
+
+
+def test_installing_an_update_restarts_the_control_plane(cp, monkeypatch):  # noqa: F811
+    import asyncio
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from control_plane import updates, websettings
+    from control_plane.web import build_owner
+    from tests.test_control_plane import csrf_of
+    restarts, seen = [], []
+
+    async def fake_install(db, settings, supervisor, *, owner, updater=None):
+        seen.append(supervisor)
+        status = "updated" if len(seen) == 1 else "current"
+        return {"last_install": {"status": status, "message": "v2 installed" if status == "updated" else "up to date",
+                                 "restarted": 0}}
+    monkeypatch.setattr(updates, "install", fake_install)
+
+    async def changed():
+        pass
+
+    async def scenario():
+        from types import SimpleNamespace as _NS
+        sup = _NS(procs={})
+        c = TestClient(TestServer(build_owner(cp.db, cp.box, cp.settings, changed, supervisor=sup,
+                                              restart=lambda: restarts.append(1))))
+        await c.start_server()
+        try:
+            token = websettings.new_login_link(cp.db)
+            await c.post(f"/once/{token}", data={"username": "boss", "password": "owner-password-123"})
+            t = csrf_of(await (await c.get("/")).text())
+            page = await (await c.post("/update/install", data={"csrf": t})).text()
+            assert "Update installed" in page and "v2 installed" in page
+            assert seen == [None]                                   # no extra rolling restart before it
+            await asyncio.sleep(1.3)
+            assert restarts == [1]                                  # the control plane restarts by itself
+            r = await c.post("/update/install", data={"csrf": t}, allow_redirects=False)
+            assert r.status == 303 and restarts == [1]              # nothing new: no restart
+        finally:
+            await c.close()
+    asyncio.run(scenario())

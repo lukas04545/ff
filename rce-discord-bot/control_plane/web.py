@@ -1475,7 +1475,15 @@ working when they use it.</p><pre style="white-space:pre-wrap;user-select:all">{
 <h1>♻️ Restarting the control plane …</h1><p>Every server stops and starts again with the new code. This page
 reloads by itself in 20 seconds (sign in again if it asks).</p><p><a href={P}/>Back to the owner panel</a></p></div>""")
         else:
-            await updates.install(db, settings, supervisor, owner=who)
+            # with a restart available, the control plane's restart restarts every server anyway
+            r = await updates.install(db, settings, None if restart else supervisor, owner=who)
+            if r["last_install"]["status"] == "updated" and restart is not None:
+                db.audit(f"owner:{who}", "control_plane.restart", detail="after an update")
+                asyncio.get_running_loop().call_later(1.0, restart)       # after this page has been sent
+                return page("Restarting", f"""<meta http-equiv=refresh content="30;url={P}/"><div class=card>
+<h1>⬆️ Update installed – restarting …</h1><p>{esc(r['last_install']['message'])}</p><p>The control plane and every
+server restart with the new version now. This page reloads by itself in 30 seconds (sign in again if it asks).</p>
+<p><a href={P}/>Back to the owner panel</a></p></div>""")
         raise go("/")
 
     async def feature_action(request):

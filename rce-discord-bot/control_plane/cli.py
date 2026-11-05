@@ -570,7 +570,7 @@ async def _run(settings: Settings) -> None:
     from control_plane import hq as hqmod
     if hqmod.enabled(settings):                         # the management Discord (control_plane/hq.py)
         from control_plane.hq import HQ
-        hq = HQ(db, box, settings, changed, sup)
+        hq = HQ(db, box, settings, changed, sup, restart=lambda: restart_requested.set())
 
     runners = []
     ai_history: dict = {}
