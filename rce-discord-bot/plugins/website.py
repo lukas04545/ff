@@ -141,7 +141,116 @@ body.theme-clean{--bg:#0d1117;--card:#161b22;--card2:#1c2330;--text:#e6edf3;--mu
 --red:#ff7a1a;--orange:#ffb15c;--gold:#ffd27a;--cut:8px;--head:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 body.theme-clean::before{background:linear-gradient(180deg,#111723,#0d1117 60%)}
 body.theme-clean h1,body.theme-clean h2{text-transform:none;letter-spacing:0;font-weight:800;text-shadow:none}"""),
+    "ocean": ("Deep ocean (teal)", """
+body.theme-ocean{--bg:#020a0d;--card:rgba(6,24,30,.86);--card2:rgba(10,38,46,.9);--text:#e6fbff;--muted:#8fb4bd;
+--line:rgba(30,200,210,.25);--red:#14b8c4;--orange:#4ef0d0;--gold:#b8fff0;--ok:#4ef08a}
+body.theme-ocean::before{background:radial-gradient(ellipse 90% 55% at 50% -8%,rgba(20,184,196,.32),transparent 70%),
+radial-gradient(ellipse 70% 40% at 85% 110%,rgba(10,90,140,.35),transparent 70%),linear-gradient(180deg,#05161c,#020a0d 60%)}
+body.theme-ocean h1{text-shadow:0 2px 0 #000,0 0 24px rgba(78,240,208,.4)}"""),
+    "toxic": ("Radtown (toxic green)", """
+body.theme-toxic{--bg:#050703;--card:rgba(16,20,8,.88);--card2:rgba(26,32,12,.9);--text:#f2f7df;--muted:#a3ad84;
+--line:rgba(170,230,30,.26);--red:#9be21e;--orange:#f5e53a;--gold:#fff27a;--ok:#5ff07a}
+body.theme-toxic::before{background:radial-gradient(ellipse 90% 55% at 50% -8%,rgba(155,226,30,.3),transparent 70%),
+repeating-linear-gradient(-45deg,rgba(245,229,58,.04) 0 14px,transparent 14px 28px),linear-gradient(180deg,#10150a,#050703 60%)}
+body.theme-toxic h1{text-shadow:0 2px 0 #000,0 0 22px rgba(155,226,30,.55)}"""),
+    "synthwave": ("Synthwave (pink & purple)", """
+body.theme-synthwave{--bg:#0a0414;--card:rgba(24,10,40,.86);--card2:rgba(38,14,60,.9);--text:#fbeaff;--muted:#b79ccc;
+--line:rgba(255,60,172,.3);--red:#ff3cac;--orange:#ffb03b;--gold:#ffe66d;--ok:#3ff0b0}
+body.theme-synthwave::before{background:radial-gradient(circle at 50% 108%,rgba(255,176,59,.55) 0 60px,rgba(255,60,172,.3)
+70px,transparent 240px),radial-gradient(ellipse 90% 55% at 50% -8%,rgba(120,40,200,.4),transparent 70%),
+linear-gradient(180deg,#1a0833,#0a0414 60%)}
+body.theme-synthwave h1{text-shadow:0 0 16px rgba(255,60,172,.7),0 0 40px rgba(255,176,59,.3)}"""),
+    "steel": ("Gunmetal (steel grey)", """
+body.theme-steel{--bg:#08090b;--card:rgba(22,25,30,.9);--card2:rgba(32,36,43,.92);--text:#eef1f5;--muted:#9aa3ad;
+--line:rgba(160,175,190,.22);--red:#7d93ad;--orange:#c4d2e0;--gold:#e8eef5;--ok:#55d98a}
+body.theme-steel::before{background:radial-gradient(ellipse 90% 55% at 50% -8%,rgba(150,170,190,.18),transparent 70%),
+linear-gradient(180deg,#14171c,#08090b 60%)}
+body.theme-steel h1{text-shadow:0 2px 0 #000}"""),
+    "desert": ("Desert (sand)", """
+body.theme-desert{--bg:#0b0805;--card:rgba(30,22,14,.88);--card2:rgba(44,32,20,.9);--text:#fbf2e4;--muted:#bba78b;
+--line:rgba(230,170,90,.26);--red:#d9893a;--orange:#f2c46d;--gold:#ffe3a3;--ok:#7ad66a}
+body.theme-desert::before{background:radial-gradient(circle at 80% 10%,rgba(255,214,140,.45) 0 34px,transparent 140px),
+radial-gradient(ellipse 90% 55% at 50% -8%,rgba(217,137,58,.3),transparent 70%),linear-gradient(180deg,#1c140b,#0b0805 60%)}"""),
+    "sakura": ("Sakura (soft pink)", """
+body.theme-sakura{--bg:#0c0609;--card:rgba(30,14,22,.86);--card2:rgba(44,20,32,.9);--text:#fff0f6;--muted:#c3a0b2;
+--line:rgba(255,140,190,.26);--red:#ff6fa8;--orange:#ffb3d1;--gold:#ffe0ec;--ok:#6fe0a0}
+body.theme-sakura::before{background:radial-gradient(ellipse 90% 55% at 50% -8%,rgba(255,111,168,.28),transparent 70%),
+radial-gradient(ellipse 60% 40% at 10% 20%,rgba(255,200,225,.1),transparent 70%),linear-gradient(180deg,#1d0c15,#0c0609 60%)}
+body.theme-sakura h1{text-shadow:0 2px 0 #000,0 0 22px rgba(255,111,168,.45)}"""),
+    "discord": ("Your Discord icon's colours", ""),   # built from the server icon: discord_theme_css()
 }
+
+
+def _hex(rgb) -> str:
+    return "#%02x%02x%02x" % tuple(max(0, min(255, int(c))) for c in rgb)
+
+
+def icon_palette(data: bytes) -> tuple[str, str] | None:
+    """The two strongest colours of a picture (the Discord server's icon): (main, second) as hex – vivid, not
+    black/white/grey. None if there's nothing colourful in it."""
+    import colorsys
+    import io
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(data)).convert("RGBA").resize((64, 64))
+    except Exception:
+        return None
+    pixels = [(r, g, b) for r, g, b, a in img.getdata() if a > 128]
+    if not pixels:
+        return None
+    buckets: dict[tuple, list] = {}
+    for r, g, b in pixels:
+        h, l, sat = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        if sat < 0.25 or l < 0.12 or l > 0.9:
+            continue                                    # greys, black, white: no theme colour
+        key = (int(h * 24) % 24,)
+        buckets.setdefault(key, []).append((r, g, b, sat))
+    if not buckets:
+        return None
+    scored = sorted(buckets.items(), key=lambda kv: -sum(p[3] for p in kv[1]))
+
+    def mean(px):
+        n = len(px)
+        rgb = (sum(p[0] for p in px) / n, sum(p[1] for p in px) / n, sum(p[2] for p in px) / n)
+        h, l, sat = colorsys.rgb_to_hls(*(c / 255 for c in rgb))
+        r, g, b = colorsys.hls_to_rgb(h, min(max(l, 0.45), 0.62), max(sat, 0.55))   # readable on dark
+        return (r * 255, g * 255, b * 255), h
+    main, h1 = mean(scored[0][1])
+    second = None
+    for _key, px in scored[1:]:
+        rgb, h2 = mean(px)
+        if min(abs(h2 - h1), 1 - abs(h2 - h1)) > 0.08 and len(px) >= len(scored[0][1]) * 0.08:
+            second = rgb
+            break
+    if second is None:                                  # one colour only: a lighter shade of it
+        r, g, b = main
+        h, l, sat = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        second = tuple(c * 255 for c in colorsys.hls_to_rgb((h + 0.06) % 1, min(l + 0.15, 0.78), sat))
+    return _hex(main), _hex(second)
+
+
+def discord_theme_css(palette: tuple[str, str] | None) -> str:
+    """The "discord" theme: background, cards and accents tinted with the icon's colours."""
+    import colorsys
+    if not palette:
+        return ""
+    main, second = palette
+    r, g, b = (int(main[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    h, _l, _s = colorsys.rgb_to_hls(r, g, b)
+
+    def tint(light, sat):
+        return _hex(c * 255 for c in colorsys.hls_to_rgb(h, light, sat))
+
+    def rgba(hexcol, alpha):
+        return f"rgba({int(hexcol[1:3], 16)},{int(hexcol[3:5], 16)},{int(hexcol[5:7], 16)},{alpha})"
+    bg, card, card2, top = tint(.03, .45), tint(.08, .4), tint(.12, .38), tint(.09, .5)
+    return (f"body.theme-discord{{--bg:{bg};--card:{rgba(card, .88)};--card2:{rgba(card2, .9)};--text:#f3f3f7;"
+            f"--muted:{tint(.7, .15)};--line:{rgba(main, .28)};--red:{main};--orange:{second};"
+            f"--gold:{tint(.82, .6)};--ok:#4be07a}}"
+            f"body.theme-discord::before{{background:radial-gradient(ellipse 90% 55% at 50% -8%,{rgba(main, .32)},"
+            f"transparent 70%),radial-gradient(ellipse 60% 40% at 90% 10%,{rgba(second, .18)},transparent 70%),"
+            f"linear-gradient(180deg,{top},{bg} 60%)}}"
+            f"body.theme-discord h1{{text-shadow:0 2px 0 #000,0 0 24px {rgba(main, .45)}}}")
 
 # Dark, burnt "Rust" look: black background with a sunset glow, rusty red/orange accents, rugged cut corners
 STYLE = """
@@ -155,7 +264,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
 background:url("NOISE"),radial-gradient(ellipse 90% 55% at 50% -8%,rgba(247,110,30,.32),transparent 70%),
 radial-gradient(ellipse 60% 40% at 85% 10%,rgba(229,52,28,.18),transparent 70%),
 linear-gradient(180deg,#120a07 0%,var(--bg) 55%)}
-a{color:inherit}a:hover{color:var(--orange)}td a,.card p a{text-decoration:none;border-bottom:1px solid rgba(247,147,30,.4)}
+a{color:inherit}a:hover{color:var(--orange)}td a,.card p a{text-decoration:none;border-bottom:1px solid var(--line)}
 h1,h2,h3,.brand,nav a,.tabs a,.btn,th,.big,.kicker{font-family:var(--head);text-transform:uppercase;letter-spacing:.06em;
 font-weight:400}
 header{background:rgba(6,6,6,.94);position:sticky;top:0;z-index:5}
@@ -196,7 +305,7 @@ background:var(--bad);letter-spacing:.08em;text-transform:uppercase;clip-path:po
 table{width:100%;border-collapse:collapse}td,th{padding:9px 6px;border-bottom:1px solid rgba(255,255,255,.06);text-align:left}
 th{font-size:.9rem;color:var(--muted)}td.n{width:2.6rem;font-family:var(--head);color:var(--orange);font-size:1.1rem}
 tr:nth-child(1) td.n{color:var(--gold)}td.r,th.r{text-align:right}tr:last-child td{border-bottom:0}
-tbody tr:hover,table tr:hover td{background:rgba(229,84,40,.06)}
+tbody tr:hover,table tr:hover td{background:rgba(255,255,255,.04)}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}.tabs a{text-decoration:none;padding:6px 16px;
 background:var(--card2);border:1px solid var(--line);font-size:1rem;clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)}
 .tabs a.active{background:var(--grad);color:#fff;border-color:transparent}
@@ -263,8 +372,10 @@ class PlayerWebsite(Plugin):
         Setting("rules", "Show the rules", "bool", True),
         Setting("theme", "Look (theme)", "choice", "rust", choices=tuple(THEMES),
                 help="rust = burnt orange · neon = purple/cyan night · arctic = ice blue · jungle = military green · "
-                     "bloodmoon = deep red · gold = royal gold · clean = calm, no grit. Changes colours, background "
-                     "and headings; the layout stays."),
+                     "bloodmoon = deep red · gold = royal gold · clean = calm, no grit · ocean = deep teal · toxic = "
+                     "radtown green · synthwave = pink & purple · steel = gunmetal grey · desert = sand · sakura = "
+                     "soft pink · discord = the colours of your Discord server's icon (picked by the bot). Changes "
+                     "colours, background and headings for the website and the store; the layout stays."),
         Setting("accent", "Main colour", "text", "#e5341c", help="Hex colour, e.g. #e5341c (blends into orange). "
                 "Leave #e5341c to use the theme's own colour."),
         Setting("season_theme", "Seasonal theme", "choice", "auto", choices=("auto", "halloween", "off"),
@@ -413,9 +524,12 @@ class PlayerWebsite(Plugin):
         updated = datetime.fromtimestamp(self.now(), self.tz).strftime("%H:%M")
         season = self.seasonal()
         theme = self.setting("theme") if self.setting("theme") in THEMES else "rust"
-        theme_css = THEMES[theme][1] + (f"body.theme-{theme}{{--red:{accent}}}"
+        theme_css = (self.discord_css() if theme == "discord" else THEMES[theme][1]) + (
+            f"body.theme-{theme}{{--red:{accent}}}"
                                         if theme != "rust" and accent.lower() != "#e5341c" else "")
-        extra_css = MENU_CSS + theme_css + (HALLOWEEN_CSS if season == "halloween" else "")
+        # --grad is set on :root with :root's colours – on body it follows the theme's --red/--orange too
+        extra_css = (MENU_CSS + theme_css + "body{--grad:linear-gradient(90deg,var(--red),var(--orange))}"
+                     + (HALLOWEEN_CSS if season == "halloween" else ""))
         decor = spider = pumpkins = ""
         if season == "halloween":
             decor = ('<div class="spooky" aria-hidden="true"><span class="bat b1"><i></i></span>'
@@ -721,6 +835,16 @@ class PlayerWebsite(Plugin):
     async def on_guild_update(self, before, after) -> None:
         if self.guild is not None and after.id == self.guild.id:
             await self.refresh_guild_icon()
+
+    def discord_css(self) -> str:
+        """The "discord" theme for the current server icon (worked out once per icon)."""
+        icon = getattr(self, "_guild_icon", None)
+        key = icon[0] if icon else None
+        cached = getattr(self, "_discord_css", None)
+        if cached is None or cached[0] != key:
+            css = discord_theme_css(icon_palette(icon[1])) if icon else ""
+            self._discord_css = cached = (key, css)
+        return cached[1]
 
     async def refresh_guild_icon(self) -> None:
         """Keeps the Discord server's icon in memory – the website's logo when none was uploaded."""
