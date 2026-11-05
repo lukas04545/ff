@@ -88,7 +88,10 @@ def esc(value) -> str:
     return html.escape("" if value is None else str(value))
 
 
-def owner_frame(title: str, body: str, *, prefix: str = "", shop: str = "") -> web.Response:
+STAFF_NAV = {"overview", "customers", "servers", "settings"}    # what a staff account sees in the menu
+
+
+def owner_frame(title: str, body: str, *, prefix: str = "", shop: str = "", staff: bool = False) -> web.Response:
     active = ACTIVE.get(title, "customers" if title.startswith("Customer") else
                         "servers" if title.startswith("Management AI") else "")
     if title in BARE:
@@ -97,7 +100,8 @@ def owner_frame(title: str, body: str, *, prefix: str = "", shop: str = "") -> w
         groups = "".join(
             f"<div class='group {tone}'><div class=lbl>{esc(label)}</div>"
             + "".join(f"<a href='{prefix}{path}' class='{'on' if key == active else ''}'><i>{icon}</i>{esc(text)}</a>"
-                      for key, icon, text, path in items) + "</div>" for label, tone, items in NAV)
+                      for key, icon, text, path in items if not staff or key in STAFF_NAV) + "</div>"
+            for label, tone, items in NAV if not staff or any(k in STAFF_NAV for k, *_r in items))
         inner = (f"<div class=app><aside><div class=brandbox><small>RCE BOT · OWNER</small><b>{esc(shop or 'Control')}"
                  f"</b><span>Every customer and server</span></div><div class=navhead><span>Navigation</span>"
                  f"<span>Owner</span></div>{groups}<form method=post action='{prefix}/logout'><button class=danger "

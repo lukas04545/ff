@@ -164,6 +164,9 @@ class DB:
         self._migrate()
 
     def _migrate(self) -> None:
+        ocols = {r["name"] for r in self.conn.execute("PRAGMA table_info(owners)")}
+        if "role" not in ocols:        # owner = everything; staff = customers only (control_plane/web.py STAFF_CAN)
+            self.conn.execute("ALTER TABLE owners ADD COLUMN role TEXT NOT NULL DEFAULT 'owner'")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(servers)")}
         if "bot_mode" not in cols:     # shared = the platform's bot (fenced to guild_id); custom = own token
             self.conn.execute("ALTER TABLE servers ADD COLUMN bot_mode TEXT NOT NULL DEFAULT 'shared'")

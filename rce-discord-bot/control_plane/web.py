@@ -138,6 +138,17 @@ def use_owner_view_token(db: DB, token: str) -> dict | None:
     return found if found and found.get("until", 0) >= time.time() else None
 
 
+# Staff accounts (owners.role = 'staff'): customer work only – everything else in the owner panel is refused.
+STAFF_CAN = tuple((m, re.compile(p)) for m, p in (
+    ("GET", r"^/?$"), ("GET", r"^/customers$"), ("GET", r"^/customers/\d+$"), ("GET", r"^/servers$"),
+    ("GET", r"^/settings$"), ("GET", r"^/passkey\.js$"),
+    ("POST", r"^/customers/new$"), ("POST", r"^/customers/\d+/(trial|server|dashboard)$"),
+    ("POST", r"^/servers/\d+/(open|password-link)$"),
+    ("POST", r"^/passkeys(/options)?$"), ("POST", r"^/passkeys/[A-Za-z0-9_-]+/remove$"), ("POST", r"^/logout$"),
+))
+ROLES = {"owner": "Owner – everything", "staff": "Staff – customers only"}
+
+
 def password_link(db: DB, box: SecretBox, settings: Settings, server_id: int, made_by: str) -> str | None:
     """A one-time link (48 h) where the customer chooses their server panel's owner password – first login or
     forgotten. None when the server has no running setup yet."""
@@ -741,13 +752,32 @@ def build_owner(db: DB, box: SecretBox, settings: Settings, changed: Callable[[]
     public portal (a sub-app there) – then allow_ips (if set) limits who even sees the login page."""
     P = prefix.rstrip("/")
 
+    import contextvars
+    is_staff = contextvars.ContextVar("is_staff", default=False)
+
     def page(title: str, body: str) -> web.Response:      # the owner panel's own look (owner_ui.py)
-        return owner_ui.owner_frame(title, body, prefix=P, shop=settings.shop_name)
+        return owner_ui.owner_frame(title, body, prefix=P, shop=settings.shop_name, staff=is_staff.get())
+
+    def role_of(username: str) -> str:
+        row = db.one("SELECT role FROM owners WHERE username = ?", (username,))
+        return (row["role"] if row and row["role"] in ROLES else "owner") if row else ""
 
     @web.middleware
     async def guard(request, handler):
         if allow_ips and _client_ip(request) not in allow_ips:
             raise web.HTTPNotFound()                     # don't even show that a panel exists here
+        sub = sess.subject(request)
+        staff = bool(sub and sub.startswith("o:") and role_of(sub[2:]) == "staff")
+        is_staff.set(staff)
+        if staff:
+            path = request.path[len(P):] if P and request.path.startswith(P) else request.path
+            if not any(m == request.method and rx.match(path) for m, rx in STAFF_CAN) \
+                    and not path.startswith(("/login", "/once/", "/invite/")):
+                resp = page("Not for staff", f"<div class=card><h1>⛔ Staff accounts can't do that</h1><p>Staff can "
+                                             f"add and look after customers. Ask an owner for anything else.</p>"
+                                             f"<p><a href={P}/customers>← customers</a></p></div>")
+                resp.set_status(403)
+                return resp
         resp = await handler(request)
         resp.headers["X-Robots-Tag"] = "noindex, nofollow"
         return resp
@@ -1627,23 +1657,27 @@ deleting, a kit for everyone …)</label><br><br><button>Send</button></form>
         who = owner(request)
         rows = "".join(
             f"<tr><td><b>{esc(o['username'])}</b>{' <span class=muted>(you)</span>' if o['username'] == who else ''}"
-            f"</td><td>{passkeys.count(o['username'])} passkey(s)</td><td>"
+            f"</td><td>{pill('active' if (o['role'] or 'owner') == 'owner' else 'trial')} "
+            f"{esc(ROLES.get(o['role'] or 'owner', ''))}</td><td>{passkeys.count(o['username'])} passkey(s)</td><td>"
             + ("" if o["username"] == who else button(request, f"/owners/{o['username']}/remove", "Remove", danger=True,
                                                       confirm=f"Remove {o['username']} from the owner panel?"))
-            + "</td></tr>" for o in db.q("SELECT username FROM owners ORDER BY rowid"))
+            + "</td></tr>" for o in db.q("SELECT username, role FROM owners ORDER BY rowid"))
         pending = "".join(
-            f"<tr><td>{esc(v['username'])}</td><td class=muted>by {esc(v.get('by', ''))}, until "
+            f"<tr><td>{esc(v['username'])} <span class=muted>({esc(v.get('role', 'owner'))})</span></td><td "
+            f"class=muted>by {esc(v.get('by', ''))}, until "
             f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(v['until']))} UTC</td><td>"
             + button(request, f"/owners/invites/{k[:16]}/cancel", "Cancel", danger=True) + "</td></tr>"
             for k, v in _invites().items())
         return page("Owners", f"""<div class=kicker>ADMIN</div><h1>Owners</h1>{msg}
-<p class=muted>Everyone here can do everything in the owner panel (customers, servers, billing, settings). Only add
-people you fully trust.</p>
+<p class=muted><b>Owners</b> can do everything (customers, servers, billing, settings, updates, other owners).
+<b>Staff</b> – e.g. your team mates – can add customers, start free trials, create servers, open customers' panels and
+dashboards and make password links; nothing else (no settings, packages, domains, updates, removing or suspending).</p>
 <div class=card><h2>People with access</h2><table>{rows}</table></div>
 <div class=card><h2>➕ Add a person</h2><p class=muted>You get a one-time link (48 hours). They open it, choose their
 password and add the 2FA key to their authenticator app – you never see their password.</p>
 <form method=post action={P}/owners/invite>{hidden(request)}<input name=username placeholder="Their username"
-required pattern="[A-Za-z0-9_.-]{{3,32}}"> <button>Create invite link</button></form>
+required pattern="[A-Za-z0-9_.-]{{3,32}}"> <select name=role><option value=staff>Staff – customers only</option>
+<option value=owner>Owner – everything</option></select> <button>Create invite link</button></form>
 {f'<h3>Open invites</h3><table>{pending}</table>' if pending else ''}</div>""")
 
     async def owners_get(request):
@@ -1660,10 +1694,12 @@ required pattern="[A-Za-z0-9_.-]{{3,32}}"> <button>Create invite link</button></
             return await owners_page(request, "<p class=err>That username exists or is already invited.</p>")
         token = secrets.token_urlsafe(32)
         invites = _invites()
-        invites[hashlib.sha256(token.encode()).hexdigest()] = {"username": username, "by": who,
+        role = str(data.get("role") or "staff")
+        role = role if role in ROLES else "staff"
+        invites[hashlib.sha256(token.encode()).hexdigest()] = {"username": username, "by": who, "role": role,
                                                                "until": int(time.time()) + INVITE_TTL}
         _save_invites(invites)
-        db.audit(f"owner:{who}", "owner.invite", detail=username)
+        db.audit(f"owner:{who}", "owner.invite", detail=f"{username} ({role})")
         link = f"{base_url(request)}/invite/{token}"
         return await owners_page(request, f"""<div class=card><h2>✅ Invite for {esc(username)}</h2><p>Send them this
 link – it works once, for 48 hours (shown only now):</p><pre style="white-space:pre-wrap;user-select:all">{esc(link)}</pre>
@@ -1686,7 +1722,7 @@ link – it works once, for 48 hours (shown only now):</p><pre style="white-spac
             return await owners_page(request, "<p class=err>You can't remove yourself.</p>")
         if db.one("SELECT 1 FROM owners WHERE username = ?", (name,)) is None:
             raise go("/owners")
-        if (db.one("SELECT COUNT(*) AS n FROM owners")["n"] or 0) <= 1:
+        if role_of(name) == "owner" and (db.one("SELECT COUNT(*) AS n FROM owners WHERE role = 'owner'")["n"] or 0) <= 1:
             return await owners_page(request, "<p class=err>The last owner can't be removed.</p>")
         db.run("DELETE FROM owners WHERE username = ?", (name,))
         passkeys.remove_user(name)
@@ -1727,9 +1763,10 @@ minlength=16 required autocomplete=new-password placeholder="Password (16+ chara
         if db.one("SELECT 1 FROM owners WHERE lower(username) = ?", (username.lower(),)):
             raise go("/login?e=That+username+exists+already")
         totp = new_secret()
-        db.run("INSERT INTO owners (username, password_hash, totp_secret) VALUES (?, ?, ?)",
-               (username, hash_password(password), totp))
-        db.audit(f"owner:{username}", "owner.create", detail=f"invited by {inv.get('by', '')} from {ip}")
+        role = inv.get("role") if inv.get("role") in ROLES else "owner"
+        db.run("INSERT INTO owners (username, password_hash, totp_secret, role) VALUES (?, ?, ?, ?)",
+               (username, hash_password(password), totp, role))
+        db.audit(f"owner:{username}", "owner.create", detail=f"{role}, invited by {inv.get('by', '')} from {ip}")
         resp = page("Welcome", f"""<h1>✅ You're in, {esc(username)}</h1><div class=card><h2>Your 2FA key – add it now</h2>
 <p>Authenticator app → add account → enter key manually (time-based, 6 digits):</p><p><code
 style='font-size:1.2rem'>{esc(totp)}</code></p><p class=muted>Or open: <code>{esc(otpauth_uri(totp, username,
@@ -1776,7 +1813,9 @@ addresses of your adopted servers. No Caddy and no open ports needed.</p>
 style="width:100%" placeholder="Cloudflare API token" required><br><br><button>Set up Cloudflare</button></form></div>""")
 
     async def settings_page(request):
-        owner(request)
+        who = owner(request)
+        if is_staff.get():                               # staff: only their own passkeys
+            return page("Settings", f"<div class=kicker>ACCOUNT</div><h1>Your account</h1>{passkey_card(request, who)}")
         return settings_form(request)
 
     async def settings_save(request):
