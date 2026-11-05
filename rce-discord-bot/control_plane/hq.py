@@ -85,7 +85,8 @@ def _chunks(text: str, size: int = 1900) -> list[str]:
 
 class HQ:
     def __init__(self, db: DB, box: SecretBox, settings: Settings, changed: Callable[[], Awaitable[None]],
-                 supervisor=None, client: discord.Client | None = None) -> None:
+                 supervisor=None, client: discord.Client | None = None, restart: Callable[[], None] | None = None) -> None:
+        self.restart = restart                       # restarts the whole control plane (after an update)
         if not settings.hq_guild_id:
             raise HQError("Set CP_HQ_GUILD_ID (your management Discord server's id).")
         # its own bot (CP_HQ_BOT_TOKEN), or – empty / the same token – the ONE shared bot of every server
@@ -542,7 +543,16 @@ class HQ:
                     return
                 else:
                     await interaction.response.defer(ephemeral=True, thinking=True)
-                    r = await updates.install(self.db, self.settings, self.supervisor, owner=owner)
+                    # with a restart coming, the control plane's restart restarts every server anyway
+                    r = await updates.install(self.db, self.settings, None if self.restart else self.supervisor,
+                                              owner=owner)
+                    if r["last_install"]["status"] == "updated" and self.restart is not None:
+                        text = (f"⬆️ Installed: {r['last_install']['message']} – the control plane and every server "
+                                "restart now with it (about a minute).")
+                        await interaction.followup.send(text, ephemeral=True)
+                        self.db.audit(actor, "control_plane.restart", detail="after an update")
+                        asyncio.get_running_loop().call_later(2.0, self.restart)
+                        return
                     text = f"{r['last_install']['status']}: {r['last_install']['message']} – " \
                            f"{r['last_install']['restarted']} server(s) restarted"
                 async with self._lock:
