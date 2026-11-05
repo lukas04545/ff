@@ -290,7 +290,8 @@ def test_owner_invites_another_owner_and_removes_them(cp):  # noqa: F811
             assert "boss" in page and "Add a person" in page
             t = csrf_of(page)
             assert (await boss.post("/owners/invite", data={"username": "mate"})).status == 403    # CSRF
-            page = await (await boss.post("/owners/invite", data={"csrf": t, "username": "mate"})).text()
+            page = await (await boss.post("/owners/invite", data={"csrf": t, "username": "mate",
+                                                                   "role": "owner"})).text()
             link = _re.search(r"(http://\S+/invite/[A-Za-z0-9_-]+)", page)[1]
             path = link.split(str(boss.server.port), 1)[1]
             assert "already invited" in await (await boss.post("/owners/invite", data={"csrf": t, "username": "Mate"})).text()
@@ -348,4 +349,57 @@ def test_customers_without_a_server_show_and_get_one(cp):  # noqa: F811
             assert "without a server yet" not in await (await c.get("/servers")).text()
         finally:
             await c.close()
+    asyncio.run(scenario())
+
+
+def test_staff_accounts_can_only_look_after_customers(cp):  # noqa: F811
+    import asyncio
+    import re as _re
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from control_plane import websettings
+    from control_plane.web import build_owner
+    from tests.test_control_plane import csrf_of
+
+    async def changed():
+        pass
+
+    async def scenario():
+        boss = TestClient(TestServer(build_owner(cp.db, cp.box, cp.settings, changed)))
+        await boss.start_server()
+        mate = TestClient(boss.server)
+        try:
+            token = websettings.new_login_link(cp.db)
+            await boss.post(f"/once/{token}", data={"username": "boss", "password": "owner-password-123"})
+            page = await (await boss.get("/owners")).text()
+            assert "Staff – customers only" in page
+            t = csrf_of(page)
+            page = await (await boss.post("/owners/invite", data={"csrf": t, "username": "mate",
+                                                                   "role": "staff"})).text()
+            path = "/invite/" + _re.search(r"/invite/([A-Za-z0-9_-]+)", page)[1]
+            await mate.post(path, data={"password": "mates-password-1234"})
+            assert cp.db.one("SELECT role FROM owners WHERE username = 'mate'")["role"] == "staff"
+            # allowed: customers
+            page = await (await mate.get("/customers")).text()
+            assert "New customer" in page and "Packages" not in page and "Owners" not in page   # menu trimmed
+            mt = csrf_of(page)
+            r = await mate.post("/customers/new", data={"csrf": mt, "email": "trialguy", "access": "trial",
+                                                        "days": "7", "plan": "0"})
+            assert "Customer #" in await r.text()
+            assert "Passkeys" in await (await mate.get("/settings")).text()
+            assert "Your domain" not in await (await mate.get("/settings")).text()        # no platform settings
+            # refused: everything else
+            for method, url in (("GET", "/owners"), ("GET", "/plans"), ("GET", "/domains"), ("GET", "/audit"),
+                                ("POST", "/settings"), ("POST", "/owners/invite"), ("POST", "/update/install"),
+                                ("POST", "/customers/1/remove"), ("POST", "/servers/1/purge")):
+                r = await (mate.get(url) if method == "GET" else mate.post(url, data={"csrf": mt}))
+                assert r.status == 403, url
+            # an owner still can; the last full owner can't be removed, staff can
+            assert (await boss.get("/plans")).status == 200
+            r = await boss.post("/owners/mate/remove", data={"csrf": t}, allow_redirects=False)
+            assert r.status == 303 and cp.db.one("SELECT 1 FROM owners WHERE username = 'mate'") is None
+        finally:
+            await mate.close()
+            await boss.close()
     asyncio.run(scenario())
