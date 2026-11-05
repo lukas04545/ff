@@ -78,7 +78,7 @@ def test_website_themes():
     from plugins.website import THEMES, PlayerWebsite
     assert {"rust", "neon", "arctic", "jungle", "bloodmoon", "gold", "clean"} <= set(THEMES)
     for key, (label, css) in THEMES.items():
-        assert label and (key == "rust" or f"body.theme-{key}" in css)
+        assert label and (key in ("rust", "discord") or f"body.theme-{key}" in css)   # discord: from the icon
     theme = next(s for s in PlayerWebsite.SETTINGS if s.key == "theme")
     assert set(theme.choices) == set(THEMES) and theme.default == "rust"
 
