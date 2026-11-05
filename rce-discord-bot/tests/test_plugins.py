@@ -619,3 +619,33 @@ def test_website_logo_is_the_discord_servers_icon(pb, monkeypatch):  # noqa: F81
     guild.icon = None
     _asyncio.run(w.refresh_guild_icon())
     assert w.picture("logo")[0] == bundled                                       # no icon: the bundled logo
+
+
+def test_website_themes_and_the_discord_icon_theme(pb):  # noqa: F811
+    import io
+
+    from PIL import Image
+    from plugins import website as wmod
+    img = Image.new("RGB", (64, 64), (230, 30, 30))
+    for x in range(64):
+        for y in range(40, 64):
+            img.putpixel((x, y), (20, 90, 230))             # red top, blue bottom
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    main, second = wmod.icon_palette(buf.getvalue())
+    r, g, b = (int(main[i:i + 2], 16) for i in (1, 3, 5))
+    assert r > g and r > b                                     # red is the bigger area: the main colour
+    r2, g2, b2 = (int(second[i:i + 2], 16) for i in (1, 3, 5))
+    assert b2 > r2                                             # blue: the second colour
+    grey = io.BytesIO()
+    Image.new("RGB", (16, 16), (128, 128, 128)).save(grey, "PNG")
+    assert wmod.icon_palette(grey.getvalue()) is None          # nothing colourful: no palette
+    css = wmod.discord_theme_css((main, second))
+    assert f"--red:{main}" in css and f"--orange:{second}" in css and "theme-discord::before" in css
+    assert {"ocean", "toxic", "synthwave", "steel", "desert", "sakura", "discord"} <= set(wmod.THEMES)
+    # the site renders with the discord theme from the server icon
+    w = plug(pb, "website", theme="discord")
+    w._guild_icon = ("icon1", buf.getvalue())
+    page = w.page("", "home", "Home", "<p>x</p>")
+    assert "theme-discord" in page and f"--red:{main}" in page                   # website (the store uses it too)
+    assert w.discord_css() == css
