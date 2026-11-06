@@ -8,7 +8,9 @@ Protocol (same as Rust PC "WebRCON"):
     - Live console output (kills, chat, bans, ...) arrives with Identifier 0/-1.
 
 The client reconnects automatically (exponential backoff) and detects
-"dead" connections via repeated command timeouts.
+"dead" connections via repeated command timeouts – but only after one last probe (PROBE_TIMEOUT) also gets no
+answer: console servers often answer slowly for a few seconds (world save, lag), which isn't a dead connection.
+last_drop says why the last connection ended (shown in the admin log).
 """
 from __future__ import annotations
 
@@ -24,6 +26,8 @@ from typing import Awaitable, Callable
 import aiohttp
 
 log = logging.getLogger("rce.rcon")
+
+PROBE_TIMEOUT = 15.0          # the last chance before a connection with timeouts is considered dead
 
 
 class RconError(Exception):
@@ -80,6 +84,9 @@ class RconClient:
         self._ids = itertools.count(1000)
         self._pending: dict[int, asyncio.Future[str]] = {}
         self._timeouts = 0
+        self._probing = False
+        self.last_drop: str = ""              # why the last connection ended (for the admin log)
+        self._closed_by_us: str = ""
         self.last_error: str | None = None   # last connection error (for the web interface)
         self.failed_attempts = 0              # failed attempts since the last successful connection
         # Commands the bot itself sent recently (time, command) – e.g. to tell the bot's own item gives apart
@@ -194,13 +201,26 @@ class RconClient:
 
     def _register_timeout(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         self._timeouts += 1
-        if self._timeouts >= self.max_consecutive_timeouts and not ws.closed:
-            log.warning(
-                "%s commands in a row without a reply – connection considered dead, reconnecting.",
-                self._timeouts,
-            )
+        if self._timeouts >= self.max_consecutive_timeouts and not ws.closed and not self._probing:
+            self._probing = True
+            asyncio.create_task(self._probe(ws))
+
+    async def _probe(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        """Several commands went unanswered: one last command with a long wait before giving up – a slow server
+        (world save, lag spike) isn't a dead connection."""
+        try:
+            await self.command("serverinfo", timeout=PROBE_TIMEOUT)
+            log.info("RCON: the server answered again after %s slow replies – connection kept.", self._timeouts)
             self._timeouts = 0
-            asyncio.create_task(ws.close())
+        except RconError:
+            if self._ws is ws and not ws.closed:
+                log.warning("%s commands in a row without a reply (and no answer in %.0f s) – connection "
+                            "considered dead, reconnecting.", self._timeouts, PROBE_TIMEOUT)
+                self._closed_by_us = f"the server stopped answering ({self._timeouts} commands without a reply)"
+                self._timeouts = 0
+                await ws.close()
+        finally:
+            self._probing = False
 
     async def _run_forever(self) -> None:
         assert self._session is not None
@@ -215,6 +235,7 @@ class RconClient:
                 )
                 self._ws = ws
                 self._timeouts = 0
+                self._closed_by_us = ""
                 self.last_error = None
                 self.failed_attempts = 0
                 opened_at = asyncio.get_running_loop().time()
@@ -229,12 +250,16 @@ class RconClient:
                         log.warning("WebSocket error: %s", ws.exception())
                         break
                 log.warning("RCON connection closed (code %s).", ws.close_code)
+                self.last_drop = self._closed_by_us or (
+                    f"the game server closed the connection (code {ws.close_code})" if ws.close_code
+                    else "the game server closed the connection")
             except aiohttp.WSServerHandshakeError as exc:
                 self.last_error = f"Handshake rejected (HTTP {exc.status}) – wrong RCON password or port?"
                 self.failed_attempts += 1
                 log.error("RCON %s", self.last_error)
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
                 self.last_error = f"Connection failed: {exc or type(exc).__name__}"
+                self.last_drop = f"network error ({exc or type(exc).__name__})"
                 self.failed_attempts += 1
                 log.warning("RCON %s", self.last_error)
             finally:

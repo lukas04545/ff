@@ -1,6 +1,8 @@
 """Feeds: chat bridge, killfeed, join/leave & server events, admin log, console log."""
 from __future__ import annotations
 
+import asyncio
+
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -176,11 +178,50 @@ class Feeds(commands.Cog):
         else:
             self.admin_log.add_line(f"🎁 {safe_md(ev.text)}")
 
+    # A drop that's back within HICCUP_SECONDS is one 🟡 line (with the reason), not a 🔴/🟢 pair; several of
+    # them in a row are counted on that line instead of one line each.
+    HICCUP_SECONDS = 60
+
     @commands.Cog.listener()
     async def on_rce_connection(self, connected: bool) -> None:
-        if self.admin_log:
-            self.admin_log.add_line("🟢 RCON connection established" if connected
-                                    else "🔴 RCON connection lost – reconnecting automatically")
+        import time as _time
+        if not self.admin_log:
+            return
+        rcon = self.bot.rcon
+        if not connected:
+            self._lost_at = _time.monotonic()
+            self._lost_reason = getattr(rcon, "last_drop", "") or ""
+            pending = getattr(self, "_lost_task", None)
+            if pending is not None and not pending.done():
+                pending.cancel()
+
+            async def announce_if_still_down():
+                await asyncio.sleep(self.HICCUP_SECONDS)
+                if not rcon.connected:
+                    self._announced_down = True
+                    self.admin_log.add_line("🔴 RCON connection lost – reconnecting automatically"
+                                            + (f" ({self._lost_reason})" if self._lost_reason else ""))
+            self._lost_task = asyncio.create_task(announce_if_still_down())
+            return
+        pending = getattr(self, "_lost_task", None)
+        if pending is not None and not pending.done():
+            pending.cancel()
+        if getattr(self, "_announced_down", False):
+            self._announced_down = False
+            self.admin_log.add_line("🟢 RCON connection established")
+            return
+        if getattr(self, "_lost_at", None) is None:
+            self.admin_log.add_line("🟢 RCON connection established")      # the first connection after a start
+            self._lost_at = 0.0
+            return
+        seconds = max(1, round(_time.monotonic() - self._lost_at))
+        now = _time.monotonic()
+        streak = getattr(self, "_hiccups", (0.0, 0))
+        count = streak[1] + 1 if now - streak[0] < 1800 else 1
+        self._hiccups = (now, count)
+        self.admin_log.add_line(f"🟡 RCON hiccup – back after {seconds}s"
+                                + (f" ({self._lost_reason})" if self._lost_reason else "")
+                                + (f" · {count}× in the last 30 min" if count > 1 else ""))
 
     # ------------------------------------------------------------ Console log
 
