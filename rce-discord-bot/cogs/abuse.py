@@ -6,7 +6,7 @@ different ("[ServerVar] SERVER giving …" or without "[ServerVar]") and are ign
 ABUSE_ITEMS and the player is not allowed, the bot runs ABUSE_REMOVE_ADMIN_COMMANDS, ABUSE_KILL_COMMAND
 (global.killplayer "<player>") and ABUSE_AFTER_KILL_COMMANDS (entity.deleteby "<player>") and pings staff.
 
-Allowed: players linked (/customkit link) to a Discord member with an ABUSE_EXEMPT_ROLE_IDS role (owner, co-owner)
+Allowed: players linked (/link) to a Discord member with an ABUSE_EXEMPT_ROLE_IDS role (owner, co-owner)
 and the names in ABUSE_EXEMPT_PLAYERS. Items the bot gives itself (shop, custom kits, rewards) never count.
 The protection only runs once at least one of the two is set – otherwise the owner could be hit.
 Limit: the log line doesn't say who gave the item. If an admin gives rockets to someone else, the log shows that

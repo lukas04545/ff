@@ -419,7 +419,7 @@ class Kits(commands.Cog):
 
         if required_role is not None:
             notes.append(f"🎖️ Only players with {required_role.mention} get this kit. They link their in-game "
-                         "player once with `/customkit link`.")
+                         "player once with `/link`.")
         rule_id = self.bot.db.add_kit_rule(name, trigger_key, phrase, cooldown_minutes, max_per_player,
                                            str(interaction.user), ktype,
                                            required_role.id if required_role else None)
@@ -557,7 +557,7 @@ class Kits(commands.Cog):
         if "player" in d:
             info = d["player"]
             lines.append(f"👤 **{safe_md(info['player'])}**: " + (f"linked to <@{info['linked_discord_user']}>"
-                         if info["linked_discord_user"] else "❌ not linked (`/customkit link`)"))
+                         if info["linked_discord_user"] else "❌ not linked (`/link`)"))
         for b in d["binds_with_notes"][:15]:
             lines.append(f"• #{b['rule_id']} **{safe_md(b['kit'])}** ({safe_md(b['emote'])}): "
                          + "; ".join(safe_md(i) for i in b["issues"]))
@@ -690,7 +690,7 @@ class Kits(commands.Cog):
         row = self.bot.db.kit_rule(rule)
         self._audit(f"🎖️ {self._who(interaction)}: Autokit #{rule} – required role "
                     f"{role.mention if role else 'removed'}")
-        hint = ("\nPlayers get it only if their in-game player is linked (`/customkit link`) to a Discord "
+        hint = ("\nPlayers get it only if their in-game player is linked (`/link`) to a Discord "
                 "account with this role." if role else "")
         await interaction.response.send_message(f"✅ {self._rule_text(row)}{hint}", ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
@@ -813,11 +813,11 @@ class Kits(commands.Cog):
             linked = self.bot.db.player_owner(player) is not None
             self._attempt(rule, player, source, "no_role",
                           f"needs role {role.name if role else rule['required_role_id']}"
-                          + ("" if linked else " – player is not linked (/customkit link)"))
+                          + ("" if linked else " – player is not linked (/link)"))
             await self._announce_denied(
                 player, f"Kit <b>{sanitize_ingame_text(kit, 40)}</b> needs the Discord role "
                         f"<b>{sanitize_ingame_text(role.name if role else 'required role', 32)}</b> "
-                        + ("." if linked else "(link your account on Discord with /customkit link)."), source)
+                        + ("." if linked else "(link your account on Discord with /link)."), source)
             return
         count, minutes_since = self.bot.db.kit_claim_state(rule["id"], player)
 

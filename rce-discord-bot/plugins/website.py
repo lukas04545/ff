@@ -653,7 +653,7 @@ class PlayerWebsite(Plugin):
         early = self.plugin("early_bird")
         if early is not None and live["next_wipe"]:
             body += (f'<div class="card"><h2>🐦 Wipe day bonus</h2>The first {early.setting("players")} linked players '
-                     f'online after the wipe get a reward. Link your player on Discord with /customkit link.</div>')
+                     f'online after the wipe get a reward. Link your player on Discord with /link.</div>')
         return self.page(base, "", "", body)
 
     def player_link(self, base: str, name: str) -> str:
@@ -763,7 +763,7 @@ class PlayerWebsite(Plugin):
             earn.append(f"{cfg.points_per_kill} per PvP kill")
         if cfg.daily_points:
             earn.append(f"{cfg.daily_points}+ with /daily")
-        intro = (f'<div class="card"><h2>How it works</h2>Link your player on Discord with <b>/customkit link</b>, '
+        intro = (f'<div class="card"><h2>How it works</h2>Link your player on Discord with <b>/link</b>, '
                  f'earn {esc(points)} ({esc(", ".join(earn) or "by playing")}) and buy with <b>/shop buy</b>. '
                  f'Items are sent to you in-game.</div>')
         body = (f'<h1>Shop</h1>{intro}<div class="grid">{"".join(cards)}</div>' if cards

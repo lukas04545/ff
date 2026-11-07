@@ -120,7 +120,7 @@ class OfflineProtection(Plugin):
                 help="Size of VIP teams' zones in percent of the normal size: 150 = 1.5×, 200 = double, 100 = no "
                      "bonus."),
         Setting("vip_role", "VIP Discord role", "role", None,
-                help="Players whose linked Discord account (/customkit link) has this role count as VIP."),
+                help="Players whose linked Discord account (/link) has this role count as VIP."),
         Setting("vip_players", "VIP players (in-game names)", "textarea", "",
                 help="One name per line – these count as VIP too (no Discord role needed)."),
         Setting("vip_who", "VIP size when …", "choice", VIP_LEADER, choices=(VIP_LEADER, VIP_ANY),

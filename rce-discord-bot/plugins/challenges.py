@@ -163,7 +163,7 @@ class Challenges(Plugin):
             if lines:
                 embed.add_field(name=label, value="\n".join(lines), inline=False)
         if not player:
-            embed.set_footer(text="Link your player with /customkit link to track your progress")
+            embed.set_footer(text="Link your player with /link to track your progress")
         content = f"🎁 Collected {self.fmt_points(got)} from challenges you finished before linking." if got else None
         await interaction.response.send_message(content=content, embed=embed, ephemeral=True)
 

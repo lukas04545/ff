@@ -166,7 +166,7 @@ class Market(Plugin):
         item = item.strip().lower()
         player = self.online_name(self.linked_player(user_id) or "")
         if player is None:
-            return False, "Join the server first – your linked player must be online (/customkit link)."
+            return False, "Join the server first – your linked player must be online (/link)."
         if not self._take(user_id, item, amount):
             return False, f"Your stash has {self.stash_of(user_id).get(item, 0)}× {self.label(item)}."
         try:

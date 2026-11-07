@@ -78,7 +78,7 @@ How to work:
   and emotes that already give a kit unless told to replace them.
 - "Assign them to their role" / "each kit only for its role" after binding kits: assign_kit_roles_to_binds – it
   sets every emote bind's required role to that kit's own Discord role in one go (don't do this through the
-  admin website). Afterwards ONLY linked players (/customkit link) who have that role get the kit – say so.
+  admin website). Afterwards ONLY linked players (/link) who have that role get the kit – say so.
   remove_roles_from_binds undoes it (everyone can use the emotes again).
 - "Kits/claims/binds don't work": call diagnose_kit_claims first (and test_emote_bind on an online player to see
   the exact failure, incl. the game server's answer) (optionally for a player) and explain the real

@@ -85,7 +85,7 @@ KIT_ACTIONS = """- You have tools for the player who opened this ticket – and 
   Use get_my_kits before answering questions about kits. Only call claim_kit when the player clearly asks
   for that kit to be claimed now. The tool enforces roles, cooldowns and the linked player – report its
   result honestly (cooldown time, not linked, not online) and never claim for anyone else.
-  If they are not linked: tell them to use /customkit link in Discord while they are online in-game and pick
+  If they are not linked: tell them to use /link in Discord while they are online in-game and pick
   their player from the list.
   get_my_kits also shows their points balance (if the shop is on): they earn points by playing, PvP kills and
   /daily and spend them themselves with /shop buy – you can't buy or give points for them.
@@ -127,7 +127,7 @@ PURCHASE_ACTIONS = """- Bought custom kits – again ONLY for the ticket owner:
     list (fix_items = correct/ask about the listed entries and call again with everything). Show them the final
     list. Staff checks the purchase and the list and approves it with a button – you can NEVER approve it yourself.
     After approval the bot creates the kit and its role and gives them the role; they claim it in-game with
-    /customkit claim (after /customkit link if their player isn't linked).
+    /customkit claim (after /link if their player isn't linked).
   * Prices & payment: request_new_custom_kit returns the price from the server's price list ("price") and, if the
     store is connected, the Tip4Serv payment check ("payment"). Tell them the total price. Results:
     approved_automatically = their payment covered it, the kit is created and they have the role – tell them to

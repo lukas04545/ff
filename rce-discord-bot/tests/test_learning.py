@@ -16,7 +16,7 @@ def test_parse_and_append(tmp_path: Path):
     assert learning.parse_facts("not json") == [] and learning.parse_facts('text {"facts": []} text') == []
 
     kb = tmp_path / "k.md"
-    kb.write_text("# Knowledge\n\n## FAQ\n**How do I link?**\n/customkit link\n", encoding="utf-8")
+    kb.write_text("# Knowledge\n\n## FAQ\n**How do I link?**\n/link\n", encoding="utf-8")
     assert learning.append_facts(kb, facts, 19, max_chars=5000) == facts
     text = kb.read_text(encoding="utf-8")
     assert text.count(learning.LEARNED_HEADING) == 1 and "**When is wipe?**" in text and "ticket #19" in text

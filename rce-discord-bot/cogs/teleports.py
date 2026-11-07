@@ -130,7 +130,7 @@ class Teleports(commands.Cog):
                 role = guild.get_role(row["required_role_id"]) if guild else None
                 await self._tell(player, f"Teleport <b>{sanitize_ingame_text(place, 30)}</b> needs the Discord role "
                                          f"<b>{sanitize_ingame_text(role.name if role else 'required role', 30)}</b> "
-                                         "(link with /customkit link).")
+                                         "(link with /link).")
                 return False
         now = time.time()
         last = self.bot.db.teleport_last_use(row["phrase"], player)
@@ -244,7 +244,7 @@ class Teleports(commands.Cog):
             who = player or self.bot.db.linked_player(interaction.user.id)
             if not who:
                 raise TeleportError("Your Discord account isn't linked to an in-game player – pick `player:` (you, "
-                                    "online) or link with `/customkit link`.")
+                                    "online) or link with `/link`.")
             who, pos = await self.capture(who)
             t = self.set(raw, *pos, name=name, by=str(interaction.user))
         except TeleportError as exc:

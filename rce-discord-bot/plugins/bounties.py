@@ -2,7 +2,7 @@
 
 /bounty place <player> <amount>   points are taken right away
 /bounty list                      open bounties
-Rules that stop abuse: the killer needs a linked player (/customkit link) and can't be the one who placed it, a
+Rules that stop abuse: the killer needs a linked player (/link) and can't be the one who placed it, a
 teammate of the target or the target's own account. Bounties nobody claims are refunded after "Expires after".
 """
 from __future__ import annotations
@@ -121,7 +121,7 @@ class Bounties(Plugin):
                  + (" 🟢" if self.online_name(name) else "") for name, total, n in rows]
         embed = discord.Embed(title="🎯 Open bounties", colour=COLOUR,
                               description="\n".join(lines) or "No bounties right now – place one with `/bounty place`.")
-        embed.set_footer(text="Kill the player to collect · needs a linked player (/customkit link)")
+        embed.set_footer(text="Kill the player to collect · needs a linked player (/link)")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ------------------------------------------------------------ Claiming

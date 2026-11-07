@@ -131,7 +131,7 @@ class RaidAlerts(Plugin):
     @raidalerts.command(name="on", description="Get a DM when your base is raided (needs a linked player).")
     async def on_cmd(self, interaction: discord.Interaction) -> None:
         if not self.linked_player(interaction.user.id):
-            await interaction.response.send_message("Link your in-game player first: /customkit link.", ephemeral=True)
+            await interaction.response.send_message("Link your in-game player first: /link.", ephemeral=True)
             return
         self.data.set(f"sub:{interaction.user.id}", interaction.user.id)
         note = "" if self.patterns() else " (The admins haven't set up the raid patterns yet.)"

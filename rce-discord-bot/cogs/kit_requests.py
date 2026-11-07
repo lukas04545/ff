@@ -514,7 +514,7 @@ class KitRequests(commands.Cog):
             return {"ok": False, "result": "approval_failed", **info, "message": text[:300]}
         return {"ok": True, "result": "approved", "request_id": req["id"], **info,
                 "message": "Payment found and the request is approved – tell the player; they claim with "
-                           "/customkit claim (after /customkit link if not linked)."}
+                           "/customkit claim (after /link if not linked)."}
 
     async def cancel(self, request_id: int, member: discord.abc.User, by: str) -> dict:
         """Withdraws one of the member's own pending requests (e.g. a duplicate) – nothing is given."""

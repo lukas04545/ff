@@ -1,7 +1,7 @@
 """Player accounts on the website (/account): players log in with a one-time code the bot DMs to their linked
 Discord account, then manage their own custom kits – add items, buy team slots per month and pick who sits on them.
 
-Login: the player enters their in-game name (linked with /customkit link). The bot DMs a 6-digit code to that
+Login: the player enters their in-game name (linked with /link). The bot DMs a 6-digit code to that
 Discord account; entering it starts a session (a cookie; only a hash of it is stored). No password, no OAuth.
 
 Team slots: a slot on a player's own custom kit lets one more player (a teammate) claim that kit, until the slot
@@ -77,7 +77,7 @@ class PlayerAccounts(commands.Cog):
         user_id = self.bot.db.player_owner(player)
         if user_id is None:
             raise AccountError(f"{player} isn't linked to a Discord account yet. Join our Discord and link it with "
-                               "/customkit link first.")
+                               "/link first.")
         name = self.bot.db.linked_player(user_id) or player
         if self._codes_per_player.hit(str(user_id)) is not None:
             raise AccountError("A code was sent several times already – check your Discord DMs or wait a few "
@@ -163,7 +163,7 @@ class PlayerAccounts(commands.Cog):
         teammate = " ".join(str(teammate or "").split())[:64]
         member_id = db.player_owner(teammate)
         if member_id is None:
-            raise AccountError(f"{teammate} isn't linked to a Discord account (they link it with /customkit link).")
+            raise AccountError(f"{teammate} isn't linked to a Discord account (they link it with /link).")
         if member_id == user_id:
             raise AccountError("You already have your own kit – use a slot for a teammate.")
         name = db.linked_player(member_id) or teammate

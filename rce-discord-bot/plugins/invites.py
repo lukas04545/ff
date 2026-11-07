@@ -1,7 +1,7 @@
 """Invite rewards: members get points when someone they invited to the Discord really plays on the server.
 
 How it works: the bot remembers which invite link a new member used. The inviter is rewarded only once the new
-member has linked their in-game player (/customkit link) and played "Hours to play" on the server – so alt
+member has linked their in-game player (/link) and played "Hours to play" on the server – so alt
 accounts and invite farming earn nothing. People who were on the Discord before, accounts younger than "Minimum
 account age" and self-invites never count.
 
@@ -205,7 +205,7 @@ class InviteRewards(Plugin):
         hours = self.setting("hours")
         embed.description = (f"Invite friends with your own Discord invite link. You get "
                              f"{self.fmt_points(self.setting('inviter_points'))} when they link their player "
-                             f"(`/customkit link`) and play {hours} hour{'s' if hours != 1 else ''} on the server.")
+                             f"(`/link`) and play {hours} hour{'s' if hours != 1 else ''} on the server.")
         if pending:
             embed.add_field(name="Still need to play", inline=False,
                             value="\n".join(f"<@{uid}>" for uid in pending[:15]))

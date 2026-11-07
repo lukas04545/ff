@@ -1,6 +1,6 @@
 """Battle pass: a season of tiers on the player website (/battlepass) with a free and a premium reward track.
 
-Players level up with XP from time online, PvP kills and a daily bonus (linked players – /customkit link – and the
+Players level up with XP from time online, PvP kills and a daily bonus (linked players – /link – and the
 website's player login). The premium track is bought with the premium currency (default "Coins", 1100) and pays out
 1200 of it over the season – enough to buy the next pass. Coins come from coin packs in the web store (PayPal / gift
 cards), from the battle pass itself and from admins (/coins give).

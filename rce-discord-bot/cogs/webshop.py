@@ -9,7 +9,7 @@ What can be bought
   * Own custom kit – players pick items on the website, priced by the price list (prices.txt, STORE_CUSTOM_KITS).
   * Gift cards – values from STORE_GIFTCARD_VALUES; owners also create gift cards in the web interface.
 
-Buyers enter their in-game name; it has to be linked to their Discord account (/customkit link) – that's who gets
+Buyers enter their in-game name; it has to be linked to their Discord account (/link) – that's who gets
 the kit (its claim role, like an approved kit purchase: /customkit claim). Gift cards pay all or part of an order.
 
 Discord: /giftcard create | list | disable (owners: server owner, Administrator permission or ADMIN_USER_IDS – the
@@ -435,7 +435,7 @@ class WebShop(commands.Cog):
         user_id = self.bot.db.player_owner(player)
         if user_id is None:
             raise CheckoutError(f"{player} isn't linked to a Discord account yet. Join our Discord and link your "
-                                "player with /customkit link first – the kit is given to that account.")
+                                "player with /link first – the kit is given to that account.")
         return self.bot.db.linked_player(user_id) or player, user_id
 
     def _owned_kit(self, user_id: int, kit: str):

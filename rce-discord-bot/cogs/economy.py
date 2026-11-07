@@ -1,6 +1,6 @@
 """Points, shop, daily reward, playtime rewards and /profile.
 
-Points belong to a Discord account and are earned with the player linked to it (/customkit link):
+Points belong to a Discord account and are earned with the player linked to it (/link):
   * playtime        POINTS_PER_HOUR while online
   * PvP kills       POINTS_PER_KILL (the same killer/victim pair at most once every 10 minutes)
   * /daily          DAILY_POINTS + DAILY_STREAK_BONUS per day in a row (max. 7)
@@ -189,7 +189,7 @@ class Economy(commands.Cog):
         """Claims the daily reward. (ok, message)"""
         cfg = self.bot.config
         if self.bot.db.linked_player(user_id) is None:
-            return False, "🔗 Link your in-game player first with `/customkit link` – then you can collect points."
+            return False, "🔗 Link your in-game player first with `/link` – then you can collect points."
         wallet, now = self.bot.db.wallet(user_id), int(time.time())
         last = wallet["daily_last"]
         if last and now - last < DAILY_COOLDOWN:
@@ -268,7 +268,7 @@ class Economy(commands.Cog):
             return BuyOutcome(False, f"There is no shop item **{safe_md(item_name)}** – see `/shop list`.")
         player = self.bot.db.linked_player(member.id)
         if player is None:
-            return BuyOutcome(False, "🔗 Link your in-game player first with `/customkit link`.")
+            return BuyOutcome(False, "🔗 Link your in-game player first with `/link`.")
         async with self._buy_locks[member.id]:
             online, role = None, None
             if row["kind"] == "role":
@@ -405,7 +405,7 @@ class Economy(commands.Cog):
             text = r["description"] or self.describe_item(r, interaction.guild)
             embed.add_field(name=f"{r['name']} – {r['price']} {self.bot.config.points_name}"[:256],
                             value=safe_md(text)[:1024], inline=False)
-        embed.set_footer(text="Earn points: playtime, PvP kills, /daily · needs a linked player (/customkit link)")
+        embed.set_footer(text="Earn points: playtime, PvP kills, /daily · needs a linked player (/link)")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @shop.command(name="buy", description="Buy something from the shop.")
@@ -497,7 +497,7 @@ class Economy(commands.Cog):
                 embed.add_field(name="PvP", value=f"{stats['kills']} kills · {stats['deaths']} deaths · K/D {kd:.2f}")
                 embed.add_field(name="Playtime", value=format_duration(stats["playtime_seconds"]))
         else:
-            embed.add_field(name="In-game", value="not linked – `/customkit link`", inline=False)
+            embed.add_field(name="In-game", value="not linked – `/link`", inline=False)
         if self.enabled:
             w = db.wallet(member.id)
             daily = ("ready now" if not w["daily_last"] or time.time() - w["daily_last"] >= DAILY_COOLDOWN

@@ -3429,6 +3429,9 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         nick = await cog.set_member_nickname(user_id, name)
+        await cog.update_linked_role(user_id)
+        if previous:
+            await cog.update_linked_role(previous)
         moved = f" (moved from Discord user {previous})" if previous else ""
         self._audit(f"Linked Discord user {user_id} to **{name}**{moved}")
         return web.json_response({"ok": True, "player": name, "user_id": str(user_id),
@@ -3449,6 +3452,9 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
         player = self.bot.db.unlink_player(int(request.match_info["user_id"]))
         if player is None:
             raise ApiError("Not linked.", 404)
+        cog = self.bot.get_cog("CustomKits")
+        if cog is not None:
+            await cog.update_linked_role(int(request.match_info["user_id"]))
         self._audit(f"Unlinked Discord user {request.match_info['user_id']} from **{player}**")
         return web.json_response({"ok": True})
 

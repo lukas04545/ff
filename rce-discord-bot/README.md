@@ -808,7 +808,7 @@ server itself is protected by your host (G-Portal) – the bot can't shield the 
 | `/customkit import`, `/customkit import-file` | Admins | Create/fill custom kits from kit builder `kit add` commands (text box or .txt file) |
 | `/customkit list`, `/customkit info` | Admins | Show custom kits (visible to admins only) |
 | `/customkit give`, `/customkit all` | Admins | Give a custom kit to one player or to all online players |
-| `/customkit link` | Everyone | Link your Discord account to your in-game player (verified via quick chat) |
+| `/link` | Everyone | Link your Discord account to your in-game player (verified via quick chat) |
 | `/customkit claim` | Members with an allowed role | Claim a custom kit to your own linked player (cooldown per player) |
 | `/customkit access`, `/customkit cooldown`, `/customkit reset-cooldown`, `/customkit link-player`, `/customkit unlink` | Admins | Who may claim, how often, reset cooldowns, link a member to a player (also offline), remove links |
 | `/ticket open`, `/ticket close` | everyone | Open a ticket or close your own ticket |
@@ -897,7 +897,7 @@ can do it too ("bind Starter to Thanks with a 30 min cooldown").
 never give kits (old kit binds on them are removed when the bot starts). Give each one coordinates and a player who
 uses that emote in game is teleported there (`TELEPORT_COMMAND`, default `global.teleportpos ({x},{y},{z}) "{name}"`).
 - **Capture your position:** stand on the spot in game and run `/teleport here location:North` (uses your linked
-  player from `/customkit link`, or `player:` – must be online). In the control panel: **Kits → 📍 Location
+  player from `/link`, or `player:` – must be online). In the control panel: **Kits → 📍 Location
   teleports**, pick yourself under *Capture from* and click **📍 Capture** next to the location – the bot asks the
   server where you stand (`TELEPORT_POSITION_COMMAND`, default `server.printpos "{name}"`) and saves it.
 - **Type coordinates:** `/teleport set location:North x:1200 y:35 z:-850 name:Outpost`, or X / Y / Z in the panel.
@@ -916,7 +916,7 @@ Examples:
 
 **Role-locked autokits (e.g. a VIP spawn kit):** an autokit can require a Discord role. The game only
 knows the in-game name, so each player links it to their Discord account once with
-`/customkit link` (pick their online player from a dropdown). On respawn the bot gives the kit
+`/link` (pick their online player from a dropdown). On respawn the bot gives the kit
 only if the linked Discord account has the role. Unlinked players and members without the role
 don't get it (for quick chat kits they get a short in-game hint). Role changes on Discord apply
 within 2 minutes. Works without the Server Members Intent. Also in the web interface: Kits →
@@ -982,16 +982,16 @@ Each member links their in-game player once; after that `/customkit claim` alway
 ```
 /customkit access kit:Eventkit role:@VIP                ← admins: allow a role (allow:False removes it)
 /customkit cooldown kit:Eventkit duration:12h           ← admins: 30m, 12h, 1d, 1d 12h, 0 = no cooldown
-/customkit link player:YourGamertag                     ← members, once: be online in-game
+/link player:YourGamertag                     ← members, once: be online in-game
 /customkit claim kit:Eventkit                           ← members: goes to the linked player
 /customkit reset-cooldown kit:Eventkit player:Name      ← admins: claim again right away (empty = everyone)
 /customkit link-player member:@Name player:<name>       ← admins: link a member directly – the player can be offline
                                                           (move:True takes the player from another account)
 /customkit unlink member:@Name                          ← admins: remove a link (e.g. gamertag changed)
 ```
-- **Linking with a dropdown:** `/customkit link` (or the **🔗 Link my in-game player** button that
+- **Linking with a dropdown:** `/link` (or the **🔗 Link my in-game player** button that
   `/customkit link-panel` posts in a channel) shows a dropdown of the online players; the member picks
-  theirs and is linked right away. They can also type it: `/customkit link player:Name`. Each in-game player
+  theirs and is linked right away. They can also type it: `/link player:Name`. Each in-game player
   can be linked to only one Discord account, and changing the link needs an admin (`/customkit unlink`) –
   otherwise members could hop between friends' players to claim kits again (the cooldown counts per player).
   ⚠️ Nothing proves the player is really theirs. To make players prove it, turn on **Linking: also verify
@@ -1263,7 +1263,7 @@ kits. Replies are sent without @mentions.
   confirmation in the ticket and an entry in the admin log.
 - It follows exactly the same rules as `/customkit claim` (role, cooldown, linked + online player) and
   can never claim for anyone else or give other kits – so nobody can talk it into more than they could
-  claim themselves. Not linked yet? It explains `/customkit link`.
+  claim themselves. Not linked yet? It explains `/link`.
 
 **Bought custom kits:** when a player writes in their ticket that they bought a custom kit (e.g. "I bought the Ak
 Kit, Tebex order #1234"), the AI files a **purchase request**: the bot posts *"🛒 Kit purchase – staff approval
@@ -1436,7 +1436,7 @@ plugin must be on). Three tabs: Kits can be put into **categories** (web interfa
   `/giftcard combine` on Discord): the whole balance moves onto one card, the others are emptied; the combined card
   keeps the earliest expiry date of the cards involved.
 
-**Checkout:** the buyer enters their in-game name – it must be linked to their Discord account (`/customkit link`),
+**Checkout:** the buyer enters their in-game name – it must be linked to their Discord account (`/link`),
 that's who gets the kit – and optionally a gift card code, then pays with **PayPal**. Right after the payment the
 kit is delivered like an approved kit purchase: the buyer gets the kit's role (for N days if it's time-limited, or a
 new custom kit with their items) and claims it with `/customkit claim` in Discord. They also get a DM, and every
@@ -1467,7 +1467,7 @@ drop from the sky at random spots inside the zone with a parachute and a pistol,
 the last one alive wins.
 
 - **Lobby:** an admin runs `/br start [seconds]`, players join on Discord with `/br join` (linked with
-  `/customkit link` and online in-game); admins can `/br add` / `/br remove` players. `/br status` shows the lobby, who's
+  `/link` and online in-game); admins can `/br add` / `/br remove` players. `/br status` shows the lobby, who's
   alive (with kills) and the zone. `/br stop` ends a round and deletes its zones.
 - **Start:** with *Kill players at the start* on (default) everyone is killed once (`global.killplayer`), so they
   respawn with an empty inventory – their gear stays in a bag where they died (the lobby announcement warns them). The
@@ -1526,7 +1526,7 @@ the last one alive wins.
 ### 🛡️ Offline protection zones
 
 Switched on and set up in the control panel under **Server → 🛡️ Offline protection** (off until you switch it on).
-One protection zone per in-game team. The **team leader** places it at his position with the quick chats *"Can I build here?"* then *"Yes"* (within *Seconds to answer "Yes"*, default 20); members and players without a team get a short in-game note. Placing again moves the zone. The zone turns **red** when every member has been offline longer than **Offline time before red** (minutes, default 30) and **green** the moment any member joins. Teams and leaders are read from the server with `relationshipmanager.teaminfoall` at start and every *Re-read all teams* minutes (default 10), kept up to date from the team log lines in between (the bot makes sure `relationshipmanager.logteamactions 1` is on), and looked up with `relationshipmanager.findplayerteam` when an unknown player places; online/offline comes from the player list. Only commands from the Rust Console Edition guide *Custom zones* are used: the leader's position via `server.printpos "<name>"`; the zone via `zones.createcustomzone "team_<id>" (x,y,z) 0 Sphere <radius> 1 1 0 1 1` (*Zone radius*, default 30 m) plus `zones.editcustomzone` `showarea 1` (a ring visible within 100 m) and `showchatmessage 1`; **red** = `allowbuildingdamage 0`, `color (255,0,0)` and an enter message; **green** = `allowbuildingdamage 1`, `color (0,255,0)`; moving or a team that's gone = `zones.deletecustomzone`. Every command is an editable setting (placeholders `{zone}` `{team}` `{leader}` `{x}` `{y}` `{z}` `{radius}`); an empty one is never sent and the page says what's missing. **Zone size (team size and VIP):** *Zone size by team size* takes one line per team size, `members=radius` – e.g. `1=20`, `2=25`, `3-4=30`, `5+=40`; team sizes no line covers use *Zone radius*. VIP teams get *VIP zone size (%)* of that (default 150 = 1.5×). VIP = the linked Discord account (`/customkit link`) has the *VIP Discord role*, or the name is on the *VIP players* list; *VIP size when …* decides whether the leader must be VIP (default) or any member. When a team grows or shrinks, or its VIP status changes, the zone is deleted and created again at the same spot with the new size (the guide has no command to resize a zone), then gets its red/green status again; the panel shows every zone's size with a ⭐ VIP badge. Zones from before this feature keep their size until something changes. **Leaving the team (optional):** with *Delete the zone when a member leaves the team* on, the zone is deleted the moment anyone leaves the team or is kicked (from the team log line – or, if that line was missed, as soon as the team list no longer has them); the leader is told in-game and has to place it again. Joining never deletes a zone. Off by default. **Expiry:** a zone whose team nobody has been online for *Delete the zone after … hours* (default 72, 0 = never) is deleted with the remove command; the leader can place a new one when the team is back. It's a **main feature** of the bot with its own page in the control panel (**Server → 🛡️ Offline protection**, owners only – not on the Plugins page): on/off, settings, and every zone with its status, which members are online right now (and who keeps a green zone green, or when it turns red), offline since, when it will be deleted, and a Delete button. **Status sent again:** every *Send every zone's status again every … minutes* (default 10, 0 = only on changes) and right after RCON reconnects, the red/green commands are sent again for every zone – so a zone reset by a server restart, or one whose command got lost, matches the panel again. A status change only counts once its commands went through; with RCON down it's retried at the next check (every 20 s). Optional Discord channel for status changes and expired zones. **Help from the support AI:** players who struggle with the quick chats can open a ticket – the ticket AI looks up their team and zone (`get_my_protection_zone`) and places or moves the zone for them (`place_protection_zone`) with the same rules as in-game: only for the ticket owner's own team (from their linked account), only if they're the team leader, and only while they're online, at the spot they stand on (the AI asks them to stand in the middle of their base first). A placed zone is confirmed in the ticket and in the admin log ("via ticket #… (AI)").
+One protection zone per in-game team. The **team leader** places it at his position with the quick chats *"Can I build here?"* then *"Yes"* (within *Seconds to answer "Yes"*, default 20); members and players without a team get a short in-game note. Placing again moves the zone. The zone turns **red** when every member has been offline longer than **Offline time before red** (minutes, default 30) and **green** the moment any member joins. Teams and leaders are read from the server with `relationshipmanager.teaminfoall` at start and every *Re-read all teams* minutes (default 10), kept up to date from the team log lines in between (the bot makes sure `relationshipmanager.logteamactions 1` is on), and looked up with `relationshipmanager.findplayerteam` when an unknown player places; online/offline comes from the player list. Only commands from the Rust Console Edition guide *Custom zones* are used: the leader's position via `server.printpos "<name>"`; the zone via `zones.createcustomzone "team_<id>" (x,y,z) 0 Sphere <radius> 1 1 0 1 1` (*Zone radius*, default 30 m) plus `zones.editcustomzone` `showarea 1` (a ring visible within 100 m) and `showchatmessage 1`; **red** = `allowbuildingdamage 0`, `color (255,0,0)` and an enter message; **green** = `allowbuildingdamage 1`, `color (0,255,0)`; moving or a team that's gone = `zones.deletecustomzone`. Every command is an editable setting (placeholders `{zone}` `{team}` `{leader}` `{x}` `{y}` `{z}` `{radius}`); an empty one is never sent and the page says what's missing. **Zone size (team size and VIP):** *Zone size by team size* takes one line per team size, `members=radius` – e.g. `1=20`, `2=25`, `3-4=30`, `5+=40`; team sizes no line covers use *Zone radius*. VIP teams get *VIP zone size (%)* of that (default 150 = 1.5×). VIP = the linked Discord account (`/link`) has the *VIP Discord role*, or the name is on the *VIP players* list; *VIP size when …* decides whether the leader must be VIP (default) or any member. When a team grows or shrinks, or its VIP status changes, the zone is deleted and created again at the same spot with the new size (the guide has no command to resize a zone), then gets its red/green status again; the panel shows every zone's size with a ⭐ VIP badge. Zones from before this feature keep their size until something changes. **Leaving the team (optional):** with *Delete the zone when a member leaves the team* on, the zone is deleted the moment anyone leaves the team or is kicked (from the team log line – or, if that line was missed, as soon as the team list no longer has them); the leader is told in-game and has to place it again. Joining never deletes a zone. Off by default. **Expiry:** a zone whose team nobody has been online for *Delete the zone after … hours* (default 72, 0 = never) is deleted with the remove command; the leader can place a new one when the team is back. It's a **main feature** of the bot with its own page in the control panel (**Server → 🛡️ Offline protection**, owners only – not on the Plugins page): on/off, settings, and every zone with its status, which members are online right now (and who keeps a green zone green, or when it turns red), offline since, when it will be deleted, and a Delete button. **Status sent again:** every *Send every zone's status again every … minutes* (default 10, 0 = only on changes) and right after RCON reconnects, the red/green commands are sent again for every zone – so a zone reset by a server restart, or one whose command got lost, matches the panel again. A status change only counts once its commands went through; with RCON down it's retried at the next check (every 20 s). Optional Discord channel for status changes and expired zones. **Help from the support AI:** players who struggle with the quick chats can open a ticket – the ticket AI looks up their team and zone (`get_my_protection_zone`) and places or moves the zone for them (`place_protection_zone`) with the same rules as in-game: only for the ticket owner's own team (from their linked account), only if they're the team leader, and only while they're online, at the spot they stand on (the AI asks them to stand in the middle of their base first). A placed zone is confirmed in the ticket and in the admin log ("via ticket #… (AI)").
 
 ### 💣 Nukes in the web store
 
@@ -1546,7 +1546,7 @@ Players can log in on the website to manage their **own** custom kits (the ones 
 `/account`** (the *My account* link appears when `PLAYER_ACCOUNTS` is on, the default).
 
 - **Login** is a one-time code – no password, nothing to set up. The player enters their in-game name; the bot DMs
-  a 6-digit code to the linked Discord account (linked with `/customkit link`); entering it logs them in for 30
+  a 6-digit code to the linked Discord account (linked with `/link`); entering it logs them in for 30
   days (a cookie; only a hash of it is stored). They must have DMs from server members on.
 - **Add items** to one of their kits: the same item picker as the store, priced by the price list. After payment
   the items are added to that kit.
@@ -1632,7 +1632,7 @@ Discord Developer Portal and the panel follows (it's served by the bot at `/img/
 | 🏅 **Achievements** | Badges for kills, hours, `/daily` streaks, wipes played, bounties and invites – points + announcement, shown in `/profile`. | on |
 | 🗳️ **Wipe feedback poll** | *N* hours after each wipe, Discord polls (your own questions) – `/wipepoll` posts them now. Needs the **Send Polls** permission. | on |
 
-All rewards go to **linked** accounts (`/customkit link`) – Console Edition only gives player names, so this stops
+All rewards go to **linked** accounts (`/link`) – Console Edition only gives player names, so this stops
 alt accounts from collecting twice. Plugins that pay points need **Points & shop** to be on.
 
 ## Community & moderation
@@ -1695,7 +1695,7 @@ The wipe itself is still done by G-Portal. If it happens at another time, use `/
 
 ### Points & shop
 
-Members earn points with the in-game player they linked (`/customkit link` – so points can only ever
+Members earn points with the in-game player they linked (`/link` – so points can only ever
 go to their own verified account):
 
 | Source | Setting (default) |
@@ -1761,7 +1761,7 @@ A running loop goes on after a bot restart.
 
 **Who is allowed** (⚙️ Settings → 🛡️ Admin abuse protection):
 - `ABUSE_EXEMPT_ROLE_IDS` – Discord roles such as *Owner* and *Co-Owner*. The bot recognises their in-game
-  name through `/customkit link`, so owners/co-owners should link their player.
+  name through `/link`, so owners/co-owners should link their player.
 - `ABUSE_EXEMPT_PLAYERS` – in-game names, comma-separated (works without linking – put the owner's gamertag
   here to be safe).
 

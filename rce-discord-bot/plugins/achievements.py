@@ -1,6 +1,6 @@
 """Achievements: badges for milestones (kills, playtime, /daily streaks, wipes played, bounties, invites).
 
-Only for linked players (/customkit link). Every unlocked badge gives points, is announced in-game and in a
+Only for linked players (/link). Every unlocked badge gives points, is announced in-game and in a
 channel, and shows up in /achievements and /profile. Unlocked badges stay, even if the leaderboard is reset.
 """
 from __future__ import annotations
@@ -150,7 +150,7 @@ class Achievements(Plugin):
         embed = discord.Embed(title=f"🏅 Achievements – {earned}/{len(badges)}", colour=COLOUR,
                               description="\n".join(lines))
         if not self.linked_player(user_id):
-            embed.set_footer(text="Link your in-game player with /customkit link to earn badges.")
+            embed.set_footer(text="Link your in-game player with /link to earn badges.")
         return embed
 
     @achievements.command(name="show", description="Your badges and progress (or someone else's).")
