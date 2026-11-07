@@ -218,3 +218,55 @@ def test_rcon_repeater(pb):  # noqa: F811
     import pytest
     with pytest.raises(ValueError):
         r.start_quick("say hi", 1, None)
+
+
+def test_random_items_with_opt_out(pb):  # noqa: F811
+    from plugins.random_items import parse_items
+    from support import emote_binds
+    items, errors = parse_items("scrap | 50 | 200\nwood\nbad line here")
+    assert items == [("scrap", 50, 200), ("wood", 1, 1)] and len(errors) == 1
+    r = plug(pb, "random_items", items="scrap | 10 | 10", who="everyone", min_players=1, optout_emote="Sorry",
+             announce=True, every_minutes=30)
+    pb.bot.online_players.update({"Bob": {}, "Ann": {}})
+    sorry = emote_binds.find("Sorry")[0]
+    run(r.on_rce_chat(ChatEvent("GLOBAL", "Bob", sorry, "")))                     # Bob opts out in game
+    assert r.opted_out() == {"bob"} and any("random items OFF" in c for c in pb.said)
+    pb.said.clear()
+    given = run(r.drop())
+    assert given == ["Ann: 10 scrap"] and 'inventory.giveto "Ann" "scrap" 10' in pb.said
+    run(r.on_rce_chat(ChatEvent("GLOBAL", "Bob", sorry, "")))                     # and back in
+    assert r.opted_out() == set()
+
+
+def test_ingame_giveaway_enter_and_draw(pb):  # noqa: F811
+    from plugins.ingame_giveaways import parse_prize
+    from support import emote_binds
+    assert parse_prize("kit:VIP") == {"kind": "kit", "name": "VIP"}
+    assert parse_prize("item:rifle.ak 2") == {"kind": "item", "name": "rifle.ak", "amount": 2}
+    assert parse_prize("nonsense") is None
+    g = plug(pb, "ingame_giveaways", entry_emote="Hello", minutes=5, auto_every_hours=0, channel=None)
+    pb.bot.online_players.update({"Bob": {}, "Ann": {}})
+    hello = emote_binds.find("Hello")[0]
+    assert run(g.start(parse_prize("item:scrap 500"), 1, 5)) is None
+    assert any("GIVEAWAY" in c and "Hello" in c for c in pb.said)
+    assert run(g.start(parse_prize("item:scrap 1"), 1, 5)) == "A giveaway is running already."
+    assert g.reserved_emotes() == {hello}                                         # no kit on Hello meanwhile
+    run(g.on_rce_chat(ChatEvent("GLOBAL", "Bob", hello, "")))
+    run(g.on_rce_chat(ChatEvent("GLOBAL", "Bob", hello, "")))                     # entering twice counts once
+    assert g.running["entries"] == {"bob"}
+    pb.said.clear()
+    run(g.tick(time.time() + 400))                                                 # time's up: the draw
+    assert 'inventory.giveto "Bob" "scrap" 500' in pb.said and any("winner" in c for c in pb.said)
+    assert g.running is None and g.reserved_emotes() == set()
+
+
+def test_safe_zone_has_a_no_build_ring(pb, monkeypatch):  # noqa: F811
+    at_position(pb, monkeypatch)
+    z = plug(pb, "zones", create_command="create {zone} {radius} {pvp} {building}", delete_command="del {zone}",
+             ring_command="ring {zone} {radius}\nzones.editcustomzone \"{zone}\" allowbuilding 0", ring_width=80,
+             portal_emote="Go, go, go!", portal_cooldown=0)
+    assert run(z.create_safe_zone("Outpost", (1.0, 2.0, 3.0), 50, 80)) == []
+    assert "create zone_Outpost 50 0 0" in pb.said                                 # no PvP, no raiding inside
+    assert "ring zone_Outpost_ring 130" in pb.said                                  # 50 m + 80 m ring
+    assert 'zones.editcustomzone "zone_Outpost_ring" allowbuilding 0' in pb.said    # nobody builds in range
+    assert z.zones()["outpost"]["ring"] == 80
