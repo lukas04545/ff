@@ -149,6 +149,19 @@ CREATE TABLE IF NOT EXISTS hq_trials (discord_id INTEGER PRIMARY KEY, customer_i
                                       claimed_at INTEGER NOT NULL);     -- one free week per Discord account
 CREATE TABLE IF NOT EXISTS hq_links (discord_id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id),
                                      linked_at INTEGER NOT NULL);
+-- customers' ideas and wishes from the HQ chat (control_plane/hq_ideas.py) and how far they are
+CREATE TABLE IF NOT EXISTS suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id INTEGER NOT NULL,                   -- Discord user id
+    author_name TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',           -- new / planned / in_progress / done / declined
+    note TEXT NOT NULL DEFAULT '',                -- the team's answer, shown on the board
+    voters TEXT NOT NULL DEFAULT '[]',            -- JSON list of Discord ids that want it too
+    announced TEXT NOT NULL DEFAULT 'new',        -- the status last announced in the channel
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 """
 
 

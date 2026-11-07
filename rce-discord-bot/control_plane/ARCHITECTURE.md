@@ -197,6 +197,13 @@ The bot builds everything by itself and repairs it at every start: roles, catego
   * **HQ Viewer** – reads every panel and alert, can't type or press anything.
   * The server owner, `CP_HQ_ADMIN_IDS` and `CP_HQ_ADMIN_ROLE_ID` always count as HQ Admin.
   * Give or take the roles in `#hq-staff` (user pickers, HQ Admin only) or in Discord's normal role menu.
+* **Suggestions AI** (`hq_ideas.py`): in `#customer-chat` (set another name with `CP_HQ_IDEAS_CHANNEL`, empty = off;
+  the bot creates it in `💬 Support` for customers with a package if it's missing) an AI reads customers' messages. It
+  saves ideas as suggestions (or counts a vote if the idea is already listed), answers status questions and questions
+  about the bot (from this README), and stays silent on normal chat. A pinned board lists every suggestion by status
+  (🆕 New, 📌 Planned, 🛠️ In progress, ✅ Done, ❌ Not planned). Change a status in the owner panel → **Suggestions**,
+  or @mention the bot there as HQ staff (e.g. "#3 is in progress"). The person who suggested it gets a notice. Staff
+  messages without an @mention are ignored. It needs the DeepSeek key (`CP_DEEPSEEK_API_KEY`).
 * **Channels** (hidden from @everyone):
   * `🛠 RCE HQ` contains:
     * `#hq-overview`: customers, subscriptions, servers, live bots/players, the version, and *Check for updates* /
