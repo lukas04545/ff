@@ -13,6 +13,8 @@ The shared bot of every server (or, with CP_HQ_BOT_TOKEN, a bot of its own) buil
   💬 Support         (everyone) #get-started: [🎫 Open my customer ticket] – customers set up their bot there with an
                     AI assistant, link their account and get a one-time login link (control_plane/hq_tickets.py);
                     linked customers get a role named after their package
+                    #customer-chat (CP_HQ_IDEAS_CHANNEL): an AI collects customers' suggestions, answers questions
+                    about the bot and keeps a pinned board with the development status of every idea (hq_ideas.py)
   👥 Customers       (private category; "Customers 2", … after 50 channels)
     #12-alex         one channel per customer who bought the bot: a customer panel (account, subscription, slots,
                      add-ons + buttons) and one panel per server (health + Restart / Suspend / Discord AI on/off).
@@ -37,7 +39,7 @@ from typing import Awaitable, Callable
 
 import discord
 
-from control_plane import actions, features, hq_tickets, manage_ai, provisioning, slots, updates
+from control_plane import actions, features, hq_ideas, hq_tickets, manage_ai, provisioning, slots, updates
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -102,6 +104,7 @@ class HQ:
                                                chunk_guilds_at_startup=False)
         self.history: dict[tuple[int, int], list[dict]] = {}       # (channel, server) -> AI conversation
         self.ticket_history: dict[int, list[dict]] = {}            # ticket channel -> the assistant's conversation
+        self.idea_history: dict[int, list[dict]] = {}              # suggestions channel -> recent chat with the AI
         self._ai = None                                            # DeepSeek client for the ticket assistant
         self.retries: dict[str, tuple[int, int, str]] = {}         # token -> (channel, server, text)
         self._last: dict[tuple[str, int], str] = {}                # panel -> hash of what's shown (no needless edits)
@@ -484,6 +487,10 @@ class HQ:
                 await self.sync_tickets(guild)
             except discord.HTTPException as exc:
                 log.warning("HQ customer tickets: %s", exc)
+            try:
+                await self.sync_ideas(guild)
+            except discord.HTTPException as exc:
+                log.warning("HQ suggestions: %s", exc)
             await self._post(chans[ALERTS_CHANNEL], self.alerts())
             await self._post(chans[AUDIT_CHANNEL], self.audit_lines())
 
@@ -629,6 +636,9 @@ class HQ:
 
     async def on_message(self, message) -> None:
         if message.author.bot or message.guild is None or message.guild.id != self.settings.hq_guild_id:
+            return
+        if self._is_ideas_channel(message.channel):          # the customers' chat: the suggestions AI
+            await self.ideas_message(message)
             return
         ticket = self.db.one("SELECT user_id FROM hq_tickets WHERE channel_id = ?", (message.channel.id,))
         if ticket is not None:                                # a customer ticket: the assistant answers its owner
@@ -899,6 +909,98 @@ class HQ:
                     await self.sync_sub_roles(self.guild)
             except discord.HTTPException as exc:
                 log.warning("HQ package roles: %s", exc)
+
+    # ------------------------------------------------------------------ suggestions (hq_ideas.py)
+
+    def _is_ideas_channel(self, channel) -> bool:
+        name = (self.settings.hq_ideas_channel or "").strip().lstrip("#").lower()
+        return bool(name) and getattr(channel, "name", None) == name
+
+    def _ideas_channel(self, guild):
+        name = (self.settings.hq_ideas_channel or "").strip().lstrip("#").lower()
+        if not name:
+            return None
+        chans = getattr(guild, "text_channels", None)
+        if chans is None:
+            chans = [ch for cat in guild.categories for ch in cat.text_channels]
+        return next((ch for ch in chans if ch.name == name), None)
+
+    async def sync_ideas(self, guild) -> None:
+        """The suggestions channel (made if missing: customers with a package + HQ staff), its pinned board and the
+        notices for changed statuses. An existing channel's permissions are left as the owner set them."""
+        name = (self.settings.hq_ideas_channel or "").strip().lstrip("#").lower()
+        if not name:
+            return
+        ch = self._ideas_channel(guild)
+        if ch is None:
+            cat = next((c for c in guild.categories if c.name == hq_tickets.SUPPORT_CATEGORY), None)
+            if cat is None:
+                return                                   # sync_tickets makes it first
+            ow = self._overwrites(guild, CUSTOMER_ACCESS)
+            row = self.db.one("SELECT value FROM settings_kv WHERE key = 'hq_sub_roles'")
+            for rid in (json.loads(row["value"]) if row else {}).values():
+                role = guild.get_role(rid)
+                if role is not None:
+                    ow[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True,
+                                                           read_message_history=True)
+            ch = await cat.create_text_channel(name, overwrites=ow, reason="RCE HQ: customers' chat",
+                                               topic="Ideas and questions about the bot – an assistant collects every "
+                                                     "suggestion; the pinned board shows how far each one is.")
+        before = self.db.one("SELECT message_id FROM hq_messages WHERE kind = 'ideas' AND ref_id = 0")
+        await self._show(ch, "ideas", 0, hq_ideas.board(self.db))
+        after = self.db.one("SELECT message_id FROM hq_messages WHERE kind = 'ideas' AND ref_id = 0")
+        if after and (before is None or before["message_id"] != after["message_id"]):
+            try:                                         # a new board: pin it so it stays findable in the chat
+                msg = await ch.fetch_message(after["message_id"])
+                await msg.pin(reason="RCE HQ: suggestions board")
+            except (discord.HTTPException, AttributeError):
+                pass
+        for s in hq_ideas.unannounced(self.db):
+            hq_ideas.mark_announced(self.db, s["id"], s["status"])
+            if s["status"] == "new":
+                continue
+            note = f"\n> {discord.utils.escape_mentions(s['note'])}" if s["note"] else ""
+            await ch.send(f"{hq_ideas.label(s['status'])} – **#{s['id']}** "
+                          f"{discord.utils.escape_mentions(s['text'][:200])} (suggested by <@{s['author_id']}>){note}",
+                          allowed_mentions=discord.AllowedMentions(users=[discord.Object(s["author_id"])],
+                                                                   everyone=False, roles=False))
+
+    async def ideas_message(self, message) -> None:
+        from support.deepseek import DeepSeekError
+        staff = self.level(message.author) >= SUPPORT
+        me = getattr(self.client, "user", None)
+        if staff and not (me is not None and me in (getattr(message, "mentions", None) or [])):
+            return                                       # staff talking to customers – only answers when @mentioned
+        text = re.sub(r"<@!?\d+>", "", message.content or "").strip()
+        client = self._ticket_ai()
+        if not text or client is None:
+            return
+        if hq_ideas.idea_turns.hit(f"idea:{message.author.id}") is not None:
+            return                                       # quietly: no reply spam in a shared channel
+        name = getattr(message.author, "display_name", None) or getattr(message.author, "name", "") or ""
+        tools = hq_ideas.IdeaTools(self.db, message.author.id, name, staff=staff)
+        hist = self.idea_history.setdefault(message.channel.id, [])
+        try:
+            async with message.channel.typing():
+                reply = await hq_ideas.answer(client, tools, hist, text)
+        except DeepSeekError as exc:
+            log.warning("HQ suggestions AI: %s", exc)
+            return
+        hist.append({"role": "user", "content": f"{name}: {text[:800]}"})
+        if reply:
+            hist.append({"role": "assistant", "content": reply[:800]})
+        del hist[:-12]
+        for i, part in enumerate(_chunks(reply) if reply else []):
+            if i == 0:
+                await message.reply(part, mention_author=False)
+            else:
+                await message.channel.send(part)
+        if tools.changed and self.guild is not None:
+            try:
+                async with self._lock:
+                    await self.sync_ideas(self.guild)
+            except discord.HTTPException as exc:
+                log.warning("HQ suggestions board: %s", exc)
 
 
 def enabled(settings: Settings) -> bool:

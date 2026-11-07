@@ -75,20 +75,21 @@ NAV = (
     ("Control", "pink", (("overview", "📊", "Overview", "/"), ("system", "🖥️", "System", "/system"),
                          ("audit", "🧾", "Audit log", "/audit"))),
     ("Customers", "violet", (("customers", "👤", "Customers", "/customers"), ("servers", "🛰️", "Servers", "/servers"),
-                             ("domains", "🌐", "Domains", "/domains"))),
+                             ("domains", "🌐", "Domains", "/domains"),
+                             ("suggestions", "💡", "Suggestions", "/suggestions"))),
     ("Shop", "teal", (("plans", "🛒", "Packages", "/plans"),)),
     ("Admin", "amber", (("settings", "⚙️", "Settings", "/settings"), ("owners", "🛡️", "Owners", "/owners"))),
 )
 BARE = {"Owner login", "One-time login", "Link used", "Signed in", "Restarting", "Owner invite", "Welcome"}
 ACTIVE = {"Owner": "overview", "System": "system", "Audit": "audit", "Customers": "customers", "Servers": "servers",
-          "Domains": "domains", "Packages": "plans", "Settings": "settings", "Owners": "owners"}
+          "Domains": "domains", "Suggestions": "suggestions", "Packages": "plans", "Settings": "settings", "Owners": "owners"}
 
 
 def esc(value) -> str:
     return html.escape("" if value is None else str(value))
 
 
-STAFF_NAV = {"overview", "customers", "servers", "settings"}    # what a staff account sees in the menu
+STAFF_NAV = {"overview", "customers", "servers", "settings", "suggestions"}    # what a staff account sees in the menu
 
 
 def owner_frame(title: str, body: str, *, prefix: str = "", shop: str = "", staff: bool = False) -> web.Response:

@@ -75,6 +75,8 @@ class Settings:
     hq_admin_ids: frozenset = field(default_factory=lambda: frozenset(
         int(x) for x in os.environ.get("CP_HQ_ADMIN_IDS", "").replace(" ", "").split(",") if x.isdigit()))
     hq_admin_role_id: int = field(default_factory=lambda: _int("CP_HQ_ADMIN_ROLE_ID", 0))
+    # the HQ channel where the suggestions AI answers customers (control_plane/hq_ideas.py); empty = off
+    hq_ideas_channel: str = field(default_factory=lambda: os.environ.get("CP_HQ_IDEAS_CHANNEL", "customer-chat"))
     # Cloudflare tunnel for every website (python -m control_plane cloudflare) – the API token is never stored
     cf_tunnel_token: str = field(default_factory=lambda: os.environ.get("CP_CF_TUNNEL_TOKEN", ""))
     # OPTIONAL, only if the owner chooses to save it: a token that can ONLY add customers' own domains

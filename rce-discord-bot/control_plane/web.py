@@ -141,7 +141,8 @@ def use_owner_view_token(db: DB, token: str) -> dict | None:
 # Staff accounts (owners.role = 'staff'): customer work only – everything else in the owner panel is refused.
 STAFF_CAN = tuple((m, re.compile(p)) for m, p in (
     ("GET", r"^/?$"), ("GET", r"^/customers$"), ("GET", r"^/customers/\d+$"), ("GET", r"^/servers$"),
-    ("GET", r"^/settings$"), ("GET", r"^/passkey\.js$"),
+    ("GET", r"^/settings$"), ("GET", r"^/passkey\.js$"), ("GET", r"^/suggestions$"),
+    ("POST", r"^/suggestions/\d+$"),
     ("POST", r"^/customers/new$"), ("POST", r"^/customers/\d+/(trial|server|dashboard)$"),
     ("POST", r"^/servers/\d+/(open|password-link)$"),
     ("POST", r"^/passkeys(/options)?$"), ("POST", r"^/passkeys/[A-Za-z0-9_-]+/remove$"), ("POST", r"^/logout$"),
@@ -1860,6 +1861,47 @@ style="width:100%" placeholder="Cloudflare API token" required><br><br><button>S
 <p>The API token wasn't saved. <b>Restart the control plane</b> (<code>systemctl restart rce-saas</code>) – it then
 starts the tunnel and every website is online at its address.</p></div>""")
 
+    async def suggestions_page(request):
+        owner(request)
+        from control_plane import hq_ideas
+        msg = esc(request.query.get("m", ""))
+        want = request.query.get("status", "")
+        rows = hq_ideas.listing(db, want if want in hq_ideas.STATUSES else None, limit=500)
+        counts = {k: db.one("SELECT COUNT(*) AS n FROM suggestions WHERE status = ?", (k,))["n"]
+                  for k in hq_ideas.STATUSES}
+        tabs = " · ".join([f"<a href={P}/suggestions>All</a>"] + [
+            f"<a href='{P}/suggestions?status={k}'>{esc(hq_ideas.label(k))} ({counts[k]})</a>" for k in hq_ideas.STATUSES])
+        def form(r) -> str:
+            opts = "".join(f"<option value={k}{' selected' if k == r['status'] else ''}>{esc(hq_ideas.label(k))}</option>"
+                           for k in hq_ideas.STATUSES)
+            return (f"<form method=post action={P}/suggestions/{r['id']} class=inline>{hidden(request)}"
+                    f"<select name=status>{opts}</select> <input name=note value='{esc(r['note'])}' maxlength=300 "
+                    f"placeholder='Note for the board (optional)' style='width:40%'> <button>Save</button> "
+                    "<button name=remove value=1 class=danger>Remove</button></form>")
+        body = "".join(f"<tr><td>#{r['id']}</td><td>{esc(r['text'])}<br><span class=muted>{esc(r['author_name'])} · "
+                       f"{time.strftime('%Y-%m-%d', time.gmtime(r['created_at']))} · 👍 {r['votes']}</span></td>"
+                       f"<td>{form(r)}</td></tr>" for r in rows)
+        return page("Suggestions", f"""<p><a href={P}/>← owner panel</a></p><h1>💡 Suggestions</h1>
+{f'<p class=muted>{msg}</p>' if msg else ''}<p class=muted>Collected by the assistant in the HQ Discord's
+<b>#{esc(settings.hq_ideas_channel or '(off)')}</b>. Change a status here – the pinned board updates and the person who
+suggested it gets a notice in the channel within a minute.</p><p>{tabs}</p>
+<table><tr><th>#</th><th>Suggestion</th><th>Status</th></tr>{body or '<tr><td colspan=3>No suggestions yet.</td></tr>'}
+</table>""")
+
+    async def suggestion_save(request):
+        who = owner(request)
+        data = await sess.form(request)
+        from control_plane import hq_ideas
+        sid = int(request.match_info["id"])
+        try:
+            if data.get("remove"):
+                hq_ideas.remove(db, sid, f"owner:{who}")
+                raise go(f"/suggestions?m=Removed+%23{sid}")
+            hq_ideas.set_status(db, sid, str(data.get("status", "")), str(data.get("note", "")), f"owner:{who}")
+        except ValueError as exc:
+            raise go("/suggestions?m=" + quote_plus(str(exc))) from None
+        raise go(f"/suggestions?m=Saved+%23{sid}")
+
     async def audit(request):
         owner(request)
         rows = db.q("SELECT * FROM audit_log ORDER BY id DESC LIMIT 300")
@@ -1887,7 +1929,8 @@ starts the tunnel and every website is online at its address.</p></div>""")
                     web.post(r"/plans/{id:\d+}", plan_save), web.post(r"/customers/{id:\d+}/plan", customer_plan),
                     web.get("/", dashboard), web.get(r"/customers/{cid:\d+}", customer), web.get("/audit", audit),
                     web.get("/customers", customers_page), web.get("/servers", servers_page),
-                    web.get("/system", system_page),
+                    web.get("/system", system_page), web.get("/suggestions", suggestions_page),
+                    web.post(r"/suggestions/{id:\d+}", suggestion_save),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post("/customers/new", customer_new), web.post(r"/customers/{id:\d+}/server", customer_server), web.post(r"/customers/{id:\d+}/trial", customer_trial),
                     web.post(r"/grants/{id:\d+}/revoke", act),
