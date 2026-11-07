@@ -304,7 +304,8 @@ def test_website_store_and_admin_api(shop, monkeypatch):
         await c.start_server()
         try:
             page = await (await c.get("/store")).text()
-            assert "AK kit" in page and "9.99" in page and 'action="/store/checkout"' in page
+            assert "AK kit" in page and "9.99" in page and 'action="/store/basket/add"' in page
+            assert 'name="gift"' not in page                     # the gift card / coupon code: only in the basket
             r = await c.get("/store")
             assert "https://www.sandbox.paypal.com" in r.headers["Content-Security-Policy"]
             assert "Test mode" in page
@@ -412,7 +413,9 @@ def test_admin_key_on_the_website(shop, monkeypatch):
         try:
             assert 'name="admin_key"' not in await (await c.get("/store")).text()   # hidden normally
             page = await (await c.get("/store?admin=1")).text()
-            assert 'name="admin_key"' in page and "Admin mode" in page and "store/build?admin=1" in page
+            assert "Admin mode" in page and "store/build?admin=1" in page
+            await c.post("/store/basket/add", data={"key": f"k{shop.kit_id}", "admin": "1"})
+            assert 'name="admin_key"' in await (await c.get("/store/basket?admin=1")).text()
             r = await c.post("/store/checkout", data={"kind": "kit", "kit": str(shop.kit_id), "player": "Gamer7",
                                                           "admin": "1", "admin_key": "wrong"})
             text = await r.text()
@@ -854,3 +857,90 @@ def test_the_other_servers_ingame_kits_come_into_their_shop(shop, monkeypatch, t
     # this server's own "vip" is a different kit: still added for this server
     s.remove_kit(rows[0]["id"])
     assert "ingame:two:vip" in s._dismissed() and run(s._sync_other_servers_kits(s._dismissed())) == 0
+
+
+def test_basket_with_a_bundle_one_payment_and_a_coupon_before_checkout(shop, monkeypatch):
+    """Kits and bundles go in a basket; the gift card / coupon code is applied on the basket page; one PayPal payment
+    delivers every kit (each as its own order, a bundle's price shared out)."""
+    from plugin_api import Plugin
+    from plugin_manager import PluginManager
+    bot, db = shop.env.bot, shop.db
+    monkeypatch.setattr(Plugin, "_loops", lambda self: [])
+    raid = db.add_store_kit("Raid kit", "Mega raid kit", 12.5, 0, None)
+    bundle = db.add_store_bundle("Starter pack", f"{shop.kit_id},{raid}", 15.0, "Both kits")
+    code = shop.s.create_gift_cards(5.0, 1, "test")[0]
+
+    async def main():
+        from web.server import WebInterface
+        bot.plugins = PluginManager(bot)
+        await bot.plugins.load_all()
+        await bot.plugins.set_enabled("website", True)
+        tmp = bot.config.database_path.parent
+        web = WebInterface(bot, env_path=tmp / ".env", secret_path=tmp / "web_secret.key")
+        c = TestClient(TestServer(web.app))
+        await c.start_server()
+        try:
+            page = await (await c.get("/store")).text()
+            assert "Starter pack" in page and "Bundle" in page and "You save" in page        # 22.49 one by one
+            r = await c.post("/store/basket/add", data={"key": f"b{bundle}"}, allow_redirects=False)
+            assert r.status == 303 and "added=Starter" in r.headers["Location"]
+            await c.post("/store/basket/add", data={"key": f"k{shop.kit_id}"})
+            await c.post("/store/basket/add", data={"key": "k99999"})                       # not for sale: refused
+            page = await (await c.get("/store/basket")).text()
+            assert "Starter pack" in page and "AK kit" in page and "24.99" in page and "Basket (2)" in page
+            # the coupon code is applied here, before paying
+            page = await (await c.post("/store/basket", data={"gift": code, "player": "Gamer7"})).text()
+            assert "Code applied" in page and "19.99" in page
+            assert (await (await c.post("/store/basket", data={"gift": "NOPE"})).text()).count("bad") >= 1
+            # remove and add again – then one checkout for everything
+            await c.post("/store/basket/remove", data={"i": "1"})
+            assert "AK kit</b>" not in await (await c.get("/store/basket")).text()
+            await c.post("/store/basket/add", data={"key": f"k{shop.kit_id}"})
+            r = await c.post("/store/checkout", data={"kind": "cart", "player": "Gamer7", "gift": code},
+                             allow_redirects=False)
+            assert r.status == 303 and r.headers["Location"].startswith("https://www.sandbox.paypal.com/")
+            assert "rce_cart" in r.headers.get("Set-Cookie", "")                         # the basket is emptied
+            parent = next(o for o in db.store_orders() if o["kind"] == "cart")
+            assert parent["total"] == 24.99 and parent["gift_amount"] == 5.0 and shop.pp.orders["PP1"]["amount"] == 19.99
+            kids = db.store_order_children(parent["id"])
+            assert [k["title"] for k in kids] == ["AK kit (Starter pack)", "Raid kit (Starter pack)", "AK kit"]
+            assert round(sum(k["total"] for k in kids), 2) == 24.99 and kids[0]["total"] + kids[1]["total"] == 15.0
+            assert all(k["status"] == "pending" for k in kids)
+            await shop.s.check_pending(now=parent["created_at"] + 60)                    # children aren't expired alone
+            assert all(o["status"] == "pending" for o in db.store_order_children(parent["id"]))
+            r = await c.get(f"/store/return?o={parent['token']}", allow_redirects=False)
+            page = await (await c.get(r.headers["Location"])).text()
+            assert "Raid kit (Starter pack)" in page and "/customkit claim" in page
+            assert db.store_order(parent["id"])["status"] == "delivered"
+            assert [o["status"] for o in db.store_order_children(parent["id"])] == ["delivered"] * 3
+            # Admin API: bundles
+            await c.post("/api/login", json={"password": "secret123"}, headers=H)
+            d = await (await c.get("/api/webshop")).json()
+            assert d["bundles"][0]["kits"] == [shop.kit_id, raid] and d["bundles"][0]["value"] == 22.49
+            assert any(o["parent_id"] == parent["id"] for o in d["orders"])
+            r = await c.post("/api/webshop/bundles", json={"name": "Solo", "kits": [raid], "price": 3}, headers=H)
+            assert r.status == 400                                                       # needs 2 kits
+            r = await c.post("/api/webshop/bundles", json={"name": "Duo", "kits": [raid, shop.kit_id], "price": "7,5"},
+                             headers=H)
+            bid = (await r.json())["id"]
+            assert db.store_bundle(bid)["price"] == 7.5
+            assert (await c.put(f"/api/webshop/bundles/{bid}", json={"enabled": False}, headers=H)).status == 200
+            assert "Duo" not in await (await c.get("/store")).text()
+            assert (await c.delete(f"/api/webshop/bundles/{bid}", headers=H)).status == 200
+        finally:
+            await c.close()
+            await bot.rcon.close()
+    bot.config = replace(bot.config, web_password="secret123")
+    asyncio.run(main())
+
+
+def test_cancelled_basket_cancels_its_kits_and_returns_the_coupon(shop):
+    s, db = shop.s, shop.db
+    code = s.create_gift_cards(3.0, 1, "test")[0]
+    r = run(s.checkout("cart", base_url="https://x", cart=[f"k{shop.kit_id}", f"k{shop.kit_id}"], player="Gamer7",
+                       gift_code=code))
+    parent = db.store_order_by("token", r["token"])
+    assert parent["total"] == 19.98 and db.gift_card(code)["balance"] == 0
+    run(s.cancel(r["token"]))
+    assert [o["status"] for o in db.store_order_children(parent["id"])] == ["cancelled", "cancelled"]
+    assert db.gift_card(code)["balance"] == 3.0

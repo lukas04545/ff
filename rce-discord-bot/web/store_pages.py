@@ -5,6 +5,7 @@ browser only sends what was picked. Checkout redirects to PayPal; PayPal sends t
 """
 from __future__ import annotations
 
+import contextvars
 import html
 import re
 import time
@@ -48,6 +49,13 @@ font-size:1.4rem;letter-spacing:.08em;color:var(--gold);user-select:all}
 .cats{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}.cats a{text-decoration:none;padding:5px 14px;
 border:1px solid var(--line);background:var(--card2);font-size:.95rem}.cats a:hover{border-color:var(--orange)}
 .cat-head{margin:22px 0 10px;font-size:1.35rem;color:#fff;scroll-margin-top:90px}
+.badge{display:inline-block;padding:2px 9px;margin-left:6px;font-size:.75rem;vertical-align:middle;
+background:var(--grad);color:#fff;letter-spacing:.05em;text-transform:uppercase}
+.was{color:var(--muted);text-decoration:line-through;font-size:.95rem;margin-left:8px}
+.bundle-list{margin:8px 0 4px;padding-left:18px}.bundle-list li{margin:2px 0}
+.basket td{vertical-align:middle}.basket .r{text-align:right}.basket form{margin:0}
+.basket-total{font-size:1.3rem;text-align:right;margin:10px 0}.applied{color:var(--ok)}
+.coupon{display:flex;gap:8px;align-items:flex-end}.coupon .field{flex:1}
 """
 STATUS_TEXT = {
     "pending": ("Waiting for payment", "If you already paid, this page updates within a few minutes – refresh it."),
@@ -136,6 +144,22 @@ def buyer_fields(*, player: bool = True, gift: bool = True, values: dict | None 
     return out
 
 
+CART_COOKIE = "rce_cart"      # the basket: "k12,b3" (store kit 12, bundle 3) – prices always come from the bot
+_cart_count: contextvars.ContextVar[int] = contextvars.ContextVar("cart_count", default=0)
+
+
+def read_cart(request) -> list[str]:
+    raw = str(getattr(request, "cookies", {}).get(CART_COOKIE, ""))[:400]
+    return [k for k in raw.split(",") if re.fullmatch(r"[kb]\d{1,9}", k)][:30]
+
+
+def set_cart(resp, keys: list[str]) -> None:
+    if keys:
+        resp.set_cookie(CART_COOKIE, ",".join(keys), max_age=7 * 86400, path="/", httponly=True, samesite="Lax")
+    else:
+        resp.del_cookie(CART_COOKIE, path="/")
+
+
 def store_tabs(base: str, active: str, shop, admin: bool = False) -> str:
     tabs = [("store", "Kits")]
     if shop.builder_problem() is None:
@@ -146,8 +170,8 @@ def store_tabs(base: str, active: str, shop, admin: bool = False) -> str:
     if bp is not None and bp.money_price():
         tabs.append(("battlepass", "🎖️ Battle pass"))          # the premium pass for money (on its own page)
     tabs.append(("store/giftcards", "Gift cards"))
-    if len(tabs) == 1:
-        return ""
+    n = _cart_count.get()
+    tabs.append(("store/basket", f"🛒 Basket ({n})" if n else "🛒 Basket"))
     return '<div class="tabs">' + "".join(
         f'<a href="{base}/{p}{"?admin=1" if admin else ""}" class="{"active" if p == active else ""}">{esc(label)}</a>'
         for p, label in tabs) + "</div>"
@@ -220,7 +244,7 @@ def _kit_picture(shop, row) -> str:
 
 
 def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, admin: bool = False,
-              shop_server: str = "") -> str:
+              shop_server: str = "", added: str = "") -> str:
     db = shop.bot.db
     groups: dict[str, list[str]] = {}
     for row in db.store_kits(enabled_only=True):
@@ -237,15 +261,12 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
         if len(servers.all_servers()) > 1:                 # several servers: where the kit is for
             names = " + ".join(servers.server_name(s) for s in shop.kit_servers(row))
             days += f'<div class="days">🖥️ For: {esc(names)}</div>'
-        values = form if form and str(form.get("kit")) == str(row["id"]) else {}
         cards = groups.setdefault((row["category"] or "").strip(), [])
         cards.append(f'<div class="card"><h2>{esc(row["name"])}</h2><div class="price">{esc(shop.fmt(row["price"]))}'
                      f'</div>{days}{desc}{_kit_picture(shop, row) or site.item_tiles(items)}'
-                     f'<form method="post" action="{base}/store/checkout"><input type="hidden" name="kind" value="kit">'
-                     f'<input type="hidden" name="kit" value="{row["id"]}">{buyer_fields(values=values, admin=admin)}'
-                     f'{pay_button(admin)}</form></div>')
-    intro = ('<div class="card"><h2>How it works</h2>Pick a kit, enter your in-game name and pay with PayPal (or a gift '
-             'card). Your name has to be linked to your Discord account first – join our Discord and use '
+                     f'{add_button(base, "k" + str(row["id"]), admin)}</div>')
+    intro = ('<div class="card"><h2>How it works</h2>Put kits and bundles in your basket, then check out once: enter '
+             'your in-game name and pay with PayPal (or a gift card / coupon code). Your name has to be linked to your Discord account first – join our Discord and use '
              '<b>/link</b>. After the payment the kit is yours right away: one-time kits are given to you '
              'in-game (when you\'re online), the others you claim with <b>/customkit claim</b> on Discord while '
              'you\'re online.</div>')
@@ -266,8 +287,102 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
         listing = f'<div class="store-grid">{"".join(groups[order[0]])}</div>'
     else:
         listing = '<p class="muted">No kits for sale right now.</p>'
-    body = notice(error, "bad") + intro + listing
+    bundles = bundle_cards(site, shop, base, admin, shop_server)
+    if bundles:
+        listing = (f'<h2 class="cat-head" id="cat-bundles">🎁 Bundles</h2><div class="store-grid">{bundles}</div>'
+                   + listing)
+        if "<nav class=\"cats\">" in listing:
+            listing = listing.replace('<nav class="cats">', '<nav class="cats"><a href="#cat-bundles">🎁 Bundles</a>', 1)
+    if added:
+        error = ""
+    body = notice(error, "bad") + (added_notice(base, added, admin) if added else "") + intro + listing
     return wrap(site, shop, base, "store", "Store", body, admin)
+
+
+def add_button(base: str, key: str, admin: bool) -> str:
+    return (f'<form method="post" action="{base}/store/basket/add"><input type="hidden" name="key" value="{esc(key)}">'
+            + ('<input type="hidden" name="admin" value="1">' if admin else "")
+            + '<button class="pay" type="submit">🛒 Add to basket</button></form>')
+
+
+def added_notice(base: str, name: str, admin: bool) -> str:
+    return (f'<div class="notice ok">✅ <b>{esc(name)}</b> is in your basket. <a href="{base}/store/basket'
+            f'{"?admin=1" if admin else ""}">Go to the basket and check out →</a></div>')
+
+
+def bundle_cards(site, shop, base: str, admin: bool, shop_server: str = "") -> str:
+    cards = ""
+    for b in shop.bot.db.store_bundles(enabled_only=True):
+        kits = shop.bundle_kits(b)
+        if not kits or (shop_server and any(shop_server not in shop.kit_servers(k) for k in kits)):
+            continue
+        value = shop.bundle_value(b)
+        was = f'<span class="was">{esc(shop.fmt(value))}</span>' if value > float(b["price"]) else ""
+        save = (f'<div class="days">You save {esc(shop.fmt(value - float(b["price"])))}</div>'
+                if value > float(b["price"]) else "")
+        desc = f'<div class="muted">{esc(b["description"])}</div>' if b["description"] else ""
+        items = "".join(f'<li>{esc(k["name"])}</li>' for k in kits)
+        cards += (f'<div class="card"><h2>{esc(b["name"])}<span class="badge">Bundle</span></h2>'
+                  f'<div class="price">{esc(shop.fmt(b["price"]))}{was}</div>{save}{desc}'
+                  f'<ul class="bundle-list">{items}</ul>{add_button(base, "b" + str(b["id"]), admin)}</div>')
+    return cards
+
+
+def basket_page(site, shop, base: str, keys: list[str], shop_server: str = "", *, error: str = "",
+                form: dict | None = None, admin: bool = False) -> str:
+    """The basket: what's in it, remove things, the gift card / coupon code (applied here, before checkout) and
+    the one checkout for everything."""
+    from cogs.webshop import CheckoutError
+    form = form or {}
+    lines = shop.cart_lines(keys, shop_server)
+    q = "?admin=1" if admin else ""
+    if not lines:
+        body = notice(error, "bad") + (f'<div class="card"><h2>Your basket is empty</h2><p class="muted">Add kits and '
+                                       f'bundles from the <a href="{base}/store{q}">store</a>.</p></div>')
+        return wrap(site, shop, base, "store/basket", "Basket", body, admin)
+    total = round(sum(line["price"] for line in lines), 2)
+    rows = ""
+    for i, line in enumerate(lines):
+        inside = (f'<div class="muted">{esc(", ".join(k["name"] for k in line["kits"]))}</div>'
+                  if line["kind"] == "bundle" else "")
+        rows += (f'<tr><td><b>{esc(line["name"])}</b>{"<span class=badge>Bundle</span>" if line["kind"] == "bundle" else ""}'
+                 f'{inside}</td><td class="r">{esc(shop.fmt(line["price"]))}</td><td class="r">'
+                 f'<form method="post" action="{base}/store/basket/remove"><input type="hidden" name="i" value="{i}">'
+                 + ('<input type="hidden" name="admin" value="1">' if admin else "")
+                 + '<button class="ghost" type="submit">Remove</button></form></td></tr>')
+    gift = str(form.get("gift", "")).strip()
+    applied, rest = "", total
+    if gift and not error:
+        try:
+            card = shop.gift_card(gift, form.get("_ip", "?"))
+        except CheckoutError as exc:
+            error, gift = str(exc), ""
+        else:
+            covers = round(min(float(card["balance"]), total), 2)
+            rest = round(total - covers, 2)
+            applied = (f'<p class="applied">✅ Code applied: {esc(shop.fmt(covers))} off'
+                       + (f' – you pay <b>{esc(shop.fmt(rest))}</b> with PayPal.' if rest > 0 else
+                          ' – it covers everything, no PayPal needed.') + '</p>')
+    player = str(form.get("player", ""))
+    coupon = (f'<form method="post" action="{base}/store/basket" class="coupon">'
+              + ('<input type="hidden" name="admin" value="1">' if admin else "")
+              + f'<input type="hidden" name="player" value="{esc(player)}">'
+              f'<label class="field"><span>Gift card / coupon code</span><input name="gift" maxlength="40" '
+              f'placeholder="XXXX-XXXX-XXXX-XXXX" value="{esc(gift)}"></label>'
+              f'<button class="ghost" type="submit">Apply</button></form>{applied}')
+    checkout = (f'<form method="post" action="{base}/store/checkout"><input type="hidden" name="kind" value="cart">'
+                f'<input type="hidden" name="gift" value="{esc(gift)}">'
+                f'{buyer_fields(gift=False, values=form, admin=admin)}'
+                f'{pay_button(admin, "Check out (paid with your code)" if rest <= 0 else f"Pay {shop.fmt(rest)} with PayPal")}'
+                f'</form>')
+    body = (notice(error, "bad")
+            + f'<div class="card basket"><h2>🛒 Your basket</h2><table>{rows}</table>'
+            f'<div class="basket-total">Total: <span class="price">{esc(shop.fmt(total))}</span></div>'
+            f'<p><a href="{base}/store{q}">← Keep shopping</a></p></div>'
+            f'<div class="card"><h2>Checkout</h2>{coupon}{checkout}<p class="muted">Everything is given to the Discord '
+            f'account your in-game name is linked to (/link). One-time kits are given in-game when you\'re online; '
+            f'the others you claim with /customkit claim.</p></div>')
+    return wrap(site, shop, base, "store/basket", "Basket", body, admin)
 
 
 def build_page(site, shop, base: str, query, error: str = "", admin: bool = False) -> str:
@@ -383,6 +498,14 @@ def nukes_page(site, shop, base: str, error: str = "", form: dict | None = None,
     return wrap(site, shop, base, "store/nukes", "Nukes", body + "</div>", admin)
 
 
+def _child_hint(c) -> str:
+    if c["status"] != "delivered":
+        return STATUS_TEXT.get(c["status"], ("", ""))[1]
+    if not c["request_id"]:
+        return "given to you in-game"
+    return f"claim it with /customkit claim {c['result']}"
+
+
 def order_page(site, shop, base: str, order) -> str:
     if order is None:
         return wrap(site, shop, base, "", "Order", '<p class="muted">Order not found.</p>')
@@ -400,7 +523,12 @@ def order_page(site, shop, base: str, order) -> str:
              f'<p><span class="price">{esc(pricing.format_money(order["total"], order["currency"]))}</span> '
              f'<span class="muted">({esc(" + ".join(pay))})</span></p>'
              + (f'<p>For: <b>{esc(order["player"])}</b></p>' if order["player"] else ""))
-    if order["status"] == "delivered":
+    children = shop.bot.db.store_order_children(order["id"]) if order["kind"] == "cart" else []
+    if children:
+        body += "<table>" + "".join(
+            f'<tr><td>{esc(c["title"])}</td><td>{esc(STATUS_TEXT.get(c["status"], (c["status"], ""))[0])}</td>'
+            f'<td class="muted">{esc(_child_hint(c))}</td></tr>' for c in children) + "</table>"
+    elif order["status"] == "delivered":
         if order["kind"] == "nuke":
             body += '<p>💣 Your nuke dropped on our Discord – everyone can claim it now.</p>'
         elif order["kind"] == "giftcard":
@@ -444,6 +572,36 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
             resp.del_cookie(SHOP_COOKIE, path="/")
         raise resp
     chosen = shop_choice(request)
+    cart = read_cart(request)
+    _cart_count.set(len(cart))
+    if request.method == "POST" and sub in ("basket/add", "basket/remove"):
+        form = await request.post()
+        admin = admin_on and form.get("admin") == "1"
+        if sub == "basket/add":
+            key = str(form.get("key", ""))
+            lines = shop.cart_lines([key], chosen)
+            if not lines:
+                return 400, kits_page(site, shop, base, "That isn't for sale (any more).", admin=admin,
+                                      shop_server=chosen)
+            if len(cart) >= shop.MAX_CART:
+                return 400, kits_page(site, shop, base, f"Your basket is full ({shop.MAX_CART} things).", admin=admin,
+                                      shop_server=chosen)
+            cart = cart + [key]
+            resp = web.HTTPSeeOther(f"{base}/store?added={quote(lines[0]['name'])}" + ("&admin=1" if admin else ""))
+        else:
+            i = str(form.get("i", ""))
+            valid = [line["key"] for line in shop.cart_lines(cart, chosen)]
+            if i.isdigit() and int(i) < len(valid):
+                del valid[int(i)]
+            cart = valid
+            resp = web.HTTPSeeOther(f"{base}/store/basket" + ("?admin=1" if admin else ""))
+        set_cart(resp, cart)
+        raise resp
+    if request.method == "POST" and sub == "basket":          # "Apply" the gift card / coupon code
+        form = await request.post()
+        admin = admin_on and form.get("admin") == "1"
+        values = {"gift": str(form.get("gift", ""))[:40], "player": str(form.get("player", ""))[:64], "_ip": ip}
+        return 200, basket_page(site, shop, base, cart, chosen, form=values, admin=admin)
     if request.method == "POST" and sub == "giftcards/combine":
         form = await request.post()
         target, codes = str(form.get("target", ""))[:40], str(form.get("codes", ""))[:600]
@@ -470,9 +628,11 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
                 timer_hours=int(timer) if timer.isdigit() else None, value=form.get("value"),
                 player=str(form.get("player", "")), gift_code=str(form.get("gift", "")),
                 name=str(form.get("name", "")), admin_key=str(form.get("admin_key", "")) if admin else "", ip=ip,
-                shop_server=chosen)
+                shop_server=chosen, cart=cart if kind == "cart" else None)
         except CheckoutError as exc:
             values = {k: str(v) for k, v in form.items() if k != "admin_key"}
+            if kind == "cart":
+                return 400, basket_page(site, shop, base, cart, chosen, error=str(exc), form=values, admin=admin)
             if kind == "custom":
                 return 400, build_page(site, shop, base, values, str(exc), admin)
             if kind == "giftcard":
@@ -480,7 +640,10 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
             if kind == "nuke":
                 return 400, nukes_page(site, shop, base, str(exc), values, admin)
             return 400, kits_page(site, shop, base, str(exc), values, admin, shop_server=chosen)
-        raise web.HTTPSeeOther(result.get("redirect") or f"{base}/store/order/{result['token']}")
+        resp = web.HTTPSeeOther(result.get("redirect") or f"{base}/store/order/{result['token']}")
+        if kind == "cart":
+            set_cart(resp, [])                                  # ordered: the basket starts empty again
+        raise resp
     admin = admin_on and query.get("admin") == "1"
     if several and not chosen and sub in ("", "build"):
         live = {servers.MAIN_ID: site.live()}
@@ -488,7 +651,10 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
             live[s["id"]] = await servers.status_of(s["id"]) or {}
         return 200, chooser_page(site, shop, base, live)
     if sub == "":
-        return 200, kits_page(site, shop, base, admin=admin, shop_server=chosen)
+        return 200, kits_page(site, shop, base, admin=admin, shop_server=chosen,
+                              added=str(query.get("added", ""))[:80])
+    if sub == "basket":
+        return 200, basket_page(site, shop, base, cart, chosen, admin=admin)
     if sub == "build":
         return 200, build_page(site, shop, base, query, admin=admin)
     if sub == "giftcards":

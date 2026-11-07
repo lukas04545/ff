@@ -1425,6 +1425,15 @@ plugin must be on). Three tabs: Kits can be put into **categories** (web interfa
   kits give the kit's claim role (optionally for N days, `/customkit claim`); in-game kits are given in-game once –
   right away if the buyer is online, otherwise automatically the next time they join. Kits you *Remove* are never
   added again. You can also add a bot kit by hand with its own name, price and duration.
+- **Basket** – kits and bundles get an **🛒 Add to basket** button; the 🛒 Basket tab lists what's in it (remove
+  things there) and has **one checkout** for everything: one PayPal payment, then every kit is delivered on its own
+  (each shows up under Orders as "part of basket #N" and can be retried by itself). The **gift card / coupon code**
+  is entered on the basket page (*Apply* shows what it covers) – before checkout, not on every kit. The basket is
+  kept in the visitor's browser for 7 days (at most 20 things); prices always come from the bot.
+- **Bundles** – web interface → **💳 Store → 🎁 Bundles**: tick 2–20 kits, give the bundle a name and one price
+  (e.g. a starter pack). It's shown at the top of the Kits page with the "one by one" price struck through and how
+  much the buyer saves. Hidden kits (or kits without a price) can be in a bundle too. The bundle's price is shared out
+  over its kits (by their own prices) for the order list.
 - **Build your own** – players pick items and amounts; the price comes from the price list (`prices.txt`, the same
   one the ticket AI and Tip4Serv use: bundles, free "with" items, caps and claim timers). Buyers can also give their kit a
   name (optional; otherwise it's named after their player). `STORE_CUSTOM_KITS`. The picker shows **every item of
@@ -1436,8 +1445,8 @@ plugin must be on). Three tabs: Kits can be put into **categories** (web interfa
   `/giftcard combine` on Discord): the whole balance moves onto one card, the others are emptied; the combined card
   keeps the earliest expiry date of the cards involved.
 
-**Checkout:** the buyer enters their in-game name – it must be linked to their Discord account (`/link`),
-that's who gets the kit – and optionally a gift card code, then pays with **PayPal**. Right after the payment the
+**Checkout:** in the basket the buyer enters their in-game name – it must be linked to their Discord account (`/link`),
+that's who gets the kit – and optionally applies a gift card / coupon code, then pays with **PayPal**. Right after the payment the
 kit is delivered like an approved kit purchase: the buyer gets the kit's role (for N days if it's time-limited, or a
 new custom kit with their items) and claims it with `/customkit claim` in Discord. They also get a DM, and every
 purchase is posted in `STORE_CHANNEL_ID` (default: admin log).

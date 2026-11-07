@@ -590,6 +590,9 @@ class WebInterface:
         r.add_post("/api/webshop/kits", self.webshop_kit_create)
         r.add_put("/api/webshop/kits/{kit_id:\\d+}", self.webshop_kit_update)
         r.add_delete("/api/webshop/kits/{kit_id:\\d+}", self.webshop_kit_delete)
+        r.add_post("/api/webshop/bundles", self.webshop_bundle_create)
+        r.add_put("/api/webshop/bundles/{bundle_id:\\d+}", self.webshop_bundle_update)
+        r.add_delete("/api/webshop/bundles/{bundle_id:\\d+}", self.webshop_bundle_delete)
         r.add_post("/api/webshop/giftcards", self.webshop_giftcards_create)
         r.add_post("/api/webshop/giftcards/{code}/toggle", self.webshop_giftcard_toggle)
         r.add_post("/api/webshop/orders/{order_id:\\d+}/retry", self.webshop_retry)
@@ -1352,7 +1355,7 @@ class WebInterface:
         syncing = shop.start_sync()           # new bot / in-game kits – in the background, the page doesn't wait
         order_cols = ("id", "kind", "title", "player", "user_id", "total", "currency", "gift_code", "gift_amount",
                       "paypal_amount", "paypal_order", "capture_id", "payer_email", "admin_key", "status", "result", "request_id",
-                      "created_at", "paid_at")
+                      "created_at", "paid_at", "parent_id")
         orders = [{k: (str(o[k]) if k == "user_id" and o[k] else o[k]) for k in order_cols}
                   for o in db.store_orders(limit=150)]
         return web.json_response({
@@ -1362,6 +1365,8 @@ class WebInterface:
             "servers": [{"id": s["id"], "name": s["name"]} for s in servers.all_servers()],
             "this_server": servers.server_id(),
             "custom_kits": [k["name"] for k in db.custom_kits()],
+            "bundles": [{**dict(b), "kits": [int(x) for x in str(b["kits"] or "").split(",") if x.strip().isdigit()],
+                         "value": shop.bundle_value(b)} for b in db.store_bundles()],
             "gift_cards": [dict(g) for g in db.gift_cards()], "orders": orders,
             "price_list": bool(shop.price_list())})
 
@@ -1435,6 +1440,60 @@ class WebInterface:
         if not self._cog("WebShop").remove_kit(int(request.match_info["kit_id"])):
             raise ApiError("Kit not found.", 404)
         self._audit(f"store: kit #{request.match_info['kit_id']} removed")
+        return web.json_response({"ok": True})
+
+    def _bundle_fields(self, data: dict, *, partial: bool = False) -> dict:
+        out = {}
+        if not partial or "name" in data:
+            out["name"] = self._text(data, "name", limit=60)
+        if not partial or "kits" in data:
+            ids = []
+            for x in data.get("kits") or []:
+                try:
+                    kid = int(x)
+                except (TypeError, ValueError):
+                    continue
+                if self.bot.db.store_kit(kid) is not None and kid not in ids:
+                    ids.append(kid)
+            if len(ids) < 2:
+                raise ApiError("A bundle needs at least 2 kits.")
+            if len(ids) > 20:
+                raise ApiError("At most 20 kits in a bundle.")
+            out["kits"] = ",".join(map(str, ids))
+        if not partial or "price" in data:
+            try:
+                price = round(float(str(data.get("price")).replace(",", ".")), 2)
+            except (TypeError, ValueError):
+                raise ApiError("The price must be a number.") from None
+            if not 0.01 <= price <= 100_000:
+                raise ApiError("The price must be between 0.01 and 100 000.")
+            out["price"] = price
+        if not partial or "description" in data:
+            out["description"] = str(data.get("description") or "").strip()[:500] or None
+        if not partial or "category" in data:
+            out["category"] = " ".join(str(data.get("category") or "").split())[:40] or None
+        if "enabled" in data:
+            out["enabled"] = 1 if data.get("enabled") else 0
+        return out
+
+    async def webshop_bundle_create(self, request: web.Request) -> web.Response:
+        f = self._bundle_fields(await self._json(request))
+        bid = self.bot.db.add_store_bundle(f["name"], f["kits"], f["price"], f["description"], f["category"])
+        self._audit(f"store: bundle **{f['name']}** for sale ({f['price']})")
+        return web.json_response({"id": bid})
+
+    async def webshop_bundle_update(self, request: web.Request) -> web.Response:
+        bid = int(request.match_info["bundle_id"])
+        if self.bot.db.store_bundle(bid) is None:
+            raise ApiError("Bundle not found.", 404)
+        self.bot.db.update_store_bundle(bid, **self._bundle_fields(await self._json(request), partial=True))
+        self._audit(f"store: bundle #{bid} changed")
+        return web.json_response({"ok": True})
+
+    async def webshop_bundle_delete(self, request: web.Request) -> web.Response:
+        if not self.bot.db.delete_store_bundle(int(request.match_info["bundle_id"])):
+            raise ApiError("Bundle not found.", 404)
+        self._audit(f"store: bundle #{request.match_info['bundle_id']} removed")
         return web.json_response({"ok": True})
 
     async def webshop_giftcards_create(self, request: web.Request) -> web.Response:

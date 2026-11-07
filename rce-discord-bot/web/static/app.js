@@ -4282,6 +4282,51 @@ views.webstore = async (main) => {
       h("div", { class: "row", style: "margin-top:.75rem" }, kName, kKit, kPrice, kDays, kServersBox),
       h("div", { class: "row", style: "margin-top:.5rem" }, kCat, catList, kDesc, kSave, kCancel));
 
+    // --- Bundles: several kits for one price (players put them in the basket like a kit)
+    let bEdit = null;
+    const bName = h("input", { placeholder: "Bundle name, e.g. Starter pack" });
+    const bPrice = h("input", { type: "number", min: "0.01", step: "0.01", placeholder: `Bundle price (${cur})` });
+    const bDesc = h("input", { placeholder: "Description (optional)" });
+    const bCat = h("input", { placeholder: "Category (optional)", maxlength: "40" });
+    const bKits = d.kits.map((k) => [k.id, h("input", { type: "checkbox", value: String(k.id) })]);
+    const bValue = h("span", { class: "muted" });
+    const showValue = () => {
+      const picked = bKits.filter(([, cb]) => cb.checked).map(([id]) => d.kits.find((k) => k.id === id));
+      const sum = picked.reduce((a, k) => a + (k.enabled && k.price > 0 ? k.price : 0), 0);
+      bValue.textContent = picked.length ? `${picked.length} kits · worth ${money(sum, cur)} one by one` : "Tick at least 2 kits";
+    };
+    bKits.forEach(([, cb]) => cb.addEventListener("change", showValue));
+    showValue();
+    const bSave = h("button", { class: "primary", text: "Add bundle" });
+    const bCancel = h("button", { class: "ghost hidden", text: "Cancel", onclick: () => load() });
+    bSave.addEventListener("click", async () => {
+      const body = { name: bName.value, price: bPrice.value, description: bDesc.value, category: bCat.value,
+        kits: bKits.filter(([, cb]) => cb.checked).map(([id]) => id) };
+      const ok = await act(() => bEdit ? api(`/api/webshop/bundles/${bEdit}`, { method: "PUT", body }) : api("/api/webshop/bundles", { method: "POST", body }), bEdit ? "Bundle saved" : "Bundle added");
+      if (ok) load();
+    });
+    const kitName = (id) => (d.kits.find((k) => k.id === id) || { name: `#${id} (removed)` }).name;
+    const bundleRows = (d.bundles || []).map((b) => h("tr", {},
+      h("td", {}, h("strong", { text: b.name }), b.category ? h("span", { class: "pill", style: "margin-left:.4rem", text: b.category }) : null,
+        b.description ? h("div", { class: "muted", text: b.description }) : null),
+      h("td", { text: b.kits.map(kitName).join(", ") }),
+      h("td", {}, money(b.price, cur), b.value > b.price ? h("div", { class: "muted", text: `saves ${money(b.value - b.price, cur)}` }) : null),
+      h("td", {}, h("span", { class: "pill " + (b.enabled ? "ok" : ""), text: b.enabled ? "for sale" : "hidden" })),
+      h("td", { class: "row tight" },
+        h("button", { class: "small", text: b.enabled ? "Hide" : "Show", onclick: async () => { await act(() => api(`/api/webshop/bundles/${b.id}`, { method: "PUT", body: { enabled: !b.enabled } })); load(); } }),
+        h("button", { class: "small", text: "Edit", onclick: () => {
+          bEdit = b.id; bName.value = b.name; bPrice.value = b.price; bDesc.value = b.description || ""; bCat.value = b.category || "";
+          bKits.forEach(([id, cb]) => { cb.checked = b.kits.includes(id); }); showValue();
+          bSave.textContent = "Save bundle"; bCancel.classList.remove("hidden"); bName.focus();
+        } }),
+        h("button", { class: "small danger", text: "Remove", onclick: async () => { if (!confirm(`Remove the bundle ${b.name}? (The kits stay.)`)) return; await act(() => api(`/api/webshop/bundles/${b.id}`, { method: "DELETE" }), "Removed"); load(); } }))));
+    const bundles = h("div", { class: "card" }, h("h2", { text: "🎁 Bundles" }),
+      h("p", { class: "muted", text: "Sell several kits together for one price – e.g. a starter pack. Players add a bundle to their basket like a kit; each kit in it is delivered on its own. Kits that are hidden (or have no price) can be in a bundle too." }),
+      (d.bundles || []).length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Bundle", "Kits", "Price", "", ""].map((t) => h("th", { text: t })))), h("tbody", {}, bundleRows))) : h("p", { class: "muted", text: "No bundles yet." }),
+      d.kits.length ? h("div", { class: "row tight", style: "margin-top:.75rem;flex-wrap:wrap" }, bKits.map(([id, cb]) => h("label", { class: "row tight" }, cb, kitName(id)))) : h("p", { class: "muted", text: "Add kits first." }),
+      h("div", { class: "row", style: "margin-top:.5rem" }, bName, bPrice, bValue),
+      h("div", { class: "row", style: "margin-top:.5rem" }, bCat, bDesc, bSave, bCancel));
+
     // --- Gift cards
     const gAmount = h("input", { type: "number", min: "0.01", step: "0.01", placeholder: `Value (${cur})` });
     const gCount = h("input", { type: "number", min: "1", max: "100", value: "1", title: "How many" });
@@ -4318,7 +4363,8 @@ views.webstore = async (main) => {
     // --- Orders
     const orderRows = d.orders.map((o) => h("tr", {},
       h("td", { text: "#" + o.id }), h("td", { class: "muted", text: new Date(o.created_at * 1000).toLocaleString() }),
-      h("td", {}, o.title, o.result && o.status === "delivered" && o.kind !== "giftcard" ? h("div", { class: "muted", text: "→ " + o.result }) : null),
+      h("td", {}, o.title, o.parent_id ? h("div", { class: "muted", text: `part of basket #${o.parent_id}` }) : null,
+        o.result && o.status === "delivered" && o.kind !== "giftcard" ? h("div", { class: "muted", text: "→ " + o.result }) : null),
       h("td", { text: o.player || "–" }),
       h("td", {}, money(o.total, o.currency), h("div", { class: "muted", text: [o.gift_amount ? `gift ${money(o.gift_amount, o.currency)}` : "", o.paypal_amount ? `PayPal ${money(o.paypal_amount, o.currency)}` : "", o.admin_key ? "🔑 free (admin key)" : ""].filter(Boolean).join(" + ") })),
       h("td", {}, h("span", { class: "pill " + (ORDER_PILL[o.status] || ""), text: o.status }),
@@ -4332,7 +4378,7 @@ views.webstore = async (main) => {
     const orders = h("div", { class: "card" }, h("h2", { text: "🧾 Orders" }),
       d.orders.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Date", "Product", "Player", "Paid", "Status", "PayPal", ""].map((t) => h("th", { text: t })))), h("tbody", {}, orderRows))) : h("p", { class: "muted", text: "No orders yet." }));
 
-    holder.replaceChildren(status, kits, nukeCard(cur), gifts, orders);
+    holder.replaceChildren(status, kits, bundles, nukeCard(cur), gifts, orders);
     if (editId) { kSave.textContent = "Save kit"; kCancel.classList.remove("hidden"); }
   };
   load();
