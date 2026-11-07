@@ -38,6 +38,7 @@ PUNISH_COOLDOWN = 10         # one spawn of several stacks makes several lines w
 IGNORED_WORDS = ("launcher",)   # "Rocket Launcher" is not a rocket
 RETRIES = 3                  # a command that failed (RCON down) is sent again this many times
 RECONNECT_WAIT = 30          # seconds to wait for RCON to come back before each retry
+HOSTED_BLIND_NOTICE = 120     # hosted servers: only outages this long are worth telling customers
 BLIND_NOTICE = 3             # RCON gaps longer than this many seconds are reported (spawns in them can't be seen)
 LOOPS_KEY = "abuse_loops"    # running punishment loops (kv store) – they go on after a restart
 LOOP_MIN_SECONDS = 3         # the loop never runs faster than this (RCON must keep up)
@@ -271,7 +272,9 @@ class AbuseGuard(commands.Cog):
         if lost is None or not self.active:
             return
         gap = time.monotonic() - lost
-        if gap >= BLIND_NOTICE:
+        import saas_mode
+        # hosted servers: short drops are the platform's business – customers only hear about real outages
+        if gap >= (HOSTED_BLIND_NOTICE if saas_mode.enabled() else BLIND_NOTICE):
             text = f"RCON was down for {gap:.0f} s – raid-item spawns in that time could not be seen"
             self._remember("-", "connection", text)
             log.warning("Admin abuse protection: %s.", text)

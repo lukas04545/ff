@@ -214,6 +214,9 @@ class Feeds(commands.Cog):
             self.admin_log.add_line("🟢 RCON connection established")      # the first connection after a start
             self._lost_at = 0.0
             return
+        import saas_mode
+        if saas_mode.enabled():
+            return                     # hosted: a short hiccup isn't the customer's business (the platform watches it)
         seconds = max(1, round(_time.monotonic() - self._lost_at))
         now = _time.monotonic()
         streak = getattr(self, "_hiccups", (0.0, 0))
