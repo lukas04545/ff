@@ -41,6 +41,7 @@ CHANNELS = (
 )
 TICKET_CATEGORY = ("TICKET_CATEGORY_ID", "ticket_category_id", "🎫 Tickets")
 MANAGER_CHANNEL = ("MANAGER_AI_CHANNEL_IDS", "manager_ai_channel_ids", "🧠・bot-setup")
+LINKED_ROLE = "🔗 Linked"
 
 
 def manager_ai_here() -> bool:
@@ -161,6 +162,14 @@ class AutoSetup(commands.Cog):
                                                   reason="RCE bot: ticket category")
                 made.append(cat_name)
             updates[key] = str(cat.id)
+        if not getattr(cfg, "linked_role_id", None) or guild.get_role(int(cfg.linked_role_id)) is None:
+            role = discord.utils.get(getattr(guild, "roles", []), name=LINKED_ROLE)
+            if role is None:
+                role = await guild.create_role(name=LINKED_ROLE, permissions=discord.Permissions.none(),
+                                               colour=discord.Colour(0x3BA55D), mentionable=False,
+                                               reason="RCE bot: role for members linked with /link")
+                made.append(f"@{LINKED_ROLE}")
+            updates["LINKED_ROLE_ID"] = str(role.id)
         if updates:
             await self._save(updates)
         return made
@@ -218,7 +227,7 @@ class AutoSetup(commands.Cog):
             except Exception:
                 pass
         out += ["", "## Linking your account",
-                "- Link your in-game name to Discord with `/customkit link` – needed for kits, the store, points and "
+                "- Link your in-game name to Discord with `/link` – needed for kits, the store, points and "
                 "your profile.", "",
                 "## Commands players use",
                 "- `/profile` – your stats, points and kits", "- `/customkit claim` – claim a kit you own",

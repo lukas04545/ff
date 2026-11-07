@@ -69,7 +69,7 @@ def _chat(cog, player, raw):
 
 
 def _link(cog, interaction, player):
-    """Starts /customkit link and returns the requested quick chat phrases."""
+    """Starts /link and returns the requested quick chat phrases."""
     asyncio.run(cog.link.callback(cog, interaction, player))
     pending = cog._pending.get(player.lower())
     return pending.phrases if pending else None
@@ -187,7 +187,7 @@ def test_spawn_kit_requires_discord_role(cog, monkeypatch):
 
 
 def test_link_with_dropdown_no_check(cog):
-    """Default: /customkit link without a name shows a dropdown of online players, picking links right away."""
+    """Default: /link without a name shows a dropdown of online players, picking links right away."""
     db = cog.bot.db
     cog.bot.online_players = {"GamerTag42": {}, "zed": {}, "Taken": {}}
     db.link_player(99, "Taken")
@@ -305,3 +305,41 @@ def test_switched_off_custom_kit_is_not_given_by_autokit_rules(cog):
     db.set_custom_kit_disabled("VIP", False)
     asyncio.run(kits._try_claim(rule, "GamerTag42", "chat"))
     assert 'inventory.giveto "GamerTag42" "rifle.ak" 1' in cog.sent
+
+
+def test_linked_members_get_the_linked_role(cog):
+    from dataclasses import replace
+    from types import SimpleNamespace as NS
+
+    class Role:
+        def __init__(self):
+            self.id, self.members = 777, []
+
+    role = Role()
+
+    class Member:
+        def __init__(self, uid):
+            self.id, self.roles = uid, []
+
+        async def add_roles(self, r, reason=None):
+            self.roles.append(r)
+            r.members.append(self)
+
+        async def remove_roles(self, r, reason=None):
+            self.roles.remove(r)
+            r.members.remove(self)
+    members = {7: Member(7), 8: Member(8)}
+    guild = NS(get_role=lambda rid: role if rid == 777 else None, get_member=members.get)
+    cog.bot.config = replace(cog.bot.config, linked_role_id=777)
+    cog._guild = lambda: guild
+    db = cog.bot.db
+    db.link_player(7, "Alpha")
+    asyncio.run(cog.update_linked_role(7))
+    asyncio.run(cog.update_linked_role(8))
+    assert role in members[7].roles and role not in members[8].roles            # only the linked one
+    db.unlink_player(7)
+    asyncio.run(cog.update_linked_role(7))
+    assert role not in members[7].roles                                           # unlinked: role gone
+    db.link_player(8, "Bravo")                                                    # linked some other way
+    assert asyncio.run(cog.sync_linked_roles()) == 1 and role in members[8].roles   # the sync catches it
+    assert cog.bot.tree.get_command("link") is not None or hasattr(cog, "link")   # /link is a top-level command

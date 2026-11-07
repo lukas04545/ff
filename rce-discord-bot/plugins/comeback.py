@@ -1,6 +1,6 @@
 """Wipe comeback DM: before a wipe, players who haven't played for a while get a DM ("wipe tomorrow – come back").
 
-Only linked members (/customkit link) whose player hasn't been online for "Inactive for" days. Max. one DM per
+Only linked members (/link) whose player hasn't been online for "Inactive for" days. Max. one DM per
 wipe, sent slowly (Discord doesn't like mass DMs), and anyone can switch them off with /wipedm off.
 """
 from __future__ import annotations

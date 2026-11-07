@@ -114,6 +114,9 @@ FIELDS: list[Field] = [
     Field("KIT_ROLES_CREATE", "Create a new role for kits without a matching role", "kits", "bool",
           help="Off (default): kits without a matching role stay without one (match them in Kits → Kit roles). On: "
                "the bot creates a role named like the kit for them."),
+    Field("LINKED_ROLE_ID", "Role for linked players", "kits", "id", pick="role",
+          help="Every member who linked their in-game player (/link) gets this role; unlinking takes it away. "
+               "Empty = no role (hosted servers get a \"🔗 Linked\" role made by the bot)."),
     Field("LINK_VERIFY_QUICKCHAT", "Linking: also verify with quick chat in-game", "kits", "bool",
           help="Off (default): members pick their online player from a dropdown in Discord and are linked right "
                "away – nothing proves the player is theirs. On: after picking, they must send two quick chat "
@@ -275,7 +278,7 @@ FIELDS: list[Field] = [
     Field("RULES_FILE", "Rules file", "community", advanced=True, placeholder="rules.md"),
     # Points & shop
     Field("ECONOMY_ENABLED", "Points & shop", "economy", "bool",
-          help="On (default): members with a linked player (/customkit link) earn points for playtime, kills and "
+          help="On (default): members with a linked player (/link) earn points for playtime, kills and "
                "/daily and spend them in /shop. Shop items are set up in the web interface → 🪙 Shop."),
     Field("POINTS_NAME", "Name of the points", "economy", placeholder="points",
           help="Shown everywhere, e.g. coins, scrap, RP."),
@@ -309,7 +312,7 @@ FIELDS: list[Field] = [
                "0 = those items are shown greyed out as \"no price yet\" and can't be bought."),
     Field("PLAYER_ACCOUNTS", "Players can log in to manage their kits", "store", "bool",
           help="On (default): the website has a My account page. Players log in with a one-time code the bot DMs to "
-               "their linked Discord account (link with /customkit link), then manage their own custom kits – add "
+               "their linked Discord account (link with /link), then manage their own custom kits – add "
                "items, and buy/assign team slots. Needs a linked Discord account; nothing extra to set up."),
     Field("STORE_SLOT_PRICE", "Team slot price (per slot per month)", "store", placeholder="0",
           help="Players can buy team slots on their own custom kit on My account: each slot lets one more player "
@@ -381,7 +384,7 @@ FIELDS: list[Field] = [
                "are set here, for this server only. A punishment on any server still removes the abuser's admin on "
                "every server."),
     Field("ABUSE_EXEMPT_ROLE_IDS", "Allowed Discord roles (owner, co-owner)", "abuse", "ids", pick="role",
-          help="Members with one of these roles may spawn – the bot knows their in-game name from /customkit link."),
+          help="Members with one of these roles may spawn – the bot knows their in-game name from /link."),
     Field("ABUSE_EXEMPT_PLAYERS", "Allowed in-game names", "abuse", placeholder="e.g. MyGamertag, CoOwnerPSN",
           help="Comma-separated, upper/lower case doesn't matter. Works without linking – put the owner's name here."),
     Field("ABUSE_ITEMS", "Forbidden items", "abuse", placeholder="rocket,c4,timed explosive,explosive.timed",

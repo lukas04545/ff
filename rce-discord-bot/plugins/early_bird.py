@@ -1,7 +1,7 @@
 """Early-bird wipe reward: the first linked players online after a wipe get points and/or a kit.
 
 Starts when the wipe manager marks the wipe (scheduled wipe time or /wipe done). Only linked players
-(/customkit link) count, each Discord account once per wipe – alt accounts can't take extra rewards.
+(/link) count, each Discord account once per wipe – alt accounts can't take extra rewards.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class EarlyBird(Plugin):
         self.data.set("rewarded", [])
         if self.setting("announce"):
             await self.say(f"<color=#f1c40f>Wipe is live!</color> The first {self.setting('players')} linked players "
-                           "online get an early-bird reward. Link your player on Discord: /customkit link")
+                           "online get an early-bird reward. Link your player on Discord: /link")
 
     async def tick(self) -> list[str]:
         if not self.window_open():

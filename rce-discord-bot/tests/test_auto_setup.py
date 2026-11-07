@@ -11,7 +11,7 @@ ids = itertools.count(9000)
 
 class Role:
     def __init__(self, id):
-        self.id = id
+        self.id, self.name = id, ""
 
 
 class Chan:
@@ -28,13 +28,19 @@ class FakeGuild:
     def __init__(self):
         self.id, self.name, self.all, self.categories = 1, "Kryvon Discord", {}, []
         self.default_role, self.me = Role(1), Role(2)
-        self.roles = {5: Role(5)}
+        self.roles = [Role(5)]
 
     def get_channel(self, cid):
         return self.all.get(cid)
 
     def get_role(self, rid):
-        return self.roles.get(rid)
+        return next((r for r in self.roles if r.id == rid), None)
+
+    async def create_role(self, name, permissions=None, colour=None, mentionable=False, reason=None):
+        role = Role(next(ids))
+        role.name, role.permissions = name, permissions
+        self.roles.append(role)
+        return role
 
     async def create_category(self, name, overwrites=None, reason=None):
         c = Chan(self, name, overwrites=overwrites)
@@ -58,7 +64,7 @@ def test_missing_channels_are_created_and_saved(pb, monkeypatch, tmp_path):  # n
                             admin_role_ids=frozenset({5}), status_channel_id=None, events_channel_id=None,
                             killfeed_channel_id=None, admin_log_channel_id=None, console_log_channel_id=None,
                             ticket_log_channel_id=None, ticket_category_id=None,
-                            manager_ai_channel_ids=frozenset())
+                            manager_ai_channel_ids=frozenset(), linked_role_id=None)
     applied = []
 
     async def apply_config(new):
@@ -75,10 +81,12 @@ def test_missing_channels_are_created_and_saved(pb, monkeypatch, tmp_path):  # n
     assert "CHAT_CHANNEL_ID" not in env and env["STATUS_CHANNEL_ID"].isdigit() and env["TICKET_CATEGORY_ID"]
     staff = guild.categories[1]
     log = staff.text_channels[0]
-    assert log.overwrites[guild.default_role].view_channel is False and log.overwrites[guild.roles[5]].view_channel
+    assert log.overwrites[guild.default_role].view_channel is False and log.overwrites[guild.get_role(5)].view_channel
     status = guild.categories[0].text_channels[0]
     assert status.overwrites[guild.default_role].send_messages is False
     assert applied                                                                # applied without a restart
+    linked = next(r for r in guild.roles if getattr(r, "name", "") == "🔗 Linked")      # the linked players' role
+    assert env["LINKED_ROLE_ID"] == str(linked.id) and "@🔗 Linked" in made
     ai = next(c for c in staff.text_channels if c.name == "🧠・bot-setup")         # the management AI's channel
     assert env["MANAGER_AI_CHANNEL_IDS"] == str(ai.id) and "Management AI" in ai.sent[0]
     assert ai.overwrites[guild.default_role].view_channel is False
@@ -94,7 +102,7 @@ def test_default_knowledge_only_when_empty(pb, tmp_path):  # noqa: F811
     a = AutoSetup(pb.bot)
     assert a.write_default_knowledge(FakeGuild())
     text = path.read_text()
-    assert "# Rusty Outpost" in text and "No cheating" in text and "VIP" in text and "/customkit link" in text
+    assert "# Rusty Outpost" in text and "No cheating" in text and "VIP" in text and "/link" in text
     path.write_text("my own knowledge")
     assert not a.write_default_knowledge(FakeGuild()) and path.read_text() == "my own knowledge"
 

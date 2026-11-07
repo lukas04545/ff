@@ -883,7 +883,7 @@ class Tickets(commands.Cog):
                                       "name": self.bot.config.points_name,
                                       "how_to_spend": "/shop list and /shop buy in Discord", "daily": "/daily"}
             if overview["linked_player"] is None:
-                overview["note"] = "Not linked yet: the player must use /customkit link while online in-game."
+                overview["note"] = "Not linked yet: the player must use /link while online in-game."
             bought = self.bot.db.kits_bought_by(member.id)
             if bought:
                 overview["kits_you_bought"] = bought    # add-ons (request_kit_addon) only for these
@@ -1062,7 +1062,7 @@ class Tickets(commands.Cog):
             return {"error": "Offline protection is switched off on this server."}
         player = self.bot.db.linked_player(member.id)
         if player is None:
-            return {"error": "not_linked", "note": "The player must link first: /customkit link while online in-game."}
+            return {"error": "not_linked", "note": "The player must link first: /link while online in-game."}
         if name == "get_my_protection_zone":
             return await protection.zone_status(player)
         result = await protection.place_for_support(player, via=f"ticket #{ticket['id']} (AI)")

@@ -51,7 +51,7 @@ class DialARide(Plugin):
             Setting(f"{key}_role", f"{label}: only players with this Discord role", "role",
                     help="Empty = everyone (or the role for all rides below)."),
             Setting(f"{key}_price", f"{label}: points price", "int", 0, min=0, max=1_000_000,
-                    help="0 = free. A price needs a linked account (/customkit link) and points & shop on."),
+                    help="0 = free. A price needs a linked account (/link) and points & shop on."),
             Setting(f"{key}_prefab", f"{label}: entity name (experts)", default=prefab,
                     help="The entity the spawn command uses."),
         )),
@@ -60,7 +60,7 @@ class DialARide(Plugin):
         Setting("cooldown", "Cooldown per player (minutes)", "int", 30, min=0, max=10_080,
                 help="Between two rides of the same player (any vehicle)."),
         Setting("linked_only", "Only linked players", "bool", False,
-                help="Only players who linked their Discord account (/customkit link)."),
+                help="Only players who linked their Discord account (/link)."),
         Setting("role", "Only players with this Discord role (all rides)", "role", help="Empty = everyone."),
         Setting("spawn_command", "Spawn command (experts)", default=SPAWN_DEFAULT,
                 help="RCON command that spawns the vehicle. Placeholders: {prefab} {x} {y} {z} {name}."),
@@ -102,7 +102,7 @@ class DialARide(Plugin):
         if self.setting("linked_only") or roles:
             uid = self.linked_user(player)
             if uid is None:
-                return "Link your account on Discord first (/customkit link)."
+                return "Link your account on Discord first (/link)."
             if roles:
                 guild = self.guild
                 member = guild.get_member(uid) if guild else None
@@ -168,7 +168,7 @@ class DialARide(Plugin):
             uid = self.linked_user(name)
             if uid is None or not self.points_enabled:
                 await self.say(f"{name}: a {label} costs {price} points – link your account on Discord first "
-                               "(/customkit link).")
+                               "(/link).")
                 return False
             if self.take_points(uid, price, f"{label} for {name}") is None:
                 await self.say(f"{name}: a {label} costs {price} points – you don't have enough.")

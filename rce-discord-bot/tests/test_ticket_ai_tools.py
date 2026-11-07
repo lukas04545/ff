@@ -110,7 +110,7 @@ def test_ai_tools_respect_rules(setup):
     assert run("claim_kit", {"kit": "VIP"})["result"] == "offline"
     s.bot.db.unlink_player(7)
     assert run("claim_kit", {"kit": "VIP"})["result"] == "not_linked"
-    assert "customkit link" in run("get_my_kits")["note"]
+    assert "/link" in run("get_my_kits")["note"]
     assert len(s.sent) == 1                                                      # only the one real claim
 
 

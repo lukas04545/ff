@@ -801,7 +801,7 @@ class BattleRoyale(Plugin):
     async def join_cmd(self, interaction: discord.Interaction) -> None:
         player = self.linked_player(interaction.user.id)
         if player is None:
-            await interaction.response.send_message("Link your player first with /customkit link.", ephemeral=True)
+            await interaction.response.send_message("Link your player first with /link.", ephemeral=True)
             return
         ok, msg = self.join(player)
         await interaction.response.send_message(("✅ " if ok else "❌ ") + self.md(msg), ephemeral=not ok)

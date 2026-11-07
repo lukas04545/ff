@@ -240,7 +240,7 @@ class Plugin(commands.Cog):
         return next((n for n in self.bot.online_players if n.lower() == player.lower()), None)
 
     def linked_user(self, player: str) -> int | None:
-        """Discord user ID linked to an in-game player (/customkit link), or None."""
+        """Discord user ID linked to an in-game player (/link), or None."""
         return self.bot.db.player_owner(player)
 
     def linked_player(self, user_id: int) -> str | None:

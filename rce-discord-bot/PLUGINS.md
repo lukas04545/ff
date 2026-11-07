@@ -100,7 +100,7 @@ Game events from the server log (`ev` objects from `rce/log_parser.py`):
 | `await give_kit(player, kit)` | Custom kit (bot kit) or in-game kit |
 | `give_points(user_id, n, reason)`, `take_points(user_id, n, reason)`, `fmt_points(n)` | Points (if Points & shop is on) |
 | `online_players()`, `online_name(player)` | Who is online |
-| `linked_user(player)`, `linked_player(user_id)` | Discord account ↔ in-game player (`/customkit link`) |
+| `linked_user(player)`, `linked_player(user_id)` | Discord account ↔ in-game player (`/link`) |
 | `channel(id, *fallbacks)`, `await post(channel, text, embed=…, ping_role=…)` | Send a message (only the given role is pinged) |
 | `audit(text)` | Line in the admin log channel |
 | `guild`, `server_name`, `next_wipe()`, `tz`, `now()`, `md(text)` | Discord server, server name, next wipe, wipe time zone, Unix time, escape Markdown |

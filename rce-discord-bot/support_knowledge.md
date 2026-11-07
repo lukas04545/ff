@@ -44,7 +44,7 @@ Check the status in the status channel. After wipes/updates the server may take 
 Players who bought a custom kit (an existing kit, or their own list of items) tell the assistant in a ticket
 together with their order details (store, order/transaction ID). The assistant files a request, staff checks the
 purchase and approves it, then the player gets the kit's role and claims the kit in-game with `/customkit claim`
-(link the in-game player first with `/customkit link`).
+(link the in-game player first with `/link`).
 [Where to buy: e.g. our Tebex store at ...]
 
 ## VIP / donations

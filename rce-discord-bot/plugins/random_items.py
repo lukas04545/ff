@@ -150,7 +150,7 @@ class RandomItems(Plugin):
     async def toggle_cmd(self, interaction: discord.Interaction) -> None:
         player = self.linked_player(interaction.user.id)
         if not player:
-            await interaction.response.send_message("Link your in-game player first: /customkit link", ephemeral=True)
+            await interaction.response.send_message("Link your in-game player first: /link", ephemeral=True)
             return
         on = self.toggle(player)
         await interaction.response.send_message(

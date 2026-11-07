@@ -31,7 +31,7 @@ class TpHome(Plugin):
                 help="Stand still: they're told it's coming, then teleported."),
         Setting("cooldown", "Cooldown (minutes)", "int", 15, min=0, max=1440),
         Setting("linked_only", "Only linked players", "bool", False,
-                help="Only players who linked their Discord account (/customkit link) can use it."),
+                help="Only players who linked their Discord account (/link) can use it."),
         Setting("role", "Only players with this Discord role", "role",
                 help="Empty = everyone (needs a linked account if set)."),
     )
@@ -49,7 +49,7 @@ class TpHome(Plugin):
         if self.setting("linked_only") or role:
             uid = self.linked_user(player)
             if uid is None:
-                return "Link your account on Discord first (/customkit link)."
+                return "Link your account on Discord first (/link)."
             if role:
                 guild = self.guild
                 member = guild.get_member(uid) if guild else None
@@ -115,7 +115,7 @@ class TpHome(Plugin):
         if home is None:
             await interaction.response.send_message(
                 f"No home saved. In game: stand at your bed and use **{self.setting('set_emote')}**; go home with "
-                f"**{self.setting('go_emote')}**." + ("" if player else " (Link your player with /customkit link.)"),
+                f"**{self.setting('go_emote')}**." + ("" if player else " (Link your player with /link.)"),
                 ephemeral=True)
             return
         await interaction.response.send_message(f"🏠 **{self.md(home['player'])}**'s home: "

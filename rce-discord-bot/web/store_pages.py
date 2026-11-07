@@ -127,7 +127,7 @@ def buyer_fields(*, player: bool = True, gift: bool = True, values: dict | None 
                 'takes it without payment</span><input name="admin_key" type="password" maxlength="200" '
                 'autocomplete="off"></label>')
     if player:
-        out += ('<label class="field"><span>Your in-game name (linked on Discord with /customkit link)</span>'
+        out += ('<label class="field"><span>Your in-game name (linked on Discord with /link)</span>'
                 f'<input name="player" maxlength="64" required value="{esc(values.get("player", ""))}"></label>')
     if gift:
         out += ('<label class="field"><span>Gift card code (optional)</span>'
@@ -246,7 +246,7 @@ def kits_page(site, shop, base: str, error: str = "", form: dict | None = None, 
                      f'{pay_button(admin)}</form></div>')
     intro = ('<div class="card"><h2>How it works</h2>Pick a kit, enter your in-game name and pay with PayPal (or a gift '
              'card). Your name has to be linked to your Discord account first – join our Discord and use '
-             '<b>/customkit link</b>. After the payment the kit is yours right away: one-time kits are given to you '
+             '<b>/link</b>. After the payment the kit is yours right away: one-time kits are given to you '
              'in-game (when you\'re online), the others you claim with <b>/customkit claim</b> on Discord while '
              'you\'re online.</div>')
     if shop_server:

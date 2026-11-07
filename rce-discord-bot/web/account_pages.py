@@ -63,7 +63,7 @@ def login_page(site, base: str, *, error: str = "", player: str = "", stage: str
         return _resp(site, base, "account", "Log in", body)
     body = (notice(error, "bad") + '<div class="card"><p>Log in to manage your own custom kits: add items, and buy '
             'team slots so your mates can use your kit. Enter your in-game name – the bot sends a one-time code to '
-            'the Discord account it\'s linked to (link it with <b>/customkit link</b>).</p>'
+            'the Discord account it\'s linked to (link it with <b>/link</b>).</p>'
             f'<form method="post" action="{base}/account/login">'
             f'<label class="field"><span>Your in-game name</span><input name="player" maxlength="64" required '
             f'value="{esc(player)}"></label><button class="pay" type="submit">Send me a code</button></form></div>')

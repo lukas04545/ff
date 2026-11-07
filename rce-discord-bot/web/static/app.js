@@ -1748,7 +1748,7 @@ function kitRolesCard() {
           h("thead", {}, h("tr", {}, ["Member", "Linked player", "Online", "Can claim"].map((t) => h("th", { text: t })))),
           h("tbody", {}, k.members.map((p) => h("tr", {},
             h("td", { text: p.name }),
-            h("td", { class: p.player ? "" : "muted", text: p.player || "not linked (/customkit link)" }),
+            h("td", { class: p.player ? "" : "muted", text: p.player || "not linked (/link)" }),
             h("td", { text: p.player ? (p.online ? "🟢 online" : "offline") : "–" }),
             h("td", { text: p.player ? when(p.ready_at) : "–" })))))))));
       }
@@ -2202,7 +2202,7 @@ function claimSettings(kit, opts, reload) {
   const cooldown = h("input", { value: minutesToDuration(kit.cooldown_minutes), placeholder: "e.g. 12h, 1d, 0", style: "max-width:140px" });
   return h("details", { style: "margin-top:.5rem" },
     h("summary", { text: `🙋 Claim by role: ${current.size ? current.size + " role(s), cooldown " + minutesToDuration(kit.cooldown_minutes) : "off (admins only)"}` }),
-    h("p", { class: "muted", text: "Members with one of these roles can claim the kit with /customkit claim. It always goes to their own in-game player, which they verify once with /customkit link. They must be online; the cooldown counts per player." }),
+    h("p", { class: "muted", text: "Members with one of these roles can claim the kit with /customkit claim. It always goes to their own in-game player, which they verify once with /link. They must be online; the cooldown counts per player." }),
     roles.length > 12 ? h("input", { type: "search", placeholder: "🔍 Filter roles…", style: "margin-bottom:.4rem", oninput: (e) => {
       const q = e.target.value.trim().toLowerCase();
       for (const [cb, r] of boxes) cb.parentElement.hidden = !!q && !r.name.toLowerCase().includes(q) && !cb.checked;
@@ -2222,7 +2222,7 @@ function claimSettings(kit, opts, reload) {
 function linkedPlayersCard(data, reload) {
   const rows = data.linked || [];
   return h("div", { class: "card" }, h("h2", { text: `🔗 Linked players (${rows.length})` }),
-    h("p", { class: "muted", text: "Members link themselves with /customkit link (dropdown of online players; optional quick chat check in Settings → Kits). Links are shared across all your servers. Custom kit claims only go to the linked player." }),
+    h("p", { class: "muted", text: "Members link themselves with /link (dropdown of online players; optional quick chat check in Settings → Kits). Links are shared across all your servers. Custom kit claims only go to the linked player." }),
     adminLinkForm(reload),
     rows.length ? h("div", { class: "row", style: "margin:0 0 .75rem" },
       h("button", { class: "small", text: "📝 Set nicknames to in-game names", onclick: async (ev) => {
@@ -2511,7 +2511,7 @@ function emoteBindsCard(data, reload) {
       h("p", { class: "muted", text: `Pick a kit next to an emote – players get it when they use that emote (quick chat) in game. One emote gives one kit; picking another replaces it. Next to each bind choose who gets it: 👥 everyone, or only linked players with a role (🔑 the kit's own role, or any role) – so some binds can be for everyone and others role-only. ${res.binds} bound. Discord: /kit bind, /kit binds.` }),
       h("div", { class: "row" }, search, h("label", { class: "muted" }, onlyBound, " only bound emotes"),
         h("button", { class: "small", text: "🎖️ Each kit only for its role", title: "Every emote bind gets its kit's own Discord role as required role (linked kit role, else the role named like the kit)", onclick: async () => {
-          if (!confirm("Set every emote bind to need its kit's own Discord role?\n\nAfterwards ONLY players who linked their account (/customkit link) AND have that kit's role get it from the emote.")) return;
+          if (!confirm("Set every emote bind to need its kit's own Discord role?\n\nAfterwards ONLY players who linked their account (/link) AND have that kit's role get it from the emote.")) return;
           const r = await act(() => api("/api/emote-binds/roles", { method: "POST", body: {} }));
           toast(`${r.assigned.length} bind(s) now need their kit's role` + (r.no_role_found.length ? ` · no role found: ${r.no_role_found.join(", ")}` : ""));
           reload();
@@ -2528,7 +2528,7 @@ function emoteBindsCard(data, reload) {
 }
 
 function autokitCard(data, m, reload, opts) {
-  // Required Discord role (players must be linked with /customkit link)
+  // Required Discord role (players must be linked with /link)
   const roles = opts?.available ? opts.roles : [];
   const roleSelect = (value) => {
     const el = h("select", {}, h("option", { value: "", text: "Everyone" }), roles.map((r) => h("option", { value: r.id, text: "🎖️ " + r.name })));
@@ -2585,9 +2585,9 @@ function autokitCard(data, m, reload, opts) {
     } }, kit, trigger, phrase,
       h("label", { class: "muted" }, "Cooldown (min) ", cooldown),
       h("label", { class: "muted" }, "Max. per player ", maxClaims),
-      h("label", { class: "muted", title: "Only players whose linked Discord account (/customkit link) has this role" }, "Required role ", newRole),
+      h("label", { class: "muted", title: "Only players whose linked Discord account (/link) has this role" }, "Required role ", newRole),
       h("button", { class: "primary", text: "Create" })),
-    h("p", { class: "muted", style: "margin:.5rem 0 0", text: "Required role: players must link their in-game player to Discord once with /customkit link – the bot then checks their Discord roles (updates within 2 minutes)." }),
+    h("p", { class: "muted", style: "margin:.5rem 0 0", text: "Required role: players must link their in-game player to Discord once with /link – the bot then checks their Discord roles (updates within 2 minutes)." }),
     h("div", { class: "row", style: "margin-top:.75rem" },
       h("button", { text: "♻️ Wipe reset (reset cooldowns & limits)", onclick: async () => {
         if (!confirm("Reset all autokit cooldowns and limits?")) return;
@@ -2737,7 +2737,7 @@ views.shop = async (main) => {
   const e = d.earning;
   if (!d.enabled) main.append(h("div", { class: "banner warn", text: "Points & shop are switched off (⚙️ Settings → 🪙 Points & shop)." }));
   main.append(h("div", { class: "card" }, h("h2", { text: `🪙 How members earn ${pts}` }),
-    h("p", { class: "muted", style: "margin-top:0", text: "Only members who linked their in-game player with /customkit link. They see their balance with /points balance or /profile and buy with /shop buy." }),
+    h("p", { class: "muted", style: "margin-top:0", text: "Only members who linked their in-game player with /link. They see their balance with /points balance or /profile and buy with /shop buy." }),
     h("div", { class: "grid", style: "margin:0" },
       ...[["⏱️", "Per hour online", e.per_hour], ["⚔️", "Per PvP kill", e.per_kill], ["📅", "/daily", `${e.daily} (+${e.streak_bonus}/day streak)`],
         ["🎁", "Playtime reward", e.reward_hours ? `every ${e.reward_hours}h: ${[e.reward_kit, e.reward_points ? `${e.reward_points} ${pts}` : ""].filter(Boolean).join(" + ") || "–"}` : "off"]]
@@ -4196,7 +4196,7 @@ function nukeCard(cur) {
 
 views.webstore = async (main) => {
   main.append(h("h1", { text: "Store" }),
-    h("p", { class: "muted", text: "Players buy kits on the player website (Store) with PayPal or gift cards. The kit is given to the Discord account their in-game name is linked to (/customkit link) – they claim it with /customkit claim." }));
+    h("p", { class: "muted", text: "Players buy kits on the player website (Store) with PayPal or gift cards. The kit is given to the Discord account their in-game name is linked to (/link) – they claim it with /customkit claim." }));
   const holder = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
   main.append(holder, itemPicturesCard());
   let editId = null, rechecked = false;

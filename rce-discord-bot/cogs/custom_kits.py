@@ -8,7 +8,7 @@ Limitation: "inventory.giveto" supports neither condition nor slot (hotbar/cloth
 the items go into the player's inventory (if it is full, they may drop on the ground).
 
 Self-service: admins pick roles per kit (/customkit access). Members first link their Discord
-account to their in-game player (/customkit link or the "Link my player" panel button): they pick their
+account to their in-game player (/link or the "Link my player" panel button): they pick their
 online player from a dropdown. Changing the link afterwards needs an admin (/customkit unlink). With
 LINK_VERIFY_QUICKCHAT on, they also have to send two requested quick chat phrases in-game to prove the
 player is theirs. Members with one of the roles then
@@ -193,10 +193,69 @@ class CustomKits(commands.Cog):
 
     async def cog_load(self) -> None:
         self.bot.add_view(LinkPanelView(self))
+        self.linked_role_loop.start()
 
     async def cog_unload(self) -> None:
         self.kit_role_loop.cancel()
         self.auto_give_loop.cancel()
+        self.linked_role_loop.cancel()
+
+    # ------------------------------------------------------------ The "linked" role (LINKED_ROLE_ID)
+
+    def _linked_role(self, guild):
+        rid = getattr(self.bot.config, "linked_role_id", None)
+        return guild.get_role(rid) if guild is not None and rid else None
+
+    async def update_linked_role(self, user_id: int, guild: discord.Guild | None = None) -> None:
+        """Gives the linked role to a member who is linked, takes it from one who isn't (any more)."""
+        guild = guild or self._guild()
+        role = self._linked_role(guild)
+        if role is None:
+            return
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except discord.HTTPException:
+                return
+        linked = self.bot.db.linked_player(user_id) is not None
+        try:
+            if linked and role not in member.roles:
+                await member.add_roles(role, reason="Linked to an in-game player (/link)")
+            elif not linked and role in member.roles:
+                await member.remove_roles(role, reason="No longer linked to an in-game player")
+        except discord.HTTPException as exc:
+            log.warning("Linked role for %s: %s", user_id, exc)
+
+    async def sync_linked_roles(self) -> int:
+        """Everyone linked has the role, nobody else. Returns how many members were changed."""
+        guild = self._guild()
+        role = self._linked_role(guild)
+        if role is None:
+            return 0
+        linked = {int(r["user_id"]) for r in self.bot.db.linked_players()}
+        changed = 0
+        for member in list(role.members):
+            if member.id not in linked:
+                await self.update_linked_role(member.id, guild)
+                changed += 1
+        have = {m.id for m in role.members}
+        for uid in linked - have:
+            if guild.get_member(uid) is not None:
+                await self.update_linked_role(uid, guild)
+                changed += 1
+        return changed
+
+    @tasks.loop(minutes=5)
+    async def linked_role_loop(self) -> None:
+        try:
+            await self.sync_linked_roles()
+        except discord.HTTPException as exc:
+            log.warning("Linked role sync: %s", exc)
+
+    @linked_role_loop.before_loop
+    async def _linked_wait(self) -> None:
+        await self.bot.wait_until_ready()
 
     # ------------------------------------------------------------ Kit roles (every kit has a Discord role)
 
@@ -984,6 +1043,7 @@ class CustomKits(commands.Cog):
             text = (f"✅ Verified! Your Discord account is now linked to **{safe_md(ev.player)}**. "
                     "You can claim kits with `/customkit claim`.")
             await self.set_member_nickname(pending.user_id, ev.player, guild=pending.interaction.guild)
+            await self.update_linked_role(pending.user_id, pending.interaction.guild)
             feed = self.bot.feed(self.bot.config.admin_log_channel_id)
             if feed:
                 feed.add_line(f"🔗 <@{pending.user_id}> linked to in-game player **{safe_md(ev.player)}**")
@@ -1013,7 +1073,7 @@ class CustomKits(commands.Cog):
         view = discord.ui.View(timeout=300)
         view.add_item(LinkPlayerSelect(self, names[:25]))
         more = (f"\nOnly the first 25 of {len(names)} online players are listed – not there? Use "
-                "`/customkit link player:<your name>`." if len(names) > 25 else "")
+                "`/link player:<your name>`." if len(names) > 25 else "")
         await interaction.response.send_message(
             "🔗 Pick **your** in-game player (you must be online). Choose carefully – changing it later needs "
             f"an admin.{more}", view=view, ephemeral=True)
@@ -1050,6 +1110,7 @@ class CustomKits(commands.Cog):
                 await reply(f"⛔ **{safe_md(online)}** was linked to another Discord account in the meantime.")
                 return
             await self.set_member_nickname(interaction.user.id, online, guild=interaction.guild)
+            await self.update_linked_role(interaction.user.id, interaction.guild)
             feed = self.bot.feed(self.bot.config.admin_log_channel_id)
             if feed:
                 feed.add_line(f"🔗 <@{interaction.user.id}> linked to in-game player **{safe_md(online)}**")
@@ -1068,8 +1129,9 @@ class CustomKits(commands.Cog):
                     f"in-game, in this order, within {VERIFY_SECONDS // 60} minutes:\n{steps}\n"
                     "This message updates as soon as it worked.")
 
-    @customkit.command(name="link",
-                       description="Link your Discord account to your in-game player (needed to claim kits).")
+    @app_commands.command(name="link",
+                          description="Link your Discord account to your in-game player (kits, store, points …).")
+    @app_commands.guild_only()
     @app_commands.describe(player="Optional: your in-game name – leave empty to pick from a list of online players")
     @app_commands.autocomplete(player=_player_ac)
     async def link(self, interaction: discord.Interaction, player: str | None = None) -> None:
@@ -1127,6 +1189,9 @@ class CustomKits(commands.Cog):
                                                     allowed_mentions=discord.AllowedMentions.none())
             return
         await self.set_member_nickname(member.id, name, guild=interaction.guild)
+        await self.update_linked_role(member.id, interaction.guild)
+        if previous:
+            await self.update_linked_role(previous, interaction.guild)
         seen = bool(self.bot.db.player(name))
         moved = f" (moved from <@{previous}>)" if previous else ""
         self._audit(interaction, f"linked {member.mention} to **{safe_md(name)}**{moved}")
@@ -1145,9 +1210,10 @@ class CustomKits(commands.Cog):
                                                     allowed_mentions=discord.AllowedMentions.none())
             return
         self._audit(interaction, f"unlinked {member.mention} from **{safe_md(player)}**")
+        await self.update_linked_role(member.id, interaction.guild)
         await interaction.response.send_message(
             f"🔓 {member.mention} is no longer linked to **{safe_md(player)}**. They can link again with "
-            "`/customkit link`.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            "`/link`.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     # ------------------------------------------------------------ Self-service claim
 
@@ -1219,7 +1285,7 @@ class CustomKits(commands.Cog):
                                                        "it there (pick that server in the command).", row["name"])
         player = self.bot.db.linked_player(member.id)
         if player is None:
-            return ClaimOutcome(False, "not_linked", "🔗 First link your in-game player with `/customkit link` – "
+            return ClaimOutcome(False, "not_linked", "🔗 First link your in-game player with `/link` – "
                                                      "the kit can only be sent to your own account.", row["name"])
 
         async with self._claim_locks[player.lower()]:  # no double claims by clicking twice
@@ -1255,7 +1321,7 @@ class CustomKits(commands.Cog):
         kit = row["kit"]
         player = self.bot.db.linked_player(member.id)
         if player is None:
-            return ClaimOutcome(False, "not_linked", "🔗 First link your in-game player with `/customkit link` – "
+            return ClaimOutcome(False, "not_linked", "🔗 First link your in-game player with `/link` – "
                                                      "the kit can only be sent to your own account.", kit)
         async with self._claim_locks[player.lower()]:
             cooldown = int(row["cooldown_minutes"])
