@@ -3,6 +3,8 @@
 Zones: custom zones made with the server's zone commands (Custom zones guide) at an admin's position – e.g. a
 PvE/safe area around an event, a no-build area, a raid-free trade zone – with a ring and an enter message.
   /zone create <name> <radius> [pvp] [building_damage] [message]   at YOUR position (linked, online) or player:
+  /zone safe <name> <radius> [ring]   a SAFE zone (no PvP, bases can't be damaged) plus a no-build RING around it
+                                      (default 80 m wide), so no base stands close enough to be raided from inside
   /zone delete <name> · /zone list
 Portals: an entry spot and an exit spot. A player who uses the portal emote while standing within the radius of an
 entry is teleported to its exit.
@@ -30,6 +32,14 @@ zones.editcustomzone "{zone}" color ({color})
 zones.editcustomzone "{zone}" showchatmessage 1
 zones.editcustomzone "{zone}" entermessage "{message}" """
 DELETE = 'zones.deletecustomzone "{zone}"'
+# The ring around a safe zone: a bigger zone where nobody can build – bases can't be close enough to be raided from
+# inside the safe zone. allowbuilding is a zones.editcustomzone property (Custom zones guide) – adjust if needed.
+RING = """zones.createcustomzone "{zone}" ({x},{y},{z}) 0 Sphere {radius} 1 1 0 1 1
+zones.editcustomzone "{zone}" allowbuilding 0
+zones.editcustomzone "{zone}" showarea 1
+zones.editcustomzone "{zone}" color (255,140,0)
+zones.editcustomzone "{zone}" showchatmessage 1
+zones.editcustomzone "{zone}" entermessage "{message}" """
 
 
 class Zones(Plugin):
@@ -42,6 +52,11 @@ class Zones(Plugin):
                 help="Placeholders: {zone} {x} {y} {z} {radius} {pvp} (1/0) {building} (building damage 1/0) "
                      "{color} {message}. Default from the Custom zones guide."),
         Setting("delete_command", "Command: delete zone", "text", DELETE),
+        Setting("ring_command", "Command: no-build ring around a safe zone", "textarea", RING,
+                help="Placeholders: {zone} {x} {y} {z} {radius} (safe zone + ring width) {message}. allowbuilding 0 = "
+                     "nobody can build there; test once with /zone safe on your server."),
+        Setting("ring_width", "Ring width around safe zones (metres)", "int", 80, min=10, max=500,
+                help="How far from the safe zone nobody can build – more than the range people raid from."),
         Setting("portal_emote", "Emote: use a portal", default="Go, go, go!",
                 help="The quick chat emote players use while standing at a portal entry."),
         Setting("portal_cooldown", "Portal cooldown (seconds)", "int", 30, min=0, max=3600),
@@ -115,6 +130,45 @@ class Zones(Plugin):
                                         f"{'on' if pvp else 'off'}, raiding {'on' if building_damage else 'off'}."
                                         + (f"\n⚠️ {'; '.join(errors)[:500]}" if errors else ""), ephemeral=True)
 
+    async def create_safe_zone(self, name: str, pos, radius: int, ring: int, message: str = "") -> list[str]:
+        """A safe zone (no PvP, no damage to bases inside) and a no-build ring around it: nobody can raid bases from
+        the safe zone, because no base can stand within `ring` metres of it."""
+        errors = await self.create_zone(name, pos, radius, pvp=False, building=False,
+                                        message=message or f"Safe zone {name} – no PvP, no raiding")
+        errors += await self._run(self.setting("ring_command"), zone=f"zone_{name}_ring",
+                                  x=round(pos[0], 1), y=round(pos[1], 1), z=round(pos[2], 1), radius=radius + ring,
+                                  message=f"No building here – too close to the safe zone {name}"[:120])
+        zones = self.zones()
+        zones[name.lower()]["ring"] = ring
+        self.data.set("zones", zones)
+        return errors
+
+    @zone.command(name="safe", description="A safe zone (no PvP, no raiding) with a no-build ring around it.")
+    @app_commands.describe(name="Zone name", radius="Radius of the safe zone in metres",
+                           ring="Width of the no-build ring (default from the settings)",
+                           message="Shown when entering", player="Whose position (default: your linked player)")
+    @admin_only()
+    async def zone_safe(self, interaction: discord.Interaction, name: str,
+                        radius: app_commands.Range[int, 5, 500] = 50, ring: app_commands.Range[int, 10, 500] | None = None,
+                        message: str = "", player: str | None = None) -> None:
+        if not ZONE_NAME.match(name):
+            await interaction.response.send_message("Name: 2–30 letters, numbers, spaces, - or _.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            pos = await self._admin_pos(interaction, player)
+        except ValueError as exc:
+            await interaction.followup.send(f"⚠️ {exc}", ephemeral=True)
+            return
+        width = ring or int(self.setting("ring_width") or 80)
+        errors = await self.create_safe_zone(name, pos, radius, width, message)
+        self.audit(f"{interaction.user} created safe zone **{self.md(name)}** at {tp.fmt(*pos)} r={radius} "
+                   f"+ {width} m no-build ring")
+        await interaction.followup.send(
+            f"🛡️ Safe zone **{self.md(name)}** at `{tp.fmt(*pos)}`, {radius} m: no PvP, no raiding inside – and nobody can "
+            f"build within {width} m around it, so no base can be raided from inside."
+            + (f"\n⚠️ {'; '.join(errors)[:500]}" if errors else ""), ephemeral=True)
+
     @zone.command(name="delete", description="Delete a zone.")
     @admin_only()
     async def zone_delete(self, interaction: discord.Interaction, name: str) -> None:
@@ -125,6 +179,8 @@ class Zones(Plugin):
             return
         self.data.set("zones", zones)
         await self._run(self.setting("delete_command"), zone=f"zone_{z['name']}")
+        if z.get("ring"):
+            await self._run(self.setting("delete_command"), zone=f"zone_{z['name']}_ring")
         self.audit(f"{interaction.user} deleted zone **{self.md(z['name'])}**")
         await interaction.response.send_message(f"🗑️ Zone **{self.md(z['name'])}** deleted.", ephemeral=True)
 
@@ -132,6 +188,7 @@ class Zones(Plugin):
     async def zone_list(self, interaction: discord.Interaction) -> None:
         lines = [f"🌀 **{self.md(z['name'])}** `{tp.fmt(z['x'], z['y'], z['z'])}` {z['radius']} m · PvP "
                  f"{'on' if z['pvp'] else 'off'} · raiding {'on' if z['building'] else 'off'}"
+                 + (f" · 🛡️ no-build ring {z['ring']} m" if z.get("ring") else "")
                  for z in self.zones().values()]
         lines += [f"🔵 portal **{self.md(p['name'])}**" + (" ✅" if p.get("exit") else " (no exit yet)")
                   for p in self.portals().values()]
