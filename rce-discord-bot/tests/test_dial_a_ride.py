@@ -95,3 +95,31 @@ def test_kits_bound_before_dont_fire_on_combo_emotes(pb, monkeypatch):  # noqa: 
         assert tried == ["starter"]                                                # off: the kit works again
         await pb.bot.rcon.close()
     asyncio.run(main())
+
+
+def test_each_ride_can_have_its_own_cooldown(pb, monkeypatch):  # noqa: F811
+    import time as _time
+
+    async def main():
+        await pb.m.load_all()
+        await pb.m.set_enabled("dial_a_ride", True)
+        ride = pb.m.running("dial_a_ride")
+        await pb.m.save_settings("dial_a_ride", {"cooldown": 0, "attackheli_cooldown": 120, "fuel": 0})
+        monkeypatch.setattr(type(ride), "online_name", lambda self, p: "Lukas")
+
+        async def pos(self, player):
+            return (1.0, 2.0, 3.0)
+        monkeypatch.setattr(type(ride), "position", pos)
+        spawns = lambda: [c for c in pb.said if c.startswith("entity.spawnat")]   # noqa: E731
+        assert await ride.call("Lukas", "attackheli")
+        assert not await ride.call("Lukas", "attackheli")                          # its own 2 h cooldown
+        assert any("next Attack helicopter in" in c for c in pb.said)
+        assert await ride.call("Lukas", "horse")                                   # other rides: no wait
+        ride.data.set("used:lukas:attackheli", _time.time() - 121 * 60)
+        assert await ride.call("Lukas", "attackheli")                              # 2 h later: again
+        await pb.m.save_settings("dial_a_ride", {"cooldown": 30})
+        assert not await ride.call("Lukas", "horse")                               # the cooldown for all rides
+        assert len(spawns()) == 3
+        await pb.m.set_enabled("dial_a_ride", False)
+        await pb.bot.rcon.close()
+    asyncio.run(main())

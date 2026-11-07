@@ -2,7 +2,7 @@
 scrap transport helicopter, attack helicopter or a horse. A combo is the start emote (default "Let's go!") and then,
 within a few seconds, the ride's own emote (e.g. "OK" = minicopter, "No" = scrap heli). Empty start emote = a single
 emote calls the ride. Each ride has its own emote (empty = off), an optional points price and Discord role; there's
-one cooldown per player. Helicopters come with low grade fuel (default 100). The combo emotes are kept for
+one cooldown per player for all rides plus an optional cooldown per ride. Helicopters come with low grade fuel (default 100). The combo emotes are kept for
 Dial-a-ride while it's on: they can't be bound to kits (support/emote_binds.reserve).
 
 The spawn command is a setting (RCON-only Rust command, default `entity.spawnat {prefab} ({x},{y},{z})`), the same
@@ -50,6 +50,9 @@ class DialARide(Plugin):
                     help="The ride's emote (the second of the combo, type it as in game, e.g. “OK”). Empty = off."),
             Setting(f"{key}_role", f"{label}: only players with this Discord role", "role",
                     help="Empty = everyone (or the role for all rides below)."),
+            Setting(f"{key}_cooldown", f"{label}: own cooldown (minutes)", "int", 0, min=0, max=10_080,
+                    help="How long a player waits before calling THIS ride again (e.g. 120 for the attack heli). "
+                         "0 = only the cooldown for all rides below."),
             Setting(f"{key}_price", f"{label}: points price", "int", 0, min=0, max=1_000_000,
                     help="0 = free. A price needs a linked account (/link) and points & shop on."),
             Setting(f"{key}_prefab", f"{label}: entity name (experts)", default=prefab,
@@ -57,8 +60,9 @@ class DialARide(Plugin):
         )),
         Setting("fuel", "Low grade fuel with every helicopter", "int", 100, min=0, max=1000,
                 help="Given to the player with the minicopter, scrap or attack helicopter. 0 = none."),
-        Setting("cooldown", "Cooldown per player (minutes)", "int", 30, min=0, max=10_080,
-                help="Between two rides of the same player (any vehicle)."),
+        Setting("cooldown", "Cooldown for all rides (minutes)", "int", 30, min=0, max=10_080,
+                help="Between two rides of the same player, whatever vehicle. Each ride can also have its own "
+                     "cooldown above – the longer wait counts."),
         Setting("linked_only", "Only linked players", "bool", False,
                 help="Only players who linked their Discord account (/link)."),
         Setting("role", "Only players with this Discord role (all rides)", "role", help="Empty = everyone."),
@@ -157,10 +161,19 @@ class DialARide(Plugin):
             if (why := await self._allowed(name, key)) is not None:
                 await self.say(f"{name}: {why}")
                 return False
-            cooldown = self.setting("cooldown") * 60
+            now = time.time()
+            waits = []
+            every = int(self.setting("cooldown") or 0) * 60          # any ride
             last = float(self.data.get(f"used:{name.lower()}", 0))
-            if cooldown and time.time() - last < cooldown:
-                await self.say(f"{name}: next ride in {format_duration(int(cooldown - (time.time() - last)) + 1)}.")
+            if every and now - last < every:
+                waits.append((every - (now - last), "next ride"))
+            own = int(self.setting(f"{key}_cooldown") or 0) * 60      # this ride
+            last_this = float(self.data.get(f"used:{name.lower()}:{key}", 0))
+            if own and now - last_this < own:
+                waits.append((own - (now - last_this), f"next {label}"))
+            if waits:
+                left, what = max(waits)
+                await self.say(f"{name}: {what} in {format_duration(int(left) + 1)}.")
                 return False
         price = 0 if free else int(self.setting(f"{key}_price") or 0)
         uid = None
@@ -201,6 +214,7 @@ class DialARide(Plugin):
                 fuel = 0
         if not free:
             self.data.set(f"used:{name.lower()}", time.time())
+            self.data.set(f"used:{name.lower()}:{key}", time.time())
         self.data.set(f"rides:{key}", int(self.data.get(f"rides:{key}", 0)) + 1)
         await self.say(f"<color=#7CFC00>{name}</color>: your {label} {icon} is here!"
                        + (f" +{fuel} low grade fuel" if fuel else "") + (f" (-{price} points)" if price else ""))
@@ -223,6 +237,7 @@ class DialARide(Plugin):
                 combo = f"**{self.md(start)}** then **{self.md(emote)}**" if start else f"**{self.md(emote)}**"
                 lines.append(f"{icon} **{label}** – {combo}"
                              + (f" · {price} {self.bot.config.points_name}" if price else " · free")
+                             + (f" · every {self.setting(key + '_cooldown')} min" if self.setting(f"{key}_cooldown") else "")
                              + (f" · <@&{self.setting(key + '_role')}> only" if self.setting(f"{key}_role") else ""))
         cooldown = self.setting("cooldown")
         text = ("\n".join(lines) + (f"\nCooldown: {cooldown} min between rides." if cooldown else "")
