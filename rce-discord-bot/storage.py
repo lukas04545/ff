@@ -351,6 +351,17 @@ class Storage:
                 created_at INTEGER NOT NULL,
                 paid_at INTEGER
             );
+            -- Web store bundles: several store kits for one price (made in the web interface → Store)
+            CREATE TABLE IF NOT EXISTS store_bundles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                kits TEXT NOT NULL DEFAULT '',         -- store kit ids, comma separated
+                price REAL NOT NULL,
+                description TEXT,
+                category TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL
+            );
             -- The server's own (in-game) kits: the Discord role that lets members claim them (cogs/custom_kits.py)
             CREATE TABLE IF NOT EXISTS ingame_kit_roles (
                 kit TEXT PRIMARY KEY COLLATE NOCASE,
@@ -548,6 +559,8 @@ class Storage:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN servers_done TEXT")
         if "shop_server" not in columns:           # several servers: the server whose shop it was bought in
             self._db.execute("ALTER TABLE store_orders ADD COLUMN shop_server TEXT")
+        if "parent_id" not in columns:             # a kit bought in a basket: the basket's order (kind "cart")
+            self._db.execute("ALTER TABLE store_orders ADD COLUMN parent_id INTEGER")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
         self._open_links(links_path, path)
@@ -1826,6 +1839,41 @@ class Storage:
         cur = self._db.execute("DELETE FROM store_kits WHERE id = ?", (kit_id,))
         self._db.commit()
         return cur.rowcount > 0
+
+    _BUNDLE_FIELDS = ("name", "kits", "price", "description", "category", "enabled")
+
+    def store_bundles(self, *, enabled_only: bool = False) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM store_bundles" + (" WHERE enabled = 1 AND price > 0" if enabled_only else "") + \
+            " ORDER BY price, id"
+        return self._db.execute(sql).fetchall()
+
+    def store_bundle(self, bundle_id: int) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM store_bundles WHERE id = ?", (bundle_id,)).fetchone()
+
+    def add_store_bundle(self, name: str, kits: str, price: float, description: str | None = None,
+                         category: str | None = None, enabled: bool = True) -> int:
+        cur = self._db.execute("INSERT INTO store_bundles (name, kits, price, description, category, enabled, "
+                               "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                               (name, kits, price, description, category, int(enabled), int(time.time())))
+        self._db.commit()
+        return int(cur.lastrowid)
+
+    def update_store_bundle(self, bundle_id: int, **fields) -> bool:
+        fields = {k: v for k, v in fields.items() if k in self._BUNDLE_FIELDS}
+        if not fields:
+            return False
+        cur = self._db.execute(f"UPDATE store_bundles SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
+                               (*fields.values(), bundle_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def delete_store_bundle(self, bundle_id: int) -> bool:
+        cur = self._db.execute("DELETE FROM store_bundles WHERE id = ?", (bundle_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def store_order_children(self, parent_id: int) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM store_orders WHERE parent_id = ? ORDER BY id", (parent_id,)).fetchall()
 
     def add_store_order(self, **fields) -> int:
         fields.setdefault("created_at", int(time.time()))

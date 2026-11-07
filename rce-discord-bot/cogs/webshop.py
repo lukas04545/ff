@@ -58,6 +58,7 @@ ITEMS_PER_SYNC = 5                    # at most this many "kit info" commands pe
 PENDING_EXPIRE = 3 * 3600          # unpaid orders are cancelled after this (gift card amounts returned)
 CHECK_AFTER = 10 * 60              # approved on PayPal but the buyer never came back: capture after this
 MAX_AMOUNT = 100_000               # per item in a custom kit
+MAX_CART = 20                      # things in one basket
 COLOUR = discord.Colour(0x2ECC71)
 
 
@@ -76,6 +77,7 @@ def new_code() -> str:
 
 
 class WebShop(commands.Cog):
+    MAX_CART = MAX_CART
     giftcard = app_commands.Group(name="giftcard", description="Store gift cards", guild_only=True)
 
     def __init__(self, bot: "RceBot") -> None:
@@ -254,6 +256,80 @@ class WebShop(commands.Cog):
                 (row["source"] == "custom" and self.bot.db.custom_kit(row["kit"]) is None):
             raise CheckoutError("This kit isn't for sale (any more).")
         return row
+
+    # ------------------------------------------------------------ Bundles and the basket
+
+    def _deliverable(self, row) -> bool:
+        return row is not None and (row["source"] != "custom" or self.bot.db.custom_kit(row["kit"]) is not None)
+
+    def bundle_kits(self, bundle) -> list:
+        """The store kits in a bundle that can still be delivered (in its order)."""
+        rows = []
+        for part in str(bundle["kits"] or "").split(","):
+            if part.strip().isdigit():
+                row = self.bot.db.store_kit(int(part))
+                if self._deliverable(row):
+                    rows.append(row)
+        return rows
+
+    def bundle_value(self, bundle) -> float:
+        """What the bundle's kits cost one by one (only kits that are for sale on their own count)."""
+        return round(sum(float(k["price"]) for k in self.bundle_kits(bundle) if k["enabled"] and k["price"] > 0), 2)
+
+    def store_bundle(self, bundle_id):
+        try:
+            row = self.bot.db.store_bundle(int(bundle_id))
+        except (TypeError, ValueError):
+            row = None
+        if row is None or not row["enabled"] or row["price"] <= 0 or not self.bundle_kits(row):
+            raise CheckoutError("This bundle isn't for sale (any more).")
+        return row
+
+    def cart_lines(self, keys, shop_server: str = "") -> list[dict]:
+        """The basket ("k12" = store kit 12, "b3" = bundle 3) → what's in it, with prices – things that aren't for
+        sale any more (or not in this server's shop) are left out."""
+        lines = []
+        for key in list(keys or [])[:MAX_CART]:
+            key = str(key).strip()
+            try:
+                if key[:1] == "k" and key[1:].isdigit():
+                    row = self.store_kit(key[1:])
+                    kits = [row]
+                    lines.append({"key": key, "kind": "kit", "id": row["id"], "name": row["name"],
+                                  "price": round(float(row["price"]), 2), "kits": kits})
+                elif key[:1] == "b" and key[1:].isdigit():
+                    row = self.store_bundle(key[1:])
+                    kits = self.bundle_kits(row)
+                    lines.append({"key": key, "kind": "bundle", "id": row["id"], "name": row["name"],
+                                  "price": round(float(row["price"]), 2), "kits": kits})
+                else:
+                    continue
+            except CheckoutError:
+                continue
+            if shop_server and any(shop_server not in self.kit_servers(k) for k in lines[-1]["kits"]):
+                lines.pop()                                  # another server's kit
+        return lines
+
+    def _split_price(self, line: dict) -> list[float]:
+        """A bundle's price shared out over its kits (by their own prices; evenly if they have none)."""
+        kits, total = line["kits"], line["price"]
+        weights = [max(float(k["price"]), 0) for k in kits]
+        if sum(weights) <= 0:
+            weights = [1.0] * len(kits)
+        shares = [round(total * w / sum(weights), 2) for w in weights]
+        shares[-1] = round(total - sum(shares[:-1]), 2)
+        return shares
+
+    def _add_cart_children(self, parent_id: int, lines: list[dict], fields: dict) -> None:
+        """One order per kit of the basket – each is delivered (and retried) like a single kit order."""
+        for line in lines:
+            shares = [line["price"]] if line["kind"] == "kit" else self._split_price(line)
+            for kit, share in zip(line["kits"], shares):
+                self.bot.db.add_store_order(
+                    token=secrets.token_urlsafe(18), kind="kit", store_kit_id=kit["id"], total=share,
+                    title=kit["name"] if line["kind"] == "kit" else f"{kit['name']} ({line['name']})",
+                    currency=fields["currency"], player=fields.get("player"), user_id=fields.get("user_id"),
+                    shop_server=fields.get("shop_server"), parent_id=parent_id)
 
     def price_custom(self, amounts: dict[str, int], timer_hours: int | None = None
                      ) -> tuple[pricing.Quote, list[dict]]:
@@ -451,14 +527,23 @@ class WebShop(commands.Cog):
     async def checkout(self, kind: str, *, base_url: str, kit_id=None, items: dict | None = None,
                        timer_hours: int | None = None, value=None, player: str = "", gift_code: str = "",
                        name: str = "", admin_key: str = "", ip: str = "?", user_id: int | None = None,
-                       slot_count: int | None = None, months: int | None = None, shop_server: str = "") -> dict:
+                       slot_count: int | None = None, months: int | None = None, shop_server: str = "",
+                       cart: list | None = None) -> dict:
         """Starts an order. Returns {"token", "redirect"} (PayPal) or {"token"} (paid with a gift card or free with
         the admin key). `user_id` (a logged-in player) is required for the "addon" and "slots" kinds."""
         db = self.bot.db
         if self._checkouts.hit(ip) is not None:
             raise CheckoutError("Too many orders started – please wait a few minutes.")
         fields: dict = {"kind": kind, "currency": self.currency}
-        if kind == "kit":
+        lines: list[dict] = []
+        if kind == "cart":                     # the basket: one payment, one order per kit (parent_id)
+            lines = self.cart_lines(cart or [], shop_server)
+            if not lines:
+                raise CheckoutError("Your basket is empty (or what was in it isn't for sale any more).")
+            names = ", ".join(line["name"] for line in lines)
+            fields.update(title=(f"Basket: {names}" if len(names) <= 120 else f"Basket ({len(lines)} items)"),
+                          total=round(sum(line["price"] for line in lines), 2))
+        elif kind == "kit":
             row = self.store_kit(kit_id)
             fields.update(title=row["name"], store_kit_id=row["id"], total=round(float(row["price"]), 2))
         elif kind == "addon":
@@ -539,7 +624,7 @@ class WebShop(commands.Cog):
             fields.update(title=f"Gift card {self.fmt(value)}", total=value)
         else:
             raise CheckoutError("Unknown product.")
-        if kind in ("kit", "custom", "nuke"):
+        if kind in ("kit", "custom", "nuke", "cart"):
             fields["player"], fields["user_id"] = self._buyer(player)
         if shop_server:
             fields["shop_server"] = shop_server[:40]
@@ -550,6 +635,8 @@ class WebShop(commands.Cog):
             self.check_admin_key(admin_key, ip)
             token = secrets.token_urlsafe(18)
             order_id = db.add_store_order(token=token, admin_key=1, **fields)
+            if kind == "cart":
+                self._add_cart_children(order_id, lines, fields)
             db.move_store_order(order_id, "pending", "paid", paid_at=int(time.time()))
             log.warning("Store order #%s taken for free with the admin key (from %s)", order_id, ip)
             await self.fulfil(order_id)
@@ -565,6 +652,8 @@ class WebShop(commands.Cog):
         token = secrets.token_urlsafe(18)
         order_id = db.add_store_order(token=token, gift_code=gift_row["code"] if gift_row else None,
                                       gift_amount=gift_amount, paypal_amount=paypal_amount, **fields)
+        if kind == "cart":
+            self._add_cart_children(order_id, lines, fields)
         if gift_amount and not db.take_gift_balance(gift_row["code"], gift_amount, int(time.time())):
             db.update_store_order(order_id, status="cancelled", result="gift card balance changed")
             raise CheckoutError("The gift card's balance just changed – please try again.")
@@ -618,6 +707,8 @@ class WebShop(commands.Cog):
             return False
         if order["gift_code"] and order["gift_amount"]:
             self.bot.db.return_gift_balance(order["gift_code"], float(order["gift_amount"]))
+        for child in self.bot.db.store_order_children(order_id):         # a basket: its kits too
+            self.bot.db.move_store_order(child["id"], "pending", status, result=result[:300])
         return True
 
     def _lock(self, order_id: int) -> asyncio.Lock:
@@ -686,9 +777,19 @@ class WebShop(commands.Cog):
         pay = (f"PayPal {order['capture_id']}" if order["capture_id"] else "") + \
               (f" gift card {order['gift_code'][:4]}…" if order["gift_code"] else "") + \
               (" FREE with the admin key" if order["admin_key"] else "")
+        if order["parent_id"]:
+            pay = f"basket order #{order['parent_id']}"
         try:
             skit = db.store_kit(order["store_kit_id"]) if order["store_kit_id"] else None
-            if order["kind"] == "giftcard":
+            if order["kind"] == "cart":
+                states = []
+                for child in db.store_order_children(order_id):
+                    if db.move_store_order(child["id"], "pending", "paid", paid_at=int(time.time())):
+                        await self.fulfil(child["id"])
+                    states.append(db.store_order(child["id"])["status"])
+                count = {st: states.count(st) for st in dict.fromkeys(states)}
+                result = f"{len(states)} kit(s): " + ", ".join(f"{n} {st}" for st, n in count.items())
+            elif order["kind"] == "giftcard":
                 code = self.create_gift_cards(float(order["total"]), 1, f"store order #{order_id}",
                                               order_id=order_id)[0]
                 result = f"Gift card {code}"
@@ -770,7 +871,7 @@ class WebShop(commands.Cog):
                         f"{self.fmt(float(order['total']))}"
                         + (f" for <@{order['user_id']}> ({safe_md(order['player'] or '')})" if order["user_id"] else "")
                         + f" – {safe_md(pay.strip())} – delivered", alert=bool(order["admin_key"]))
-        if order["user_id"] and order["kind"] != "giftcard":
+        if order["user_id"] and order["kind"] not in ("giftcard", "cart"):      # a basket: each kit sends its own
             if order["kind"] == "nuke":
                 text = (f"💣 Thanks! Your nuke dropped on our Discord – everyone can claim "
                         f"{self.bot.config.store_nuke_points} {self.bot.config.points_name} from it for 24 hours.")
@@ -1115,6 +1216,8 @@ class WebShop(commands.Cog):
         """Buyers who paid but closed the page get their order anyway; never-paid orders expire."""
         now = int(time.time()) if now is None else now
         for order in self.bot.db.store_orders(status="pending", limit=200):
+            if order["parent_id"]:
+                continue                       # a kit of a basket: goes with its basket
             age = now - order["created_at"]
             if order["paypal_order"] and age >= CHECK_AFTER and self.paypal is not None:
                 try:
