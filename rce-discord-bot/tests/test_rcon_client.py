@@ -183,3 +183,26 @@ def test_admin_log_shows_hiccups_once_with_the_reason(monkeypatch):
     assert lines[1].startswith("🟡 RCON hiccup – back after") and "stopped answering" in lines[1]
     assert lines[2].startswith("🔴 RCON connection lost") and "code 1006" in lines[2]
     assert lines[3] == "🟢 RCON connection established" and len(lines) == 4
+
+
+def test_hosted_customers_dont_see_hiccups(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from cogs.feeds import Feeds
+    monkeypatch.setenv("RCE_SAAS", "1")
+    lines = []
+    rcon = NS(connected=True, last_drop="")
+    feeds = Feeds.__new__(Feeds)
+    log_feed = NS(add_line=lines.append)
+    feeds.bot = NS(rcon=rcon, config=NS(admin_log_channel_id=1), feed=lambda cid: log_feed)
+    monkeypatch.setattr(Feeds, "HICCUP_SECONDS", 0.2)
+
+    async def scenario():
+        await feeds.on_rce_connection(True)
+        rcon.connected, rcon.last_drop = False, "the server stopped answering (4 commands without a reply)"
+        await feeds.on_rce_connection(False)
+        await asyncio.sleep(0.05)
+        rcon.connected = True
+        await feeds.on_rce_connection(True)
+    asyncio.run(scenario())
+    assert lines == ["🟢 RCON connection established"]                      # no 🟡 line for a hosted customer
