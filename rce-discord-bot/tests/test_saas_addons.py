@@ -321,3 +321,41 @@ def test_own_bot_disconnect_deletes_its_token(cp):  # noqa: F811
     out = provisioning.disconnect_discord(cp.db, cp.box, s["id"], actor="t")
     assert out["token"] == TOKEN and provisioning.get_secret(cp.db, cp.box, s["id"], "discord_token") is None
     assert cp.db.one("SELECT status FROM servers WHERE id = ?", (s["id"],))["status"] == "awaiting_token"
+
+
+def test_switching_to_another_discord_leaves_the_old_one(cp, monkeypatch):
+    from control_plane import web as cpweb
+    cp.settings.shared_client_id, cp.settings.shared_bot_token = "424242", "shared-token"
+    guilds, left = iter([str(GUILD), "777000777000777000"]), []
+
+    async def exchange(settings, code):
+        return next(guilds)
+
+    async def leave(token, guild_id):
+        left.append(guild_id)
+        return True
+    monkeypatch.setattr(cpweb, "exchange_code", exchange)
+    monkeypatch.setattr(provisioning, "leave_guild", leave)
+
+    async def changed():
+        pass
+
+    async def scenario():
+        a = TestClient(TestServer(cpweb.build_portal(cp.db, cp.box, cp.settings, changed)))
+        await a.start_server()
+        try:
+            await a.post("/signup", data={"email": "a@x.io", "password": "password1234"})
+            await a.post("/servers", data={"name": "One", "csrf": csrf_of(await (await a.get("/dashboard")).text())})
+            sid = cp.db.one("SELECT id FROM servers")["id"]
+            for _ in range(2):
+                loc = (await a.get(f"/servers/{sid}/discord", allow_redirects=False)).headers["Location"]
+                state = re.search(r"state=([^&]+)", loc)[1].replace("%2E", ".")
+                r = await a.get(f"/discord/callback?code=c&state={state}", allow_redirects=False)
+                if not left:
+                    assert "Bot+added" in r.headers["Location"]
+                    assert "Switch to another Discord" in await (await a.get("/dashboard")).text()
+            assert "Switched" in r.headers["Location"] and left == [str(GUILD)]
+            assert cp.db.one("SELECT guild_id FROM servers")["guild_id"] == "777000777000777000"
+        finally:
+            await a.close()
+    asyncio.run(scenario())

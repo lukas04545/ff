@@ -535,7 +535,7 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                    f"class=inline>{hidden}<button>Use our bot instead</button></form> ")
         else:
             out = (f"🤖 Our bot – {'connected to Discord ' + esc(s['guild_name'] or s['guild_id']) if s['guild_id'] else 'not in a Discord yet'}"
-                   f"<br><a href=/servers/{sid}/discord>{'Move to another Discord' if s['guild_id'] else '➕ Add the bot to your Discord'}</a><br>"
+                   f"<br><a href=/servers/{sid}/discord>{'🔁 Switch to another Discord' if s['guild_id'] else '➕ Add the bot to your Discord'}</a><br>"
                    f"{disconnect_form(s, hidden) if s['guild_id'] else ''}")
             if own_bot:
                 out += (f"<form method=post action=/servers/{sid}/token>{hidden}<input name=token type=password "
@@ -571,11 +571,18 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
         s = own_server(c, int(state[0]))
         try:
             guild = await exchange_code(settings, request.query.get("code", ""))
+            before = db.one("SELECT guild_id FROM servers WHERE id = ?", (s["id"],))["guild_id"]
             provisioning.bind_guild(db, s["id"], guild, actor=f"customer:{c['id']}")
         except (provisioning.ProvisionError, OAuthError) as exc:
             raise web.HTTPSeeOther("/dashboard?m=" + str(exc).replace(" ", "+")) from None
+        moved = bool(before) and str(before) != str(guild)
+        if moved and str(before) != str(settings.hq_guild_id or ""):
+            await provisioning.leave_guild(settings.shared_bot_token, str(before))     # switched: out of the old one
         await changed()
-        raise web.HTTPSeeOther("/dashboard?m=Bot+added+–+it+starts+in+a+few+seconds")
+        raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(
+            "Switched to your other Discord – the bot left the old one and starts there in a few seconds. Check the "
+            "admin roles in your panel (Settings → Permissions): roles of the old Discord don't exist there."
+            if moved else "Bot added – it starts in a few seconds"))
 
     async def use_shared(request):
         c = need(request)

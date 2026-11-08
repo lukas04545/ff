@@ -3192,6 +3192,7 @@ views.settings = async (main) => {
     }
     if (g.id === "discord") card.append(discordTester(inputs));
     if (g.id === "rcon") card.append(rconTester(inputs));
+    if (g.id === "rcon" && !data.setup_mode && !fields.some((f) => f.locked)) card.append(rconServers());
     if (g.id === "web") card.append(ownDomainBox(rows));
     if (g.id === "web" && !data.setup_mode) card.firstChild.after(shieldBox());
     if (g.id === "updates" && !data.setup_mode) card.firstChild.after(updateStatus());
@@ -3499,6 +3500,42 @@ function rconTester(inputs) {
     btn.disabled = false;
   } });
   return h("div", { style: "margin-top:.75rem" }, btn, out);
+}
+
+// Saved game servers: switch the bot to another Rust server (RCON) with one click – reconnects right away.
+function rconServers() {
+  const box = h("div", { style: "margin-top:1rem;border-top:1px solid var(--line);padding-top:.75rem" });
+  const load = async () => {
+    let d;
+    try { d = await api("/api/settings/rcon-servers"); } catch (e) { box.replaceChildren(h("p", { class: "error", text: e.message })); return; }
+    const name = h("input", { placeholder: "Name, e.g. EU main or Test server", maxlength: "40" });
+    const out = h("div");
+    const rows = d.servers.map((r) => h("tr", {},
+      h("td", {}, h("strong", { text: r.name }), r.current ? h("span", { class: "pill ok", style: "margin-left:.4rem", text: "in use" }) : null),
+      h("td", { class: "muted", text: `${r.host}:${r.port}` }),
+      h("td", { class: "row tight" },
+        r.current ? null : h("button", { class: "small primary", text: "Switch to it", onclick: async () => {
+          if (!confirm(`Switch the bot to ${r.name} (${r.host}:${r.port})? It disconnects from the current game server.`)) return;
+          const res = await act(() => api(`/api/settings/rcon-servers/${r.id}/use`, { method: "POST" }));
+          if (!res) return;
+          toast(res.rcon_test.ok ? `Switched to ${res.name} – connected` : `Switched to ${res.name} – but RCON doesn't answer yet`, !res.rcon_test.ok);
+          setTimeout(() => location.reload(), res.rcon_test.ok ? 600 : 2500);
+        } }),
+        h("button", { class: "small danger", text: "Remove", onclick: async () => {
+          if (!confirm(`Remove ${r.name} from the list? (Nothing changes on the server.)`)) return;
+          await act(() => api(`/api/settings/rcon-servers/${r.id}`, { method: "DELETE" }), "Removed"); load();
+        } }))));
+    box.replaceChildren(
+      h("h3", { text: "🔁 Switch to another game server" }),
+      h("p", { class: "muted", text: "To move the bot to another Rust server, enter its RCON IP, port and password above and Save – it reconnects right away. Save each game server here to switch back and forth with one click (the passwords stay on the server)." }),
+      rows.length ? h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, rows))) : h("p", { class: "muted", text: "No saved game servers yet." }),
+      d.current.host ? h("div", { class: "row", style: "margin-top:.5rem" }, name,
+        h("button", { text: `Save ${d.current.host}:${d.current.port} to the list`, onclick: async () => {
+          if (await act(() => api("/api/settings/rcon-servers", { method: "POST", body: { name: name.value } }), "Saved")) load();
+        } })) : null, out);
+  };
+  load();
+  return box;
 }
 
 function discordTester(inputs) {

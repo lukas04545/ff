@@ -470,6 +470,10 @@ class WebInterface:
         r.add_get("/api/settings", self.get_settings)
         r.add_put("/api/settings", self.put_settings)
         r.add_post("/api/settings/test-rcon", self.settings_test_rcon)
+        r.add_get("/api/settings/rcon-servers", self.rcon_servers)
+        r.add_post("/api/settings/rcon-servers", self.rcon_server_save)
+        r.add_post("/api/settings/rcon-servers/{sid:[0-9a-f]{8}}/use", self.rcon_server_use)
+        r.add_delete("/api/settings/rcon-servers/{sid:[0-9a-f]{8}}", self.rcon_server_delete)
         r.add_post("/api/settings/test-discord", self.settings_test_discord)
         r.add_post("/api/settings/cloudflare-domain", self.cloudflare_domain)              # own domain (owner)
         r.add_post("/api/settings/cloudflare-domain/check", self.cloudflare_domain_check)
@@ -2882,6 +2886,74 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
         password = str(data.get("password") or self._saved("RCON_PASSWORD"))
         result = await diagnose_rcon(host, port, password)
         return web.json_response({"ok": result.ok, "steps": result.steps})
+
+    # ------------------------------------------------------------ Saved game servers (switch RCON with one click)
+
+    RCON_SERVERS_KEY = "rcon_servers"
+
+    def _rcon_list(self) -> list[dict]:
+        db = getattr(self.bot, "db", None) if self.bot is not None else None
+        try:
+            return json.loads(db.get_value(self.RCON_SERVERS_KEY) or "[]") if db is not None else []
+        except ValueError:
+            return []
+
+    def _rcon_store(self, rows: list[dict]) -> None:
+        if self.bot is None or getattr(self.bot, "db", None) is None:
+            raise ApiError("Start the bot first.")
+        self.bot.db.set_value(self.RCON_SERVERS_KEY, json.dumps(rows))
+
+    def _rcon_unlocked(self) -> None:
+        if {"RCON_HOST", "RCON_PORT", "RCON_PASSWORD"} & set(locked_settings()):
+            raise ApiError("This server's RCON is set on the main server.", 403)
+
+    async def rcon_servers(self, request: web.Request) -> web.Response:
+        host, port = self._saved("RCON_HOST"), self._saved("RCON_PORT")
+        return web.json_response({
+            "current": {"host": host, "port": port},
+            "servers": [{"id": r["id"], "name": r["name"], "host": r["host"], "port": r["port"],
+                         "current": r["host"] == host and str(r["port"]) == port} for r in self._rcon_list()]})
+
+    async def rcon_server_save(self, request: web.Request) -> web.Response:
+        """Saves the RCON details in use now under a name (the password stays on the server, never sent back)."""
+        self._rcon_unlocked()
+        name = self._text(await self._json(request), "name", limit=40)
+        host, port, password = self._saved("RCON_HOST"), self._saved("RCON_PORT"), self._saved("RCON_PASSWORD")
+        if not host or not port:
+            raise ApiError("Save the RCON IP, port and password first.")
+        rows = [r for r in self._rcon_list() if not (r["host"] == host and str(r["port"]) == port)]
+        if len(rows) >= 20:
+            raise ApiError("At most 20 saved game servers.")
+        rows.append({"id": secrets.token_hex(4), "name": name, "host": host, "port": port, "password": password})
+        self._rcon_store(rows)
+        self._audit(f"RCON: game server **{name}** ({host}:{port}) saved")
+        return web.json_response({"ok": True})
+
+    async def rcon_server_use(self, request: web.Request) -> web.Response:
+        """Switches the bot to a saved game server – reconnects right away, no restart."""
+        self._rcon_unlocked()
+        row = next((r for r in self._rcon_list() if r["id"] == request.match_info["sid"]), None)
+        if row is None:
+            raise ApiError("Saved game server not found.", 404)
+        update_env(self.env_path, {"RCON_HOST": row["host"], "RCON_PORT": str(row["port"]),
+                                   "RCON_PASSWORD": row["password"], "RCON_ENABLED": "true"}, template=ENV_TEMPLATE)
+        self._audit(f"RCON: switched to **{row['name']}** ({row['host']}:{row['port']})")
+        result = await diagnose_rcon(row["host"], str(row["port"]), row["password"])
+        if not self.setup_mode:
+            try:
+                await self._apply_live(load_config(self.env_path))
+            except ConfigError as exc:
+                raise ApiError(f"Switched, but the settings aren't complete: {exc}") from None
+        return web.json_response({"ok": True, "name": row["name"], "rcon_test": {"ok": result.ok,
+                                                                                  "steps": result.steps}})
+
+    async def rcon_server_delete(self, request: web.Request) -> web.Response:
+        rows = self._rcon_list()
+        keep = [r for r in rows if r["id"] != request.match_info["sid"]]
+        if len(keep) == len(rows):
+            raise ApiError("Saved game server not found.", 404)
+        self._rcon_store(keep)
+        return web.json_response({"ok": True})
 
     async def settings_test_discord(self, request: web.Request) -> web.Response:
         token = str((await self._json(request)).get("token") or self._saved("DISCORD_TOKEN")).strip()
