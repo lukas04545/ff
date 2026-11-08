@@ -269,3 +269,55 @@ def test_owner_switches_addons_and_installs_updates(cp, monkeypatch):
         finally:
             await owner.close()
     asyncio.run(scenario())
+
+
+def test_customer_can_disconnect_the_bot_from_their_discord(cp, monkeypatch):
+    from control_plane import web as cpweb
+    left = []
+
+    async def leave(token, guild_id):
+        left.append((token, guild_id))
+        return True
+    monkeypatch.setattr(provisioning, "leave_guild", leave)
+    cp.settings.shared_bot_token = "shared-token"
+
+    async def changed():
+        pass
+
+    async def scenario():
+        a = TestClient(TestServer(cpweb.build_portal(cp.db, cp.box, cp.settings, changed)))
+        await a.start_server()
+        try:
+            await a.post("/signup", data={"email": "a@x.io", "password": "password1234"})
+            await a.post("/servers", data={"name": "One", "csrf": csrf_of(await (await a.get("/dashboard")).text())})
+            sid = cp.db.one("SELECT id FROM servers")["id"]
+            assert "Disconnect from Discord" not in await (await a.get("/dashboard")).text()  # not connected yet
+            cp.db.run("UPDATE servers SET status = 'active' WHERE id = ?", (sid,))
+            provisioning.bind_guild(cp.db, sid, str(GUILD), actor="t")
+            page = await (await a.get("/dashboard")).text()
+            assert "Disconnect from Discord" in page
+            r = await a.post(f"/servers/{sid}/discord/disconnect", data={"csrf": csrf_of(page), "leave": "1"},
+                             allow_redirects=False)
+            assert "disconnected" in r.headers["Location"] and "left" in r.headers["Location"]
+            row = cp.db.one("SELECT guild_id, status FROM servers WHERE id = ?", (sid,))
+            assert row["guild_id"] is None and row["status"] == "awaiting_token"         # the panel keeps running
+            assert left == [("shared-token", str(GUILD))]
+            assert provisioning.environment(cp.db, cp.box, cp.settings, sid)["DISCORD_TOKEN"] == ""
+            # again: nothing connected any more
+            r = await a.post(f"/servers/{sid}/discord/disconnect", data={"csrf": csrf_of(page)}, allow_redirects=False)
+            assert "isn" in r.headers["Location"] and len(left) == 1
+            assert cp.db.one("SELECT 1 FROM audit_log WHERE action = 'server.discord_disconnected'")
+        finally:
+            await a.close()
+    asyncio.run(scenario())
+
+
+def test_own_bot_disconnect_deletes_its_token(cp):  # noqa: F811
+    cid = customer(cp)
+    paid(cp, cid)
+    features.grant(cp.db, cid, "custom_bot", owner="me")
+    s = provisioning.provision_server(cp.db, cp.box, cp.settings, cid, "Main", actor="t")
+    provisioning.set_bot_token(cp.db, cp.box, s["id"], TOKEN, actor="t")
+    out = provisioning.disconnect_discord(cp.db, cp.box, s["id"], actor="t")
+    assert out["token"] == TOKEN and provisioning.get_secret(cp.db, cp.box, s["id"], "discord_token") is None
+    assert cp.db.one("SELECT status FROM servers WHERE id = ?", (s["id"],))["status"] == "awaiting_token"

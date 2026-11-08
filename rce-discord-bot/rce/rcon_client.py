@@ -93,6 +93,7 @@ class RconClient:
         # from admins spawning items in the server log
         self.recent_commands: deque[tuple[float, str]] = deque(maxlen=500)
         self._wake = asyncio.Event()           # new connection details -> reconnect right away
+        self.enabled = True                    # False = disconnected on purpose (Settings → RCON) – no connecting
         self._message_listeners: list[MessageListener] = []
         self._state_listeners: list[StateListener] = []
 
@@ -135,6 +136,23 @@ class RconClient:
             await self._ws.close()
         return True
 
+    async def set_enabled(self, on: bool) -> bool:
+        """Disconnect on purpose (False) or connect again (True). Returns False if nothing changed."""
+        on = bool(on)
+        if on == self.enabled:
+            return False
+        self.enabled = on
+        self.failed_attempts, self.last_error = 0, None
+        if not on:
+            self._closed_by_us = "RCON was switched off in the settings"
+            log.info("RCON switched off – disconnecting.")
+        else:
+            log.info("RCON switched on – connecting …")
+        self._wake.set()
+        if self._ws is not None and not self._ws.closed:
+            await self._ws.close()
+        return True
+
     async def close(self) -> None:
         self._closing = True
         self._wake.set()
@@ -165,6 +183,8 @@ class RconClient:
         Edition (say, kick, ...). A timeout is then not treated as an error.
         """
         ws = self._ws
+        if not self.enabled:
+            raise RconNotConnected("RCON is switched off (Settings → RCON).")
         if ws is None or ws.closed or not self.connected:
             raise RconNotConnected("No RCON connection to the Rust server (connecting...).")
 
@@ -228,6 +248,10 @@ class RconClient:
         while not self._closing:
             opened_at: float | None = None
             self._wake.clear()
+            if not self.enabled:                      # disconnected on purpose: wait until switched on again
+                self.last_error = "Switched off in the settings."
+                await self._wake.wait()
+                continue
             try:
                 log.info("Connecting to WebRCON %s:%s ...", self.host, self.port)
                 ws = await asyncio.wait_for(

@@ -84,6 +84,7 @@ class Config:
     admin_role_ids: frozenset[int]
     admin_user_ids: frozenset[int]
     allow_raw_rcon: bool
+    rcon_enabled: bool                 # False = disconnected on purpose (Settings → RCON)
 
     # Channels (None = feature disabled)
     status_channel_id: int | None
@@ -352,6 +353,7 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         admin_role_ids=_id_set("ADMIN_ROLE_IDS"),
         admin_user_ids=_id_set("ADMIN_USER_IDS"),
         allow_raw_rcon=_bool("ALLOW_RAW_RCON", True),
+        rcon_enabled=_bool("RCON_ENABLED", True),
         status_channel_id=_int("STATUS_CHANNEL_ID"),
         chat_channel_id=_int("CHAT_CHANNEL_ID"),
         killfeed_channel_id=_int("KILLFEED_CHANNEL_ID"),

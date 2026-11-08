@@ -58,6 +58,9 @@ FIELDS: list[Field] = [
           help="The RCON port from the G-Portal panel – NOT the game port."),
     Field("RCON_PASSWORD", "RCON password", "rcon", "secret", required=True,
           help="G-Portal → Settings → Basic settings. Letters and numbers only; restart the server afterwards."),
+    Field("RCON_ENABLED", "Connected to the game server (RCON)", "rcon", "bool",
+          help="Switch off to disconnect the bot from your Rust server (e.g. while you move servers). The RCON "
+               "details stay saved – switch it on again to reconnect."),
     # Permissions
     Field("ADMIN_ROLE_IDS", "Admin roles", "rights", "ids", pick="role",
           help="These roles may use server commands (RCON, kits, in-game kick/ban)."),

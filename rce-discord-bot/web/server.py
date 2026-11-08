@@ -141,6 +141,7 @@ AI_BLOCKED = ("/api/login", "/api/logout", "/api/reauth", "/api/2fa", "/api/pass
               "/api/restart",
               "/api/update", "/api/backups", "/api/setup", "/api/honeypot", "/api/switch", "/api/command")
 # … and these only for reading (no changes): servers, the domain, gift cards (money), plugin code/files
+RCON_OFF_NOTE = "RCON switched off by the customer (Settings → RCON)"
 AI_BLOCKED_WRITES = ("/api/servers", "/api/settings/cloudflare-domain", "/api/webshop/giftcards", "/api/plugins/upload",
                      "/api/plugins/generate", "/api/allplugins/copy")
 AI_BLOCKED_WRITE_RE = re.compile(r"^/api/plugins/[^/]+(/file/.*)?$")      # delete a plugin, upload plugin files
@@ -2253,7 +2254,8 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
             "players_online": len(bot.online_players) if bot is not None else 0,
             "latency_ms": round(bot.latency * 1000) if bot is not None and bot.is_ready() else None,
             # why it waits in setup mode (a settings message, no secrets) – shown in the owner panel
-            "error": (str(self.setup_error or "Waiting for its settings")[:300]) if self.setup_mode else None,
+            "error": (str(self.setup_error or "Waiting for its settings")[:300]) if self.setup_mode else
+            (RCON_OFF_NOTE if bot is not None and not bot.rcon.enabled else None),
         }, headers={"Cache-Control": "no-store"})
 
     async def shield_status(self, request: web.Request) -> web.Response:

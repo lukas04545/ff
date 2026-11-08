@@ -387,7 +387,7 @@ class HQ:
     def alerts(self) -> list[str]:
         """What changed since the last look: new customers/servers, crashes, offline bots, RCON, late payments."""
         servers = {r["id"]: dict(r) for r in self.db.q(
-            "SELECT s.id, s.name, s.status, s.customer_id, h.process, h.discord_ready, h.rcon_connected "
+            "SELECT s.id, s.name, s.status, s.customer_id, h.process, h.discord_ready, h.rcon_connected, h.error "
             "FROM servers s LEFT JOIN health h ON h.server_id = s.id WHERE s.status != 'deleted'")}
         custs = {r["id"]: dict(r) for r in self.db.q(
             "SELECT c.id, c.email, c.status, s.status AS sub FROM customers c LEFT JOIN subscriptions s "
@@ -419,7 +419,8 @@ class HQ:
             elif s["status"] == "active" and not before["discord_ready"] and s["discord_ready"]:
                 out.append(f"🟢 {tag}: bot is back online")
             if s["status"] == "active" and before["rcon_connected"] and not s["rcon_connected"]:
-                out.append(f"❌ {tag}: RCON connection lost")
+                out.append(f"🔌 {tag}: RCON switched off by the customer" if "switched off" in (s["error"] or "")
+                           else f"❌ {tag}: RCON connection lost")
             elif s["status"] == "active" and not before["rcon_connected"] and s["rcon_connected"]:
                 out.append(f"✅ {tag}: RCON back")
         return out

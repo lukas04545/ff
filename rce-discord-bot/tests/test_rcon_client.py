@@ -206,3 +206,40 @@ def test_hosted_customers_dont_see_hiccups(monkeypatch):
         await feeds.on_rce_connection(True)
     asyncio.run(scenario())
     assert lines == ["🟢 RCON connection established"]                      # no 🟡 line for a hosted customer
+
+
+def test_rcon_can_be_switched_off_and_on_again():
+    """Settings → RCON → "Connected to the game server" off: the bot disconnects and doesn't reconnect until it's
+    switched on again (the details stay saved)."""
+    async def scenario():
+        runner, port = await _start_mock()
+        client = RconClient("127.0.0.1", port, "pw", reconnect_min=0.2, reconnect_max=0.5)
+        await client.start()
+        assert await client.wait_until_connected(5)
+        assert await client.set_enabled(False)
+        await asyncio.sleep(0.8)                                   # several reconnect delays: stays off
+        assert not client.connected and "Switched off" in client.last_error
+        assert "switched off" in client.last_drop
+        with pytest.raises(RconNotConnected, match="switched off"):
+            await client.command("serverinfo")
+        assert not await client.set_enabled(False)                 # nothing changed
+        assert await client.set_enabled(True)
+        assert await client.wait_until_connected(5)
+        assert json.loads(await client.command("serverinfo"))["MaxPlayers"] == 50
+        await client.close()
+        await runner.cleanup()
+    asyncio.run(scenario())
+
+
+def test_starts_switched_off_from_the_settings():
+    async def scenario():
+        runner, port = await _start_mock()
+        client = RconClient("127.0.0.1", port, "pw", reconnect_min=0.2, reconnect_max=0.5)
+        client.enabled = False                                      # RCON_ENABLED=false
+        await client.start()
+        assert not await client.wait_until_connected(0.8)
+        await client.set_enabled(True)
+        assert await client.wait_until_connected(5)
+        await client.close()
+        await runner.cleanup()
+    asyncio.run(scenario())
