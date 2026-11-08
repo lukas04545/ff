@@ -470,6 +470,7 @@ class WebInterface:
         r.add_get("/api/settings", self.get_settings)
         r.add_put("/api/settings", self.put_settings)
         r.add_post("/api/settings/test-rcon", self.settings_test_rcon)
+        r.add_get("/api/settings/migrate", self.migrate_info)
         r.add_get("/api/settings/rcon-servers", self.rcon_servers)
         r.add_post("/api/settings/rcon-servers", self.rcon_server_save)
         r.add_post("/api/settings/rcon-servers/{sid:[0-9a-f]{8}}/use", self.rcon_server_use)
@@ -2887,12 +2888,48 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
         result = await diagnose_rcon(host, port, password)
         return web.json_response({"ok": result.ok, "steps": result.steps})
 
+    # ------------------------------------------------------------ Migrate: another Discord / another game server
+
+    async def migrate_info(self, request: web.Request) -> web.Response:
+        """What the Migrate page shows: where the bot is now and how to move it (Discord + RCON)."""
+        import saas_mode
+        bot = self.bot
+        hosted = saas_mode.enabled()
+        shared = hosted and os.environ.get("SAAS_SHARED_BOT") == "1"
+        portal = os.environ.get("SAAS_PORTAL_URL", "").rstrip("/") if hosted else ""
+        sid = os.environ.get("SAAS_SERVER_ID", "") if hosted else ""
+        guild = None
+        if bot is not None and bot.is_ready():
+            from permcheck import main_guild
+            g = main_guild(bot)
+            guild = {"id": str(g.id), "name": g.name} if g else None
+        return web.json_response({
+            "hosted": hosted, "shared_bot": shared,
+            "portal": portal or None,
+            "switch_discord_url": f"{portal}/servers/{sid}/discord" if shared and portal and sid else None,
+            "dashboard_url": f"{portal}/dashboard" if portal else None,
+            "guild": guild,
+            "guilds": [] if shared or bot is None else [{"id": str(g.id), "name": g.name} for g in bot.guilds],
+            "guild_setting": self._saved("GUILD_ID"),
+            "guild_locked": "GUILD_ID" in locked_settings(),
+            "invite_url": None if shared or bot is None else invite_url(bot.application_id),
+            "rcon": {"host": self._saved("RCON_HOST"), "port": self._saved("RCON_PORT"),
+                     "password_set": bool(self._saved("RCON_PASSWORD")),
+                     "enabled": (self._saved("RCON_ENABLED") or "true").lower() not in ("0", "false", "no", "off"),
+                     "connected": bool(bot is not None and bot.rcon.connected),
+                     "locked": bool({"RCON_HOST", "RCON_PORT", "RCON_PASSWORD"} & set(locked_settings()))},
+            "setup_mode": self.setup_mode})
+
     # ------------------------------------------------------------ Saved game servers (switch RCON with one click)
 
     RCON_SERVERS_KEY = "rcon_servers"
 
     def _rcon_list(self) -> list[dict]:
         db = getattr(self.bot, "db", None) if self.bot is not None else None
+        reset = self._saved("RCON_RESET_AT")             # the platform owner reset RCON: old passwords go too
+        if db is not None and reset and db.get_value("rcon_servers_reset") != reset:
+            db.set_value(self.RCON_SERVERS_KEY, "[]")
+            db.set_value("rcon_servers_reset", reset)
         try:
             return json.loads(db.get_value(self.RCON_SERVERS_KEY) or "[]") if db is not None else []
         except ValueError:

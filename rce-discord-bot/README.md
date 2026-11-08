@@ -315,6 +315,12 @@ To **disconnect** the bot from the game server (e.g. while you move servers), sw
 Connected to the game server* (`RCON_ENABLED=false`). It disconnects right away and doesn't reconnect; the RCON
 details stay saved, and switching it on again reconnects.
 
+**🚚 Migrate** (Admin → Migrate, owners only) puts both moves on one page: the bot's Discord (hosted: *Switch to
+another Discord* through your shop account; your own bot: invite it to the new Discord, pick it, restart) and the
+Rust server (enter the new RCON details, *Test*, *Connect to this server* – live, no restart – or switch between
+saved game servers). Hosted customers also find the link to their other servers there. While RCON is switched off,
+the IP, port and password may be empty – the bot runs without a game server until a fresh one is entered.
+
 To **switch to another game server**, enter its RCON IP, port and password and save – the bot reconnects right away,
 no restart. Under *Settings → RCON → Switch to another game server* you can save each game server by name and switch
 between them with one click (the passwords stay on the bot's PC/server and are never shown again).

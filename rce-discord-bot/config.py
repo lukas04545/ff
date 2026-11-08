@@ -340,20 +340,23 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         if os.environ.get("SAAS_AI") != "1":
             os.environ["DEEPSEEK_API_KEY"] = ""                    # AI is an add-on the owner switches on
 
+    rcon_on = _bool("RCON_ENABLED", True)
     port = _int("RCON_PORT")
-    if port is None:
+    if port is None and rcon_on:
         raise ConfigError("Required value 'RCON_PORT' is missing from the .env file.")
+    # RCON switched off (disconnected, or reset by the platform owner): the details may be empty until a fresh one
+    rcon_get = _required if rcon_on else _get
 
     cfg = Config(
         discord_token=_required("DISCORD_TOKEN"),
         guild_id=_int("GUILD_ID"),
-        rcon_host=_required("RCON_HOST"),
-        rcon_port=port,
-        rcon_password=_required("RCON_PASSWORD"),
+        rcon_host=rcon_get("RCON_HOST") or "",
+        rcon_port=port or 0,
+        rcon_password=rcon_get("RCON_PASSWORD") or "",
         admin_role_ids=_id_set("ADMIN_ROLE_IDS"),
         admin_user_ids=_id_set("ADMIN_USER_IDS"),
         allow_raw_rcon=_bool("ALLOW_RAW_RCON", True),
-        rcon_enabled=_bool("RCON_ENABLED", True),
+        rcon_enabled=rcon_on,
         status_channel_id=_int("STATUS_CHANNEL_ID"),
         chat_channel_id=_int("CHAT_CHANNEL_ID"),
         killfeed_channel_id=_int("KILLFEED_CHANNEL_ID"),

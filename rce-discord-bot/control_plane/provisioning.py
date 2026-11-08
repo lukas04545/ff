@@ -401,6 +401,18 @@ def add_domain(db: DB, settings: Settings, server_id: int, hostname: str, *, act
     return host
 
 
+def reset_rcon(db: DB, server_id: int, *, actor: str) -> None:
+    """The platform owner disconnects a server's RCON and clears its details (IP, port, password), so the customer
+    can enter a fresh one in their panel. The bot keeps running (Discord, website) – RCON is simply off until then.
+    Saved game servers in the panel are cleared too (they hold the old passwords)."""
+    s = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (server_id,))
+    if s is None:
+        raise ProvisionError("No such server.")
+    write_env(Path(s["home_dir"]), {"RCON_HOST": "", "RCON_PORT": "", "RCON_PASSWORD": "", "RCON_ENABLED": "false",
+                                    "RCON_RESET_AT": str(_now())})
+    db.audit(actor, "server.rcon_reset", customer_id=s["customer_id"], server_id=server_id)
+
+
 def move_domain(db: DB, hostname: str, from_id: int, to_id: int, *, actor: str) -> None:
     """Moves an own domain to another server of the SAME customer – it keeps working (Cloudflare already accepted
     it, the CNAME stays the same); from now on it shows that server's website."""
@@ -486,6 +498,7 @@ def environment(db: DB, box: SecretBox, settings: Settings, server_id: int) -> d
     else:                                   # the platform's bot, fenced to this server's one Discord (saas_fence.py)
         env.update({"DISCORD_TOKEN": settings.shared_bot_token, "SAAS_SHARED_BOT": "1",
                     "SAAS_GUILD_ID": s["guild_id"] or "", "GUILD_ID": s["guild_id"] or ""})
+    env["SAAS_PORTAL_URL"], env["SAAS_SERVER_ID"] = settings.portal_url, str(server_id)   # the panel's Migrate page
     env["SAAS_PUBLIC_URL"] = public_url(db, settings, server_id, s["slug"])   # changed → restart with the new links
     ai = features.has(db, s["customer_id"], "ai")
     env["SAAS_AI"] = "1" if ai else "0"

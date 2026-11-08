@@ -359,3 +359,22 @@ def test_switching_to_another_discord_leaves_the_old_one(cp, monkeypatch):
         finally:
             await a.close()
     asyncio.run(scenario())
+
+
+def test_owner_resets_a_customers_rcon(cp):  # noqa: F811
+    from envfile import read_env
+    from pathlib import Path
+    from control_plane import actions
+    cid = customer(cp)
+    paid(cp, cid)
+    s = dict(provisioning.provision_server(cp.db, cp.box, cp.settings, cid, "Main", actor="t"))
+    s = dict(cp.db.one("SELECT * FROM servers WHERE id = ?", (s["id"],)))
+    provisioning.write_env(Path(s["home_dir"]), {"RCON_HOST": "1.1.1.1", "RCON_PORT": "28016", "RCON_PASSWORD": "pw"})
+    out = asyncio.run(actions.server(cp.db, cp.settings, None, s["id"], "rcon-reset", actor="owner:boss"))
+    assert "fresh" in out
+    env = read_env(Path(s["home_dir"]) / ".env")
+    assert env["RCON_HOST"] == "" and env["RCON_PASSWORD"] == "" and env["RCON_ENABLED"] == "false"
+    assert env["RCON_RESET_AT"]
+    assert cp.db.one("SELECT 1 FROM audit_log WHERE action = 'server.rcon_reset'")
+    e = provisioning.environment(cp.db, cp.box, cp.settings, s["id"])
+    assert e["SAAS_SERVER_ID"] == str(s["id"]) and e["SAAS_PORTAL_URL"] == cp.settings.portal_url

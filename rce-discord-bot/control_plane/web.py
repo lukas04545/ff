@@ -144,7 +144,7 @@ STAFF_CAN = tuple((m, re.compile(p)) for m, p in (
     ("GET", r"^/settings$"), ("GET", r"^/passkey\.js$"), ("GET", r"^/suggestions$"),
     ("POST", r"^/suggestions/\d+$"),
     ("POST", r"^/customers/new$"), ("POST", r"^/customers/\d+/(trial|server|dashboard)$"),
-    ("POST", r"^/servers/\d+/(open|password-link)$"),
+    ("POST", r"^/servers/\d+/(open|password-link|rcon-reset)$"),
     ("POST", r"^/passkeys(/options)?$"), ("POST", r"^/passkeys/[A-Za-z0-9_-]+/remove$"), ("POST", r"^/logout$"),
 ))
 ROLES = {"owner": "Owner – everything", "staff": "Staff – customers only"}
@@ -1071,6 +1071,9 @@ server run <code>python3 -m control_plane login-link</code> – it prints a one-
                                 f"{hidden(request)}<button>🔗 Password link</button></form>")
                     acts.append(f"<form method=post action='{P}/servers/{sid}/open' class=inline target=_blank>"
                                 f"{hidden(request)}<button>🔑 Open panel</button></form>")
+                    acts.append(button(request, f"/servers/{sid}/rcon-reset", "🔌 Reset RCON",
+                                       confirm="Disconnect this server's RCON and clear its IP, port and password, so "
+                                               "the customer can enter a fresh one? The bot keeps running."))
                 acts.append(f"<a href={P}/servers/{sid}/ai>🧠 Management AI</a>")
                 acts.append(button(request, f"/servers/{sid}/manager-ai/{'off' if s['manager_ai'] else 'on'}",
                                    ("Discord AI: on → switch off" if s["manager_ai"] else "Discord AI: off → switch on")))
@@ -2038,7 +2041,7 @@ suggested it gets a notice in the channel within a minute.</p><p>{tabs}</p>
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post("/customers/new", customer_new), web.post(r"/customers/{id:\d+}/server", customer_server), web.post(r"/customers/{id:\d+}/trial", customer_trial),
                     web.post(r"/grants/{id:\d+}/revoke", act),
-                    web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act),
+                    web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge|rcon-reset}", act),
                     web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai|custom_domain}/{on:on|off}", feature_action),
                     web.post("/update/{action:check|install|restart}", update_action),
                     web.get(r"/servers/{id:\d+}/ai", ai_page), web.post(r"/servers/{id:\d+}/ai", ai_send),

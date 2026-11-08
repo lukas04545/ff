@@ -32,10 +32,14 @@ async def server(db: DB, settings: Settings, supervisor, sid: int, action: str, 
         provisioning.remove_server(db, sid, actor=actor)
     elif action == "purge":
         provisioning.purge_server(db, settings, sid, actor=actor)
+    elif action == "rcon-reset":
+        provisioning.reset_rcon(db, sid, actor=actor)
+        if supervisor is not None and sid in getattr(supervisor, "procs", {}):
+            await supervisor.restart(sid)                # starts with RCON off and empty – ready for a fresh one
     else:
         raise ValueError(f"Unknown action {action!r}.")
     return {"suspend": "suspended", "reactivate": "reactivated", "restart": "restarting", "remove": "removed",
-            "purge": "purged"}[action]
+            "purge": "purged", "rcon-reset": "RCON disconnected and cleared – the customer can enter a fresh one"}[action]
 
 
 def customer(db: DB, cid: int, action: str, *, actor: str, owner: str, slots_n: int = 1, reason: str = "") -> str:
