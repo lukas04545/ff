@@ -120,6 +120,9 @@ class RceBot(commands.Bot):
             self._global_commands_cleared = True  # never touch global commands – they're every tenant's
         self.rcon.add_message_listener(self._on_rcon_message)
         self.rcon.add_state_listener(self._on_rcon_state)
+        # The control panel first: whatever happens below (Discord rate limits, a slow plugin, RCON off), the panel
+        # stays reachable
+        await self._start_web()
 
         for cog in COGS:
             await self.load_extension(cog)
@@ -152,17 +155,60 @@ class RceBot(commands.Bot):
         self.tree.interaction_check = _guard
         import discord_router
         discord_router.setup(self)        # several servers on one Discord bot: each event to the right server
-        synced = await self.sync_commands()
-        log.info("Synced %d slash commands.", len(synced))
+        # In the background: Discord may make a command update wait (rate limits) – that must never hold up the start
+        asyncio.create_task(self._sync_commands_at_start(), name="command-sync")
 
         await self.rcon.start()
         asyncio.create_task(self._rcon_watchdog(), name="rcon-watchdog")
 
-        if self.config.web_enabled:
-            from web.server import WebInterface
-            self.web = WebInterface(self)
-            # Only open the browser on the very first start, not on every restart from the web interface
-            await self.web.start(open_browser=None if self._first_start else False)
+    async def _start_web(self) -> None:
+        if not self.config.web_enabled or self.web is not None:
+            return
+        from web.server import WebInterface
+        self.web = WebInterface(self)
+        # Only open the browser on the very first start, not on every restart from the web interface
+        if not await self.web.start(open_browser=None if self._first_start else False):
+            asyncio.create_task(self._retry_web(), name="web-retry")
+
+    async def _retry_web(self) -> None:
+        """The port was still taken (e.g. the old process hadn't let go yet): keep trying, the panel must come up."""
+        while not self.is_closed():
+            await asyncio.sleep(5)
+            try:
+                await self.web.stop()
+            except Exception:
+                pass
+            if await self.web.start(open_browser=False):
+                log.info("Web interface is up now.")
+                return
+
+    def _commands_digest(self) -> str:
+        import hashlib
+        import json as _json
+        import discord_router
+        import servers
+        own = [command.to_dict(self.tree) for command in self.tree._get_all_commands(guild=None)]
+        others = {sid: discord_router.read_commands(sid) for sid in discord_router.shared_bot_servers()} \
+            if getattr(self, "router", None) is not None else {}
+        raw = _json.dumps([own, others, self.config.guild_id, servers.server_id()], sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    async def _sync_commands_at_start(self) -> None:
+        """Registers the slash commands – only if they changed since the last time (Discord allows only a few
+        updates a day per Discord server; restarting often must not use them up), and never blocking the start."""
+        try:
+            digest = self._commands_digest()
+            if self.db.get_value("commands_synced") == digest:
+                log.info("Slash commands unchanged – not sent to Discord again.")
+                return
+            synced = await asyncio.wait_for(self.sync_commands(), 120)
+            self.db.set_value("commands_synced", digest)
+            log.info("Synced %d slash commands.", len(synced))
+        except asyncio.TimeoutError:
+            log.warning("Discord is holding back the slash command update (rate limit) – the commands are updated "
+                        "on a later start. Everything else works.")
+        except Exception:
+            log.exception("Syncing the slash commands failed – everything else works")
 
     async def sync_commands(self) -> list:
         """Registers the slash commands with Discord (at the start and when a plugin is switched on/off)."""
@@ -438,6 +484,7 @@ async def run_setup(error: str, fix_url: str | None = None) -> None:
     await web.stop()
 
 
+START_CRASHES = 3
 PAUSED_TEXT = ("The bot is switched off – it's not in your Discord and not connected to your Rust server. "
                "Turn it on again with \"Turn the bot on\" (your settings and data are kept).")
 
@@ -483,6 +530,7 @@ def main() -> None:
     setup_fix_url: str | None = None
     first_start = True
     forced_off: set[str] = set()  # intents Discord rejected despite the check
+    crashes = 0                   # crashes in a row (START_CRASHES → the panel opens with the reason)
     while True:
         if setup_error is None and saas_mode.enabled() and os.environ.get("SAAS_WAITING_DISCORD") == "1":
             # hosted, bot not added to a Discord yet: the panel works already (settings, RCON …), Discord later
@@ -547,6 +595,18 @@ def main() -> None:
             log.error("No connection to Discord (%s). Retrying in 30 seconds …", exc)
             time.sleep(30)
             continue
+        except Exception as exc:
+            # Any other crash: try again twice, then open the panel with the reason (it must stay reachable)
+            crashes += 1
+            log.exception("The bot stopped because of an error (%s of %s)", crashes, START_CRASHES)
+            if crashes < START_CRASHES:
+                time.sleep(10)
+                continue
+            setup_error = (f"The bot stopped because of an error: {type(exc).__name__}: {str(exc)[:200]} – fix it "
+                           "(or update) and click \"Start bot with saved settings\".")
+            crashes = 0
+            continue
+        crashes = 0
         if bot.update_restart:
             restart_after_update(bot.launched_by_script)
         if bot.restart_requested:
