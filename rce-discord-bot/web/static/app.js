@@ -2606,7 +2606,16 @@ function emoteBindsCard(data, reload) {
     };
     search.addEventListener("input", filter);
     onlyBound.addEventListener("change", filter);
-    holder.replaceChildren(h("h2", { text: "🎭 Emote kits" }),
+    const seen = res.seen || [];
+    const seenBox = h("details", { class: "eb-seen", style: "margin:.4rem 0 .6rem" },
+      h("summary", { text: `🕵️ Last emotes the bot received (${seen.length}) – check here when a bind doesn't fire` }),
+      seen.length ? h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, seen.map((x) => h("tr", {},
+        h("td", { class: "muted", text: new Date(x.at * 1000).toLocaleTimeString() }),
+        h("td", { text: x.player }),
+        h("td", {}, "💬 " + x.emote, h("div", { class: "muted", style: "font-size:.75rem", text: x.raw })),
+        h("td", { text: x.result })))))) :
+        h("p", { class: "muted", text: "Nothing yet since the bot started. Use the emote in game – if it doesn't show up here within a few seconds, the server didn't send it to the bot (RCON not connected, or the server delays its log)." }));
+    holder.replaceChildren(h("h2", { text: "🎭 Emote kits" }), seenBox,
       h("p", { class: "muted", text: `Pick a kit next to an emote – players get it when they use that emote (quick chat) in game. One emote gives one kit; picking another replaces it. Next to each bind choose who gets it: 👥 everyone, or only linked players with a role (🔑 the kit's own role, or any role) – so some binds can be for everyone and others role-only. ${res.binds} bound. Discord: /kit bind, /kit binds.` }),
       h("div", { class: "row" }, search, h("label", { class: "muted" }, onlyBound, " only bound emotes"),
         h("button", { class: "small", text: "🎖️ Each kit only for its role", title: "Every emote bind gets its kit's own Discord role as required role (linked kit role, else the role named like the kit)", onclick: async () => {
