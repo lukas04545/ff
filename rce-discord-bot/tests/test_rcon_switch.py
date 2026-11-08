@@ -88,3 +88,37 @@ def test_hosted_panel_knows_the_customers_other_servers(bot, monkeypatch):  # no
         assert me["this_server"] == 5
         assert me["my_servers"][1] == {"id": 8, "name": "US", "url": "https://portal.example.com/servers/8/panel"}
     run(bot, scenario)
+
+
+def test_turn_the_bot_off_and_on(bot, monkeypatch):  # noqa: F811
+    env = bot.config.database_path.parent / ".env"
+    env.write_text("RCON_HOST=1.1.1.1\nRCON_PORT=28016\nRCON_PASSWORD=pw\n")
+    restarts = []
+    monkeypatch.setattr(type(bot), "request_restart", lambda self: restarts.append(1))
+
+    async def scenario(c):
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        assert (await (await c.get("/api/me")).json())["paused"] is False
+        r = await c.post("/api/settings/power", json={"on": False}, headers=H)
+        assert (await r.json())["changed"] and restarts == [1]
+        assert "BOT_PAUSED=true" in env.read_text()
+        assert (await (await c.get("/api/me")).json())["paused"] is True
+        r = await c.post("/api/settings/power", json={"on": False}, headers=H)
+        assert not (await r.json())["changed"] and restarts == [1]                  # already off
+        await c.post("/api/settings/power", json={"on": True}, headers=H)
+        assert "BOT_PAUSED=false" in env.read_text()
+    run(bot, scenario)
+
+
+def test_a_switched_off_bot_starts_the_panel_only(tmp_path, monkeypatch):
+    import bot as botmod
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("BOT_PAUSED=true\n")
+    assert botmod.bot_paused()
+    (tmp_path / ".env").write_text("BOT_PAUSED=false\n")
+    assert not botmod.bot_paused()
+
+
+def test_the_ai_cant_switch_the_bot_off():
+    import web.server as ws
+    assert "/api/settings/power".startswith(ws.AI_BLOCKED_WRITES)

@@ -438,6 +438,20 @@ async def run_setup(error: str, fix_url: str | None = None) -> None:
     await web.stop()
 
 
+PAUSED_TEXT = ("The bot is switched off – it's not in your Discord and not connected to your Rust server. "
+               "Turn it on again with \"Turn the bot on\" (your settings and data are kept).")
+
+
+def bot_paused() -> bool:
+    """BOT_PAUSED in the .env: the owner switched the bot off in the panel – only the control panel runs."""
+    from envfile import read_env
+    try:
+        value = read_env(Path(".env")).get("BOT_PAUSED", "")
+    except OSError:
+        value = ""
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 PRIVILEGED_INTENTS_HELP = (
     "A privileged intent is not enabled in the Developer Portal. Under Bot → Privileged Gateway Intents, enable "
     "\"Message Content Intent\" (chat bridge, tickets, Discord log) and \"Server Members Intent\" (welcome, "
@@ -475,6 +489,8 @@ def main() -> None:
             setup_error = ("Your bot isn't in your Discord yet – add it from your dashboard (\"Add the bot to "
                            "Discord\"). Everything else can be set up here already; the bot starts by itself once "
                            "it's added.")
+        if setup_error is None and bot_paused():
+            setup_error = PAUSED_TEXT                    # switched off: no Discord, no RCON – the panel only
         if setup_error is None:
             try:
                 config = load_config()
