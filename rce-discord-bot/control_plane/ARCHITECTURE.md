@@ -61,7 +61,8 @@ Every server runs on one of two bots:
   * One Discord server can belong to only one tenant server (unique index).
   * **Disconnect from Discord** (dashboard, per server): unbinds the Discord server (an own bot's token is deleted),
     the server goes back to "awaiting_token" (only its control panel runs) and, ticked by default, the bot leaves that
-    Discord server. Adding the bot again reconnects it. To disconnect from the game server, the customer switches off
+    Discord server. Adding the bot again reconnects it. **Switch to another Discord** runs the same OAuth install for
+    the new Discord; the bot is then bound there and leaves the old one. To disconnect from the game server, the customer switches off
     *Settings → RCON → Connected to the game server* in their panel (`RCON_ENABLED`); the RCON details stay saved,
     and HQ shows "RCON switched off by the customer" instead of "RCON connection lost".
   * Each tenant still runs **its own process** (own data, website, settings); they all share the token.
