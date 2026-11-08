@@ -210,6 +210,7 @@ const ICONS = {
   makeplugin: '<path d="M4 20L15 9"/><path d="M15 3v3M18 6h3M19 10v2M17 4l2 2"/>',
   users2: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 6"/>',
   servers: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/>',
+  migrate: '<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
   honeypot: '<path d="M7 8h10l1 3v7a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3v-7z"/><path d="M8 5h8v3H8zM9 14h6"/>',
   settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
 };
@@ -432,7 +433,7 @@ function route() {
   updateNavCounts();
   const main = $("#main");
   main.replaceChildren();
-  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore", "protection", "servers", "honeypot", "br"].includes(view) || view.startsWith("p/"))) {
+  if (!isOwner() && (["settings", "users", "plugins", "makeplugin", "webstore", "protection", "servers", "honeypot", "br", "migrate"].includes(view) || view.startsWith("p/"))) {
     main.append(h("h1", { text: "No access" }), h("p", { class: "muted", text: "Only owners can open this page. Ask the server owner if you need it." }));
     return;
   }
@@ -687,6 +688,90 @@ function honeypotCard() {
 }
 
 // Honeypot page: everyone who opened the fake /admin login and everything saved about them (web/honeypot.py)
+// Migrate: move the bot to another Discord and/or another Rust server (RCON) – everything in one place
+views.migrate = async (main) => {
+  main.append(h("h1", { text: "Migrate" }),
+    h("p", { class: "muted", text: "Moving to another Discord or another Rust server? Do it here – your kits, players, store and settings come along." }));
+  const holder = h("div", {}, h("p", { class: "muted", text: "Loading …" }));
+  main.append(holder);
+  let d;
+  try { d = await api("/api/settings/migrate"); } catch (e) { holder.replaceChildren(h("div", { class: "banner bad", text: e.message })); return; }
+
+  // --- Discord
+  const discord = h("div", { class: "card" }, h("h2", { text: "💬 Discord" }),
+    h("p", {}, "Now: ", d.guild ? h("strong", { text: d.guild.name }) : h("span", { class: "muted", text: "not connected to a Discord" })));
+  if (d.shared_bot) {
+    discord.append(
+      h("p", { class: "muted", text: "Discord asks which server to add the bot to; the bot moves there and leaves the old one. Its channels are created again in the new Discord. Afterwards pick your admin roles again (Settings → Permissions) – the old Discord's roles don't exist there." }),
+      h("div", { class: "row" },
+        d.switch_discord_url ? h("a", { class: "btn primary", href: d.switch_discord_url, target: "_blank", rel: "noopener", text: d.guild ? "🔁 Switch to another Discord" : "➕ Add the bot to your Discord" }) : null,
+        d.dashboard_url ? h("a", { class: "btn ghost", href: d.dashboard_url, target: "_blank", rel: "noopener", text: "🔌 Disconnect (shop dashboard)" }) : null),
+      h("p", { class: "muted", style: "margin:.5rem 0 0", text: "This opens your shop account – log in there if it asks." }));
+  } else if (d.guild_locked) {
+    discord.append(h("p", { class: "muted", text: "This server's Discord is set on the main server." }));
+  } else {
+    const pick = h("select", {}, h("option", { value: "", text: "– pick the Discord –" }), d.guilds.map((g) => h("option", { value: g.id, text: g.name })));
+    pick.value = d.guild_setting || "";
+    const out = h("div");
+    discord.append(
+      h("p", {}, h("strong", { text: "1. " }), "Add the bot to the new Discord: ",
+        d.invite_url ? h("a", { href: d.invite_url, target: "_blank", rel: "noopener", text: "invite link" }) : h("span", { class: "muted", text: "(the bot isn't online yet)" }),
+        h("span", { class: "muted", text: " – then reload this page." })),
+      h("p", {}, h("strong", { text: "2. " }), "Pick it here and restart:"),
+      h("div", { class: "row" }, pick, h("button", { class: "primary", text: "Use this Discord", onclick: async () => {
+        if (!pick.value) return toast("Pick the Discord first.", true);
+        const r = await act(() => api("/api/settings", { method: "PUT", body: { values: { GUILD_ID: pick.value } } }));
+        if (r) out.replaceChildren(h("div", { class: "banner warn", style: "margin-top:.6rem" }, "Saved – restart the bot to move it there: ", restartButton()));
+      } })), out,
+      h("p", { class: "muted", style: "margin:.5rem 0 0", text: "Channels and roles of the old Discord don't exist in the new one – the bot creates its channels again where it can; check Settings → Channels and Permissions afterwards." }));
+  }
+
+  // --- RCON
+  const rc = d.rcon;
+  const host = h("input", { value: rc.host, placeholder: "IP, e.g. 123.45.67.89" });
+  const port = h("input", { value: rc.port, placeholder: "RCON port", inputmode: "numeric", style: "max-width:9rem" });
+  const pass = h("input", { type: "password", autocomplete: "new-password", placeholder: rc.password_set ? "•••••• saved – leave empty to keep" : "RCON password" });
+  const out = h("div");
+  const state = rc.connected ? h("span", { class: "pill ok", text: "connected" }) : !rc.enabled ? h("span", { class: "pill warn", text: "disconnected" }) : h("span", { class: "pill bad", text: "not connected" });
+  const rcon = h("div", { class: "card" }, h("h2", { text: "🎮 Rust server (RCON)" }),
+    h("p", {}, "Now: ", rc.host ? h("strong", { text: `${rc.host}:${rc.port}` }) : h("span", { class: "muted", text: "no game server set" }), " ", state));
+  if (rc.locked) {
+    rcon.append(h("p", { class: "muted", text: "This server's RCON is set on the main server." }));
+  } else {
+    if (!rc.host && !rc.enabled) rcon.append(h("div", { class: "banner warn", text: "Your RCON was reset – enter your new game server's details below." }));
+    rcon.append(
+      h("p", { class: "muted", text: "Enter the new server's RCON IP, port and password (G-Portal → your server → Settings), test it, then connect – the bot switches right away, no restart." }),
+      h("div", { class: "row" }, host, port, pass),
+      h("div", { class: "row", style: "margin-top:.5rem" },
+        h("button", { text: "🔌 Test", onclick: async () => {
+          out.replaceChildren(h("p", { class: "muted", text: "Testing … (up to 20 seconds)" }));
+          try { out.replaceChildren(renderSteps(await api("/api/settings/test-rcon", { method: "POST", body: { host: host.value, port: port.value, password: pass.value } }))); }
+          catch (e) { out.replaceChildren(h("p", { class: "error", text: e.message })); }
+        } }),
+        h("button", { class: "primary", text: "Connect to this server", onclick: async () => {
+          const values = { RCON_HOST: host.value, RCON_PORT: port.value, RCON_ENABLED: "true" };
+          if (pass.value) values.RCON_PASSWORD = pass.value;
+          const r = await act(() => api("/api/settings", { method: "PUT", body: { values } }));
+          if (!r) return;
+          if (r.config_error) return out.replaceChildren(h("div", { class: "banner warn", text: r.config_error }));
+          out.replaceChildren(r.rcon_test ? renderSteps(r.rcon_test) : h("p", { class: "muted", text: "Connecting …" }));
+          toast(r.rcon_test && !r.rcon_test.ok ? "Saved – but RCON doesn't answer with these details yet" : "Switched – connecting now", r.rcon_test && !r.rcon_test.ok);
+        } }),
+        rc.enabled && rc.host ? h("button", { class: "ghost", text: "Disconnect", onclick: async () => {
+          if (!confirm("Disconnect the bot from this Rust server? The details stay saved.")) return;
+          if (await act(() => api("/api/settings", { method: "PUT", body: { values: { RCON_ENABLED: "false" } } }), "Disconnected")) location.reload();
+        } }) : null),
+      out, rconServers());
+  }
+
+  // --- Other servers
+  const others = d.hosted && d.dashboard_url ? h("div", { class: "card" }, h("h2", { text: "🖥️ Your other servers" }),
+    h("p", { class: "muted", text: "Every server has its own panel. Switch with the server menu at the top left, or here – it opens signed in (log in to your shop account once if it asks)." }),
+    h("div", { class: "row" }, (me.my_servers || []).filter((x) => x.id !== me.this_server).map((x) => h("a", { class: "btn", href: x.url, text: "🛢️ " + x.name })),
+      h("a", { class: "btn ghost", href: d.dashboard_url, target: "_blank", rel: "noopener", text: "Open my shop dashboard" }))) : null;
+  holder.replaceChildren(discord, rcon, others || "");
+};
+
 views.honeypot = async (main) => {
   const fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString() : "–";
   const refHost = (u) => { try { return new URL(u, location.origin).host; } catch { return u; } };
@@ -2062,6 +2147,20 @@ async function switchServer(id) {
 
 async function loadServerSwitch() {
   const box = $("#srv-switch");
+  if (me.hosted) {                        // hosted: the customer's other servers – each opens signed in
+    const mine = me.my_servers || [];
+    if (mine.length < 2) { box.classList.add("hidden"); return; }
+    const sel = h("select", { title: "Switch to the panel of another of your servers" },
+      mine.map((s) => h("option", { value: String(s.id), text: "🛢️ " + s.name })));
+    sel.value = String(me.this_server || "");
+    sel.addEventListener("change", () => {
+      const s = mine.find((x) => String(x.id) === sel.value);
+      if (s) { sel.disabled = true; location.href = s.url; }
+    });
+    box.replaceChildren(sel);
+    box.classList.remove("hidden");
+    return;
+  }
   const d = await api("/api/servers").catch(() => null);
   if (!d || d.servers.length < 2) { box.classList.add("hidden"); return; }
   const sel = h("select", { title: "Which server this panel shows" }, d.servers.map((s) => h("option", { value: s.id, text: (s.main ? "🏠 " : "🛢️ ") + s.name })));

@@ -144,7 +144,7 @@ STAFF_CAN = tuple((m, re.compile(p)) for m, p in (
     ("GET", r"^/settings$"), ("GET", r"^/passkey\.js$"), ("GET", r"^/suggestions$"),
     ("POST", r"^/suggestions/\d+$"),
     ("POST", r"^/customers/new$"), ("POST", r"^/customers/\d+/(trial|server|dashboard)$"),
-    ("POST", r"^/servers/\d+/(open|password-link)$"),
+    ("POST", r"^/servers/\d+/(open|password-link|rcon-reset)$"),
     ("POST", r"^/passkeys(/options)?$"), ("POST", r"^/passkeys/[A-Za-z0-9_-]+/remove$"), ("POST", r"^/logout$"),
 ))
 ROLES = {"owner": "Owner – everything", "staff": "Staff – customers only"}
@@ -421,8 +421,8 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
         ])
         done = now == 4
         rows = "".join(
-            f"<tr><td><b>{esc(s['name'])}</b><br><a href='{esc(provisioning.panel_url(settings, s))}' "
-            f"target=_blank>Admin panel</a> · <a href='{esc(settings.url_for(s['slug']))}' target=_blank>Website</a>"
+            f"<tr><td><b>{esc(s['name'])}</b><br><a href='/servers/{s['id']}/panel' target=_blank "
+            f"title='Opens its admin panel, already signed in'>Admin panel</a> · <a href='{esc(settings.url_for(s['slug']))}' target=_blank>Website</a>"
             f"</td><td>{pill(s['status'])}"
             f"{'<br><span class=muted>' + esc(s['suspend_reason']) + '</span>' if s['suspend_reason'] else ''}</td>"
             f"<td>{'🟢 ' + esc(s['guild_name'] or 'online') if s['discord_ready'] else '⚪ offline'}"
@@ -620,6 +620,33 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
         provisioning.use_shared_bot(db, s["id"], actor=f"customer:{c['id']}")
         await changed()
         raise web.HTTPSeeOther("/dashboard?m=Switched+to+our+bot+–+add+it+to+your+Discord")
+
+    async def open_my_panel(request):
+        """A customer opens one of THEIR servers' control panels – signed in right away (a one-time, 60-second link,
+        like the owner's "Open panel"). Used by the dashboard and by the server switcher inside every panel."""
+        import saas_mode
+        c = me(request)
+        if c is None and request.query.get("r") != "1":
+            # coming from a panel on another site: the session cookie is SameSite=Strict – one same-site hop
+            here = f"/servers/{int(request.match_info['sid'])}/panel?r=1"
+            return web.Response(text=f'<!doctype html><meta charset=utf-8><meta http-equiv="refresh" content="0;url='
+                                     f'{here}"><title>Opening …</title><p><a href="{here}">continue</a></p>',
+                                content_type="text/html", headers={"Cache-Control": "no-store",
+                                                                    "Content-Security-Policy": "default-src 'none'"})
+        if c is None:
+            raise web.HTTPSeeOther("/login?e=" + quote_plus("Log in to switch between your servers' panels"))
+        s = own_server(c, int(request.match_info["sid"]))
+        health = provisioning.get_secret(db, box, s["id"], "health_token")
+        if s["status"] not in ("active", "awaiting_token") or not health:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(f"{s['name']} isn't running right now."))
+        token = saas_mode.owner_login_token(provisioning.manage_token(health), f"customer:{c['id']}")
+        db.audit(f"customer:{c['id']}", "server.open_panel", customer_id=c["id"], server_id=s["id"])
+        url = f"{settings.url_for(s['slug'])}/saas/login?t={token}"
+        return web.Response(text=f'<!doctype html><meta charset=utf-8><meta http-equiv="refresh" content="0;url='
+                                 f'{esc(url)}"><title>Opening {esc(s["name"])} …</title><p>Opening the panel of '
+                                 f'{esc(s["name"])} … <a href="{esc(url)}">continue</a></p>', content_type="text/html",
+                            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                                     "Content-Security-Policy": "default-src 'none'"})
 
     async def disconnect_discord(request):
         """The customer disconnects the bot from their Discord (and, ticked by default, makes it leave there)."""
@@ -843,6 +870,7 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                     web.get(r"/servers/{sid:\d+}/discord", discord_install), web.get("/discord/callback", discord_callback),
                     web.post(r"/servers/{sid:\d+}/shared", use_shared),
                     web.post(r"/servers/{sid:\d+}/discord/disconnect", disconnect_discord),
+                    web.get(r"/servers/{sid:\d+}/panel", open_my_panel),
                     web.post(r"/servers/{sid:\d+}/password-link", customer_password_link),
                     web.get("/as-customer", owner_view)])
     return app
@@ -1071,6 +1099,9 @@ server run <code>python3 -m control_plane login-link</code> – it prints a one-
                                 f"{hidden(request)}<button>🔗 Password link</button></form>")
                     acts.append(f"<form method=post action='{P}/servers/{sid}/open' class=inline target=_blank>"
                                 f"{hidden(request)}<button>🔑 Open panel</button></form>")
+                    acts.append(button(request, f"/servers/{sid}/rcon-reset", "🔌 Reset RCON",
+                                       confirm="Disconnect this server's RCON and clear its IP, port and password, so "
+                                               "the customer can enter a fresh one? The bot keeps running."))
                 acts.append(f"<a href={P}/servers/{sid}/ai>🧠 Management AI</a>")
                 acts.append(button(request, f"/servers/{sid}/manager-ai/{'off' if s['manager_ai'] else 'on'}",
                                    ("Discord AI: on → switch off" if s["manager_ai"] else "Discord AI: off → switch on")))
@@ -2038,7 +2069,7 @@ suggested it gets a notice in the channel within a minute.</p><p>{tabs}</p>
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post("/customers/new", customer_new), web.post(r"/customers/{id:\d+}/server", customer_server), web.post(r"/customers/{id:\d+}/trial", customer_trial),
                     web.post(r"/grants/{id:\d+}/revoke", act),
-                    web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge}", act),
+                    web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge|rcon-reset}", act),
                     web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai|custom_domain}/{on:on|off}", feature_action),
                     web.post("/update/{action:check|install|restart}", update_action),
                     web.get(r"/servers/{id:\d+}/ai", ai_page), web.post(r"/servers/{id:\d+}/ai", ai_send),

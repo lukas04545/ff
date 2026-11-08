@@ -65,6 +65,15 @@ Every server runs on one of two bots:
     the new Discord; the bot is then bound there and leaves the old one. To disconnect from the game server, the customer switches off
     *Settings → RCON → Connected to the game server* in their panel (`RCON_ENABLED`); the RCON details stay saved,
     and HQ shows "RCON switched off by the customer" instead of "RCON connection lost".
+  * **Reset RCON** (owner panel → server, also staff): clears the server's RCON IP/port/password and switches RCON
+    off (`provisioning.reset_rcon`), then restarts it. The bot keeps running in Discord; the customer enters a fresh
+    game server on the panel's **🚚 Migrate** page. Saved game servers are cleared too (`RCON_RESET_AT`).
+  * **Switching between panels:** a customer with more than one server gets a server menu at the top left of every
+    panel (`SAAS_SIBLINGS` in its environment). Picking one goes through the portal (`/servers/<id>/panel`), which
+    checks that the server is theirs and opens its panel signed in (a one-time, 60-second link, like the owner's
+    *Open panel*). They log in to the shop once if needed. The dashboard's "Admin panel" links work the same way.
+  * The panel's Migrate page links to the portal (`SAAS_PORTAL_URL`, `SAAS_SERVER_ID`) for switching Discord and
+    for the customer's other servers (each server has its own panel: dashboard → Servers → Admin panel).
   * Each tenant still runs **its own process** (own data, website, settings); they all share the token.
   * **Guild fence** (`saas_fence.py`): without sharding, Discord sends every connection every guild's events and
     lets it act anywhere. The fence wraps every gateway parser, so other guilds' events are dropped before

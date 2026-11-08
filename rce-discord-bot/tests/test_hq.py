@@ -320,7 +320,7 @@ def test_typing_in_a_customer_channel_talks_to_their_management_ai(world, monkey
         m = Msg(ai, "list binds")
         m.author, m.guild = author, w.guild
         await w.hq.on_message(m)
-        assert "Start with the server" in ai.sent[-1].content
+        assert "Which server?" in ai.sent[-1].content
         m = Msg(ai, f"#{w.sid} list binds")
         m.author, m.guild = author, w.guild
         await w.hq.on_message(m)
@@ -448,3 +448,47 @@ def test_alerts_and_audit_feed(world):
     assert "server.restart" in feed and "owner:boss" in feed
     asyncio.run(w.hq.sync())                                            # nothing new: nothing posted again
     assert len(audit.sent) == 1
+
+
+def test_the_ai_remembers_the_server_and_the_waiting_question(world):
+    """Exactly the chat that went wrong: "Stop using rcon" → "Which server?" → "#5" → runs it on #5 (and #5 stays
+    picked); "… on #5" at the end works too."""
+    w = world
+    w.cp.db.run("UPDATE customers SET base_slots = 2 WHERE id = ?", (w.cid,))
+    s2 = provisioning.provision_server(w.cp.db, w.cp.box, w.cp.settings, w.cid, "Second", actor="t")
+    asyncio.run(w.hq.sync())
+    ch = _channel(w, hqmod.channel_name(w.cid, "a@x.io"))
+    pick = w.hq._pick_server
+    assert pick(ch.id, "Stop using rcon")[2].startswith("Which server?")
+    assert pick(ch.id, f"#{s2['id']}") == (s2["id"], "Stop using rcon", "")               # the waiting question
+    assert pick(ch.id, "and now list the kits") == (s2["id"], "and now list the kits", "")  # remembered
+    assert pick(ch.id, f"Stop using rcon on #{w.sid}")[:2] == (w.sid, "Stop using rcon")  # "#id" at the end
+    assert pick(ch.id, "status?")[0] == w.sid                                               # the new pick stays
+    sid, text, note = pick(ch.id, f"#{s2['id']}")                                           # nothing waiting
+    assert sid == s2["id"] and "What should I do" in note
+    assert "isn't one of" in pick(ch.id, "check #9999")[2]
+    # #hq-ai: any server, remembered per channel too
+    ai = _channel(w, hqmod.AI_CHANNEL)
+    assert pick(ai.id, "list binds")[2].startswith("Which server?")
+    assert pick(ai.id, f"#{w.sid}") == (w.sid, "list binds", "")
+
+
+def test_the_ai_conversation_survives_a_restart(world, monkeypatch):
+    w = world
+    seen = []
+
+    async def fake_ask(db, box, sid, text, history, allow_risky=False):
+        seen.append(list(history))
+        return {"answer": f"ok: {text}", "done": [], "asked": []}
+    monkeypatch.setattr(manage_ai, "ask", fake_ask)
+
+    async def go(h):
+        await h.sync()
+        ch = _channel(w, hqmod.channel_name(w.cid, "a@x.io"))
+        m = Msg(ch, "remember the word banana")
+        m.author, m.guild = NS(id=ADMIN, guild=w.guild, bot=False, roles=[]), w.guild
+        await h.on_message(m)
+    asyncio.run(go(w.hq))
+    fresh = hqmod.HQ(w.cp.db, w.cp.box, w.cp.settings, w.hq.changed, w.sup, client=w.hq.client)   # a restart
+    asyncio.run(go(fresh))
+    assert seen[0] == [] and any("banana" in x["content"] for x in seen[1])

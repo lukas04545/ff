@@ -111,7 +111,12 @@ WEB_ON = """
   admin confirms every change). Use it for anything your other tools don't cover (shop, wipe, schedules, rules,
   tickets, reports, giveaways, plugins, settings, store, status …). Prefer the dedicated tools when they fit. For
   settings: GET /api/settings first, then PUT /api/settings with {"values": {"KEY": "value"}} – only the keys to
-  change. Secrets, logins and access settings are off-limits."""
+  change. Secrets, logins and access settings are off-limits.
+- RCON (the game server connection): "stop using / disconnect RCON" = PUT /api/settings with
+  {"values": {"RCON_ENABLED": "false"}} (the details stay saved); "reconnect / use RCON again" = "true". That's
+  allowed (the admin confirms). Switching to a saved game server: GET /api/settings/rcon-servers, then
+  POST /api/settings/rcon-servers/<id>/use. A new IP/port can't be typed in by you – the owner enters it on the
+  panel's Migrate page."""
 
 CONSOLE_ON = """
 - run_console_command exists for anything your other tools can't do (Rust console commands). Use it only when the

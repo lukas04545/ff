@@ -107,6 +107,7 @@ class HQ:
         self.idea_history: dict[int, list[dict]] = {}              # suggestions channel -> recent chat with the AI
         self._ai = None                                            # DeepSeek client for the ticket assistant
         self.retries: dict[str, tuple[int, int, str]] = {}         # token -> (channel, server, text)
+        self.waiting: dict[int, str] = {}                          # channel -> the question that waits for "#<id>"
         self._last: dict[tuple[str, int], str] = {}                # panel -> hash of what's shown (no needless edits)
         self._lock = asyncio.Lock()
         self._snap: dict | None = None                             # last state seen, for #hq-alerts
@@ -611,25 +612,66 @@ class HQ:
 
     # ------------------------------------------------------------------ management AI
 
+    def _load_hist(self, store: dict, key, db_key: str) -> list[dict]:
+        """A conversation from memory – or, after a restart, from the database (so the AIs remember)."""
+        if key not in store:
+            row = self.db.one("SELECT value FROM settings_kv WHERE key = ?", (db_key,))
+            try:
+                store[key] = json.loads(row["value"]) if row else []
+            except ValueError:
+                store[key] = []
+        return store[key]
+
+    def _save_hist(self, db_key: str, hist: list[dict]) -> None:
+        self.db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)",
+                    (db_key, json.dumps([{"role": m["role"], "content": str(m["content"])[:2000]} for m in hist])))
+
+    def _remembered(self, channel_id: int) -> int | None:
+        row = self.db.one("SELECT value FROM settings_kv WHERE key = ?", (f"hq_pick:{channel_id}",))
+        return int(row["value"]) if row and str(row["value"]).isdigit() else None
+
+    def _remember(self, channel_id: int, sid: int) -> None:
+        self.db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)", (f"hq_pick:{channel_id}", str(sid)))
+
     def _pick_server(self, channel_id: int, text: str) -> tuple[int | None, str, str]:
-        """(server id, message, problem). In a customer channel: their only server or '#<id> …'; in #hq-ai: '#<id> …'."""
-        m = SERVER_PREFIX.match(text)
-        sid, text = (int(m[1]), m[2].strip()) if m else (None, text.strip())
+        """(server id, message, problem). "#<id>" anywhere in the message picks the server ("#5 list binds", "stop rcon
+        on #5"); without one, the server this channel used last is remembered; a customer with one server needs none.
+        Just "#5" picks it and runs the question that waited for it ("Which server?")."""
         cid = self.channel_customer(channel_id)
         if cid is None:
-            if sid is None:
-                return None, text, "Start with the server: `#12 list the emote binds` (ids are in the panels)."
-            ok = self.db.one("SELECT 1 FROM servers WHERE id = ? AND status != 'deleted'", (sid,))
-            return (sid, text, "") if ok else (None, text, f"There's no server #{sid}.")
-        mine = [r["id"] for r in self.db.q("SELECT id FROM servers WHERE customer_id = ? AND status != 'deleted' "
-                                           "ORDER BY id", (cid,))]
-        if sid is not None:
-            return (sid, text, "") if sid in mine else (None, text, f"#{sid} isn't one of this customer's servers.")
-        if len(mine) == 1:
-            return mine[0], text, ""
-        if not mine:
-            return None, text, "This customer has no server yet."
-        return None, text, "Which server? Start with " + ", ".join(f"`#{i}`" for i in mine) + "."
+            known = {r["id"] for r in self.db.q("SELECT id FROM servers WHERE status != 'deleted'")}
+        else:
+            known = {r["id"] for r in self.db.q("SELECT id FROM servers WHERE customer_id = ? AND status != 'deleted'",
+                                                (cid,))}
+        sid, rest = None, text.strip()
+        m = SERVER_PREFIX.match(text) or re.search(r"(?:^|\s)(?:on |for |server )?#(\d+)\b[.!?]?", text, re.I)
+        if m:
+            sid = int(m[1])
+            rest = (m[2].strip() if m.re is SERVER_PREFIX else (text[:m.start()] + " " + text[m.end():]).strip())
+        if sid is not None and sid not in known:
+            return None, rest, (f"#{sid} isn't one of this customer's servers." if cid is not None else
+                                f"There's no server #{sid}.")
+        if sid is None:
+            remembered = self._remembered(channel_id)
+            if remembered in known:
+                sid = remembered
+            elif len(known) == 1 and cid is not None:      # a customer channel with one server
+                sid = next(iter(known))
+        if sid is None:
+            self.waiting[channel_id] = rest
+            if cid is not None and not known:
+                return None, rest, "This customer has no server yet."
+            return None, rest, ("Which server? Answer with " + ", ".join(f"`#{i}`" for i in sorted(known)) + "."
+                                if cid is not None else
+                                "Which server? Answer with its number, e.g. `#12` (ids are in the panels).")
+        self._remember(channel_id, sid)
+        if not rest:                                    # just "#5": the question that waited for a server, if any
+            rest = self.waiting.pop(channel_id, "")
+            if not rest:
+                return sid, "", f"OK – I'm working on **#{sid}** in this channel now. What should I do?"
+        else:
+            self.waiting.pop(channel_id, None)
+        return sid, rest, ""
 
     def _is_ai_channel(self, channel) -> bool:
         return getattr(channel, "name", "") == AI_CHANNEL and getattr(getattr(channel, "category", None), "name",
@@ -650,21 +692,22 @@ class HQ:
             return
         if not (self._is_ai_channel(message.channel) or self.channel_customer(message.channel.id) is not None):
             return
-        sid, text, problem = self._pick_server(message.channel.id, message.content or "")
-        if not text:
+        if not (message.content or "").strip():
             return
+        sid, text, problem = self._pick_server(message.channel.id, message.content or "")
         if problem:
             await message.reply(problem, mention_author=False)
             return
         await self._ask(message.channel, message.author, sid, text, allow_risky=False, reply_to=message)
 
     async def _ask(self, channel, user, sid: int, text: str, *, allow_risky: bool, reply_to=None) -> None:
-        hist = self.history.setdefault((channel.id, sid), [])
+        hist = self._load_hist(self.history, (channel.id, sid), f"hq_hist:{channel.id}:{sid}")
         async with channel.typing():
             out = await manage_ai.ask(self.db, self.box, sid, text, list(hist), allow_risky=allow_risky)
         answer = out.get("answer") or f"⚠️ {out.get('error', 'no answer')}"
         hist += [{"role": "user", "content": text}, {"role": "assistant", "content": answer}]
         del hist[:-24]
+        self._save_hist(f"hq_hist:{channel.id}:{sid}", hist)
         self.db.audit(f"discord:{user.id}", "manager_ai.request", server_id=sid,
                       detail=f"{'[risky allowed] ' if allow_risky else ''}{text[:200]} → "
                              f"{', '.join(out.get('done') or []) or 'no changes'}")
@@ -832,6 +875,7 @@ class HQ:
             await interaction.response.send_message("🔒 Closing …")
             self.db.run("DELETE FROM hq_tickets WHERE channel_id = ?", (interaction.channel.id,))
             self.ticket_history.pop(interaction.channel.id, None)
+            self.db.run("DELETE FROM settings_kv WHERE key = ?", (f"hq_ticket_hist:{interaction.channel.id}",))
             self.db.audit(f"discord:{user.id}", "hq.ticket_close")
             await interaction.channel.delete(reason="RCE HQ: ticket closed")
 
@@ -889,7 +933,7 @@ class HQ:
                                        user_name=getattr(message.author, "name", "") or "",
                                        password_link=lambda sid, by: password_link(self.db, self.box, self.settings,
                                                                                    sid, by))
-        hist = self.ticket_history.setdefault(message.channel.id, [])
+        hist = self._load_hist(self.ticket_history, message.channel.id, f"hq_ticket_hist:{message.channel.id}")
         text = message.content or ""
         try:
             async with message.channel.typing():
@@ -899,6 +943,7 @@ class HQ:
             reply = "The assistant can't answer right now – a staff member will help you here."
         hist += [{"role": "user", "content": text[:1500]}, {"role": "assistant", "content": reply[:1500]}]
         del hist[:-16]
+        self._save_hist(f"hq_ticket_hist:{message.channel.id}", hist)
         for i, part in enumerate(_chunks(reply)):
             if i == 0:
                 await message.reply(part, mention_author=False)
@@ -980,7 +1025,7 @@ class HQ:
             return                                       # quietly: no reply spam in a shared channel
         name = getattr(message.author, "display_name", None) or getattr(message.author, "name", "") or ""
         tools = hq_ideas.IdeaTools(self.db, message.author.id, name, staff=staff)
-        hist = self.idea_history.setdefault(message.channel.id, [])
+        hist = self._load_hist(self.idea_history, message.channel.id, f"hq_idea_hist:{message.channel.id}")
         try:
             async with message.channel.typing():
                 reply = await hq_ideas.answer(client, tools, hist, text)
@@ -991,6 +1036,7 @@ class HQ:
         if reply:
             hist.append({"role": "assistant", "content": reply[:800]})
         del hist[:-12]
+        self._save_hist(f"hq_idea_hist:{message.channel.id}", hist)
         for i, part in enumerate(_chunks(reply) if reply else []):
             if i == 0:
                 await message.reply(part, mention_author=False)
