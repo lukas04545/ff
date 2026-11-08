@@ -117,6 +117,7 @@ class Kits(commands.Cog):
         self._announced: dict[str, float] = {}
         self._role_cache: dict[int, tuple[float, frozenset[int]]] = {}  # user_id -> (time, role IDs)
         self.attempts: deque = deque(maxlen=150)   # recent autokit tries with their outcome (diagnosis)
+        self.seen: deque = deque(maxlen=40)        # the last emotes received from the server, and what happened
 
     # ------------------------------------------------------------ Helpers
 
@@ -758,13 +759,25 @@ class Kits(commands.Cog):
     async def on_rce_chat(self, ev: lp.ChatEvent) -> None:
         if ev.channel == "SERVER":
             return
+        seen = {"at": int(time.time()), "player": ev.player, "channel": ev.channel, "raw": ev.raw,
+                "emote": quickchat.translate(ev.raw), "result": "no kit bound to this emote"}
+        self.seen.append(seen)
         if tp.is_location(ev.raw):
+            seen["result"] = "location emote – a teleport, never a kit"
             return                       # Location emotes are teleports (cogs/teleports.py), never kits
-        if emote_binds.reserved_by(ev.raw):
+        if (owner := emote_binds.reserved_by(ev.raw)):
+            seen["result"] = f"kept by {owner} – can't give a kit"
             return                       # kept by a feature (e.g. Dial-a-ride combos) – never a kit
+        results = []
         for rule in self.bot.db.kit_rules(enabled_only=True, trigger="quickchat"):
-            if rule["phrase"] == ev.raw:
+            if quickchat.normalize(rule["phrase"]) == ev.raw:      # any spelling of the same emote
+                marker = self.attempts[-1] if self.attempts else None
                 await self._try_claim(rule, ev.player, "quickchat")
+                last = self.attempts[-1] if self.attempts and self.attempts[-1] is not marker else None
+                outcome = (last["outcome"] + (f" ({last['detail']})" if last["detail"] else "")) if last else "tried"
+                results.append(f"{rule['kit']}: {outcome}")
+        if results:
+            seen["result"] = " · ".join(results)
 
     async def player_has_role(self, player: str, role_id: int) -> bool:
         """Does the Discord account linked to this in-game player have the role? (unlinked = no)"""
@@ -882,7 +895,7 @@ class Kits(commands.Cog):
         limit, kit name, server answer). Returns what happened."""
         before = len(self.attempts)
         for rule in self.bot.db.kit_rules(enabled_only=True, trigger="quickchat"):
-            if rule["phrase"] == raw:
+            if quickchat.normalize(rule["phrase"]) == quickchat.normalize(raw):
                 await self._try_claim(rule, player, "quickchat")
         return list(self.attempts)[before:] if len(self.attempts) >= before else list(self.attempts)[-3:]
 
@@ -932,6 +945,9 @@ class Kits(commands.Cog):
                                          if not r.is_default()] if member else "not on the Discord server"
             out["player"] = info
         out["recent_tries"] = [{**t, "at": f"<t:{t['at']}:R>"} for t in tries[-25:]]
+        # what the server actually sent (if an emote never shows up here, it never reached the bot)
+        out["recent_emotes"] = [{**e, "at": f"<t:{e['at']}:R>"} for e in list(self.seen)[-15:]
+                                if player is None or e["player"].lower() == player.lower()]
         if not tries:
             out["note"] = ("No emote/respawn kit tries since the bot started" + (f" from {player}" if player else "")
                            + " – if players used the emotes, the bot didn't see them in the server log.")

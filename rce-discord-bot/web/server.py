@@ -3783,7 +3783,9 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
         for b in eb.binds(self.bot.db):
             bound.setdefault(b["raw"], b)
         emotes = [{**e, "bind": bound.get(e["raw"]), "reserved": eb.reserved_by(e["raw"])} for e in eb.emotes()]
-        return web.json_response({"emotes": emotes, "binds": len(bound)})
+        kits = self.bot.get_cog("Kits")
+        seen = list(getattr(kits, "seen", []))[::-1][:25]
+        return web.json_response({"emotes": emotes, "binds": len(bound), "seen": seen})
 
     async def emote_bind_roles(self, request: web.Request) -> web.Response:
         """Each emote bind (or every autokit) needs its kit's own Discord role (linked kit role, else same name)."""

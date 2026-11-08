@@ -156,6 +156,8 @@ def parse_line(line: str) -> Event | None:
 
     if m := PATTERNS["chat"].search(line):
         raw = m["message"].strip()
+        if m["channel"] != "SERVER":                          # players' emotes: one spelling each (binds match it)
+            raw = quickchat.normalize(raw)
         return ChatEvent(m["channel"], m["player"].strip(), raw, quickchat.translate(raw))
 
     if m := PATTERNS["suicide"].search(line):

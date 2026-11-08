@@ -381,8 +381,10 @@ class RceBot(commands.Bot):
             try:
                 data = json.loads(msg.text)
                 text = str(data.get("Message", ""))
+                from rce import quickchat
+                raw = quickchat.normalize(text)
                 self.dispatch("rce_chat", log_parser.ChatEvent(
-                    "GLOBAL", str(data.get("Username", "?")), text, text))
+                    "GLOBAL", str(data.get("Username", "?")), raw, quickchat.translate(raw)))
                 return
             except (json.JSONDecodeError, AttributeError):
                 pass
