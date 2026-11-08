@@ -414,7 +414,8 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                          (f"<a class=btn href=/servers/{first['id']}/discord>➕ Add the bot to Discord</a>"
                           if first else "")),
             shop_ui.step(4, state(3), "Connect your Rust server",
-                         "Open your admin panel → Settings and enter your G-Portal RCON IP, port and password.",
+                         "Open your admin panel → Settings and enter your G-Portal RCON IP, port and password. "
+                         "(To disconnect it later: Settings → RCON → switch off \"Connected to the game server\".)",
                          (f"<a class=btn href='{esc(provisioning.panel_url(settings, first))}' target=_blank>"
                           f"Open my admin panel</a>" if first else "")),
         ])
@@ -516,17 +517,26 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                 f"target=_blank>admin panel</a> → Plugins → Website → <b>Look (theme)</b> – logo, colours, texts.</p>"
                 f"</div>")
 
+    def disconnect_form(s, hidden: str) -> str:
+        return (f"<form method=post action=/servers/{s['id']}/discord/disconnect class=inline onsubmit=\"return "
+                f"confirm('Disconnect the bot from your Discord? Your settings and data are kept.')\">{hidden}"
+                f"<label class=muted style='font-size:.8rem'><input type=checkbox name=leave value=1 checked> "
+                f"also remove it from my Discord server</label> <button class='ghost small'>🔌 Disconnect from "
+                f"Discord</button></form><br>")
+
     def bot_cell(s, csrf: str, own_bot: bool) -> str:
         sid = s["id"]
         hidden = f"<input type=hidden name=csrf value={csrf}>"
         if s["bot_mode"] == "custom":
-            out = (f"🤖 <b>Own bot</b> {'· ' + esc(s['bot_user']) if s['bot_user'] else ''}<form method=post "
+            out = (f"🤖 <b>Own bot</b> {'· ' + esc(s['bot_user']) if s['bot_user'] else ''}"
+                   f"{disconnect_form(s, hidden) if s['status'] == 'active' else ''}<form method=post "
                    f"action=/servers/{sid}/token>{hidden}<input name=token type=password placeholder='New bot token' "
                    f"required> <button>Save token</button></form><form method=post action=/servers/{sid}/shared "
                    f"class=inline>{hidden}<button>Use our bot instead</button></form> ")
         else:
             out = (f"🤖 Our bot – {'connected to Discord ' + esc(s['guild_name'] or s['guild_id']) if s['guild_id'] else 'not in a Discord yet'}"
-                   f"<br><a href=/servers/{sid}/discord>{'Move to another Discord' if s['guild_id'] else '➕ Add the bot to your Discord'}</a><br>")
+                   f"<br><a href=/servers/{sid}/discord>{'Move to another Discord' if s['guild_id'] else '➕ Add the bot to your Discord'}</a><br>"
+                   f"{disconnect_form(s, hidden) if s['guild_id'] else ''}")
             if own_bot:
                 out += (f"<form method=post action=/servers/{sid}/token>{hidden}<input name=token type=password "
                         f"placeholder='Own bot token' required> <button>Use my own bot</button></form> ")
@@ -574,6 +584,24 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
         provisioning.use_shared_bot(db, s["id"], actor=f"customer:{c['id']}")
         await changed()
         raise web.HTTPSeeOther("/dashboard?m=Switched+to+our+bot+–+add+it+to+your+Discord")
+
+    async def disconnect_discord(request):
+        """The customer disconnects the bot from their Discord (and, ticked by default, makes it leave there)."""
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        data = await sess.form(request)
+        try:
+            out = provisioning.disconnect_discord(db, box, s["id"], actor=f"customer:{c['id']}")
+        except provisioning.ProvisionError as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
+        left = False
+        if data.get("leave") and out["guild_id"] != str(settings.hq_guild_id or ""):
+            left = await provisioning.leave_guild(out["token"] or settings.shared_bot_token, out["guild_id"]) \
+                if out["guild_id"] else False
+        await changed()
+        raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(
+            "The bot is disconnected from your Discord" + (" and left your Discord server" if left else "")
+            + ". Your admin panel keeps working – add the bot again any time."))
 
     async def add_server(request):
         c = need(request)
@@ -739,6 +767,7 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                     web.post("/stripe/webhook", stripe_webhook), web.get("/paused/{slug}", paused),
                     web.get(r"/servers/{sid:\d+}/discord", discord_install), web.get("/discord/callback", discord_callback),
                     web.post(r"/servers/{sid:\d+}/shared", use_shared),
+                    web.post(r"/servers/{sid:\d+}/discord/disconnect", disconnect_discord),
                     web.post(r"/servers/{sid:\d+}/password-link", customer_password_link),
                     web.get("/as-customer", owner_view)])
     return app

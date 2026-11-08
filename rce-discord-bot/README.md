@@ -311,6 +311,10 @@ rce-discord-bot/
 
 > The menu names in the G-Portal panel may change slightly. You're always looking for: IP, RCON port, RCON password.
 
+To **disconnect** the bot from the game server (e.g. while you move servers), switch off *Settings → RCON →
+Connected to the game server* (`RCON_ENABLED=false`). It disconnects right away and doesn't reconnect; the RCON
+details stay saved, and switching it on again reconnects.
+
 ### 4. Set up the bot
 
 **Windows (easiest way):** Double-click **`start.bat`**. On first start the script creates the

@@ -91,6 +91,7 @@ class RceBot(commands.Bot):
         dbcrypt.enable(dbcrypt.adopt_env_key() if config.db_encryption else None)
         self.db = Storage(config.database_path, links_path=links_path)
         self.rcon = RconClient(config.rcon_host, config.rcon_port, config.rcon_password)
+        self.rcon.enabled = config.rcon_enabled
 
         # Live state, maintained by cogs/status.py
         self.online_players: dict[str, dict] = {}
@@ -268,6 +269,7 @@ class RceBot(commands.Bot):
             needs.append("Server Members intent (" + ", ".join(wanted["members"]) + ")")
         self.config = new
         await self.rcon.reconfigure(new.rcon_host, new.rcon_port, new.rcon_password)
+        await self.rcon.set_enabled(new.rcon_enabled)
         # Cogs that keep something from the settings (loops, intervals, AI client …) adjust themselves
         for cog in list(self.cogs.values()):
             handler = getattr(cog, "on_config_changed", None)

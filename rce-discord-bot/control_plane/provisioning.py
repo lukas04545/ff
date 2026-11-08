@@ -252,6 +252,39 @@ def use_shared_bot(db: DB, server_id: int, *, actor: str) -> None:
         db.audit(actor, "server.shared_bot", customer_id=s["customer_id"], server_id=server_id)
 
 
+def disconnect_discord(db: DB, box: SecretBox, server_id: int, *, actor: str) -> dict:
+    """The customer disconnects the bot from their Discord: the shared bot is no longer bound to their Discord
+    server (an own bot's token is deleted). Only the control panel keeps running ("awaiting_token") until they add
+    the bot again. Returns {"guild_id", "token"} – what the bot was in, so the caller can make it leave."""
+    s = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (server_id,))
+    if s is None:
+        raise ProvisionError("No such server.")
+    token = get_secret(db, box, server_id, "discord_token") if s["bot_mode"] == "custom" else None
+    if not s["guild_id"] and not token:
+        raise ProvisionError("The bot isn't connected to a Discord.")
+    with db.transaction():
+        db.run("DELETE FROM secrets WHERE server_id = ? AND kind = 'discord_token'", (server_id,))
+        db.run("UPDATE servers SET guild_id = NULL, status = CASE WHEN status = 'active' THEN 'awaiting_token' "
+               "ELSE status END WHERE id = ?", (server_id,))
+        db.audit(actor, "server.discord_disconnected", customer_id=s["customer_id"], server_id=server_id,
+                 detail=str(s["guild_id"] or "own bot"))
+    return {"guild_id": str(s["guild_id"] or ""), "token": token}
+
+
+async def leave_guild(token: str, guild_id: str) -> bool:
+    """The bot leaves that Discord server (Discord API). Best effort – False if Discord refused or was unreachable."""
+    import aiohttp
+    if not token or not str(guild_id).isdigit():
+        return False
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+            async with http.delete(f"https://discord.com/api/v10/users/@me/guilds/{guild_id}",
+                                   headers={"Authorization": f"Bot {token}"}) as r:
+                return r.status in (200, 204, 404)
+    except (aiohttp.ClientError, TimeoutError, OSError):
+        return False
+
+
 def bind_guild(db: DB, server_id: int, guild_id: str, *, actor: str) -> None:
     """The shared bot was added to this Discord server (verified by Discord's OAuth answer, not by the customer's
     word): the server is fenced to it. One Discord server can belong to only one tenant server."""
