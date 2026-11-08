@@ -167,11 +167,48 @@ def panel_url(settings: Settings, server: dict) -> str:
     return f"{settings.url_for(server['slug'])}/{path}" if path else settings.url_for(server["slug"])
 
 
+FREE_ADDRESS = "free"            # main_address:<server id> = this → the free <slug>.<domain> address is the main one
+
+
 def public_url(db: DB, settings: Settings, server_id: int, slug: str) -> str:
-    """Where the server's websites live: its own (active) domain, else <slug>.<the platform's domain>."""
+    """Where the server's websites live: the main address the customer picked (one of its own active domains, or the
+    free address), else its first own active domain, else <slug>.<the platform's domain>."""
+    pick = db.one("SELECT value FROM settings_kv WHERE key = ?", (f"main_address:{server_id}",))
+    if pick is not None and pick["value"] == FREE_ADDRESS:
+        return settings.url_for(slug)
+    if pick is not None and db.one("SELECT 1 FROM domains WHERE hostname = ? AND server_id = ? AND status = 'active'",
+                                   (pick["value"], server_id)):
+        return f"https://{pick['value']}"
     own = db.one("SELECT hostname FROM domains WHERE server_id = ? AND status = 'active' ORDER BY created_at LIMIT 1",
                  (server_id,))
     return f"https://{own['hostname']}" if own else settings.url_for(slug)
+
+
+def set_main_address(db: DB, server_id: int, choice: str, *, actor: str) -> None:
+    """The customer picks the main address of their website: FREE_ADDRESS or one of its own active domains."""
+    s = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (server_id,))
+    if s is None:
+        raise ProvisionError("No such server.")
+    choice = str(choice or "").strip().lower()
+    if choice != FREE_ADDRESS and not db.one(
+            "SELECT 1 FROM domains WHERE hostname = ? AND server_id = ? AND status = 'active'", (choice, server_id)):
+        raise ProvisionError("That domain isn't connected (active) on this server yet.")
+    db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)", (f"main_address:{server_id}", choice))
+    db.audit(actor, "server.main_address", customer_id=s["customer_id"], server_id=server_id, detail=choice)
+
+
+def old_addresses(db: DB, settings: Settings, server_id: int) -> list[str]:
+    """Earlier free addresses of this server that still forward to it."""
+    return sorted(r["key"][len("host_alias:"):] for r in db.q(
+        "SELECT key FROM settings_kv WHERE key LIKE 'host_alias:%' AND value = ?", (str(server_id),)))
+
+
+def release_old_address(db: DB, server_id: int, host: str, *, actor: str) -> None:
+    """Stop forwarding an old address – it's free again (for this or another server)."""
+    cur = db.run("DELETE FROM settings_kv WHERE key = ? AND value = ?", (f"host_alias:{host}", str(server_id)))
+    if not cur.rowcount:
+        raise ProvisionError("That isn't an old address of this server.")
+    db.audit(actor, "server.address_released", server_id=server_id, detail=host)
 
 
 def sync_public_url(db: DB, settings: Settings, server_id: int, slug: str, home: Path) -> bool:
@@ -325,7 +362,7 @@ def change_address(db: DB, settings: Settings, server_id: int, new: str, *, acto
         db.run("DELETE FROM settings_kv WHERE key = ?", (f"host_alias:{new_host}",))
         db.run("INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)", (f"host_alias:{old_host}", str(server_id)))
         db.audit(actor, "server.address", customer_id=s["customer_id"], server_id=server_id, detail=f"{s['slug']} → {new}")
-    write_env(Path(s["home_dir"]), {"WEB_PUBLIC_URL": settings.url_for(new)})
+    write_env(Path(s["home_dir"]), {"WEB_PUBLIC_URL": public_url(db, settings, server_id, new)})
     return new
 
 
@@ -362,6 +399,28 @@ def add_domain(db: DB, settings: Settings, server_id: int, hostname: str, *, act
            "VALUES (?, ?, 'pending', ?, NULL, '')", (host, server_id, _now()))
     db.audit(actor, "domain.add", customer_id=s["customer_id"], server_id=server_id, detail=host)
     return host
+
+
+def move_domain(db: DB, hostname: str, from_id: int, to_id: int, *, actor: str) -> None:
+    """Moves an own domain to another server of the SAME customer – it keeps working (Cloudflare already accepted
+    it, the CNAME stays the same); from now on it shows that server's website."""
+    a = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (from_id,))
+    b = db.one("SELECT * FROM servers WHERE id = ? AND status != 'deleted'", (to_id,))
+    if a is None or b is None or a["customer_id"] != b["customer_id"]:
+        raise ProvisionError("Pick one of your other servers.")
+    if a["id"] == b["id"]:
+        raise ProvisionError("It's on that server already.")
+    row = db.one("SELECT * FROM domains WHERE hostname = ? AND server_id = ? AND status != 'removed'",
+                 (hostname, from_id))
+    if row is None:
+        raise ProvisionError("That domain isn't connected to this server.")
+    if len(domains(db, to_id)) >= MAX_DOMAINS:
+        raise ProvisionError(f"That server has {MAX_DOMAINS} domains already.")
+    with db.transaction():
+        db.run("UPDATE domains SET server_id = ? WHERE hostname = ?", (to_id, hostname))
+        db.run("DELETE FROM settings_kv WHERE key = ? AND value = ?", (f"main_address:{from_id}", hostname))
+        db.audit(actor, "domain.move", customer_id=a["customer_id"], server_id=to_id,
+                 detail=f"{hostname}: #{from_id} → #{to_id}")
 
 
 def remove_domain(db: DB, server_id: int, hostname: str, *, actor: str) -> None:
@@ -427,6 +486,7 @@ def environment(db: DB, box: SecretBox, settings: Settings, server_id: int) -> d
     else:                                   # the platform's bot, fenced to this server's one Discord (saas_fence.py)
         env.update({"DISCORD_TOKEN": settings.shared_bot_token, "SAAS_SHARED_BOT": "1",
                     "SAAS_GUILD_ID": s["guild_id"] or "", "GUILD_ID": s["guild_id"] or ""})
+    env["SAAS_PUBLIC_URL"] = public_url(db, settings, server_id, s["slug"])   # changed → restart with the new links
     ai = features.has(db, s["customer_id"], "ai")
     env["SAAS_AI"] = "1" if ai else "0"
     env["DEEPSEEK_API_KEY"] = settings.deepseek_api_key if ai else ""

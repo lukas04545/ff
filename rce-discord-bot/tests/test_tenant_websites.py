@@ -112,3 +112,83 @@ def test_server_address_follows_a_new_domain(cp):  # noqa: F811
     assert read_env(home / ".env")["WEB_PUBLIC_URL"] == "https://kryvon3x.com"
     assert hostproxy.resolve(cp.db, cp.settings, "kryvon3x.com")[1]["id"] == s["id"]
     assert hostproxy.resolve(cp.db, cp.settings, f"{s['slug']}.consolecorrosion.org")[1]["id"] == s["id"]
+
+
+def test_customer_moves_their_website_address(cp):  # noqa: F811
+    """Move an own domain to another of your servers, pick the main address, release an old address."""
+    cid, a = _server(cp)
+    from control_plane import slots
+    slots.grant(cp.db, cid, 1, owner="boss")
+    b = provisioning.provision_server(cp.db, cp.box, cp.settings, cid, "Second", actor="t")
+    features.grant(cp.db, cid, "custom_domain", owner="boss")
+    host = provisioning.add_domain(cp.db, cp.settings, a["id"], "www.kryvonrust.com", actor="t")
+    cp.db.run("UPDATE domains SET status = 'active' WHERE hostname = ?", (host,))
+    url = lambda s: provisioning.public_url(cp.db, cp.settings, s["id"], s["slug"])   # noqa: E731
+    assert url(a) == "https://www.kryvonrust.com"
+    env_before = provisioning.environment(cp.db, cp.box, cp.settings, a["id"])["SAAS_PUBLIC_URL"]
+    # the free address as the main one (the domain keeps working)
+    provisioning.set_main_address(cp.db, a["id"], provisioning.FREE_ADDRESS, actor="t")
+    assert url(a) == cp.settings.url_for(a["slug"])
+    assert provisioning.environment(cp.db, cp.box, cp.settings, a["id"])["SAAS_PUBLIC_URL"] != env_before  # restart
+    with pytest.raises(provisioning.ProvisionError):
+        provisioning.set_main_address(cp.db, a["id"], "www.not-mine.com", actor="t")
+    provisioning.set_main_address(cp.db, a["id"], host, actor="t")
+    assert url(a) == "https://www.kryvonrust.com"
+    # move the domain to the second server
+    provisioning.move_domain(cp.db, host, a["id"], b["id"], actor="t")
+    assert hostproxy.resolve(cp.db, cp.settings, host)[1]["id"] == b["id"]
+    assert url(b) == "https://www.kryvonrust.com" and url(a) == cp.settings.url_for(a["slug"])
+    with pytest.raises(provisioning.ProvisionError):                           # not on that server any more
+        provisioning.move_domain(cp.db, host, a["id"], b["id"], actor="t")
+    _, stranger = _server(cp, "Stranger")
+    with pytest.raises(provisioning.ProvisionError, match="your other servers"):
+        provisioning.move_domain(cp.db, host, b["id"], stranger["id"], actor="t")
+    # an old address forwards until it's released – then it's free again
+    old = a["slug"]
+    provisioning.change_address(cp.db, cp.settings, a["id"], "kryvon-new", actor="t")
+    old_host = f"{old}.kryvon3x.com"
+    assert provisioning.old_addresses(cp.db, cp.settings, a["id"]) == [old_host]
+    provisioning.release_old_address(cp.db, a["id"], old_host, actor="t")
+    assert hostproxy.resolve(cp.db, cp.settings, old_host)[0] not in ("tenant", "paused")   # no longer forwards
+    assert provisioning.change_address(cp.db, cp.settings, stranger["id"], old, actor="t") == old
+    with pytest.raises(provisioning.ProvisionError):
+        provisioning.release_old_address(cp.db, a["id"], old_host, actor="t")
+
+
+def test_dashboard_buttons_to_move_the_website(cp):  # noqa: F811
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from control_plane import slots
+    from control_plane import web as cpweb
+    from tests.test_control_plane import csrf_of
+    cp.settings.base_domain = "kryvon3x.com"
+
+    async def changed():
+        pass
+
+    async def scenario():
+        a = TestClient(TestServer(cpweb.build_portal(cp.db, cp.box, cp.settings, changed)))
+        await a.start_server()
+        try:
+            await a.post("/signup", data={"email": "a@x.io", "password": "password1234"})
+            cid = cp.db.one("SELECT id FROM customers WHERE email = 'a@x.io'")["id"]
+            paid(cp, cid)
+            slots.grant(cp.db, cid, 1, owner="boss")
+            features.grant(cp.db, cid, "custom_domain", owner="boss")
+            for name in ("One", "Two"):
+                await a.post("/servers", data={"name": name, "csrf": csrf_of(await (await a.get("/dashboard")).text())})
+            one, two = [r["id"] for r in cp.db.q("SELECT id FROM servers ORDER BY id")]
+            provisioning.add_domain(cp.db, cp.settings, one, "www.kryvonrust.com", actor="t")
+            cp.db.run("UPDATE domains SET status = 'active'")
+            page = await (await a.get("/dashboard")).text()
+            assert "Move to this server" in page and "Use as main address" in page
+            t = csrf_of(page)
+            r = await a.post(f"/servers/{one}/main-address", data={"csrf": t, "choice": "free"}, allow_redirects=False)
+            assert "Main+address" in r.headers["Location"] and "kryvon3x.com" in r.headers["Location"]
+            r = await a.post(f"/servers/{one}/domains/move", data={"csrf": t, "hostname": "www.kryvonrust.com",
+                                                                   "to": str(two)}, allow_redirects=False)
+            assert "now+shows" in r.headers["Location"]
+            assert cp.db.one("SELECT server_id FROM domains")["server_id"] == two
+        finally:
+            await a.close()
+    asyncio.run(scenario())
