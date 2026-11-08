@@ -378,3 +378,54 @@ def test_owner_resets_a_customers_rcon(cp):  # noqa: F811
     assert cp.db.one("SELECT 1 FROM audit_log WHERE action = 'server.rcon_reset'")
     e = provisioning.environment(cp.db, cp.box, cp.settings, s["id"])
     assert e["SAAS_SERVER_ID"] == str(s["id"]) and e["SAAS_PORTAL_URL"] == cp.settings.portal_url
+
+
+def test_customer_switches_between_their_panels(cp, monkeypatch):
+    import json as _json
+    from control_plane import slots
+    from control_plane import web as cpweb
+    import saas_mode
+
+    async def changed():
+        pass
+
+    async def scenario():
+        a = TestClient(TestServer(cpweb.build_portal(cp.db, cp.box, cp.settings, changed)))
+        await a.start_server()
+        try:
+            await a.post("/signup", data={"email": "a@x.io", "password": "password1234"})
+            cid = cp.db.one("SELECT id FROM customers WHERE email = 'a@x.io'")["id"]
+            paid(cp, cid)
+            slots.grant(cp.db, cid, 1, owner="boss")
+            for name in ("One", "Two"):
+                await a.post("/servers", data={"name": name, "csrf": csrf_of(await (await a.get("/dashboard")).text())})
+            one, two = [r["id"] for r in cp.db.q("SELECT id FROM servers ORDER BY id")]
+            cp.db.run("UPDATE servers SET status = 'active'")
+            env = provisioning.environment(cp.db, cp.box, cp.settings, one)
+            assert [x["name"] for x in _json.loads(env["SAAS_SIBLINGS"])] == ["One", "Two"]
+            assert f"/servers/{two}/panel" in await (await a.get("/dashboard")).text()
+            r = await a.get(f"/servers/{two}/panel", allow_redirects=False)
+            assert r.status == 200
+            token = re.search(r"/saas/login\?t=([^\"&]+)", await r.text())[1]
+            monkeypatch.setenv("RCE_SAAS", "1")
+            monkeypatch.setenv("SAAS_MANAGE_TOKEN", provisioning.manage_token(
+                provisioning.get_secret(cp.db, cp.box, two, "health_token")))
+            assert saas_mode.check_owner_login(token) == f"customer:{cid}"          # valid for THAT server's panel
+            # someone else's server: no
+            b = TestClient(TestServer(cpweb.build_portal(cp.db, cp.box, cp.settings, changed)))
+            await b.start_server()
+            await b.post("/signup", data={"email": "b@x.io", "password": "password1234"})
+            assert (await b.get(f"/servers/{two}/panel?r=1", allow_redirects=False)).status == 404
+            # logged out: one same-site hop, then the login page
+            await a.close()
+            c = TestClient(TestServer(cpweb.build_portal(cp.db, cp.box, cp.settings, changed)))
+            await c.start_server()
+            r = await c.get(f"/servers/{two}/panel", allow_redirects=False)
+            assert r.status == 200 and "r=1" in await r.text()
+            r = await c.get(f"/servers/{two}/panel?r=1", allow_redirects=False)
+            assert r.status == 303 and r.headers["Location"].startswith("/login")
+            await b.close()
+            await c.close()
+        finally:
+            await a.close()
+    asyncio.run(scenario())

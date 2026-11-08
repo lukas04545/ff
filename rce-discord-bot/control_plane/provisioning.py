@@ -14,6 +14,7 @@ Lifecycle of a server ("awaiting_token" = waiting for its bot: a token, or the s
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
@@ -499,6 +500,10 @@ def environment(db: DB, box: SecretBox, settings: Settings, server_id: int) -> d
         env.update({"DISCORD_TOKEN": settings.shared_bot_token, "SAAS_SHARED_BOT": "1",
                     "SAAS_GUILD_ID": s["guild_id"] or "", "GUILD_ID": s["guild_id"] or ""})
     env["SAAS_PORTAL_URL"], env["SAAS_SERVER_ID"] = settings.portal_url, str(server_id)   # the panel's Migrate page
+    mine = db.q("SELECT id, name FROM servers WHERE customer_id = ? AND status != 'deleted' ORDER BY id",
+                (s["customer_id"],))
+    # the customer's other servers: the panel's server switcher (a new / renamed server restarts the others once)
+    env["SAAS_SIBLINGS"] = json.dumps([{"id": r["id"], "name": r["name"]} for r in mine]) if len(mine) > 1 else ""
     env["SAAS_PUBLIC_URL"] = public_url(db, settings, server_id, s["slug"])   # changed → restart with the new links
     ai = features.has(db, s["customer_id"], "ai")
     env["SAAS_AI"] = "1" if ai else "0"

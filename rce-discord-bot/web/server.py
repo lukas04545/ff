@@ -2138,9 +2138,11 @@ class WebInterface:
         self._set_session_cookie(resp, OWNER, request)
         resp.set_cookie(GATE_COOKIE, self._gate_value(), max_age=GATE_TTL, httponly=True, samesite="Strict",
                         secure=self._is_https(request), path="/")
-        log.info("Platform owner %s signed in from the owner panel (%s)", who, self._client_ip(request))
+        log.info("%s signed in from the control plane (%s)", who, self._client_ip(request))
         if self.bot is not None:
-            self.bot.audit(f"🛡️ Web interface: the platform owner (**{who}**) signed in from the owner panel")
+            self.bot.audit("🔀 Web interface: opened from the customer's shop dashboard / another of their panels"
+                           if who.startswith("customer:") else
+                           f"🛡️ Web interface: the platform owner (**{who}**) signed in from the owner panel")
         return resp
 
     # One-time "choose your panel password" links (from the owner panel or the customer's dashboard)
@@ -2489,8 +2491,25 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
         return web.json_response({"ok": True, "setup_mode": self.setup_mode, "panel_path": self.panel_path,
                                   "user": request["user"], "role": request["role"],
                                   "hosted": saas_mode.enabled(), "hidden_views": saas_mode.hidden_views(),
+                                  **self._hosted_servers(),
                                   "skin": self.themes.get(request["user"]), "skin_options": self.themes.options(),
                                   **self._tunnel_info()})
+
+    @staticmethod
+    def _hosted_servers() -> dict:
+        """Hosted: the customer's servers (for the switcher) and how to open another one's panel."""
+        import saas_mode
+        if not saas_mode.enabled():
+            return {}
+        try:
+            siblings = json.loads(os.environ.get("SAAS_SIBLINGS") or "[]")
+        except ValueError:
+            siblings = []
+        portal = os.environ.get("SAAS_PORTAL_URL", "").rstrip("/")
+        return {"my_servers": [{"id": int(x["id"]), "name": str(x["name"])[:60],
+                                "url": f"{portal}/servers/{int(x['id'])}/panel"} for x in siblings
+                               if isinstance(x, dict) and str(x.get("id", "")).isdigit()] if portal else [],
+                "this_server": int(os.environ.get("SAAS_SERVER_ID") or 0) or None}
 
     def _tunnel_info(self) -> dict:
         t = self.tunnel

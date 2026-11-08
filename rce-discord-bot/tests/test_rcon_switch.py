@@ -74,3 +74,17 @@ def test_migrate_page_and_reset_by_the_platform_owner(bot, monkeypatch):  # noqa
         assert (await (await c.get("/api/settings/rcon-servers")).json())["servers"] == []    # old passwords gone
         assert (await c.get("/api/settings/migrate", headers={})).status == 200
     run(bot, scenario)
+
+
+def test_hosted_panel_knows_the_customers_other_servers(bot, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("RCE_SAAS", "1")
+    monkeypatch.setenv("SAAS_PORTAL_URL", "https://portal.example.com")
+    monkeypatch.setenv("SAAS_SERVER_ID", "5")
+    monkeypatch.setenv("SAAS_SIBLINGS", '[{"id": 5, "name": "EU"}, {"id": 8, "name": "US"}]')
+
+    async def scenario(c):
+        await c.post("/api/login", json={"password": "secret123"}, headers=H)
+        me = await (await c.get("/api/me")).json()
+        assert me["this_server"] == 5
+        assert me["my_servers"][1] == {"id": 8, "name": "US", "url": "https://portal.example.com/servers/8/panel"}
+    run(bot, scenario)

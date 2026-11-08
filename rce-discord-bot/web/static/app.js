@@ -766,8 +766,9 @@ views.migrate = async (main) => {
 
   // --- Other servers
   const others = d.hosted && d.dashboard_url ? h("div", { class: "card" }, h("h2", { text: "🖥️ Your other servers" }),
-    h("p", { class: "muted", text: "Every server has its own panel. Open your shop dashboard → Servers → \"Admin panel\" of the server you want (🔑 Panel password sets its login the first time)." }),
-    h("a", { class: "btn", href: d.dashboard_url, target: "_blank", rel: "noopener", text: "Open my shop dashboard" })) : null;
+    h("p", { class: "muted", text: "Every server has its own panel. Switch with the server menu at the top left, or here – it opens signed in (log in to your shop account once if it asks)." }),
+    h("div", { class: "row" }, (me.my_servers || []).filter((x) => x.id !== me.this_server).map((x) => h("a", { class: "btn", href: x.url, text: "🛢️ " + x.name })),
+      h("a", { class: "btn ghost", href: d.dashboard_url, target: "_blank", rel: "noopener", text: "Open my shop dashboard" }))) : null;
   holder.replaceChildren(discord, rcon, others || "");
 };
 
@@ -2146,6 +2147,20 @@ async function switchServer(id) {
 
 async function loadServerSwitch() {
   const box = $("#srv-switch");
+  if (me.hosted) {                        // hosted: the customer's other servers – each opens signed in
+    const mine = me.my_servers || [];
+    if (mine.length < 2) { box.classList.add("hidden"); return; }
+    const sel = h("select", { title: "Switch to the panel of another of your servers" },
+      mine.map((s) => h("option", { value: String(s.id), text: "🛢️ " + s.name })));
+    sel.value = String(me.this_server || "");
+    sel.addEventListener("change", () => {
+      const s = mine.find((x) => String(x.id) === sel.value);
+      if (s) { sel.disabled = true; location.href = s.url; }
+    });
+    box.replaceChildren(sel);
+    box.classList.remove("hidden");
+    return;
+  }
   const d = await api("/api/servers").catch(() => null);
   if (!d || d.servers.length < 2) { box.classList.add("hidden"); return; }
   const sel = h("select", { title: "Which server this panel shows" }, d.servers.map((s) => h("option", { value: s.id, text: (s.main ? "🏠 " : "🛢️ ") + s.name })));
