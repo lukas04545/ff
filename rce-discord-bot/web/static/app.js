@@ -769,7 +769,7 @@ views.migrate = async (main) => {
     h("p", { class: "muted", text: "Every server has its own panel. Switch with the server menu at the top left, or here – it opens signed in (log in to your shop account once if it asks)." }),
     h("div", { class: "row" }, (me.my_servers || []).filter((x) => x.id !== me.this_server).map((x) => h("a", { class: "btn", href: x.url, text: "🛢️ " + x.name })),
       h("a", { class: "btn ghost", href: d.dashboard_url, target: "_blank", rel: "noopener", text: "Open my shop dashboard" }))) : null;
-  holder.replaceChildren(discord, rcon, others || "");
+  holder.replaceChildren(discord, rcon, others || "", powerCard() || "");
 };
 
 views.honeypot = async (main) => {
@@ -3197,8 +3197,31 @@ function ownDomainBox(rows) {
     h("div", { class: "row", style: "margin-top:.5rem" }, btn, current ? checkBtn : null), out);
 }
 
+// ⏻ Turn the whole bot off (out of Discord and off RCON – only this panel keeps running) or on again
+function powerCard() {
+  if (!isOwner()) return null;
+  const off = !!me.paused;
+  const btn = h("button", { class: off ? "primary" : "danger", text: off ? "⏻ Turn the bot on" : "⏻ Turn the bot off", onclick: async () => {
+    if (!off && !confirm("Turn the bot off? It goes offline in your Discord and disconnects from your Rust server – kits, store, tickets and everything else stop until you turn it on again. Your settings and data are kept, and this panel keeps working.")) return;
+    btn.disabled = true;
+    try {
+      await api("/api/settings/power", { method: "POST", body: { on: off } });
+      toast(off ? "Turning on – the bot starts in a moment …" : "Turning off …");
+      waitForBot(off ? "#overview" : "#settings");
+    } catch (e) { toast(e.message, true); btn.disabled = false; }
+  } });
+  return h("div", { class: "card", style: off ? "border-color:var(--warn,#f0b429)" : "" },
+    h("h2", { text: off ? "⏻ The bot is switched off" : "⏻ Bot power" }),
+    h("p", { class: "muted", text: off
+      ? "It's not in your Discord and not connected to your Rust server. Your settings and data are kept – turn it on to start it again."
+      : "Switch the whole bot off (offline in Discord, disconnected from RCON) – e.g. during a server move or a break – and on again later." }),
+    btn);
+}
+
 views.settings = async (main) => {
   main.append(h("h1", { text: setupMode ? "Setup" : "Settings" }));
+  const power = powerCard();
+  if (power && (me.paused || !setupMode)) main.append(power);
   const banner = h("div");
   main.append(banner);
   let data, opts;

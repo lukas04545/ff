@@ -315,6 +315,10 @@ To **disconnect** the bot from the game server (e.g. while you move servers), sw
 Connected to the game server* (`RCON_ENABLED=false`). It disconnects right away and doesn't reconnect; the RCON
 details stay saved, and switching it on again reconnects.
 
+**⏻ Turn the bot off / on** (Settings or Migrate, owners only): the whole bot goes offline in Discord and
+disconnects from the Rust server – only the control panel keeps running, showing *Turn the bot on*. Your settings and
+data are kept; the switch survives restarts (`BOT_PAUSED` in the `.env`). The management AI can't use it.
+
 **🚚 Migrate** (Admin → Migrate, owners only) puts both moves on one page: the bot's Discord (hosted: *Switch to
 another Discord* through your shop account; your own bot: invite it to the new Discord, pick it, restart) and the
 Rust server (enter the new RCON details, *Test*, *Connect to this server* – live, no restart – or switch between

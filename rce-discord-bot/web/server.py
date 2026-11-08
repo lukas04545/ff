@@ -142,7 +142,7 @@ AI_BLOCKED = ("/api/login", "/api/logout", "/api/reauth", "/api/2fa", "/api/pass
               "/api/update", "/api/backups", "/api/setup", "/api/honeypot", "/api/switch", "/api/command")
 # … and these only for reading (no changes): servers, the domain, gift cards (money), plugin code/files
 RCON_OFF_NOTE = "RCON switched off by the customer (Settings → RCON)"
-AI_BLOCKED_WRITES = ("/api/servers", "/api/settings/cloudflare-domain", "/api/webshop/giftcards", "/api/plugins/upload",
+AI_BLOCKED_WRITES = ("/api/servers", "/api/settings/power", "/api/settings/cloudflare-domain", "/api/webshop/giftcards", "/api/plugins/upload",
                      "/api/plugins/generate", "/api/allplugins/copy")
 AI_BLOCKED_WRITE_RE = re.compile(r"^/api/plugins/[^/]+(/file/.*)?$")      # delete a plugin, upload plugin files
 # Settings it may never change (besides every secret): access, ports, who is admin, its own permissions
@@ -471,6 +471,7 @@ class WebInterface:
         r.add_put("/api/settings", self.put_settings)
         r.add_post("/api/settings/test-rcon", self.settings_test_rcon)
         r.add_get("/api/settings/migrate", self.migrate_info)
+        r.add_post("/api/settings/power", self.power)
         r.add_get("/api/settings/rcon-servers", self.rcon_servers)
         r.add_post("/api/settings/rcon-servers", self.rcon_server_save)
         r.add_post("/api/settings/rcon-servers/{sid:[0-9a-f]{8}}/use", self.rcon_server_use)
@@ -2488,7 +2489,8 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
 
     async def me(self, request: web.Request) -> web.Response:
         import saas_mode
-        return web.json_response({"ok": True, "setup_mode": self.setup_mode, "panel_path": self.panel_path,
+        return web.json_response({"ok": True, "setup_mode": self.setup_mode, "paused": self._paused(),
+                                  "panel_path": self.panel_path,
                                   "user": request["user"], "role": request["role"],
                                   "hosted": saas_mode.enabled(), "hidden_views": saas_mode.hidden_views(),
                                   **self._hosted_servers(),
@@ -2906,6 +2908,31 @@ autocomplete=new-password></label><button>Save and sign in</button></form>""")
         password = str(data.get("password") or self._saved("RCON_PASSWORD"))
         result = await diagnose_rcon(host, port, password)
         return web.json_response({"ok": result.ok, "steps": result.steps})
+
+    # ------------------------------------------------------------ Power: switch the whole bot off / on
+
+    def _paused(self) -> bool:
+        try:
+            value = read_env(self.env_path).get("BOT_PAUSED", "")
+        except OSError:
+            value = ""
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+    async def power(self, request: web.Request) -> web.Response:
+        """Turns the bot off (it leaves Discord and RCON – only this panel keeps running) or on again. The setting
+        survives restarts (BOT_PAUSED in the .env)."""
+        on = bool((await self._json(request)).get("on"))
+        if on == (not self._paused()):
+            return web.json_response({"ok": True, "on": on, "changed": False})
+        update_env(self.env_path, {"BOT_PAUSED": "false" if on else "true"}, template=ENV_TEMPLATE)
+        self._audit(f"Bot switched {'ON' if on else 'OFF'} in the panel")
+        log.warning("Bot switched %s in the panel by %s", "on" if on else "off", request.get("user", "?"))
+        if on:
+            if self.setup_mode and self.on_config_saved:
+                self.on_config_saved()                  # starts the bot (with the saved settings)
+        elif self.bot is not None:
+            self.bot.request_restart()                  # stops; the start sees BOT_PAUSED and runs the panel only
+        return web.json_response({"ok": True, "on": on, "changed": True})
 
     # ------------------------------------------------------------ Migrate: another Discord / another game server
 
