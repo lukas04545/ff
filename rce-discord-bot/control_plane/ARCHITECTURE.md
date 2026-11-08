@@ -127,6 +127,14 @@ Every server runs on one of two bots:
   * Connecting it at Cloudflare: owner panel → 🌐 Domains with a token used once (*Zone › SSL and Certificates ›
     Edit*, not saved). Or, only if the owner chooses, a saved token with just that permission
     (`CP_CF_SAAS_TOKEN`) does it automatically.
+* **Moving the website** (portal, Website card):
+  * *Move to this server* moves an own domain to another of the customer's servers. It keeps working (same CNAME,
+    Cloudflare already accepted it) and shows that server's website from then on.
+  * *Main address*: with a live own domain, the customer picks which address (the free one or one of their domains)
+    the bot uses in its links. `main_address:<server id>` in `settings_kv`; `public_url()` follows it.
+  * *Release* stops an old address from forwarding, so it's free again.
+  * The main address is part of the server's environment hash (`SAAS_PUBLIC_URL`). Any change restarts the server,
+    and at start its `WEB_PUBLIC_URL` is updated to match.
 * **The website is free:** on hosted servers the player website is on from the start, in every package.
   * Customers add a logo, a header picture and up to 6 server pictures (a gallery on the home page; big photos are
     made smaller in the browser).

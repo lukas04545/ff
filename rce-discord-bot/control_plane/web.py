@@ -473,6 +473,17 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                 f"user-select:all'>{esc(link_code(settings, c['id']))}</code></p><p class=muted>Only give it to the "
                 f"assistant in your own ticket – it links your Discord account to this account.</p></div>")
 
+    def move_form(s: dict, hostname: str, hidden: str) -> str:
+        """Move an own domain to another of the customer's servers."""
+        others = db.q("SELECT id, name FROM servers WHERE customer_id = ? AND id != ? AND status != 'deleted' "
+                      "ORDER BY id", (s["customer_id"], s["id"]))
+        if not others:
+            return ""
+        opts = "".join(f"<option value={o['id']}>{esc(o['name'])}</option>" for o in others)
+        return (f"<form method=post action=/servers/{s['id']}/domains/move class=inline>{hidden}<input type=hidden "
+                f"name=hostname value='{esc(hostname)}'><select name=to>{opts}</select> <button class='ghost small'>"
+                f"Move to this server</button></form> ")
+
     def website_card(s: dict, hidden: str, can_domain: bool) -> str:
         """The server's websites: its address on our domain (changeable), its own domains, the look."""
         sid, base = s["id"], settings.base_domain
@@ -481,9 +492,26 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
             f"<tr><td><a href='https://{esc(d['hostname'])}' target=_blank>{esc(d['hostname'])}</a></td><td>"
             f"{pill('active' if d['status'] == 'active' else 'waiting')}"
             f"{'<br><span class=muted>' + esc(d['note']) + '</span>' if d['note'] else ''}</td><td>"
+            f"{move_form(s, d['hostname'], hidden)}"
             f"<form method=post action=/servers/{sid}/domains/remove class=inline>{hidden}<input type=hidden "
             f"name=hostname value='{esc(d['hostname'])}'><button class='danger small'>Remove</button></form></td></tr>"
             for d in own)
+        main_now = provisioning.public_url(db, settings, sid, s["slug"])
+        choices = [(provisioning.FREE_ADDRESS, settings.url_for(s["slug"]))] + [
+            (d["hostname"], f"https://{d['hostname']}") for d in own if d["status"] == "active"]
+        main_part = ""
+        if len(choices) > 1:                              # an own domain is live: which one is the main address
+            opts = "".join(f"<option value='{esc(v)}'{' selected' if url == main_now else ''}>{esc(url)}</option>"
+                           for v, url in choices)
+            main_part = (f"<form method=post action=/servers/{sid}/main-address class=row>{hidden}<span>Main address"
+                         f"</span><select name=choice>{opts}</select><button class=ghost>Use as main address</button>"
+                         f"</form><p class=muted>The main address is used in the bot's links (Discord, the panel, the "
+                         f"shop). The others keep working.</p>")
+        olds = provisioning.old_addresses(db, settings, sid)
+        old_part = ("<p class=muted>Old addresses that still forward here: " + " ".join(
+            f"<form method=post action=/servers/{sid}/old-address/release class=inline>{hidden}<input type=hidden "
+            f"name=host value='{esc(h)}'><code>{esc(h)}</code> <button class='ghost small' title='Stop forwarding – "
+            f"the address is free again'>Release</button></form>" for h in olds) + "</p>") if olds else ""
         if can_domain:
             domain_part = (f"<h3>Your own domain</h3><table>{rows}</table>"
                            f"<form method=post action=/servers/{sid}/domains class=row>{hidden}<input name=hostname "
@@ -512,7 +540,8 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                 f"{esc(settings.url_for(s['slug']))}</a></p>"
                 f"<form method=post action=/servers/{sid}/address class=row>{hidden}<input name=address "
                 f"value='{esc(s['slug'])}' pattern='[a-z0-9-]{{3,30}}' required><span class=muted>.{esc(base)}</span>"
-                f"<button class=ghost>Change address</button></form><p class=muted>The old address keeps working.</p>"
+                f"<button class=ghost>Change address</button></form><p class=muted>The old address keeps working "
+                f"(forwarding) until you release it.</p>{old_part}{main_part}"
                 f"{domain_part}<p class=muted>🎨 Look: open your <a href='{esc(provisioning.panel_url(settings, s))}' "
                 f"target=_blank>admin panel</a> → Plugins → Website → <b>Look (theme)</b> – logo, colours, texts.</p>"
                 f"</div>")
@@ -671,6 +700,42 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                 db.run("UPDATE domains SET note = ? WHERE hostname = ?", (str(exc)[:300], host))
         raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(msg))
 
+    async def move_domain(request):
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        data = await sess.form(request)
+        host = str(data.get("hostname", ""))[:255]
+        try:
+            target = own_server(c, int(data.get("to", "0") or 0))
+            provisioning.move_domain(db, host, s["id"], target["id"], actor=f"customer:{c['id']}")
+        except (provisioning.ProvisionError, ValueError) as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
+        await changed()                                  # both websites restart with their new addresses
+        raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(f"{host} now shows {target['name']}'s website."))
+
+    async def main_address(request):
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        data = await sess.form(request)
+        try:
+            provisioning.set_main_address(db, s["id"], str(data.get("choice", "")), actor=f"customer:{c['id']}")
+        except provisioning.ProvisionError as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
+        await changed()
+        raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(
+            f"Main address: {provisioning.public_url(db, settings, s['id'], s['slug'])} – the bot uses it in a moment."))
+
+    async def release_address(request):
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        data = await sess.form(request)
+        try:
+            provisioning.release_old_address(db, s["id"], str(data.get("host", ""))[:255], actor=f"customer:{c['id']}")
+        except provisioning.ProvisionError as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
+        await changed()
+        raise web.HTTPSeeOther("/dashboard?m=Old+address+released+–+it+no+longer+forwards")
+
     async def remove_domain(request):
         c = need(request)
         s = own_server(c, int(request.match_info["sid"]))
@@ -767,6 +832,9 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                     web.post(r"/servers/{sid:\d+}/address", change_address),
                     web.post(r"/servers/{sid:\d+}/domains", add_domain),
                     web.post(r"/servers/{sid:\d+}/domains/remove", remove_domain),
+                    web.post(r"/servers/{sid:\d+}/domains/move", move_domain),
+                    web.post(r"/servers/{sid:\d+}/main-address", main_address),
+                    web.post(r"/servers/{sid:\d+}/old-address/release", release_address),
                     web.post("/signup", signup), web.post("/login", login),
                     web.post("/logout", logout), web.get("/dashboard", dashboard), web.post("/servers", add_server),
                     web.post(r"/servers/{sid:\d+}/token", set_token), web.post(r"/servers/{sid:\d+}/remove", remove),
