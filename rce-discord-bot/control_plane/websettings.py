@@ -56,6 +56,10 @@ FIELDS = (
     Field("STRIPE_WEBHOOK_SECRET", "Stripe webhook secret", "Billing (Stripe)", secret=True,
           help="Webhook: https://portal.<domain>/stripe/webhook"),
     Field("STRIPE_PRICE_ID", "Stripe price id", "Billing (Stripe)"),
+    Field("CP_PAYPAL_CLIENT_ID", "PayPal client id", "Billing (PayPal)",
+          help="developer.paypal.com → Apps & Credentials → your app. Customers then pay months in advance with PayPal."),
+    Field("CP_PAYPAL_SECRET", "PayPal secret", "Billing (PayPal)", secret=True),
+    Field("CP_PAYPAL_MODE", "PayPal mode", "Billing (PayPal)", help="sandbox (test money) or live"),
     Field("CP_GRACE_DAYS", "Days of grace after a failed payment", "Billing (Stripe)", kind="int"),
     Field("CP_HQ_BOT_TOKEN", "Management Discord bot token", "Management Discord", secret=True, restart=True),
     Field("CP_HQ_GUILD_ID", "Management Discord server id", "Management Discord", kind="ids", restart=True),
@@ -117,7 +121,8 @@ KEY_ATTR = {"CP_BASE_DOMAIN": "base_domain", "CP_DEEPSEEK_API_KEY": "deepseek_ap
             "CP_OWNER_PATH": "owner_path", "CP_OWNER_ALLOW_IPS": "owner_allow_ips", "CP_UPDATE_REPO": "update_repo",
             "CP_UPDATE_BRANCH": "update_branch", "CP_TENANT_MEMORY_MB": "memory_mb",
             "CP_CF_TUNNEL_TOKEN": "cf_tunnel_token", "CP_SHOP_NAME": "shop_name", "CP_CF_SAAS_TOKEN": "cf_saas_token",
-            "CP_DOMAIN_PRICE": "domain_price"}
+            "CP_DOMAIN_PRICE": "domain_price", "CP_PAYPAL_CLIENT_ID": "paypal_client_id",
+            "CP_PAYPAL_SECRET": "paypal_secret", "CP_PAYPAL_MODE": "paypal_mode"}
 
 
 def refresh(settings: Settings, keys=None) -> None:
