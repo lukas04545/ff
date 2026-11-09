@@ -85,7 +85,7 @@ def shop_page(shop: str, title: str, body: str, *, nav: str = "") -> web.Respons
         content_type="text/html",
         headers={"Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
                  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' "
-                                            "https://checkout.stripe.com https://billing.stripe.com; "
+                                            "https://checkout.stripe.com https://billing.stripe.com https://www.paypal.com https://www.sandbox.paypal.com; "
                                             "frame-ancestors 'none'"})
 
 

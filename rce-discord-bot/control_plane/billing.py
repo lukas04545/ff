@@ -56,7 +56,7 @@ def subscription_ok(db: DB, customer_id: int, now: float | None = None) -> bool:
         return False
     if row["status"] in RUNNING or row["status"] == "comped":         # comped: granted by the owner, no Stripe
         return True
-    if row["status"] == "trial":                                      # the owner's free trial, until its end
+    if row["status"] in ("trial", "paid"):          # the owner's free trial / months paid with PayPal: until the end
         return (row["current_period_end"] or 0) > (now or time.time())
     return row["status"] == "past_due" and (row["grace_until"] or 0) > (now or time.time())
 

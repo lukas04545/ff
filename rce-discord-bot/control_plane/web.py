@@ -67,7 +67,7 @@ def page(title: str, body: str) -> web.Response:
                         headers={"Cache-Control": "no-store", "X-Frame-Options": "DENY",
                                  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
                                                             "form-action 'self' https://checkout.stripe.com "
-                                                            "https://billing.stripe.com; frame-ancestors 'none'",
+                                                            "https://billing.stripe.com https://www.paypal.com https://www.sandbox.paypal.com; frame-ancestors 'none'",
                                  "Referrer-Policy": "no-referrer"})
 
 
@@ -372,6 +372,10 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
         c = need(request)
         csrf = sess.csrf(request)
         hidden = f"<input type=hidden name=csrf value={csrf}>"
+        from control_plane import paypal_billing
+        if db.one("SELECT 1 FROM paypal_payments WHERE customer_id = ? AND status = 'pending'", (c["id"],)):
+            if await paypal_billing.check_pending(db, settings, c["id"]):       # paid, but never came back
+                await changed()
         sub = db.one("SELECT * FROM subscriptions WHERE customer_id = ?", (c["id"],))
         paid_ok = billing.subscription_ok(db, c["id"])
         plan = plans.current(db, c["id"])
@@ -394,8 +398,9 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
         def state(i):
             return "done" if order[i] else ("now" if i == now else "later")
         pick = shop_ui.plan_cards(plans.listed(db), action=lambda p: (
-            f"<form method=post action=/billing/checkout>{hidden}<input type=hidden name=plan value={p['id']}>"
-            f"<button class=small>Choose {esc(p['name'])}</button></form>"))
+            (f"<form method=post action=/billing/checkout>{hidden}<input type=hidden name=plan value={p['id']}>"
+             f"<button class=small>Choose {esc(p['name'])}</button></form>" if settings.stripe_secret_key or
+             not paypal_billing.configured(settings) else "") + paypal_form(hidden, p)))
         steps = "".join([
             shop_ui.step(1, state(0), "Choose your package",
                          (f"Free trial{' of ' + esc(plan['name']) if plan else ''} until "
@@ -451,6 +456,14 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                 f"({esc(plans.price_text(p))})</button></form> " for p in others)
         package = (f"<b>{esc(plan['name'])}</b> · {esc(plans.price_text(plan))} / month · " if plan else "") + \
             f"{pill(sub['status'] if sub else 'none')}"
+        until = paypal_billing.paid_until(db, c["id"])
+        if until:                                         # paid with PayPal: until when, and extend
+            left = max(0, int((until - time.time()) // 86400))
+            package += (f"<p>🅿️ Paid with PayPal until <b>{time.strftime('%Y-%m-%d', time.gmtime(until))}</b> "
+                        f"({left} day{'s' if left != 1 else ''} left){' – extend it in time so your servers keep running' if left <= 7 else ''}."
+                        f"</p>" + (paypal_form(hidden, plan, "Extend with PayPal") if plan else ""))
+        elif sub and sub["status"] == "paid" and plan:    # paid time is over
+            package += "<p>Your paid time has ended – pay again to switch your servers on.</p>" + paypal_form(hidden, plan)
         return shop(request, "Dashboard", f"""{flash(request)}
 <h1>Hi {esc(c['name'] or c['email'])} 👋</h1>
 {'' if done else f"<div class=card><h2>Get started</h2><div class=steps>{steps}</div></div>"}
@@ -786,6 +799,55 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
             raise web.HTTPSeeOther("/#plans")
         raise await start_checkout(request, c, plan)
 
+    async def paypal_start(request):
+        from control_plane import paypal_billing
+        c = need(request)
+        data = await sess.form(request)
+        try:
+            url = await paypal_billing.start(db, settings, c, int(data.get("plan", 0) or 0), int(data.get("months", 1) or 1))
+        except (paypal_billing.PayPalBillingError, ValueError) as exc:
+            raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(str(exc))) from None
+        raise web.HTTPSeeOther(url)
+
+    def _hop(target: str) -> web.Response:
+        """Back from PayPal (another site): the SameSite=Strict login cookie comes with the next, same-site request."""
+        return web.Response(text=f'<!doctype html><meta charset=utf-8><meta http-equiv="refresh" content="0;url='
+                                 f'{esc(target)}"><title>Back to the shop …</title><p><a href="{esc(target)}">'
+                                 f'Continue</a></p>', content_type="text/html",
+                            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                                     "Content-Security-Policy": "default-src 'none'"})
+
+    async def paypal_return(request):
+        from control_plane import paypal_billing
+        pay = await paypal_billing.complete(db, settings, request.query.get("o", ""))
+        if pay is None:
+            return _hop("/dashboard")
+        if pay["status"] == "paid":
+            await changed()                                      # stopped servers start again
+            msg = (f"Thanks! Paid with PayPal – your package runs until "
+                   f"{time.strftime('%Y-%m-%d', time.gmtime(pay['until'] or time.time()))}.")
+        elif pay["status"] == "review":
+            msg = "PayPal hasn't confirmed the payment yet – we'll check it and switch you on."
+        else:
+            msg = "The payment isn't finished yet – if you paid, it shows up here in a minute."
+        return _hop("/dashboard?m=" + quote_plus(msg))
+
+    async def paypal_cancel(request):
+        from control_plane import paypal_billing
+        paypal_billing.cancel(db, request.query.get("o", ""))
+        return _hop("/dashboard?m=" + quote_plus("PayPal payment cancelled – nothing was charged."))
+
+    def paypal_form(hidden: str, plan: dict, label: str = "Pay with PayPal") -> str:
+        from control_plane import paypal_billing
+        if not paypal_billing.configured(settings):
+            return ""
+        sym = plans.CURRENCIES.get(plan["currency"], plan["currency"].upper() + " ")
+        opts = "".join(f"<option value={m}>{m} month{'s' if m != 1 else ''} – {sym}{paypal_billing.amount(plan, m):.2f}"
+                       f"</option>" for m in paypal_billing.MONTHS)
+        return (f"<form method=post action=/billing/paypal class=row style='margin-top:.4rem'>{hidden}"
+                f"<input type=hidden name=plan value={plan['id']}><select name=months>{opts}</select>"
+                f"<button class='ghost small'>🅿️ {esc(label)}</button></form>")
+
     async def domain_addon(request):
         """The premium add-on (own domain) is added to / removed from the running subscription."""
         c = need(request)
@@ -856,6 +918,8 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
     app.add_routes([web.get("/", index), web.get("/signup", signup_page), web.get("/login", login_page),
                     web.post("/billing/switch", switch_plan),
                     web.post("/billing/addon/domain/{on:on|off}", domain_addon),
+                    web.post("/billing/paypal", paypal_start), web.get("/billing/paypal/return", paypal_return),
+                    web.get("/billing/paypal/cancel", paypal_cancel),
                     web.post(r"/servers/{sid:\d+}/address", change_address),
                     web.post(r"/servers/{sid:\d+}/domains", add_domain),
                     web.post(r"/servers/{sid:\d+}/domains/remove", remove_domain),
@@ -1379,7 +1443,8 @@ Password: {esc(password)}</pre><p class=muted>Access: {esc(access_text)}.</p>
 {pill(sub['status'] if sub else 'none')} {esc(sub['stripe_subscription_id'] or '') if sub else ''}
 {('· grace until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['grace_until']))) if sub and sub['grace_until'] else ''}
 {('· trial until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['current_period_end'])) + ' UTC') if sub and sub['status'] == 'trial' and sub['current_period_end'] else ''}
-<br><br><form method=post action={P}/customers/{cid}/dashboard class=inline target=_blank>{hidden(request)}<button>
+{('· paid with PayPal until ' + time.strftime('%Y-%m-%d', time.gmtime(sub['current_period_end']))) if sub and sub['status'] == 'paid' and sub['current_period_end'] else ''}
+{paypal_list(cid)}<br><br><form method=post action={P}/customers/{cid}/dashboard class=inline target=_blank>{hidden(request)}<button>
 🔑 Open dashboard</button></form> {acct} {comp} {button(request, f'/customers/{cid}/remove', 'Remove customer', danger=True,
                                        confirm='Remove the customer and all their servers?')}
 <form method=post action={P}/customers/{cid}/trial class=inline>{hidden(request)}<input name=days type=number min=1
@@ -1425,6 +1490,18 @@ max=365 value=14 style="width:5rem"> days <button>{'Extend' if sub and sub['stat
             return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/>Back</a></div>")
         await changed()
         raise go(back)
+
+    def paypal_list(cid: int) -> str:
+        rows = db.q("SELECT p.*, pl.name FROM paypal_payments p LEFT JOIN plans pl ON pl.id = p.plan_id WHERE "
+                    "p.customer_id = ? AND p.status != 'cancelled' ORDER BY p.id DESC LIMIT 12", (cid,))
+        if not rows:
+            return ""
+        return ("<table style='margin-top:.6rem'><tr><th>PayPal</th><th>Package</th><th>Amount</th><th>State</th>"
+                "<th>Capture</th></tr>" + "".join(
+                    f"<tr><td>{time.strftime('%Y-%m-%d', time.gmtime(r['created_at']))}</td><td>{esc(r['name'] or '?')} × "
+                    f"{r['months']}</td><td>{esc(r['amount'])} {esc(r['currency'])}</td><td>{pill(r['status'])}</td>"
+                    f"<td class=muted>{esc(r['capture_id'] or r['paypal_order'] or '')}</td></tr>" for r in rows)
+                + "</table>")
 
     def plan_form(p: dict | None, request) -> str:
         p = p or {"name": "", "tagline": "", "price_cents": 999, "currency": "eur", "slots": 1, "ai": 0,

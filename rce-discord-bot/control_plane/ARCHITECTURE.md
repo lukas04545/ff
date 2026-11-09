@@ -108,6 +108,18 @@ Every server runs on one of two bots:
   3. bot added to their Discord;
   4. RCON connected.
   Subscribers can switch packages there; Stripe prorates.
+* **PayPal** (`control_plane/paypal_billing.py`): with `CP_PAYPAL_CLIENT_ID` / `CP_PAYPAL_SECRET` / `CP_PAYPAL_MODE`
+  set (owner panel → Settings → Billing (PayPal)), every package also has *Pay with PayPal*.
+  * Customers prepay 1, 3, 6 or 12 months (the monthly price × months). There's no automatic renewal.
+  * After the capture (the amount PayPal reports is checked), the subscription is `paid` until
+    `current_period_end`. Paying again extends from the current end.
+  * The dashboard shows the end date and *Extend with PayPal*; in the last 7 days it reminds the customer.
+  * When the time is over, the servers stop like after a free trial (data kept). The next payment starts them again.
+  * A buyer who closes the page after paying is completed on their next dashboard visit and by a 5-minute check.
+    Unpaid orders expire after 3 hours.
+  * Customers with a running Stripe subscription can't also pay with PayPal.
+  * Payments are listed on the customer's page in the owner panel.
+  * Without Stripe keys, the package cards only show PayPal.
 * **Owner panel → 🛒 Packages:**
   * name, monthly price (EUR/USD/GBP), number of servers, AI and own-bot add-ons, perks, "most popular", order,
     for sale yes/no;

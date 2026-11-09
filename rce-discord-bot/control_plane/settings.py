@@ -60,6 +60,10 @@ class Settings:
     stripe_secret_key: str = field(default_factory=lambda: os.environ.get("STRIPE_SECRET_KEY", ""))
     stripe_webhook_secret: str = field(default_factory=lambda: os.environ.get("STRIPE_WEBHOOK_SECRET", ""))
     stripe_price_id: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_ID", ""))
+    # PayPal: customers pay months in advance (billing.py, "paid" until current_period_end)
+    paypal_client_id: str = field(default_factory=lambda: os.environ.get("CP_PAYPAL_CLIENT_ID", ""))
+    paypal_secret: str = field(default_factory=lambda: os.environ.get("CP_PAYPAL_SECRET", ""))
+    paypal_mode: str = field(default_factory=lambda: os.environ.get("CP_PAYPAL_MODE", "sandbox").strip().lower())
     grace_days: int = field(default_factory=lambda: _int("CP_GRACE_DAYS", 3))
     # The platform's shared bot (default for every server): token + OAuth app for "Add to Discord"
     shared_bot_token: str = field(default_factory=lambda: os.environ.get("CP_SHARED_BOT_TOKEN", ""))

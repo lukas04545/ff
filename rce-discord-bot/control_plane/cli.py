@@ -602,7 +602,19 @@ async def _run(settings: Settings) -> None:
     tunnel = cftunnel.start_tunnel(settings)           # every website through the Cloudflare tunnel (if set up)
     try:
         extra = (hq.start(), hq.refresh_forever()) if hq is not None else ()
-        work = asyncio.ensure_future(asyncio.gather(sup.run_forever(), health.poll_forever(db, box, sup), *extra))
+        from control_plane import paypal_billing
+
+        async def paypal_forever() -> None:
+            """PayPal payments whose buyer never came back to the shop: completed (or expired) every 5 minutes."""
+            while True:
+                await asyncio.sleep(300)
+                try:
+                    if await paypal_billing.check_pending(db, settings):
+                        await changed()
+                except Exception:
+                    log.exception("PayPal check failed")
+        work = asyncio.ensure_future(asyncio.gather(sup.run_forever(), health.poll_forever(db, box, sup),
+                                                    paypal_forever(), *extra))
         stop = asyncio.ensure_future(restart_requested.wait())
         await asyncio.wait({work, stop}, return_when=asyncio.FIRST_COMPLETED)
         if work.done():

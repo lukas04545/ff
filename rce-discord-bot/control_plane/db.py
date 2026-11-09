@@ -149,6 +149,22 @@ CREATE TABLE IF NOT EXISTS hq_trials (discord_id INTEGER PRIMARY KEY, customer_i
                                       claimed_at INTEGER NOT NULL);     -- one free week per Discord account
 CREATE TABLE IF NOT EXISTS hq_links (discord_id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id),
                                      linked_at INTEGER NOT NULL);
+-- PayPal: a customer pays N months of a package in advance (billing.py)
+CREATE TABLE IF NOT EXISTS paypal_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT NOT NULL UNIQUE,                   -- secret part of the return link
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    plan_id INTEGER NOT NULL,
+    months INTEGER NOT NULL,
+    amount TEXT NOT NULL,                         -- e.g. "29.97" (what PayPal must report)
+    currency TEXT NOT NULL,
+    paypal_order TEXT UNIQUE,
+    capture_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',       -- pending / paid / cancelled / review
+    created_at INTEGER NOT NULL,
+    paid_at INTEGER,
+    until INTEGER                                 -- the package runs until then (after this payment)
+);
 -- customers' ideas and wishes from the HQ chat (control_plane/hq_ideas.py) and how far they are
 CREATE TABLE IF NOT EXISTS suggestions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
