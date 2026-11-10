@@ -231,12 +231,46 @@ class TicketModal(discord.ui.Modal, title="Open support ticket"):
                                     min_length=10, max_length=1500,
                                     placeholder="Describe your problem as precisely as possible.")
 
-    def __init__(self, cog: "Tickets") -> None:
-        super().__init__()
-        self.cog = cog
+    def __init__(self, cog: "Tickets", category: str | None = None) -> None:
+        super().__init__(title=(f"Ticket: {category}" if category and category != NOT_SURE else
+                                "Open support ticket")[:45])
+        self.cog, self.category = cog, category
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self.cog.create_ticket(interaction, str(self.anliegen).strip(), str(self.ingame).strip() or None)
+        await self.cog.create_ticket(interaction, str(self.anliegen).strip(), str(self.ingame).strip() or None,
+                                     category=self.category)
+
+
+NOT_SURE = "?"
+
+
+def parse_ticket_types(text: str) -> list[dict]:
+    """TICKET_TYPES: one per line "emoji Label | hint" -> [{"emoji", "label", "hint", "slug"}]."""
+    out = []
+    for line in str(text or "").splitlines():
+        head, _, hint = line.partition("|")
+        head = head.strip()
+        if not head:
+            continue
+        first, _, rest = head.partition(" ")
+        emoji, label = (first, rest.strip()) if rest and not first[:1].isalnum() else (None, head)
+        slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:20] or "ticket"
+        if label and all(t["slug"] != slug for t in out):
+            out.append({"emoji": emoji, "label": label[:50], "hint": hint.strip()[:200], "slug": slug})
+    return out[:24]
+
+
+class TicketTypeSelect(discord.ui.Select):
+    def __init__(self, cog: "Tickets", types: list[dict]) -> None:
+        options = [discord.SelectOption(label=t["label"], value=t["label"], emoji=t["emoji"],
+                                        description=t["hint"][:100] or None) for t in types]
+        options.append(discord.SelectOption(label="Not sure", value=NOT_SURE, emoji="❓",
+                                            description="The assistant picks the right category"))
+        super().__init__(placeholder="What is your ticket about?", options=options)
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(TicketModal(self.cog, self.values[0]))
 
 
 class TicketPanelView(discord.ui.View):
@@ -282,6 +316,11 @@ class TicketControlView(discord.ui.View):
                        custom_id="rce:ticket:staff")
     async def call_staff(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         await self.cog.request_staff(interaction)
+
+    @discord.ui.button(label="Claim", emoji="🙋", style=discord.ButtonStyle.primary,
+                       custom_id="rce:ticket:claim")
+    async def claim_ticket(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.claim(interaction)
 
     @discord.ui.button(label="Close", emoji="🔒", style=discord.ButtonStyle.danger,
                        custom_id="rce:ticket:close")
@@ -479,26 +518,58 @@ class Tickets(commands.Cog):
             await interaction.response.send_message(
                 f"You already have an open ticket: <#{existing['channel_id']}>", ephemeral=True)
             return
+        types = parse_ticket_types(self.bot.config.ticket_types)
+        if types:                                    # categories: pick one first (or let the AI choose)
+            view = discord.ui.View(timeout=300)
+            view.add_item(TicketTypeSelect(self, types))
+            await interaction.response.send_message("🎫 What is your ticket about?", view=view, ephemeral=True)
+            return
         await interaction.response.send_modal(TicketModal(self))
 
-    async def create_ticket(self, interaction: discord.Interaction, topic: str, ingame: str | None) -> None:
+    async def categorise(self, topic: str, types: list[dict]) -> str | None:
+        """The AI picks the category that fits the ticket (one short call). None = it couldn't."""
+        if not self.ai.enabled or not types:
+            return None
+        options = "\n".join(f"- {t['label']}: {t['hint']}" for t in types)
+        try:
+            raw = await self.ai.chat_json([
+                {"role": "system", "content": "Sort a support ticket of a Rust game server into exactly one category. "
+                                              "Answer as JSON {\"category\": \"<name>\"} with one of these names:\n"
+                                              + options},
+                {"role": "user", "content": topic[:1500]}], max_tokens=60, temperature=0)
+            picked = str(json.loads(raw).get("category", "")).strip().lower()
+        except Exception as exc:                                   # the ticket opens anyway
+            log.warning("Ticket categorisation failed: %s", exc)
+            return None
+        return next((t["label"] for t in types if t["label"].lower() == picked), None)
+
+    async def create_ticket(self, interaction: discord.Interaction, topic: str, ingame: str | None, *,
+                            category: str | None = None) -> None:
         assert interaction.guild is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
+        if category == NOT_SURE:
+            category = await self.categorise(topic, parse_ticket_types(self.bot.config.ticket_types))
         try:
-            channel = await self.open_ticket(interaction.guild, interaction.user, topic, ingame)
+            channel = await self.open_ticket(interaction.guild, interaction.user, topic, ingame, category=category)
         except TicketError as exc:
             await interaction.followup.send(str(exc)[:2000], ephemeral=True)
             return
         await interaction.followup.send(f"✅ Your ticket has been created: {channel.mention}", ephemeral=True)
 
     async def open_ticket(self, guild: discord.Guild, user: discord.abc.User, topic: str, ingame: str | None, *,
-                          title: str | None = None, opened_by: str | None = None) -> discord.TextChannel:
+                          title: str | None = None, opened_by: str | None = None,
+                          category: str | None = None) -> discord.TextChannel:
         """Creates a ticket channel for this user and starts the AI (also used for giveaway prize tickets)."""
+        kind = next((t for t in parse_ticket_types(self.bot.config.ticket_types) if t["label"] == category), None)
+        if kind is not None:                          # the AI (and staff) see the category with the request
+            topic = f"[{kind['label']}{' – ' + kind['hint'] if kind['hint'] else ''}] {topic}"
         category = guild.get_channel(self.bot.config.ticket_category_id)
         if not isinstance(category, discord.CategoryChannel):
             raise TicketError("⚠️ The ticket category was not found (TICKET_CATEGORY_ID).")
 
         ticket_id = self.bot.db.create_ticket(user.id, topic, ingame)
+        if kind is not None:
+            self.bot.db.update_ticket(ticket_id, category=kind["label"])
         overwrites: dict = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True,
@@ -513,7 +584,8 @@ class Tickets(commands.Cog):
         try:
             prefix = self._server_prefix()
             channel = await guild.create_text_channel(
-                f"{prefix}ticket-{ticket_id:04d}-{slug}", category=category, overwrites=overwrites,
+                f"{prefix}{kind['slug'] if kind else 'ticket'}-{ticket_id:04d}-{slug}", category=category,
+                overwrites=overwrites,
                 topic=f"Ticket #{ticket_id} by {user} ({user.id})", reason=f"Support ticket #{ticket_id}")
         except discord.HTTPException as exc:
             self.bot.db.delete_ticket(ticket_id)
@@ -527,6 +599,8 @@ class Tickets(commands.Cog):
         embed = discord.Embed(title=title or f"🎫 Ticket #{ticket_id}", description=topic[:4000],
                               colour=discord.Colour.blurple())
         embed.add_field(name="In-game name", value=safe_md(ingame) if ingame else "–")
+        if kind is not None:
+            embed.add_field(name="Category", value=f"{kind['emoji'] or ''} {kind['label']}".strip())
         if self.ai.enabled:
             embed.add_field(name="What happens next?", inline=False, value=(
                 "Our AI assistant will reply shortly. If it can't help, it will bring in the team – "
@@ -541,6 +615,8 @@ class Tickets(commands.Cog):
                                   colour=discord.Colour.blurple())
         log_embed.add_field(name="By", value=opened_by or f"{user.mention} ({safe_md(str(user))})")
         log_embed.add_field(name="Channel", value=channel.mention)
+        if kind is not None:
+            log_embed.add_field(name="Category", value=kind["label"])
         await self._log(guild, embed=log_embed)
 
         ticket = self.bot.db.ticket(ticket_id)
@@ -549,6 +625,28 @@ class Tickets(commands.Cog):
         else:
             await self._escalate(channel, ticket, "New ticket (no AI configured)", source="System")
         return channel
+
+    async def claim(self, interaction: discord.Interaction) -> None:
+        """A staff member takes the ticket: the others see who handles it, the AI pauses."""
+        ticket = self.bot.db.ticket_by_channel(interaction.channel.id) if interaction.channel else None
+        if ticket is None:
+            await interaction.response.send_message("This isn't a ticket.", ephemeral=True)
+            return
+        if not self.is_staff(interaction.user):
+            await interaction.response.send_message("Only staff can claim tickets.", ephemeral=True)
+            return
+        if ticket["claimed_by"]:
+            await interaction.response.send_message(f"Already claimed by **{safe_md(ticket['claimed_by'])}**.",
+                                                    ephemeral=True)
+            return
+        name = getattr(interaction.user, "display_name", str(interaction.user))[:60]
+        self.bot.db.update_ticket(ticket["id"], claimed_by=name, staff_joined=1)
+        self._generation[interaction.channel.id] += 1                # discard a pending AI reply
+        await interaction.response.send_message(f"🙋 **{safe_md(name)}** is handling this ticket now – the AI "
+                                                "assistant is paused.", allowed_mentions=discord.AllowedMentions.none())
+        await self._log(interaction.guild, embed=discord.Embed(
+            title=f"🙋 Ticket #{ticket['id']} claimed", description=f"by {safe_md(name)}",
+            colour=discord.Colour.green()))
 
     async def open_prize_ticket(self, guild: discord.Guild, winner_id: int, prize: str, link: str) -> None:
         """Giveaway won -> the winner gets a ticket in which the AI redeems the prize (or calls staff)."""

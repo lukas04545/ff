@@ -490,6 +490,9 @@ class Storage:
             self._db.execute("ALTER TABLE tickets ADD COLUMN transcript TEXT")
         if "keep_open" not in columns:
             self._db.execute("ALTER TABLE tickets ADD COLUMN keep_open INTEGER NOT NULL DEFAULT 0")
+        for column in ("category", "claimed_by"):           # ticket category · the staff member handling it
+            if column not in columns:
+                self._db.execute(f"ALTER TABLE tickets ADD COLUMN {column} TEXT")
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(custom_kits)")}
         if "claim_role_ids" not in columns:
             # Roles whose members may claim the kit themselves (comma-separated IDs, empty = admins only)
@@ -1026,7 +1029,8 @@ class Storage:
 
     # ------------------------------------------------------------ Tickets
 
-    _TICKET_FIELDS = {"channel_id", "ai_enabled", "escalated", "staff_joined", "ai_replies", "keep_open"}
+    _TICKET_FIELDS = {"channel_id", "ai_enabled", "escalated", "staff_joined", "ai_replies", "keep_open", "category",
+                      "claimed_by"}
 
     def create_ticket(self, user_id: int, topic: str, ingame_name: str | None) -> int:
         cur = self._db.execute(

@@ -138,6 +138,12 @@ FIELDS: list[Field] = [
     Field("DEEPSEEK_API_KEY", "DeepSeek API key", "tickets", "secret",
           help="platform.deepseek.com → API Keys. Empty = tickets without AI."),
     Field("DEEPSEEK_MODEL", "DeepSeek model", "tickets", placeholder="deepseek-flash"),
+    Field("TICKET_TYPES", "Ticket categories", "tickets", "textarea",
+          placeholder="🛠️ Support | problems in game\n💳 Purchase | store, kits you bought\n💸 Refund | money back\n"
+                      "🚨 Admin abuse | report a staff member\n🧰 Custom kit | build or change your kit",
+          help="One per line: emoji, name and (after |) a hint for the AI. Players pick one when they open a ticket; "
+               "\"❓ Not sure\" lets the AI choose. The channel is named after it (e.g. refund-0042-alex). Empty = "
+               "one kind of ticket."),
     Field("TICKET_AI_MAX_REPLIES", "Max. AI replies per ticket", "tickets", "int", placeholder="20"),
     Field("TICKET_RESOLVE_MINUTES", "Ask \"Is it resolved?\" after (minutes)", "tickets", "int", placeholder="5",
           help="After the AI answered and the player hasn't written for this long, the AI asks if the issue is "
