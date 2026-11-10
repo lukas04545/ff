@@ -1,207 +1,155 @@
-"""Wipe manager, scheduled messages, reports + watchlist, teams and the population graph."""
+"""Warnings & notes, staff applications, role menus, anti-raid, event sign-ups, trivia, /connect, staff activity."""
 import asyncio
+import datetime
 import time
-from datetime import datetime
-from types import SimpleNamespace
-from zoneinfo import ZoneInfo
+from types import SimpleNamespace as NS
 
-import pytest
-
-from cogs.wipe import next_occurrence, parse_when
-from storage import Storage
-
-H = {"X-Requested-With": "rce-web"}
-BERLIN = ZoneInfo("Europe/Berlin")
+from tests.test_plugins import pb, plug  # noqa: F401
 
 
-def test_wipe_dates():
-    ts = parse_when("2026-10-15 18:00", BERLIN)
-    assert datetime.fromtimestamp(ts, BERLIN).strftime("%Y-%m-%d %H:%M") == "2026-10-15 18:00"
-    assert parse_when("15.10.2026 18:00", BERLIN) == ts and parse_when("next thursday", BERLIN) is None
-    # Weekly across the end of daylight saving time (25 Oct 2026): still 18:00 local time
-    nxt = next_occurrence(parse_when("2026-10-22 18:00", BERLIN), "weekly", BERLIN, now=0)
-    assert datetime.fromtimestamp(nxt, BERLIN).strftime("%Y-%m-%d %H:%M") == "2026-10-29 18:00"
-    # Monthly = first same weekday of the next month (Thursday 1 Oct 2026 -> Thursday 5 Nov 2026)
-    nxt = next_occurrence(parse_when("2026-10-01 20:00", BERLIN), "monthly", BERLIN, now=0)
-    assert datetime.fromtimestamp(nxt, BERLIN).strftime("%a %Y-%m-%d %H:%M") == "Thu 2026-11-05 20:00"
-    # Missed several weeks (bot was off): jumps to the first date in the future
-    old = int(time.time()) - 30 * 86400
-    assert time.time() < next_occurrence(old, "weekly", BERLIN) <= time.time() + 7 * 86400
-    assert next_occurrence(old, "none", BERLIN) is None
+def run(c):
+    return asyncio.run(c)
 
 
-@pytest.fixture
-def bot(tmp_path):
-    cfg = SimpleNamespace(wipe_timezone="Europe/Berlin", wipe_channel_id=5, events_channel_id=None, wipe_ping_role_id=9,
-                          wipe_reset_kits=True, wipe_reset_stats=True, wipe_reset_points=False, backup_enabled=False,
-                          rust_server_wipe="", report_channel_id=6, alert_channel_id=None, admin_log_channel_id=None,
-                          support_role_ids=frozenset({42}), admin_user_ids=frozenset(), admin_role_ids=frozenset())
-    sent, said, audit = [], [], []
-
-    class Channel:
-        id = 5
-
-        async def send(self, content=None, embed=None, **kw):
-            sent.append((content, embed.title if embed else None, embed))
-            return SimpleNamespace(id=777, channel=SimpleNamespace(id=6))
-
-    async def command(cmd, **kw):
-        said.append(cmd)
-        return ""
-    import discord
-    b = SimpleNamespace(config=cfg, db=Storage(tmp_path / "bot.db"), audit=audit.append, online_players={},
-                        rcon=SimpleNamespace(command=command, connected=True),
-                        get_channel=lambda cid: (b.channels_used.append(cid), Channel())[1],
-                        get_cog=lambda name: None, add_view=lambda v: None, get_user=lambda uid: None,
-                        dispatch=lambda *a: b.events.append(a))
-    b.sent, b.said, b.audit_lines, b.channels_used, b.events = sent, said, audit, [], []
-    old = discord.abc.Messageable
-    discord.abc.Messageable = Channel
-    yield b
-    discord.abc.Messageable = old
-    b.db.close()
+def test_warnings_kick_and_ban_after_n(pb):  # noqa: F811
+    p = plug(pb, "player_notes", kick_after=2, ban_after=3, tell_ingame=True, dm=False)
+    pb.bot.online_players = {"Ryvex": {}}
+    run(p.warn_player("ryvex", "spawn killing", "Mod"))
+    assert any("was warned" in c for c in pb.said)
+    _, count, action = run(p.warn_player("Ryvex", "again", "Mod"))
+    assert count == 2 and action.startswith("kicked")
+    _, count, action = run(p.warn_player("Ryvex", "third", "Mod"))
+    assert count == 3 and action.startswith("banned")
+    assert any(c.startswith(pb.bot.config.ban_template.split("{")[0]) for c in pb.said)
+    p.add("n", "Ryvex", "alt of Bob?", "Mod")
+    assert len(p.entries("n", "RYVEX")) == 1 and len(p.entries("w")) == 3
+    assert p.remove("w", p.entries("w")[0]["id"]) and p.clear("w", "ryvex") == 2
 
 
-def test_wipe_countdown_and_resets(bot):
-    from cogs.wipe import Wipe
-    w = Wipe(bot)
-    now = int(time.time())
-    w.set_schedule(now + 30 * 60, "weekly")                      # set 30 min before the wipe
-    asyncio.run(w.tick(now))
-    assert [s[1] for s in bot.sent] == ["🧹 Wipe coming up"] and bot.sent[0][0] == "<@&9>"   # only the 1 h post
-    assert bot.said and "Server wipe in 30 minutes" in bot.said[0]
-    asyncio.run(w.tick(now + 60))
-    assert len(bot.sent) == 1                                     # no repeat
-    asyncio.run(w.tick(now + 25 * 60))                            # 10 min stage: in-game only
-    assert len(bot.sent) == 1 and len(bot.said) == 2
+def test_role_menu_refuses_roles_with_permissions():
+    from plugins.role_menus import role_problem
+    me = NS(top_role=10)
 
-    bot.db.record_kill("A", "B")
-    bot.db.add_kit_rule("starter", "respawn", None, 0, 1, "admin")
-    bot.db.record_kit_claim(1, "starter", "A", "autokit")
-    asyncio.run(w.tick(now + 31 * 60))                            # wipe time
-    assert bot.sent[-1][1] == "🧹 Server wiped!" and bot.db.player("A")["kills"] == 0
-    assert bot.db.kit_claim_state(1, "A")[0] == 0
-    nxt = w.schedule()["next"]
-    assert nxt and abs(nxt - (now + 30 * 60 + 7 * 86400)) < 3700  # next week, same local time
-    assert "Next wipe" in [f.name for f in bot.sent[-1][2].fields]
+    class Role(int):
+        def __new__(cls, pos, perms=0, managed=False, default=False):
+            r = super().__new__(cls, pos)
+            r.permissions, r.managed, r.name, r._default = NS(value=perms), managed, f"r{pos}", default
+            return r
+
+        def is_default(self):
+            return self._default
+    guild = NS(me=me)
+    assert role_problem(guild, Role(5)) is None
+    assert "permissions" in role_problem(guild, Role(5, perms=8))           # e.g. administrator
+    assert "above" in role_problem(guild, Role(12))
+    assert "managed" in role_problem(guild, Role(3, managed=True))
 
 
-def test_scheduled_messages(bot):
-    from cogs.schedule import Schedule
-    s = Schedule(bot)
-    with pytest.raises(ValueError):
-        s.add("too often", 1, "game", None, "admin")
-    with pytest.raises(ValueError):
-        s.add("needs a channel", 30, "both", None, "admin")
-    msg_id = s.add("Join our Discord!\nNow", 30, "both", 5, "admin")
-    now = int(time.time())
-    asyncio.run(s.tick(now + 60))
-    assert bot.said == []                                         # first time after one interval
-    asyncio.run(s.tick(now + 31 * 60))
-    assert bot.said == ["say Join our Discord! Now"] and bot.sent[-1][0] == "Join our Discord! Now"
-    bot.db.set_scheduled_enabled(msg_id, False)
-    asyncio.run(s.tick(now + 120 * 60))
-    assert len(bot.said) == 1
+def test_anti_raid_join_wave_and_young_accounts(pb):  # noqa: F811
+    p = plug(pb, "anti_raid", joins=3, seconds=30, raid_action="kick", always_action="alert", min_age_days=7)
+    acted = []
+
+    def member(days_old):
+        async def kick(reason=None):
+            acted.append(("kick", days_old))
+
+        async def timeout(delta, reason=None):
+            acted.append(("timeout", days_old))
+        return NS(bot=False, created_at=datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days_old),
+                  kick=kick, timeout=timeout, mention="@x")
+    run(p.on_member_join(member(1)))                     # young, no raid: only flagged
+    assert acted == []
+    for _ in range(3):
+        run(p.on_member_join(member(400)))               # old accounts: never touched
+    run(p.on_member_join(member(2)))                     # 5th join in 30 s = raid; young → kicked
+    assert acted == [("kick", 2)] and p.data.get("raids") == 1
 
 
-def test_reports_and_watchlist(bot):
-    from cogs.reports import Reports
-    r = Reports(bot)
-    member = SimpleNamespace(id=7, roles=[])
-    ok, text = asyncio.run(r.create_report(member, "Cheater123", "flying over my base at outpost"))
-    assert ok and "report #1" in text and bot.sent[-1][0] == "<@&42>"
-    assert bot.db.report(1)["message_id"] == 777
-    assert not asyncio.run(r.create_report(member, "Cheater123", "again!"))[0]   # cooldown
-    assert r.is_staff(SimpleNamespace(id=1, roles=[SimpleNamespace(id=42)])) and not r.is_staff(member)
-
-    bot.db.watch("BanEvader", "alt of banned Cheater123", "admin")
-    bot.config.watchlist_channel_id = 8                           # own channel for watchlist alerts
-    asyncio.run(r.on_rce_player_join("banevader"))                # case doesn't matter
-    assert bot.sent[-1][1] == "👀 Watched player joined" and bot.channels_used[-1] == 8
-    n = len(bot.sent)
-    asyncio.run(r.on_rce_player_join("BanEvader"))                # re-join right away: no second ping
-    asyncio.run(r.on_rce_player_join("SomeoneElse"))
-    assert len(bot.sent) == n
-
-
-def test_teams_and_population(tmp_path):
-    db = Storage(tmp_path / "bot.db")
-    for killer in ("Ann", "Ann", "Bob", "Cid"):
-        db.record_kill(killer, "Zed")
-    db.team_event("create", "Ann", 11)
-    db.team_event("join", "Bob", 11, "Ann")
-    db.team_event("create", "Cid", 12)                            # solo team -> not ranked
-    rows = db.team_leaderboard("kills")
-    assert [(r["leader"], r["members"], r["kills"]) for r in rows] == [("Ann", 2, 3)]
-    db.team_event("promote", "Ann", 11, "Bob")
-    db.team_event("leave", "Ann", 11, "Bob")
-    team, members = db.team_of("Bob")
-    assert team["leader"] == "Bob" and members == ["Bob"] and db.team_of("Ann") is None
-
-    now = int(time.time())
-    db.add_population_sample(now - 50 * 86400, 99, 50, 0)         # too old -> deleted by the next sample
-    for i in range(12):
-        db.add_population_sample(now - 3600 + i * 300, i, 50, 0)
-    assert len(db.population(now - 86400)) == 12
-    hourly = db.population(now - 86400, 3600)
-    assert sum(p[1] for p in hourly) / len(hourly) <= 11 and all(p[2] == 50 for p in hourly)
-    assert db.population(0)[0][1] != 99
-    db.close()
+def test_event_signups_teams_winners_and_rewards(pb, monkeypatch):  # noqa: F811
+    p = plug(pb, "event_signups", points=100)
+    monkeypatch.setattr(type(p), "points_enabled", property(lambda self: True))
+    paid = []
+    monkeypatch.setattr(p, "give_points", lambda uid, amount, why: paid.append((uid, amount)) or 1)
+    eid = p.create_event("Raid night", p.now() + 600, team_size=2)
+    u = lambda i, n: NS(id=i, display_name=n)                               # noqa: E731
+    assert "with team" in run(p.join(eid, u(1, "A"), "Wolves"))
+    assert "Wolves" in run(p.join(eid, u(2, "B"), "wolves"))               # same team, any case
+    assert "full" in run(p.join(eid, u(3, "C"), "Wolves"))
+    assert "already" in run(p.join(eid, u(1, "A"), "Bears"))
+    run(p.join(eid, u(3, "C"), "Bears"))
+    assert run(p.leave(eid, 3)) == "You left the event."
+    assert "**Wolves** – A, B" in p.embed(eid).fields[0].value
+    run(p.set_winners(eid, ["Wolves"]))
+    assert sorted(paid) == [(1, 100), (2, 100)] and p.leaderboard() == [("Wolves", 1)]
+    late = p.create_event("Later", p.now() - 1)
+    assert "closed" in run(p.join(late, u(5, "E")))
+    assert run(p.start_due()) == 1 and p.event(late)["closed"]
+    assert p.find("raid night") == eid and p.find(f"#{eid}") == eid
 
 
-def test_web_endpoints(tmp_path, monkeypatch):
-    from aiohttp.test_utils import TestClient, TestServer
-    for k, v in dict(DISCORD_TOKEN="x", RCON_HOST="127.0.0.1", RCON_PORT="1", RCON_PASSWORD="pw",
-                     ADMIN_ROLE_IDS="1", WEB_PASSWORD="secret123", DATABASE_PATH=str(tmp_path / "bot.db"),
-                     SUPPORT_KNOWLEDGE_FILE=str(tmp_path / "k.md")).items():
-        monkeypatch.setenv(k, v)
-    from bot import RceBot
-    from cogs.reports import Reports
-    from cogs.schedule import Schedule
-    from cogs.wipe import Wipe
-    from config import load_config
-    from web.server import WebInterface
+def test_trivia_first_right_answer_wins_once(pb, monkeypatch):  # noqa: F811
+    from plugins.trivia import TriviaRound
+    p = plug(pb, "trivia", points=0, builtin=True)
 
-    async def no_loop(self):
-        return None
-    for cls in (Wipe, Schedule):
-        monkeypatch.setattr(cls, "cog_load", no_loop)
+    async def go():
+        game = TriviaRound(p, ("2 + 2?", "4", "3", "5", "6"), 1, 60)
+        out = []
 
-    async def scenario():
-        bot = RceBot(load_config("/nonexistent"))
-        for cls in (Wipe, Schedule, Reports):
-            await bot.add_cog(cls(bot))
-        bot.db.add_report(7, "Cheater123", "aimbot")
-        bot.db.add_population_sample(int(time.time()) - 600, 12, 50, 0)
-        web = WebInterface(bot, env_path=tmp_path / ".env", secret_path=tmp_path / "k")
-        c = TestClient(TestServer(web.app))
-        await c.start_server()
-        try:
-            await c.post("/api/login", json={"password": "secret123"}, headers=H)
-            r = await c.put("/api/wipe", json={"when": "2099-01-05T18:00", "repeat": "weekly"}, headers=H)
-            assert r.status == 200
-            w = await (await c.get("/api/wipe")).json()
-            assert w["local"] == "2099-01-05T18:00" and w["repeat"] == "weekly" and w["repeat_text"] == "every week"
-            assert (await c.put("/api/wipe", json={"when": "2000-01-01T10:00"}, headers=H)).status == 400
-            bad = await c.post("/api/schedules", json={"text": "hi", "minutes": 30, "target": "discord"}, headers=H)
-            assert bad.status == 400
-            ok = await c.post("/api/schedules", json={"text": "Vote for us!", "minutes": 60, "target": "game"}, headers=H)
-            assert ok.status == 200
-            rows = (await (await c.get("/api/schedules")).json())["rows"]
-            assert rows[0]["text"] == "Vote for us!" and rows[0]["channel_id"] is None
-            reports = await (await c.get("/api/reports?status=open")).json()
-            assert reports["reports"][0]["player"] == "Cheater123"
-            assert (await c.post("/api/reports/1/handled", headers=H)).status == 200
-            assert (await (await c.get("/api/reports?status=open")).json())["reports"] == []
-            await c.post("/api/watchlist", json={"player": "BanEvader", "reason": "alt"}, headers=H)
-            assert (await (await c.get("/api/reports")).json())["watchlist"][0]["player"] == "BanEvader"
-            assert (await c.delete("/api/watchlist/BanEvader", headers=H)).status == 200
-            pop = await (await c.get("/api/population?days=1")).json()
-            assert pop["points"][0][1] == 12
-            teams = await (await c.get("/api/leaderboard?teams=1&category=kills")).json()
-            assert teams["rows"] == []
-        finally:
-            await c.close()
-            await bot.rcon.close()
-            bot.db.close()
-    asyncio.run(scenario())
+        def it(uid):
+            async def send_message(text=None, ephemeral=False, **kw):
+                out.append((uid, text))
+
+            async def edit_message(embed=None, view=None):
+                out.append((uid, "EDIT", embed.fields[0].name))
+            return NS(user=NS(id=uid), response=NS(send_message=send_message, edit_message=edit_message),
+                      followup=NS(send=lambda *a, **k: asyncio.sleep(0)))
+        wrong = next(i for i in range(4) if i != game.right)
+        await game.answer(it(1), wrong)
+        await game.answer(it(1), game.right)                  # one try each
+        await game.answer(it(2), game.right)
+        await game.answer(it(3), game.right)
+        return game, out
+    game, out = run(go())
+    assert out[0] == (1, "❌ Wrong!") and out[1] == (1, "You had your try.")
+    assert out[2] == (2, "EDIT", "✅ Solved") and "Already solved" in out[3][1]
+    assert game.winner == 2 and p.data.get("wins") == {"2": 1}
+    assert len(p.questions()) >= 10
+    p2 = plug(pb, "trivia", builtin=False, questions="Best gun? | AK | Bow | Rock | Spear\nbroken line")
+    assert p2.questions() == [("Best gun?", "AK", "Bow", "Rock", "Spear")]
+
+
+def test_connect_and_staff_activity(pb):  # noqa: F811
+    c = plug(pb, "connect_info", how_to_join="Search Kryvon EU")
+    assert "Search Kryvon EU" in c.embed().description
+    s = plug(pb, "staff_activity")
+    s.record("Mod#1", "commands", "/kick")
+    s.record("Mod#1", "commands", "/ban")
+    s.record("panel:owner", "panel", "Settings changed")
+    rows = dict(s.summary(7))
+    assert rows["Mod#1"]["commands"] == 2 and rows["panel:owner"]["panel"] == 1
+
+
+def test_staff_application_accept_gives_the_role(pb, monkeypatch):  # noqa: F811
+    p = plug(pb, "staff_applications", channel=100, role=55, wait_days=7)
+    monkeypatch.setattr("plugins.staff_applications.is_admin", lambda bot, user: user.id == 9)
+    replies, roles = [], []
+
+    def it(uid, guild=None):
+        async def send_message(text=None, ephemeral=False, **kw):
+            replies.append(text)
+        return NS(user=NS(id=uid, mention=f"<@{uid}>", __str__=lambda s: "u"), guild=guild,
+                  response=NS(send_message=send_message))
+
+    async def add_roles(role, reason=None):
+        roles.append(role)
+    member = NS(id=4, add_roles=add_roles, send=lambda *a, **k: asyncio.sleep(0))
+    guild = NS(get_member=lambda uid: member, get_role=lambda rid: NS(id=rid, mention="@Staff"))
+    run(p.submit(it(4), [("Why?", "I love Rust")]))
+    assert "sent to the staff" in replies[-1] and pb.posted[-1].embed.fields[0].value == "I love Rust"
+    assert "open application" in p.blocked(4)
+    run(p.decide(it(5, guild), 1, True))
+    assert "Only staff" in replies[-1]
+    run(p.decide(it(9, guild), 1, True))
+    assert roles and "Accepted" in replies[-1] and p.data.get("app:1")["state"] == "accepted"
+    run(p.decide(it(9, guild), 1, False))
+    assert "already decided" in replies[-1]

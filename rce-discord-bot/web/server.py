@@ -1346,6 +1346,10 @@ class WebInterface:
         user = _current_user.get()
         if self.bot is not None:
             self.bot.audit(f"🌐 Web interface ({user}): {text}")
+            try:                                                       # staff activity (plugins/staff_activity.py)
+                self.bot.dispatch("rce_panel_action", user, text)
+            except (AttributeError, RuntimeError):                     # not connected to Discord (yet)
+                pass
         log.info("Web action by %s: %s", user, text)
 
     def _cog(self, name: str):
