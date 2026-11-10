@@ -1664,6 +1664,21 @@ alt accounts from collecting twice. Plugins that pay points need **Points & shop
 
 ## Community & moderation
 
+### Staff & community tools (plugins – switch them on in Plugins)
+
+| Plugin | What it does |
+|---|---|
+| 📝 Warnings & notes | `/warn add/list/remove/clear` for in-game players (told in game / by DM, automatic kick or ban after N warnings), `/note add/list/remove` – private staff notes. The warning count shows in `/profile`. |
+| 📋 Staff applications | `/apply` opens a form with your questions (up to 5); staff Accept / Decline with a button – accepting gives the role you set, the applicant gets a DM. One open application per member, a waiting time after a decline. |
+| 🎭 Role menus | `/rolemenu create` posts buttons members click to take or drop a role (pings, region, platform). Only roles **without any permissions** and below the bot's role can be in a menu. |
+| 🛡️ Anti-raid | Join waves on Discord (more than N joins in M seconds) alert staff and start raid mode: brand-new accounts are timed out or kicked. Optional: always keep accounts younger than X days out. Needs the Server Members intent. |
+| 🏆 Event sign-ups | `/signup create` posts an event with Join / Leave (solo or teams, live countdown, max players); everyone gets a DM when it starts. `/signup winners` records winners (points reward), `/signup leaderboard`. |
+| ❓ Trivia | `/trivia ask` (or automatically every N minutes): a question with 4 answer buttons, the first right answer wins points. Built-in Rust questions + your own. `/trivia top`. |
+| 🔌 Connect info (on) | `/connect` – how to join the server, players online, the website. |
+| 👮 Staff activity (on) | `/staffactivity [days]` – per staff member: admin commands and control panel changes, active days, the last action. |
+
+Also: **ticket categories** (Settings → Tickets → *Ticket categories*: players pick Support / Purchase / Refund / Admin abuse / …, or "❓ Not sure" and the AI picks one; the channel is named after it), a **🙋 Claim** button in every ticket (staff: "I'm handling this" – the AI pauses), an **🤖 AI check** on every player report (severity, kind, what to check – it never punishes), **raid statistics** (`/raidalerts stats`), **daily and monthly recaps** (Weekly recap plugin), the website's **Staff / Bans / Wipes** pages (Player website plugin), **discount codes** in the store (Store → 🏷️ Discount codes), **TikTok** in the Streamers plugin, and **cross-server profiles** (`/profile` shows the stats from your other servers). In-game mutes don't exist on Console Edition (there's no free text chat) – use `/mod timeout` for Discord.
+
 These features come from the KRYVON bot and have been rebuilt and extended here:
 
 | KRYVON bot | Here |

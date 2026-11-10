@@ -1,5 +1,6 @@
 """Weekly recap: once a week the bot posts the week's highlights – top killers, most playtime, best K/D, the most
-embarrassing way to die, new players, peak population, bounties and the biggest team.
+embarrassing way to die, new players, peak population, bounties and the biggest team. Optional: the same as a daily
+recap (every day at the hour) and a monthly recap (on the 1st at the hour).
 
 Counted by the plugin itself from the killfeed and the player list (a leaderboard reset doesn't matter). Optional:
 points for the week's top killer and the player with the most playtime.
@@ -45,12 +46,15 @@ class WeeklyRecap(Plugin):
         Setting("reward", "Points for the top killer and top player", "int", 0, min=0, max=1_000_000,
                 help="0 = no reward (only linked players can get it)."),
         Setting("min_kills", "Min. kills for the K/D ranking", "int", 5, min=1, max=1000),
+        Setting("daily", "Also a daily recap", "bool", False, help="Every day at the hour above."),
+        Setting("monthly", "Also a monthly recap", "bool", False, help="On the 1st of every month at the hour above."),
     )
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._last_tick: float | None = None
         self.week: dict | None = None
+        self.extra: dict[str, dict] = {}              # "day" / "month" buckets (same shape as the week)
 
     # ------------------------------------------------------------ Counting
 
@@ -63,9 +67,22 @@ class WeeklyRecap(Plugin):
     def _fresh(self) -> dict:
         return {"start": self.now(), "kills": {}, "deaths": {}, "playtime": {}, "causes": {}, "players": []}
 
+    def _bucket(self, period: str = "week") -> dict:
+        if period == "week":
+            return self._week()
+        if period not in self.extra:
+            stored = self.data.get(f"bucket:{period}")
+            self.extra[period] = stored if isinstance(stored, dict) else self._fresh()
+        return self.extra[period]
+
+    def _buckets(self) -> list[dict]:
+        return [self._week(), self._bucket("day"), self._bucket("month")]
+
     def _save(self) -> None:
         if self.week is not None:
             self.data.set("week", self.week)
+        for period, bucket in self.extra.items():
+            self.data.set(f"bucket:{period}", bucket)
 
     @staticmethod
     def _inc(table: dict, key: str, amount: float = 1) -> None:
@@ -73,34 +90,36 @@ class WeeklyRecap(Plugin):
 
     @Plugin.listener()
     async def on_rce_kill(self, ev) -> None:
-        week = self._week()
-        if ev.victim_type is KillerType.PLAYER:
-            self._inc(week["deaths"], ev.victim)
-            if ev.killer_type is KillerType.PLAYER and ev.killer.lower() != ev.victim.lower():
-                self._inc(week["kills"], ev.killer)
-            elif ev.killer_type is not KillerType.PLAYER:
-                self._inc(week["causes"], ev.killer)
+        for week in self._buckets():
+            if ev.victim_type is KillerType.PLAYER:
+                self._inc(week["deaths"], ev.victim)
+                if ev.killer_type is KillerType.PLAYER and ev.killer.lower() != ev.victim.lower():
+                    self._inc(week["kills"], ev.killer)
+                elif ev.killer_type is not KillerType.PLAYER:
+                    self._inc(week["causes"], ev.killer)
 
     @Plugin.listener()
     async def on_rce_suicide(self, ev) -> None:
-        self._inc(self._week()["causes"], "Suicide")
+        for week in self._buckets():
+            self._inc(week["causes"], "Suicide")
 
     def add_playtime(self, players: list[str], seconds: float) -> None:
-        week = self._week()
-        known = set(week["players"])
-        for p in players:
-            self._inc(week["playtime"], p, seconds)
-            if p not in known:
-                week["players"].append(p)
-                known.add(p)
+        for week in self._buckets():
+            known = set(week["players"])
+            for p in players:
+                self._inc(week["playtime"], p, seconds)
+                if p not in known:
+                    week["players"].append(p)
+                    known.add(p)
 
     # ------------------------------------------------------------ The post
 
-    def build(self, now: int | None = None) -> discord.Embed:
+    def build(self, now: int | None = None, period: str = "week") -> discord.Embed:
         now = self.now() if now is None else now
-        week = self._week()
+        week = self._bucket(period)
         kills, playtime = Counter(week["kills"]), Counter(week["playtime"])
-        embed = discord.Embed(title=f"📰 Weekly recap – {self.server_name}", colour=COLOUR,
+        title = {"day": "Daily recap", "week": "Weekly recap", "month": "Monthly recap"}[period]
+        embed = discord.Embed(title=f"📰 {title} – {self.server_name}", colour=COLOUR,
                               description=f"<t:{week['start']}:D> – <t:{now}:D>")
 
         def ranking(counter: Counter, fmt) -> str:
@@ -131,7 +150,8 @@ class WeeklyRecap(Plugin):
             done = int(bounties.data.get("claimed_total", 0)) - int(week.get("bounties_at_start", 0))
             if done > 0:
                 stats.append(f"🎯 **{done}** bounties collected")
-        embed.add_field(name="📊 This week", value=" · ".join(stats), inline=False)
+        embed.add_field(name={"day": "📊 Today", "week": "📊 This week", "month": "📊 This month"}[period],
+                        value=" · ".join(stats), inline=False)
         teams = self.bot.db.team_leaderboard("members", 1)
         if teams:
             t = teams[0]
@@ -141,15 +161,15 @@ class WeeklyRecap(Plugin):
             embed.set_footer(text=f"Top killer and top player get {self.fmt_points(reward)} (linked players).")
         return embed
 
-    async def post_recap(self) -> bool:
-        week = self._week()
+    async def post_recap(self, period: str = "week") -> bool:
+        week = self._bucket(period)
         if not week["players"] and not week["kills"]:
-            self._reset()
+            self._reset(period)
             return False
-        embed = self.build()
+        embed = self.build(period=period)
         channel = self.channel(self.setting("channel"), self.bot.config.events_channel_id)
         message = await self.post(channel, embed=embed)
-        reward = self.setting("reward")
+        reward = self.setting("reward") if period == "week" else 0          # the reward stays weekly
         if message is not None and reward:
             winners = {n for n, _ in Counter(week["kills"]).most_common(1)} | \
                       {n for n, _ in Counter(week["playtime"]).most_common(1)}
@@ -157,10 +177,14 @@ class WeeklyRecap(Plugin):
                 user_id = self.linked_user(name)
                 if user_id is not None:
                     self.give_points(user_id, reward, "weekly recap top player")
-        self._reset()
+        self._reset(period)
         return message is not None
 
-    def _reset(self) -> None:
+    def _reset(self, period: str = "week") -> None:
+        if period != "week":
+            self.extra[period] = self._fresh()
+            self._save()
+            return
         self.week = self._fresh()
         bounties = self.plugin("bounties")
         if bounties is not None:
@@ -189,15 +213,42 @@ class WeeklyRecap(Plugin):
         if slot is not None:
             self.data.set("last_slot", slot)
             await self.post_recap()
+        for period in ("day", "month"):
+            slot = self.due_extra(period)
+            if slot is not None:
+                self.data.set(f"last_slot:{period}", slot)
+                if self.setting("daily" if period == "day" else "monthly"):
+                    await self.post_recap(period)
+                else:
+                    self._reset(period)
+
+    def due_extra(self, period: str, now: int | None = None) -> int | None:
+        """The daily slot (every day at the hour) or the monthly one (the 1st at the hour), once each."""
+        now = self.now() if now is None else now
+        local = datetime.fromtimestamp(now, self.tz)
+        slot = local.replace(hour=self.setting("hour"), minute=0, second=0, microsecond=0)
+        if period == "month":
+            slot = slot.replace(day=1)
+        if slot > local:
+            slot = slot - timedelta(days=1) if period == "day" else \
+                (slot.replace(day=1) - timedelta(days=1)).replace(day=1)
+        slot_ts, last = int(slot.timestamp()), self.data.get(f"last_slot:{period}")
+        if last is None:
+            self.data.set(f"last_slot:{period}", slot_ts)
+            return None
+        return slot_ts if slot_ts > last else None
 
     async def on_unload(self) -> None:
         self._save()
 
-    @app_commands.command(name="recap", description="Preview of this week's recap (only you see it).")
+    @app_commands.command(name="recap", description="Preview of the recap so far (only you see it).")
+    @app_commands.choices(period=[app_commands.Choice(name="This week", value="week"),
+                                  app_commands.Choice(name="Today", value="day"),
+                                  app_commands.Choice(name="This month", value="month")])
     @app_commands.guild_only()
     @admin_only()
-    async def recap(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_message(embed=self.build(), ephemeral=True)
+    async def recap(self, interaction: discord.Interaction, period: str = "week") -> None:
+        await interaction.response.send_message(embed=self.build(period=period), ephemeral=True)
 
     def status(self) -> dict:
         week = self._week()

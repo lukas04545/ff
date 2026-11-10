@@ -890,7 +890,7 @@ def test_basket_with_a_bundle_one_payment_and_a_coupon_before_checkout(shop, mon
             assert "Starter pack" in page and "AK kit" in page and "24.99" in page and "Basket (2)" in page
             # the coupon code is applied here, before paying
             page = await (await c.post("/store/basket", data={"gift": code, "player": "Gamer7"})).text()
-            assert "Code applied" in page and "19.99" in page
+            assert "Gift card: €5.00 paid" in page and "19.99" in page
             assert (await (await c.post("/store/basket", data={"gift": "NOPE"})).text()).count("bad") >= 1
             # remove and add again – then one checkout for everything
             await c.post("/store/basket/remove", data={"i": "1"})

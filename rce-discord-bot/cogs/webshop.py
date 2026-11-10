@@ -215,6 +215,28 @@ class WebShop(commands.Cog):
 
     MAX_COMBINE = 10
 
+    def discount(self, code: str, total: float, ip: str = "?") -> tuple:
+        """A usable discount code and how much it takes off this total – or CheckoutError."""
+        if self._gift_failures.retry_after(ip) is not None:
+            raise CheckoutError("Too many wrong codes – please wait 15 minutes.")
+        row = self.bot.db.store_discount(str(code or "").strip())
+        if row is None:
+            self._gift_failures.hit(ip)
+            raise CheckoutError("This discount code doesn't exist.")
+        if not row["enabled"]:
+            raise CheckoutError("This discount code isn't active.")
+        if row["expires_at"] and row["expires_at"] <= time.time():
+            raise CheckoutError("This discount code has expired.")
+        if row["uses_left"] is not None and row["uses_left"] <= 0:
+            raise CheckoutError("This discount code is used up.")
+        if total < float(row["min_total"] or 0):
+            raise CheckoutError(f"This code needs a basket of at least {self.fmt(row['min_total'])}.")
+        off = total * float(row["percent"] or 0) / 100 + float(row["amount"] or 0)
+        return row, round(min(total, off), 2)
+
+    def is_discount(self, code: str) -> bool:
+        return bool(str(code or "").strip()) and self.bot.db.store_discount(str(code).strip()) is not None
+
     async def combine_gift_cards(self, target: str, sources, ip: str = "?") -> dict:
         """Moves the balance of other gift cards onto one (`target`). Returns {"code", "moved", "balance",
         "expires_at", "count"}; CheckoutError with a message for the player otherwise."""
@@ -322,8 +344,11 @@ class WebShop(commands.Cog):
 
     def _add_cart_children(self, parent_id: int, lines: list[dict], fields: dict) -> None:
         """One order per kit of the basket – each is delivered (and retried) like a single kit order."""
+        full = sum(line["price"] for line in lines)
+        factor = fields["total"] / full if full else 1          # a discount code: every kit a bit cheaper
         for line in lines:
             shares = [line["price"]] if line["kind"] == "kit" else self._split_price(line)
+            shares = [round(x * factor, 2) for x in shares]
             for kit, share in zip(line["kits"], shares):
                 self.bot.db.add_store_order(
                     token=secrets.token_urlsafe(18), kind="kit", store_kit_id=kit["id"], total=share,
@@ -528,7 +553,7 @@ class WebShop(commands.Cog):
                        timer_hours: int | None = None, value=None, player: str = "", gift_code: str = "",
                        name: str = "", admin_key: str = "", ip: str = "?", user_id: int | None = None,
                        slot_count: int | None = None, months: int | None = None, shop_server: str = "",
-                       cart: list | None = None) -> dict:
+                       cart: list | None = None, discount_code: str = "") -> dict:
         """Starts an order. Returns {"token", "redirect"} (PayPal) or {"token"} (paid with a gift card or free with
         the admin key). `user_id` (a logged-in player) is required for the "addon" and "slots" kinds."""
         db = self.bot.db
@@ -543,6 +568,11 @@ class WebShop(commands.Cog):
             names = ", ".join(line["name"] for line in lines)
             fields.update(title=(f"Basket: {names}" if len(names) <= 120 else f"Basket ({len(lines)} items)"),
                           total=round(sum(line["price"] for line in lines), 2))
+            if discount_code.strip():                   # a discount code: off the basket, before the gift card
+                code_row, off = self.discount(discount_code, fields["total"], ip)
+                if off > 0:
+                    fields.update(total=round(fields["total"] - off, 2), discount_code=code_row["code"],
+                                  discount_amount=off, title=f"{fields['title'][:150]} (code {code_row['code']})")
         elif kind == "kit":
             row = self.store_kit(kit_id)
             fields.update(title=row["name"], store_kit_id=row["id"], total=round(float(row["price"]), 2))
@@ -635,6 +665,9 @@ class WebShop(commands.Cog):
             self.check_admin_key(admin_key, ip)
             token = secrets.token_urlsafe(18)
             order_id = db.add_store_order(token=token, admin_key=1, **fields)
+            if fields.get("discount_code") and not db.use_store_discount(fields["discount_code"]):
+                db.update_store_order(order_id, status="cancelled", result="discount code used up")
+                raise CheckoutError("This discount code was just used up – please try again without it.")
             if kind == "cart":
                 self._add_cart_children(order_id, lines, fields)
             db.move_store_order(order_id, "pending", "paid", paid_at=int(time.time()))
@@ -652,6 +685,9 @@ class WebShop(commands.Cog):
         token = secrets.token_urlsafe(18)
         order_id = db.add_store_order(token=token, gift_code=gift_row["code"] if gift_row else None,
                                       gift_amount=gift_amount, paypal_amount=paypal_amount, **fields)
+        if fields.get("discount_code") and not db.use_store_discount(fields["discount_code"]):
+            db.update_store_order(order_id, status="cancelled", result="discount code used up")
+            raise CheckoutError("This discount code was just used up – please try again without it.")
         if kind == "cart":
             self._add_cart_children(order_id, lines, fields)
         if gift_amount and not db.take_gift_balance(gift_row["code"], gift_amount, int(time.time())):
@@ -707,6 +743,8 @@ class WebShop(commands.Cog):
             return False
         if order["gift_code"] and order["gift_amount"]:
             self.bot.db.return_gift_balance(order["gift_code"], float(order["gift_amount"]))
+        if order["discount_code"]:
+            self.bot.db.return_store_discount(order["discount_code"])
         for child in self.bot.db.store_order_children(order_id):         # a basket: its kits too
             self.bot.db.move_store_order(child["id"], "pending", status, result=result[:300])
         return True

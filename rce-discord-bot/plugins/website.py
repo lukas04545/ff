@@ -370,6 +370,12 @@ class PlayerWebsite(Plugin):
                 help="Set it up in the web interface → Store and Settings → Store."),
         Setting("shop", "Show the points shop", "bool", True),
         Setting("rules", "Show the rules", "bool", True),
+        Setting("show_staff", "Show the staff page", "bool", True,
+                help="Lists the members with your admin and support roles, plus anyone you add below."),
+        Setting("staff_extra", "Extra staff (one per line: Name | Role)", "textarea", ""),
+        Setting("show_bans", "Show the bans page", "bool", False,
+                help="Who is banned from the server and why (recorded from now on: bans in the server log and /ban)."),
+        Setting("show_wipes", "Show the wipe history", "bool", True),
         Setting("theme", "Look (theme)", "choice", "rust", choices=tuple(THEMES),
                 help="rust = burnt orange · neon = purple/cyan night · arctic = ice blue · jungle = military green · "
                      "bloodmoon = deep red · gold = royal gold · clean = calm, no grit · ocean = deep teal · toxic = "
@@ -511,6 +517,12 @@ class PlayerWebsite(Plugin):
             links.append(("shop", "Points"))
         if self.setting("rules"):
             links.append(("rules", "Rules"))
+        if self.setting("show_staff"):
+            links.append(("staff", "Staff"))
+        if self.setting("show_bans"):
+            links.append(("bans", "Bans"))
+        if self.setting("show_wipes"):
+            links.append(("wipes", "Wipes"))
         nav = "".join(f'<a href="{base}/{path}" class="{"active" if path == active else ""}">{esc(label)}</a>'
                       for path, label in links)
         accent = self.setting("accent").strip()
@@ -778,6 +790,80 @@ class PlayerWebsite(Plugin):
             '<h1>Rules</h1><p class="muted">No rules yet.</p>'
         return self.page(base, "rules", "Rules", body)
 
+    # ------------------------------------------------------------ Staff, bans, wipe history
+
+    def staff_list(self) -> list[tuple[str, str]]:
+        """(name, role): members with the admin / support roles (if the bot sees them) + the extra lines."""
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        guild = self.guild
+        cfg = self.bot.config
+        if guild is not None:
+            for rid in list(cfg.admin_role_ids) + [r for r in cfg.support_role_ids if r not in cfg.admin_role_ids]:
+                role = guild.get_role(rid)
+                for m in (getattr(role, "members", None) or [] if role is not None else []):
+                    if not m.bot and m.id not in seen:
+                        seen.add(m.id)
+                        out.append((m.display_name, role.name))
+        for line in str(self.setting("staff_extra") or "").splitlines():
+            name, _, role = line.partition("|")
+            if name.strip():
+                out.append((name.strip()[:40], role.strip()[:40] or "Staff"))
+        return out
+
+    def staff_page(self, base: str) -> str:
+        rows = self.staff_list()
+        cards = "".join(f'<div class="card"><h2>{esc(n)}</h2><div class="muted">{esc(r)}</div></div>' for n, r in rows)
+        body = (f'<h1>Staff</h1><div class="grid">{cards}</div>' if cards else
+                '<h1>Staff</h1><p class="muted">The team list is coming soon.</p>')
+        return self.page(base, "staff", "Staff", body)
+
+    @Plugin.listener()
+    async def on_rce_ban(self, ev) -> None:
+        bans = dict(self.data.get("bans", {}))
+        key = ev.player.lower()
+        if ev.banned:
+            old = bans.get(key, {})
+            bans[key] = {"player": ev.player, "at": self.now(), "reason": old.get("reason", "") if old.get("pending")
+                         else "", "pending": False}
+        else:
+            bans.pop(key, None)
+        self.data.set("bans", bans)
+
+    @Plugin.listener()
+    async def on_rce_ban_reason(self, player: str, reason: str) -> None:
+        """The reason given with /ban (the server log line itself has none)."""
+        bans = dict(self.data.get("bans", {}))
+        row = bans.get(player.lower()) or {"player": player, "at": self.now(), "pending": True}
+        row["reason"] = str(reason or "")[:200]
+        bans[player.lower()] = row
+        self.data.set("bans", bans)
+
+    def bans_page(self, base: str) -> str:
+        rows = sorted(self.data.get("bans", {}).values(), key=lambda r: -r["at"])
+        body = "".join(f'<tr><td>{esc(r["player"])}</td><td>{datetime.fromtimestamp(r["at"]).strftime("%Y-%m-%d")}</td>'
+                       f'<td>{esc(r.get("reason") or "–")}</td></tr>' for r in rows)
+        html = ('<h1>Bans</h1><div class="card"><table><tr><th>Player</th><th>Since</th><th>Reason</th></tr>'
+                f'{body}</table></div>' if body else '<h1>Bans</h1><p class="muted">Nobody is banned. 🎉</p>')
+        return self.page(base, "bans", "Bans", html)
+
+    @Plugin.listener()
+    async def on_rce_wiped(self, next_wipe) -> None:
+        wipes = list(self.data.get("wipes", []))
+        wipes.append(self.now())
+        self.data.set("wipes", wipes[-100:])
+
+    def wipes_page(self, base: str) -> str:
+        wipes = sorted(self.data.get("wipes", []), reverse=True)
+        nxt = self.next_wipe()
+        items = "".join(f"<li>{datetime.fromtimestamp(w).strftime('%Y-%m-%d %H:%M')}</li>" for w in wipes[:50])
+        body = ('<h1>Wipes</h1>'
+                + (f'<div class="card"><h2>Next wipe</h2><div class="big">{datetime.fromtimestamp(nxt).strftime("%Y-%m-%d %H:%M")}'
+                   f'</div></div>' if nxt else "")
+                + (f'<div class="card"><h2>Past wipes ({len(wipes)})</h2><ul>{items}</ul></div>' if items else
+                   '<p class="muted">No wipes recorded yet – they are added here from the next wipe on.</p>'))
+        return self.page(base, "wipes", "Wipes", body)
+
     def not_found(self, base: str) -> str:
         return self.page(base, "", "Not found", f'<h1>Not found</h1><p><a href="{base}/">Back to the home page</a></p>')
 
@@ -797,6 +883,12 @@ class PlayerWebsite(Plugin):
             return 200, self.shop(base)
         if path == "rules" and self.setting("rules"):
             return 200, self.rules(base)
+        if path == "staff" and self.setting("show_staff"):
+            return 200, self.staff_page(base)
+        if path == "bans" and self.setting("show_bans"):
+            return 200, self.bans_page(base)
+        if path == "wipes" and self.setting("show_wipes"):
+            return 200, self.wipes_page(base)
         return 404, self.not_found(base)
 
     def asset(self, name: str) -> tuple[bytes, str]:

@@ -4495,6 +4495,35 @@ views.webstore = async (main) => {
       h("div", { class: "row", style: "margin-top:.5rem" }, bName, bPrice, bValue),
       h("div", { class: "row", style: "margin-top:.5rem" }, bCat, bDesc, bSave, bCancel));
 
+    // --- Discount codes
+    const dCode = h("input", { placeholder: "Code, e.g. SUMMER20", maxlength: "30", style: "text-transform:uppercase" });
+    const dPercent = h("input", { type: "number", min: "0", max: "100", step: "1", placeholder: "% off" });
+    const dAmount = h("input", { type: "number", min: "0", step: "0.01", placeholder: `or ${cur} off` });
+    const dMin = h("input", { type: "number", min: "0", step: "0.01", placeholder: `Min. basket (${cur})` });
+    const dUses = h("input", { type: "number", min: "0", placeholder: "Uses (0 = unlimited)" });
+    const dDays = h("input", { type: "number", min: "0", placeholder: "Valid days (0 = no end)" });
+    const dBtn = h("button", { class: "primary", text: "Create code", onclick: async () => {
+      const r = await act(() => api("/api/webshop/discounts", { method: "POST", body: { code: dCode.value, percent: dPercent.value, amount: dAmount.value, min_total: dMin.value, uses: dUses.value || 0, days: dDays.value || 0 } }));
+      if (r) { toast(`Discount code ${r.code} created`); load(); }
+    } });
+    const discRows = (d.discounts || []).map((x) => {
+      const expired = x.expires_at && x.expires_at < Date.now() / 1000;
+      const state = !x.enabled ? ["off", ""] : expired ? ["expired", ""] : (x.uses_left !== null && x.uses_left <= 0) ? ["used up", ""] : ["active", "ok"];
+      return h("tr", {},
+        h("td", {}, h("code", { text: x.code })),
+        h("td", { text: [x.percent ? `${x.percent}%` : "", x.amount ? money(x.amount, cur) : ""].filter(Boolean).join(" + ") + " off" + (x.min_total ? ` · min ${money(x.min_total, cur)}` : "") }),
+        h("td", { class: "muted", text: `used ${x.used}×` + (x.uses_left !== null ? ` · ${x.uses_left} left` : "") + (x.expires_at ? ` · until ${new Date(x.expires_at * 1000).toLocaleDateString()}` : "") }),
+        h("td", {}, h("span", { class: "pill " + state[1], text: state[0] })),
+        h("td", { class: "row tight" },
+          h("button", { class: "small", text: x.enabled ? "Switch off" : "Switch on", onclick: async () => { await act(() => api(`/api/webshop/discounts/${encodeURIComponent(x.code)}/toggle`, { method: "POST", body: { enabled: !x.enabled } })); load(); } }),
+          h("button", { class: "small danger", text: "Delete", onclick: async () => { if (!confirm(`Delete ${x.code}?`)) return; await act(() => api(`/api/webshop/discounts/${encodeURIComponent(x.code)}`, { method: "DELETE" }), "Deleted"); load(); } })));
+    });
+    const discounts = h("div", { class: "card" }, h("h2", { text: "🏷️ Discount codes" }),
+      h("p", { class: "muted", text: "Codes players enter in the basket for a percentage or an amount off (e.g. SUMMER20 = 20 % off). Optional: a minimum basket, a number of uses and an end date. A gift card can be used on top." }),
+      h("div", { class: "row" }, dCode, dPercent, dAmount, dMin),
+      h("div", { class: "row", style: "margin-top:.5rem" }, dUses, dDays, dBtn),
+      discRows.length ? h("div", { class: "table-wrap", style: "margin-top:.75rem" }, h("table", {}, h("thead", {}, h("tr", {}, ["Code", "Discount", "Used", "", ""].map((t) => h("th", { text: t })))), h("tbody", {}, discRows))) : null);
+
     // --- Gift cards
     const gAmount = h("input", { type: "number", min: "0.01", step: "0.01", placeholder: `Value (${cur})` });
     const gCount = h("input", { type: "number", min: "1", max: "100", value: "1", title: "How many" });
@@ -4546,7 +4575,7 @@ views.webstore = async (main) => {
     const orders = h("div", { class: "card" }, h("h2", { text: "🧾 Orders" }),
       d.orders.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Date", "Product", "Player", "Paid", "Status", "PayPal", ""].map((t) => h("th", { text: t })))), h("tbody", {}, orderRows))) : h("p", { class: "muted", text: "No orders yet." }));
 
-    holder.replaceChildren(status, kits, bundles, nukeCard(cur), gifts, orders);
+    holder.replaceChildren(status, kits, bundles, nukeCard(cur), discounts, gifts, orders);
     if (editId) { kSave.textContent = "Save kit"; kCancel.classList.remove("hidden"); }
   };
   load();

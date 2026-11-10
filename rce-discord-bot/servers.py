@@ -594,6 +594,12 @@ async def online_on(sid: str) -> list[str] | None:
     return [str(n) for n in data.get("players", [])] if isinstance(data, dict) else None
 
 
+async def player_stats_on(sid: str, player: str) -> dict | None:
+    """A player's stats on that server (kills, deaths, playtime, first/last seen) – None: unknown or unreachable."""
+    data = await ask_server(sid, "playerstats", {"player": player}, timeout=5)
+    return data.get("stats") if isinstance(data, dict) and isinstance(data.get("stats"), dict) else None
+
+
 async def give_on(sid: str, player: str, *, item: str | None = None, amount: int = 1,
                   kit: str | None = None) -> str:
     """Gives an item or in-game kit on another server. "given", "offline" (not online there) or "unreachable"."""

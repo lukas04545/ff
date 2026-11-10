@@ -142,7 +142,8 @@ AI_BLOCKED = ("/api/login", "/api/logout", "/api/reauth", "/api/2fa", "/api/pass
               "/api/update", "/api/backups", "/api/setup", "/api/honeypot", "/api/switch", "/api/command")
 # … and these only for reading (no changes): servers, the domain, gift cards (money), plugin code/files
 RCON_OFF_NOTE = "RCON switched off by the customer (Settings → RCON)"
-AI_BLOCKED_WRITES = ("/api/servers", "/api/settings/power", "/api/settings/cloudflare-domain", "/api/webshop/giftcards", "/api/plugins/upload",
+AI_BLOCKED_WRITES = ("/api/servers", "/api/settings/power", "/api/settings/cloudflare-domain", "/api/webshop/giftcards",
+                     "/api/webshop/discounts", "/api/plugins/upload",
                      "/api/plugins/generate", "/api/allplugins/copy")
 AI_BLOCKED_WRITE_RE = re.compile(r"^/api/plugins/[^/]+(/file/.*)?$")      # delete a plugin, upload plugin files
 # Settings it may never change (besides every secret): access, ports, who is admin, its own permissions
@@ -432,7 +433,7 @@ class WebInterface:
         r.add_get("/api/honeypot", self.honeypot_list)
         r.add_get("/api/system", self.system_info)
         r.add_post("/api/switch", self.switch_server)
-        r.add_post("/internal/{action:online|give|status|kits|kitinfo}", self.internal)          # other servers of this bot (signed)
+        r.add_post("/internal/{action:online|give|status|kits|kitinfo|playerstats}", self.internal)          # other servers of this bot (signed)
         r.add_get("/api/servers", self.servers_list)                     # several Rust servers (servers.py)
         r.add_post("/api/servers", self.servers_create)
         r.add_post("/api/servers/{sid}/{action:start|stop|restart}", self.servers_action)
@@ -597,6 +598,9 @@ class WebInterface:
         r.add_post("/api/webshop/kits", self.webshop_kit_create)
         r.add_put("/api/webshop/kits/{kit_id:\\d+}", self.webshop_kit_update)
         r.add_delete("/api/webshop/kits/{kit_id:\\d+}", self.webshop_kit_delete)
+        r.add_post("/api/webshop/discounts", self.webshop_discount_create)
+        r.add_post("/api/webshop/discounts/{code}/toggle", self.webshop_discount_toggle)
+        r.add_delete("/api/webshop/discounts/{code}", self.webshop_discount_delete)
         r.add_post("/api/webshop/bundles", self.webshop_bundle_create)
         r.add_put("/api/webshop/bundles/{bundle_id:\\d+}", self.webshop_bundle_update)
         r.add_delete("/api/webshop/bundles/{bundle_id:\\d+}", self.webshop_bundle_delete)
@@ -864,6 +868,10 @@ class WebInterface:
             data = json.loads(body or b"{}")
         except ValueError:
             raise web.HTTPBadRequest() from None
+        if action == "playerstats":                  # cross-server profiles (/profile on another server)
+            row = self.bot.db.player(str(data.get("player") or "")[:64])
+            return web.json_response({"stats": {k: row[k] for k in ("kills", "deaths", "playtime_seconds",
+                                                                    "first_seen", "last_seen")} if row else None})
         if action in ("kits", "kitinfo"):            # its in-game kits, for the main server's web store
             from rce import kits as kitparse
             from rce.rcon_client import RconError
@@ -1346,6 +1354,10 @@ class WebInterface:
         user = _current_user.get()
         if self.bot is not None:
             self.bot.audit(f"🌐 Web interface ({user}): {text}")
+            try:                                                       # staff activity (plugins/staff_activity.py)
+                self.bot.dispatch("rce_panel_action", user, text)
+            except (AttributeError, RuntimeError):                     # not connected to Discord (yet)
+                pass
         log.info("Web action by %s: %s", user, text)
 
     def _cog(self, name: str):
@@ -1372,6 +1384,7 @@ class WebInterface:
             "servers": [{"id": s["id"], "name": s["name"]} for s in servers.all_servers()],
             "this_server": servers.server_id(),
             "custom_kits": [k["name"] for k in db.custom_kits()],
+            "discounts": [dict(d) for d in db.store_discounts()],
             "bundles": [{**dict(b), "kits": [int(x) for x in str(b["kits"] or "").split(",") if x.strip().isdigit()],
                          "value": shop.bundle_value(b)} for b in db.store_bundles()],
             "gift_cards": [dict(g) for g in db.gift_cards()], "orders": orders,
@@ -1482,6 +1495,46 @@ class WebInterface:
         if "enabled" in data:
             out["enabled"] = 1 if data.get("enabled") else 0
         return out
+
+    async def webshop_discount_create(self, request: web.Request) -> web.Response:
+        data = await self._json(request)
+        code = re.sub(r"[^A-Za-z0-9_-]", "", str(data.get("code") or "")).upper()[:30]
+        if len(code) < 3:
+            raise ApiError("The code needs at least 3 letters or digits (e.g. SUMMER20).")
+        if self.bot.db.store_discount(code) is not None or self.bot.db.gift_card(code) is not None:
+            raise ApiError("That code exists already.")
+
+        def num(key, hi):
+            try:
+                value = round(float(str(data.get(key) or 0).replace(",", ".")), 2)
+            except ValueError:
+                raise ApiError(f"{key} must be a number.") from None
+            if not 0 <= value <= hi:
+                raise ApiError(f"{key}: 0 to {hi}.")
+            return value
+        percent, amount, min_total = num("percent", 100), num("amount", 100_000), num("min_total", 100_000)
+        if not percent and not amount:
+            raise ApiError("Set a percent or an amount off.")
+        uses = self._int(data, "uses", 0, 0, 1_000_000) or None
+        days = self._int(data, "days", 0, 0, 3650)
+        self.bot.db.add_store_discount(code, percent=percent, amount=amount, min_total=min_total, uses=uses,
+                                       expires_at=int(time.time()) + days * 86400 if days else None,
+                                       note=str(data.get("note") or "")[:100] or None)
+        self._audit(f"store: discount code **{code}** created ({percent:g}% / {amount:g} off)")
+        return web.json_response({"ok": True, "code": code})
+
+    async def webshop_discount_toggle(self, request: web.Request) -> web.Response:
+        code = request.match_info["code"]
+        if not self.bot.db.set_store_discount(code, enabled=1 if (await self._json(request)).get("enabled") else 0):
+            raise ApiError("Code not found.", 404)
+        self._audit(f"store: discount code {code} switched")
+        return web.json_response({"ok": True})
+
+    async def webshop_discount_delete(self, request: web.Request) -> web.Response:
+        if not self.bot.db.delete_store_discount(request.match_info["code"]):
+            raise ApiError("Code not found.", 404)
+        self._audit(f"store: discount code {request.match_info['code']} deleted")
+        return web.json_response({"ok": True})
 
     async def webshop_bundle_create(self, request: web.Request) -> web.Response:
         f = self._bundle_fields(await self._json(request))

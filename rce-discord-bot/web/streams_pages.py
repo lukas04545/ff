@@ -31,7 +31,7 @@ background:rgba(0,0,0,.75);padding:2px 8px;font-size:.8rem}
 .st-off a{padding:6px 12px;border:1px solid var(--line);text-decoration:none;color:var(--muted)}
 .st-off a:hover{color:#fff;border-color:var(--orange)}
 """
-NAMES = {"twitch": "Twitch", "kick": "Kick", "youtube": "YouTube"}
+NAMES = {"twitch": "Twitch", "kick": "Kick", "youtube": "YouTube", "tiktok": "TikTok"}
 
 
 def player_url(s, info, host: str) -> str:
@@ -49,7 +49,8 @@ def render(site, plugin, request, base: str) -> web.Response:
     live, offline = data["live"], data["offline"]
     host = (request.host or "localhost").split(":")[0]
     watch = str(request.query.get("watch", ""))
-    featured = next(((s, i) for s, i in live if s.key == watch), live[0] if live else None)
+    embeddable = [(s, i) for s, i in live if s.platform != "tiktok"]      # TikTok has no embeddable live player
+    featured = next(((s, i) for s, i in embeddable if s.key == watch), embeddable[0] if embeddable else None)
     body = ""
     if featured:
         s, info = featured
@@ -65,6 +66,11 @@ def render(site, plugin, request, base: str) -> web.Response:
         for s, info in live:
             if s is featured[0]:
                 continue
+            if s.platform == "tiktok":                  # opens on TikTok
+                cards += (f'<a class="st-card on" href="{esc(s.url)}" target="_blank" rel="noopener"><div class="thumb">'
+                          f'<span class="st-live">Live</span></div><div class="meta"><b>{esc(s.channel)}</b>'
+                          f'<small>{esc(info.title or "TikTok")} ↗</small></div></a>')
+                continue
             thumb = f'<img src="{esc(info.thumbnail)}" alt="" loading="lazy">' if info.thumbnail else ""
             viewers = f'<span class="v">{info.viewers:,} watching</span>'.replace(",", " ") \
                 if info.viewers is not None else ""
@@ -73,6 +79,10 @@ def render(site, plugin, request, base: str) -> web.Response:
                       f'<small>{esc(info.title or NAMES[s.platform])}</small></div></a>')
         if cards:
             body += f'<h2>Also live</h2><div class="st-grid">{cards}</div>'
+    elif live:                                          # only TikTok streams: links
+        body += "<h2>Live now</h2><div class=\"st-off\">" + "".join(
+            f'<a href="{esc(s.url)}" target="_blank" rel="noopener">🔴 {esc(s.channel)} <small>· TikTok</small></a>'
+            for s, _ in live) + "</div>"
     else:
         body += ('<div class="card"><h2>Nobody is live right now</h2><p class="muted">When one of our streamers goes '
                  'live, the stream shows up here – and in our Discord.</p></div>')
