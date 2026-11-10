@@ -716,6 +716,15 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
   deletes its folder for good (database, settings, kits, logs) – you confirm by typing the server's name (and your
   password). Backups of removed servers are listed under *Removed servers* with **Delete for good**.
 
+### 📲 The panel as an app (Android, also PC)
+
+The control panel installs like an app: open it in Chrome on your phone (its normal address, over https) and tap
+**📲 Install app** at the bottom of the menu – or in Chrome's menu ⋮ → *Install app* / *Add to Home screen*. It then
+opens from its own icon (your Discord server's picture), fullscreen, without the browser bar. Every server's panel
+installs as its own app. Nothing of the panel is stored on the phone – without a connection it shows "No connection"
+and opens again when you're online. (Installing needs https – the Cloudflare tunnel / your domain; `localhost` works
+on the PC itself.)
+
 ### 🎨 Panel themes (owner picks one per account)
 
 Under **👥 Users → 🎨 Panel themes** the owner chooses how the control panel looks for every account, including

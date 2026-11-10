@@ -536,10 +536,40 @@ async function start() {
   $("#account").classList.remove("hidden");        // everyone: password + two-factor login
   menuReady = loadMenu();
   loadServerSwitch();
+  setupApp();
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   if (setupMode && location.hash !== "#settings") location.hash = "#settings";
   else route();
+}
+
+// The panel as an app (Android: "Install app" – fullscreen, own icon). The service worker only shows an offline page;
+// nothing of the panel is cached (it's private and live).
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  $("#install-app")?.classList.remove("hidden");
+});
+window.addEventListener("appinstalled", () => { installPrompt = null; $("#install-app")?.classList.add("hidden"); });
+function setupApp() {
+  const base = me.panel_path;
+  const btn = $("#install-app");
+  if (btn && !btn.dataset.ready) {
+    btn.dataset.ready = "1";
+    btn.addEventListener("click", async () => {
+      if (!installPrompt) {
+        toast("In your browser's menu (⋮) choose \"Install app\" or \"Add to Home screen\".");
+        return;
+      }
+      installPrompt.prompt();
+      const { outcome } = await installPrompt.userChoice;
+      if (outcome === "accepted") { installPrompt = null; btn.classList.add("hidden"); }
+    });
+  }
+  if (!base || !location.pathname.startsWith(base) || !("serviceWorker" in navigator)) return;
+  if (window.matchMedia("(display-mode: standalone)").matches) btn?.classList.add("hidden");   // running as the app
+  navigator.serviceWorker.register(base + "/sw.js", { scope: base + "/" }).catch(() => {});
 }
 
 // Waits until the bot is reachable again after a restart, then reloads

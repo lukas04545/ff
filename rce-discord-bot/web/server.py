@@ -201,6 +201,55 @@ def placeholder_svg(shortname: str) -> str:
             'text-anchor="middle">' + text + '</text></svg>')
 
 
+APP_FILES = ("manifest.webmanifest", "sw.js", "app-icon-192.png", "app-icon-512.png")
+# The app's service worker: no caching of the panel's data (it's private and live) – it only shows a short "offline"
+# page instead of the browser's error when there's no connection.
+APP_WORKER = """self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener("fetch", (e) => {
+  if (e.request.mode !== "navigate") return;
+  e.respondWith(fetch(e.request).catch(() => new Response(
+    '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">' +
+    '<body style="background:#0b0e1a;color:#e8ecf8;font-family:system-ui;display:grid;place-items:center;' +
+    'height:100vh;margin:0;text-align:center"><div><h2>No connection</h2><p>The panel opens again as soon as ' +
+    'you are online.</p></div>', { headers: { "Content-Type": "text/html; charset=utf-8" } })));
+});
+"""
+
+
+def make_app_icon(picture: bytes | None, size: int) -> bytes:
+    """A square PNG: the picture (or "RCE") centred on the dark panel colour, within Android's safe zone."""
+    import io
+    from PIL import Image, ImageDraw
+    img = Image.new("RGBA", (size, size), (11, 14, 26, 255))
+    inner = int(size * 0.62)
+    if picture:
+        try:
+            pic = Image.open(io.BytesIO(picture)).convert("RGBA").resize((inner, inner), Image.LANCZOS)
+            mask = Image.new("L", (inner, inner), 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, inner - 1, inner - 1), fill=255)
+            img.paste(pic, ((size - inner) // 2, (size - inner) // 2), mask)
+        except Exception:
+            picture = None
+    if not picture:
+        d = ImageDraw.Draw(img)
+        off = (size - inner) // 2
+        d.ellipse((off, off, off + inner, off + inner), fill=(229, 52, 28, 255))
+        d.text((size / 2, size / 2), "RCE", fill=(255, 255, 255, 255), anchor="mm",
+               font=_icon_font(int(size * 0.2)))
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
+
+
+def _icon_font(px: int):
+    from PIL import ImageFont
+    try:
+        return ImageFont.load_default(size=px)
+    except TypeError:                                         # older Pillow
+        return ImageFont.load_default()
+
+
 def invite_url(app_id) -> str | None:
     """Invite link with all required permissions. Using it again updates the bot role's permissions."""
     return (f"https://discord.com/oauth2/authorize?client_id={app_id}"
@@ -498,6 +547,7 @@ class WebInterface:
                 # the panel's secret address works in setup mode too (hosted: a server waiting for its bot)
                 r.add_get("/" + self.ws.panel_path, self._panel)
                 r.add_get("/" + self.ws.panel_path + "/", self._panel)
+                r.add_get("/" + self.ws.panel_path + "/{name}", self._app_route)
             return app
         r.add_post("/api/restart", self.restart)
         r.add_get("/api/update", self.update_info)
@@ -823,7 +873,10 @@ class WebInterface:
 
     async def _panel(self, request: web.Request) -> web.StreamResponse:
         """The control panel at its secret address – remembers the visitor may see the panel (gate cookie)."""
-        resp = await self._index(request)
+        base = self.panel_path
+        resp = await self._index(request, (           # installable as an app (Android: "Install app")
+            f'<link rel="manifest" href="{base}/manifest.webmanifest">'
+            f'<link rel="apple-touch-icon" href="{base}/app-icon-192.png">'))
         resp.set_cookie(GATE_COOKIE, self._gate_value(), max_age=GATE_TTL, httponly=True, samesite="Strict",
                         secure=self._is_https(request), path="/")
         return resp
@@ -1593,6 +1646,61 @@ class WebInterface:
 
     # ------------------------------------------------------------ Item pictures
 
+    # ------------------------------------------------------------ The panel as an app (PWA: Android "Install app")
+
+    async def _app_route(self, request: web.Request) -> web.StreamResponse:
+        name = request.match_info["name"]
+        if name not in APP_FILES:
+            raise web.HTTPNotFound()
+        return await self._app_file(request, name)
+
+    def _app_name(self) -> str:
+        cfg = getattr(self.bot, "config", None)
+        return (getattr(cfg, "server_display_name", "") or "RCE Bot").strip()[:40] or "RCE Bot"
+
+    async def _app_file(self, request: web.Request, name: str) -> web.Response:
+        base = self.panel_path
+        if name == "manifest.webmanifest":
+            title = self._app_name()
+            body = json.dumps({
+                "id": f"{base}/", "name": f"{title} – control panel", "short_name": title[:12],
+                "description": "The control panel of your Rust Console Edition server bot.",
+                "start_url": f"{base}/", "scope": f"{base}/", "display": "standalone", "orientation": "any",
+                "background_color": "#0b0e1a", "theme_color": "#0b0e1a",
+                "icons": [{"src": f"{base}/app-icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png",
+                           "purpose": "any maskable"} for n in (192, 512)]})
+            return web.Response(text=body, content_type="application/manifest+json",
+                                headers={"Cache-Control": "no-cache"})
+        if name == "sw.js":
+            return web.Response(text=APP_WORKER, content_type="application/javascript",
+                                headers={"Cache-Control": "no-cache"})
+        size = 512 if "512" in name else 192
+        data = await self._app_icon(size)
+        return web.Response(body=data, content_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+    async def _app_icon(self, size: int) -> bytes:
+        """The app icon: the Discord server's picture on the panel's dark background (Android crops icons to a
+        circle or rounded square – the picture sits in the safe middle), else a plain "RCE" icon."""
+        cache = getattr(self, "_icons", None)
+        if cache is None:
+            cache = self._icons = {}
+        asset = None
+        user = getattr(self.bot, "user", None) if self.bot is not None else None
+        if user is not None:
+            from permcheck import main_guild
+            guild = main_guild(self.bot)
+            asset = getattr(guild, "icon", None) or user.display_avatar
+        key = (asset.url if asset is not None else "plain", size)
+        if key not in cache:
+            picture = None
+            if asset is not None:
+                try:
+                    picture = await asset.replace(size=512, format="png").read()
+                except (discord.DiscordException, aiohttp.ClientError, OSError):
+                    picture = None
+            cache[key] = await asyncio.to_thread(make_app_icon, picture, size)
+        return cache[key]
+
     async def bot_avatar(self, request: web.Request) -> web.Response:
         """The Discord server's icon (else the bot's profile picture), 128 px PNG – the control panel's logo.
         Fetched once per picture and kept in memory, so browsers never load it from Discord. 404 while the bot isn't logged in to Discord."""
@@ -2016,6 +2124,9 @@ class WebInterface:
         tail = request.match_info.get("tail", "").strip("/")
         if tail and tail == self.ws.panel_path and request.method == "GET":
             return await self._panel(request)                 # the control panel's secret address
+        if self.ws.panel_path and tail.startswith(self.ws.panel_path + "/") and request.method == "GET" \
+                and tail[len(self.ws.panel_path) + 1:] in APP_FILES:
+            return await self._app_file(request, tail[len(self.ws.panel_path) + 1:])
         if tail and request.method == "GET" and not servers.is_child() and self._session_user(request) is not None \
                 and any(s["panel_path"] == f"/{tail}" for s in servers.all_servers() if not s["main"]):
             # an extra server's panel address (an older version opened it here): the panel lives at one address now
@@ -2086,7 +2197,7 @@ class WebInterface:
         charset = "utf-8" if kind.startswith(("text/", "application/")) else None
         return conditional(request, found[0], kind, cache, charset=charset)
 
-    async def _index(self, request: web.Request) -> web.Response:
+    async def _index(self, request: web.Request, extra_head: str = "") -> web.Response:
         found = self._static_file("index.html")
         if found is None:
             raise web.HTTPNotFound()
@@ -2095,6 +2206,8 @@ class WebInterface:
             linked = self._static_file(m[2])
             return f"{m[1]}?v={linked[1] if linked else '0'}"
         page = STATIC_LINK.sub(versioned, found[0].decode("utf-8"))
+        if extra_head:
+            page = page.replace("</head>", extra_head + "</head>", 1)
         return conditional(request, page.encode("utf-8"), "text/html", "no-cache", charset="utf-8")
 
     def _login_blocked(self, *keys: str, count: bool = True) -> float | None:
