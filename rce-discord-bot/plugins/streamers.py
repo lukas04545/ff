@@ -4,6 +4,8 @@ The owner lists the streamers (platform | channel | in-game name). Every few min
   * Twitch  – the official API (Client ID + Secret from dev.twitch.tv, free)
   * Kick    – Kick's public channel data
   * YouTube – the channel's /live page (no API key – YouTube's API quota is far too small for this)
+  * TikTok  – the account's public /live page (best effort: TikTok has no free API; the website links to the stream
+              instead of embedding it)
 When someone goes live, an embed is posted in the chosen Discord channel (optionally pinging a role once per stream);
 when the stream ends the message says so. The website shows the live streams embedded (watch right there) and the
 other streamers. With "Only while on our server" a stream only counts while the streamer's in-game player is online.
@@ -22,10 +24,10 @@ from discord.ext import tasks
 
 from plugin_api import Plugin, Setting
 
-PLATFORMS = ("twitch", "kick", "youtube")
-ICONS = {"twitch": "🟣", "kick": "🟢", "youtube": "🔴"}
-COLOURS = {"twitch": 0x9146FF, "kick": 0x53FC18, "youtube": 0xFF0000}
-LINE = re.compile(r"^\s*(twitch|kick|youtube)\s*\|\s*([^|]{1,80}?)\s*(?:\|\s*([^|]{0,64}?)\s*)?$", re.I)
+PLATFORMS = ("twitch", "kick", "youtube", "tiktok")
+ICONS = {"twitch": "🟣", "kick": "🟢", "youtube": "🔴", "tiktok": "⚫"}
+COLOURS = {"twitch": 0x9146FF, "kick": 0x53FC18, "youtube": 0xFF0000, "tiktok": 0x010101}
+LINE = re.compile(r"^\s*(twitch|kick|youtube|tiktok)\s*\|\s*([^|]{1,80}?)\s*(?:\|\s*([^|]{0,64}?)\s*)?$", re.I)
 CHANNEL_NAME = re.compile(r"^[@\w.\-]{2,80}$")
 UA = "Mozilla/5.0 (compatible; RCE-Bot streamers; +https://discord.com)"
 OFFLINE_CHECKS = 2              # checks in a row without the stream before it counts as ended (no flapping)
@@ -48,6 +50,8 @@ class Streamer:
             return f"https://www.twitch.tv/{self.channel}"
         if self.platform == "kick":
             return f"https://kick.com/{self.channel}"
+        if self.platform == "tiktok":
+            return f"https://www.tiktok.com/@{self.channel}/live"
         return (f"https://www.youtube.com/{self.channel}" if self.channel.startswith("@")
                 else f"https://www.youtube.com/channel/{self.channel}")
 
@@ -71,7 +75,7 @@ def parse_streamers(text: str) -> tuple[list[Streamer], list[str]]:
         m = LINE.match(line)
         channel = m.group(2).strip() if m else ""
         if not m or not CHANNEL_NAME.match(channel):
-            problems.append(f"Line {n}: use  platform | channel | in-game name  (platform: twitch, kick or youtube).")
+            problems.append(f"Line {n}: use  platform | channel | in-game name  (platform: twitch, kick, youtube or tiktok).")
             continue
         platform = m.group(1).lower()
         if platform == "youtube" and not (channel.startswith("@") or channel.startswith("UC")):
@@ -97,6 +101,15 @@ def parse_youtube_live(html: str) -> Live | None:
     return Live(title=_unescape(title.group(1)) if title else "", video_id=vid.group(1),
                 thumbnail=f"https://i.ytimg.com/vi/{vid.group(1)}/hqdefault_live.jpg",
                 viewers=int(viewers.group(1)) if viewers else None)
+
+
+def parse_tiktok_live(html: str) -> Live | None:
+    """From an account's public /live page: live right now? TikTok's page data marks a running room with status 2."""
+    if not re.search(r'"liveRoom(?:UserInfo)?"', html) or not re.search(r'"status"\s*:\s*2\b', html):
+        return None
+    title = re.search(r'"title"\s*:\s*"([^"]{0,200})"', html)
+    viewers = re.search(r'"userCount"\s*:\s*(\d+)', html)
+    return Live(title=_unescape(title.group(1)) if title else "", viewers=int(viewers.group(1)) if viewers else None)
 
 
 def _unescape(text: str) -> str:
@@ -134,7 +147,7 @@ class Streamers(Plugin):
     SETTINGS = (
         Setting("streamers", "Streamers", "textarea", "",
                 help="One per line: platform | channel | in-game name (optional), e.g.  twitch | kryvon_live | "
-                     "Gamer7  ·  kick | kryvon  ·  youtube | @KryvonRust. Platforms: twitch, kick, youtube."),
+                     "Gamer7  ·  kick | kryvon  ·  youtube | @KryvonRust  ·  tiktok | kryvonrust. Platforms: twitch, kick, youtube, tiktok."),
         Setting("only_on_server", "Only while they play on our server", "bool", False,
                 help="A stream only counts while the streamer's in-game player (3rd column) is online on the server."),
         Setting("channel", "Discord channel for live announcements", "channel", None,
@@ -226,6 +239,12 @@ class Streamers(Plugin):
                 return None
             return parse_youtube_live(await r.text())
 
+    async def _tiktok(self, user: str) -> Live | None:
+        async with self._http().get(f"https://www.tiktok.com/@{user}/live", headers={"Accept-Language": "en"}) as r:
+            if r.status != 200:
+                return None
+            return parse_tiktok_live(await r.text())
+
     async def fetch_live(self) -> dict[str, Live]:
         """Asks the platforms who is live now. -> {streamer key: Live}."""
         streamers = self.streamers()
@@ -243,7 +262,8 @@ class Streamers(Plugin):
             if s.platform == "twitch":
                 continue
             try:
-                result = await (self._kick(s.channel) if s.platform == "kick" else self._youtube(s.channel))
+                fetch = {"kick": self._kick, "tiktok": self._tiktok}.get(s.platform, self._youtube)
+                result = await fetch(s.channel)
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
                 problems.append(f"{s.platform.title()} {s.channel}: {exc}")
                 continue

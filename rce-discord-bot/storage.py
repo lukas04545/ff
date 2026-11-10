@@ -351,6 +351,19 @@ class Storage:
                 created_at INTEGER NOT NULL,
                 paid_at INTEGER
             );
+            -- Web store discount codes (e.g. SUMMER20 = 20 % off, or a fixed amount off), applied in the basket
+            CREATE TABLE IF NOT EXISTS store_discounts (
+                code TEXT PRIMARY KEY COLLATE NOCASE,
+                percent REAL NOT NULL DEFAULT 0,
+                amount REAL NOT NULL DEFAULT 0,
+                min_total REAL NOT NULL DEFAULT 0,
+                uses_left INTEGER,                     -- NULL = unlimited
+                used INTEGER NOT NULL DEFAULT 0,
+                expires_at INTEGER,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                note TEXT,
+                created_at INTEGER NOT NULL
+            );
             -- Web store bundles: several store kits for one price (made in the web interface → Store)
             CREATE TABLE IF NOT EXISTS store_bundles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -564,6 +577,9 @@ class Storage:
             self._db.execute("ALTER TABLE store_orders ADD COLUMN shop_server TEXT")
         if "parent_id" not in columns:             # a kit bought in a basket: the basket's order (kind "cart")
             self._db.execute("ALTER TABLE store_orders ADD COLUMN parent_id INTEGER")
+        if "discount_code" not in columns:         # a discount code used in the basket, and how much it took off
+            self._db.execute("ALTER TABLE store_orders ADD COLUMN discount_code TEXT")
+            self._db.execute("ALTER TABLE store_orders ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.commit()
         self._open_links(links_path, path)
@@ -1843,6 +1859,46 @@ class Storage:
         cur = self._db.execute("DELETE FROM store_kits WHERE id = ?", (kit_id,))
         self._db.commit()
         return cur.rowcount > 0
+
+    def store_discounts(self) -> list[sqlite3.Row]:
+        return self._db.execute("SELECT * FROM store_discounts ORDER BY created_at DESC").fetchall()
+
+    def store_discount(self, code: str) -> sqlite3.Row | None:
+        return self._db.execute("SELECT * FROM store_discounts WHERE code = ?", (str(code).strip(),)).fetchone()
+
+    def add_store_discount(self, code: str, *, percent: float = 0, amount: float = 0, min_total: float = 0,
+                           uses: int | None = None, expires_at: int | None = None, note: str | None = None) -> None:
+        self._db.execute("INSERT INTO store_discounts (code, percent, amount, min_total, uses_left, expires_at, note, "
+                         "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                         (code, percent, amount, min_total, uses, expires_at, note, int(time.time())))
+        self._db.commit()
+
+    def set_store_discount(self, code: str, **fields) -> bool:
+        fields = {k: v for k, v in fields.items() if k in ("enabled",)}
+        if not fields:
+            return False
+        cur = self._db.execute(f"UPDATE store_discounts SET {', '.join(f'{k} = ?' for k in fields)} WHERE code = ?",
+                               (*fields.values(), code))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def delete_store_discount(self, code: str) -> bool:
+        cur = self._db.execute("DELETE FROM store_discounts WHERE code = ?", (code,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def use_store_discount(self, code: str) -> bool:
+        """Counts a use (only while uses are left) – False = used up meanwhile."""
+        cur = self._db.execute("UPDATE store_discounts SET used = used + 1, uses_left = CASE WHEN uses_left IS NULL "
+                               "THEN NULL ELSE uses_left - 1 END WHERE code = ? AND (uses_left IS NULL OR uses_left > 0)",
+                               (code,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def return_store_discount(self, code: str) -> None:
+        self._db.execute("UPDATE store_discounts SET used = MAX(used - 1, 0), uses_left = CASE WHEN uses_left IS NULL "
+                         "THEN NULL ELSE uses_left + 1 END WHERE code = ?", (code,))
+        self._db.commit()
 
     _BUNDLE_FIELDS = ("name", "kits", "price", "description", "category", "enabled")
 

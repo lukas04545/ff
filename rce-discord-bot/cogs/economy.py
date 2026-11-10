@@ -528,8 +528,34 @@ class Economy(commands.Cog):
     @app_commands.describe(member="Member (default: you)")
     @app_commands.guild_only()
     async def profile(self, interaction: discord.Interaction, member: discord.Member | None = None) -> None:
-        await interaction.response.send_message(embed=self.profile_embed(member or interaction.user),
-                                                allowed_mentions=discord.AllowedMentions.none())
+        member = member or interaction.user
+        embed = self.profile_embed(member)
+        player = self.bot.db.linked_player(member.id)
+        others = self._other_servers()
+        if player and others:                        # several servers: the same player's stats on the others
+            await interaction.response.defer()
+            await self.add_other_servers(embed, player, others)
+            await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+            return
+        await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+    @staticmethod
+    def _other_servers() -> list[str]:
+        import servers
+        return [s["id"] for s in servers.all_servers() if s["id"] != servers.server_id()]
+
+    async def add_other_servers(self, embed: discord.Embed, player: str, sids: list[str]) -> None:
+        """Cross-server profile: one line per other server of this bot (kills, deaths, K/D, playtime)."""
+        import servers
+        results = await asyncio.gather(*(servers.player_stats_on(sid, player) for sid in sids))
+        lines = []
+        for sid, st in zip(sids, results):
+            if st:
+                kd = st["kills"] / max(st["deaths"], 1)
+                lines.append(f"**{safe_md(servers.server_name(sid))}** – {st['kills']} kills · {st['deaths']} deaths · "
+                             f"K/D {kd:.2f} · {format_duration(st['playtime_seconds'])}")
+        if lines:
+            embed.add_field(name="🌍 On our other servers", value="\n".join(lines)[:1020], inline=False)
 
 
 async def setup(bot: "RceBot") -> None:

@@ -67,6 +67,8 @@ class Admin(commands.Cog):
         response = await self.bot.rcon.command(self.bot.config.ban_template.format(name=name),
                                                expect_response=False)
         self._audit(interaction, f"**Ban** `{name}`" + (f" – Reason: {safe_md(reason)}" if reason else ""))
+        if reason:
+            self.bot.dispatch("rce_ban_reason", name, reason)          # the website's bans page shows it
         await interaction.followup.send(f"🔨 Ban sent for **{safe_md(name)}**.\n"
                                         f"{self._format_response(response)}", ephemeral=True)
 

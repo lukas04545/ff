@@ -351,28 +351,43 @@ def basket_page(site, shop, base: str, keys: list[str], shop_server: str = "", *
                  + ('<input type="hidden" name="admin" value="1">' if admin else "")
                  + '<button class="ghost" type="submit">Remove</button></form></td></tr>')
     gift = str(form.get("gift", "")).strip()
-    applied, rest = "", total
-    if gift and not error:
+    disc = str(form.get("discount", "")).strip()
+    applied, rest, ip = [], total, form.get("_ip", "?")
+    if disc and not error:                            # a discount code first: it lowers the price
         try:
-            card = shop.gift_card(gift, form.get("_ip", "?"))
+            row, off = shop.discount(disc, total, ip)
+        except CheckoutError as exc:
+            error, disc = str(exc), ""
+        else:
+            disc = row["code"]
+            rest = round(total - off, 2)
+            applied.append(f'🏷️ Discount <b>{esc(disc)}</b>: {esc(shop.fmt(off))} off')
+    if gift and not error:                            # then the gift card pays (part of) the rest
+        try:
+            card = shop.gift_card(gift, ip)
         except CheckoutError as exc:
             error, gift = str(exc), ""
         else:
-            covers = round(min(float(card["balance"]), total), 2)
-            rest = round(total - covers, 2)
-            applied = (f'<p class="applied">✅ Code applied: {esc(shop.fmt(covers))} off'
-                       + (f' – you pay <b>{esc(shop.fmt(rest))}</b> with PayPal.' if rest > 0 else
-                          ' – it covers everything, no PayPal needed.') + '</p>')
+            covers = round(min(float(card["balance"]), rest), 2)
+            rest = round(rest - covers, 2)
+            applied.append(f'🎁 Gift card: {esc(shop.fmt(covers))} paid')
+    if applied:
+        applied_html = ('<p class="applied">✅ ' + " · ".join(applied)
+                        + (f' – you pay <b>{esc(shop.fmt(rest))}</b> with PayPal.' if rest > 0 else
+                           ' – it covers everything, no PayPal needed.') + '</p>')
+    else:
+        applied_html = ""
     player = str(form.get("player", ""))
+    keep = (f'<input type="hidden" name="gift" value="{esc(gift)}">'
+            f'<input type="hidden" name="discount" value="{esc(disc)}">')
     coupon = (f'<form method="post" action="{base}/store/basket" class="coupon">'
               + ('<input type="hidden" name="admin" value="1">' if admin else "")
-              + f'<input type="hidden" name="player" value="{esc(player)}">'
-              f'<label class="field"><span>Gift card / coupon code</span><input name="gift" maxlength="40" '
-              f'placeholder="XXXX-XXXX-XXXX-XXXX" value="{esc(gift)}"></label>'
-              f'<button class="ghost" type="submit">Apply</button></form>{applied}')
+              + f'<input type="hidden" name="player" value="{esc(player)}">{keep}'
+              f'<label class="field"><span>Gift card or discount code</span><input name="code" maxlength="40" '
+              f'placeholder="e.g. SUMMER20 or XXXX-XXXX-XXXX-XXXX"></label>'
+              f'<button class="ghost" type="submit">Apply</button></form>{applied_html}')
     checkout = (f'<form method="post" action="{base}/store/checkout"><input type="hidden" name="kind" value="cart">'
-                f'<input type="hidden" name="gift" value="{esc(gift)}">'
-                f'{buyer_fields(gift=False, values=form, admin=admin)}'
+                f'{keep}{buyer_fields(gift=False, values=form, admin=admin)}'
                 f'{pay_button(admin, "Check out (paid with your code)" if rest <= 0 else f"Pay {shop.fmt(rest)} with PayPal")}'
                 f'</form>')
     body = (notice(error, "bad")
@@ -597,10 +612,14 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
             resp = web.HTTPSeeOther(f"{base}/store/basket" + ("?admin=1" if admin else ""))
         set_cart(resp, cart)
         raise resp
-    if request.method == "POST" and sub == "basket":          # "Apply" the gift card / coupon code
+    if request.method == "POST" and sub == "basket":          # "Apply" a gift card or discount code
         form = await request.post()
         admin = admin_on and form.get("admin") == "1"
-        values = {"gift": str(form.get("gift", ""))[:40], "player": str(form.get("player", ""))[:64], "_ip": ip}
+        values = {"gift": str(form.get("gift", ""))[:40], "discount": str(form.get("discount", ""))[:40],
+                  "player": str(form.get("player", ""))[:64], "_ip": ip}
+        code = str(form.get("code", "")).strip()[:40]
+        if code:                                               # which kind of code is it?
+            values["discount" if shop.is_discount(code) else "gift"] = code
         return 200, basket_page(site, shop, base, cart, chosen, form=values, admin=admin)
     if request.method == "POST" and sub == "giftcards/combine":
         form = await request.post()
@@ -628,7 +647,8 @@ async def handle(site, shop, request, base: str, path: str, ip: str):
                 timer_hours=int(timer) if timer.isdigit() else None, value=form.get("value"),
                 player=str(form.get("player", "")), gift_code=str(form.get("gift", "")),
                 name=str(form.get("name", "")), admin_key=str(form.get("admin_key", "")) if admin else "", ip=ip,
-                shop_server=chosen, cart=cart if kind == "cart" else None)
+                shop_server=chosen, cart=cart if kind == "cart" else None,
+                discount_code=str(form.get("discount", ""))[:40] if kind == "cart" else "")
         except CheckoutError as exc:
             values = {k: str(v) for k, v in form.items() if k != "admin_key"}
             if kind == "cart":

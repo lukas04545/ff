@@ -65,6 +65,35 @@ class RaidAlerts(Plugin):
                 out[player.lower()] = int(uid)
         return out
 
+    def raided(self, line: str) -> set[str] | None:
+        """The players/teams a matching line names (an empty set = a raid without a name); None = no raid line."""
+        for pat in self.patterns():
+            m = pat.search(line)
+            if not m:
+                continue
+            groups = m.groupdict()
+            names = {groups[k].strip() for k in ("player", "team") if groups.get(k)}
+            return names
+        return None
+
+    def count_raid(self, names: set[str]) -> None:
+        """Raid statistics: per player/team and per day (all raids, not only opted-in players)."""
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        self.data.set("raids_total", int(self.data.get("raids_total", 0)) + 1)
+        self.data.set(f"day:{day}", int(self.data.get(f"day:{day}", 0)) + 1)
+        for name in names:
+            key = f"raided:{name.lower()}"
+            row = self.data.get(key) or {"name": name, "count": 0}
+            row["count"], row["last"] = row["count"] + 1, int(time.time())
+            self.data.set(key, row)
+
+    def raid_stats(self, days: int = 7) -> dict:
+        cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - (days - 1) * 86400))
+        per_day = {k[4:]: v for k, v in self.data.items("day:").items() if k[4:] >= cutoff}
+        top = sorted(self.data.items("raided:").values(), key=lambda r: -r["count"])[:10]
+        return {"total": int(self.data.get("raids_total", 0)), "recent": sum(per_day.values()), "per_day": per_day,
+                "most_raided": top}
+
     def targets(self, line: str) -> list[tuple[int, str]]:
         """(user id, player) to alert for this line."""
         subs = self.subscribers()
@@ -96,6 +125,9 @@ class RaidAlerts(Plugin):
             self.seen.append((int(time.time()), line[:300]))
         sent = 0
         now = time.time()
+        names = self.raided(line)
+        if names is not None:
+            self.count_raid(names)
         for uid, player in self.targets(line):
             if now - float(self.data.get(f"last:{uid}", 0)) < self.setting("cooldown") * 60:
                 continue
@@ -143,6 +175,15 @@ class RaidAlerts(Plugin):
         self.data.delete(f"sub:{interaction.user.id}")
         await interaction.response.send_message("Raid alerts off.", ephemeral=True)
 
+    @raidalerts.command(name="stats", description="Raid statistics: raids this week and the most raided.")
+    async def stats_cmd(self, interaction: discord.Interaction, days: app_commands.Range[int, 1, 90] = 7) -> None:
+        st = self.raid_stats(days)
+        top = "\n".join(f"{i}. **{self.md(r['name'])}** – {r['count']} raid{'s' if r['count'] != 1 else ''}"
+                        for i, r in enumerate(st["most_raided"], 1))
+        await interaction.response.send_message(
+            f"🚨 **Raids** – {st['recent']} in the last {days} day(s), {st['total']} since tracking started"
+            + (f"\n**Most raided**\n{top}" if top else ""), ephemeral=True)
+
     @raidalerts.command(name="scan", description="Recent console lines with watch words – to build patterns (admins).")
     @admin_only()
     async def scan_cmd(self, interaction: discord.Interaction) -> None:
@@ -165,4 +206,5 @@ class RaidAlerts(Plugin):
 
     def status(self) -> dict:
         return {"Opted in": len(self.data.items("sub:")), "Alerts sent": int(self.data.get("alerts", 0)),
+                "Raids counted": int(self.data.get("raids_total", 0)),
                 "Lines seen by the scanner": len(self.seen)}
