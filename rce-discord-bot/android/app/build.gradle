@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.rcebot.panel'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.rcebot.panel'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        release {
+            // The signing key is NOT in the repository – keep it safe and pass it in when building:
+            //   RCE_APK_KEYSTORE=/path/to/rce-panel-release.keystore RCE_APK_PASSWORD=… gradle assembleRelease
+            // Updates must be signed with the same key, otherwise phones refuse them over the old version.
+            def ks = System.getenv('RCE_APK_KEYSTORE')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('RCE_APK_PASSWORD')
+                keyAlias 'rcepanel'
+                keyPassword System.getenv('RCE_APK_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            signingConfig System.getenv('RCE_APK_KEYSTORE') ? signingConfigs.release : null
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+}

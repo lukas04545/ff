@@ -474,7 +474,11 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
 <table><tr><th>Server</th><th>Status</th><th>Live</th><th></th></tr>
 {rows or '<tr><td colspan=4 class=muted>No server yet – start with the steps above.</td></tr>'}</table>{add}</div>
 {''.join(website_card(dict(s), hidden, 'custom_domain' in addons) for s in servers)}
-{support_card(c)}""")
+{support_card(c)}
+<div class=card><h2>📲 Android app</h2><p>Your control panel as an app on your phone: <a class=btn href=/app/rce-panel.apk>
+Download the app</a></p><p class=muted>Install it (Android asks once to allow apps from your browser), then open your
+admin panel on the phone and tap <b>📲 Android app → Add this panel to the app</b>. Several servers: add each one and
+switch in the app's menu.</p></div>""")
 
     def support_card(c) -> str:
         """The code to link their Discord account in the support Discord (customer tickets, hq_tickets.py)."""
@@ -799,6 +803,14 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
             raise web.HTTPSeeOther("/#plans")
         raise await start_checkout(request, c, plan)
 
+    async def android_app(request):
+        from web.server import ANDROID_APK
+        if not ANDROID_APK.is_file():
+            raise web.HTTPNotFound(text="The Android app isn't built yet.")
+        return web.FileResponse(ANDROID_APK, headers={
+            "Content-Type": "application/vnd.android.package-archive",
+            "Content-Disposition": 'attachment; filename="rce-panel.apk"', "Cache-Control": "no-cache"})
+
     async def paypal_start(request):
         from control_plane import paypal_billing
         c = need(request)
@@ -918,6 +930,7 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
     app.add_routes([web.get("/", index), web.get("/signup", signup_page), web.get("/login", login_page),
                     web.post("/billing/switch", switch_plan),
                     web.post("/billing/addon/domain/{on:on|off}", domain_addon),
+                    web.get("/app/rce-panel.apk", android_app),
                     web.post("/billing/paypal", paypal_start), web.get("/billing/paypal/return", paypal_return),
                     web.get("/billing/paypal/cancel", paypal_cancel),
                     web.post(r"/servers/{sid:\d+}/address", change_address),
