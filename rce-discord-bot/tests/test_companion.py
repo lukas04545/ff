@@ -107,3 +107,74 @@ def test_companion_web_endpoints(bot):  # noqa: F811
         run_web(bot, scenario)
     finally:
         mp.undo()
+
+
+def test_account_overview_and_kit_claim(pb, monkeypatch):  # noqa: F811
+    from cogs.custom_kits import ClaimOutcome
+    c = plug(pb, "companion")
+    raid = plug(pb, "raid_alerts", rf=True)
+    pb.db.link_player(7, "Bob")
+    raid.claim_rf(7, 4242)
+    member = NS(id=7, roles=[])
+
+    async def get_member(uid):
+        return member if uid == 7 else None
+    monkeypatch.setattr(c, "member", get_member)
+    claimed = []
+
+    class Custom:
+        def kit_overview(self, m):
+            return {"claimable_kits": [
+                {"kit": "Starter", "can_claim_now": True, "ready_at": None, "cooldown": "1 day", "last_claimed": "never"},
+                {"kit": "VIP", "can_claim_now": False, "ready_at": 2_000_000_000, "cooldown": "12 h",
+                 "last_claimed": "2 h ago"}]}
+
+        async def claim_for(self, m, kit, via):
+            claimed.append((m.id, kit, via))
+            return ClaimOutcome(True, "claimed", f"✅ **{kit}** sent to `Bob`.", kit)
+    real_get_cog = pb.bot.get_cog
+    monkeypatch.setattr(pb.bot, "get_cog", lambda name: Custom() if name == "CustomKits" else real_get_cog(name))
+    acc = run(c.account(7))
+    assert acc["player"] == "Bob" and [k["kit"] for k in acc["kits"]] == ["Starter", "VIP"]
+    assert acc["kits"][1]["ready"] is False and acc["kits"][1]["ready_at"] == 2_000_000_000
+    assert acc["raid"]["rf"] == 4242 and acc["raid"]["dm"] is False
+    out = run(c.claim(7, "Starter"))
+    assert out["ok"] and out["message"] == "✅ Starter sent to Bob." and claimed == [(7, "Starter", "the Companion app")]
+    assert run(c.claim(8, "Starter"))["ok"] is False                 # not on the Discord: nothing claimed
+    assert len(claimed) == 1
+
+
+def test_app_switches_alerts_and_rf(bot):  # noqa: F811
+    from plugin_api import Plugin
+    from plugin_manager import PluginManager
+
+    async def scenario(c):
+        m = bot.plugins
+        await m.set_enabled("raid_alerts", True)
+        comp, raid = m.running("companion"), m.running("raid_alerts")
+        bot.db.link_player(7, "Bob")
+        token, _ = comp.exchange(comp.new_code(7))
+        auth = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        r = await c.post("/p/companion/alerts", data=json.dumps({"on": True}), headers=auth)
+        assert (await r.json())["ok"] and raid.data.get("sub:7") == 7
+        r = await c.post("/p/companion/rf", data=json.dumps({"frequency": "555"}), headers=auth)
+        assert (await r.json())["ok"] and raid.rf_of(7) == 555
+        r = await c.post("/p/companion/rf", data=json.dumps({"release": True}), headers=auth)
+        assert raid.rf_of(7) is None
+        acc = await (await c.get("/p/companion/account", headers=auth)).json()
+        assert acc["player"] == "Bob" and acc["raid"]["dm"] is True
+        assert (await c.get("/p/companion/account")).status == 401
+        assert (await c.post("/p/companion/claim", data=json.dumps({"kit": "x"}),
+                             headers={"Content-Type": "application/json"})).status == 401
+
+    async def setup():
+        bot.plugins = PluginManager(bot)
+        await bot.plugins.load_all()
+    import pytest
+    mp = pytest.MonkeyPatch()
+    mp.setattr(Plugin, "_loops", lambda self: [])
+    asyncio.run(setup())
+    try:
+        run_web(bot, scenario)
+    finally:
+        mp.undo()

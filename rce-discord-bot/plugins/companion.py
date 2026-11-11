@@ -3,7 +3,9 @@
   /companion   on Discord: the app download and a one-time pairing link / code (15 minutes) for YOUR account
 
 The app polls this server (every ~20 s while alerts are on) at /p/companion/feed with its own token and shows new
-alerts as notifications. Raid alerts (also the RF raid alarm) go to the app automatically; other plugins can call
+alerts as notifications. /p/companion/account gives the player's overview for the app's home screen (linked player,
+kits with their claim timers, raid alerts, offline protection); /p/companion/claim claims a kit (same rules as
+/customkit claim), /p/companion/alerts switches the raid alert DMs, /p/companion/rf sets the RF raid alarm frequency. Raid alerts (also the RF raid alarm) go to the app automatically; other plugins can call
 push(user_id, title, text). Tokens are stored hashed; /companion again (or "Unpair" in the app) can end a pairing.
 """
 from __future__ import annotations
@@ -114,6 +116,64 @@ class Companion(Plugin):
                 "player": player, "player_online": bool(player and self.online_name(player)),
                 "alerts": [a for a in self.data.get(f"feed:{user_id}", []) if a["id"] > since]}
 
+    # ------------------------------------------------------------ the player's account (the app's home screen)
+
+    async def member(self, user_id: int):
+        guild = self.guild
+        if guild is None:
+            return None
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except discord.HTTPException:
+                return None
+        return member
+
+    async def account(self, user_id: int) -> dict:
+        player = self.linked_player(user_id)
+        out: dict = {"server": self.server_name, "player": player,
+                     "player_online": bool(player and self.online_name(player)), "kits": [], "owned_kits": []}
+        custom = self.bot.get_cog("CustomKits")
+        member = await self.member(user_id)
+        if custom is not None and member is not None:
+            try:
+                for k in custom.kit_overview(member).get("claimable_kits", []):
+                    out["kits"].append({"kit": k["kit"], "ready": k["can_claim_now"], "ready_at": k.get("ready_at"),
+                                        "cooldown": k.get("cooldown"), "last": k.get("last_claimed"),
+                                        "items": k.get("items", [])[:12]})
+            except Exception:                               # one bad kit never breaks the overview
+                self.log.exception("Companion: kit overview failed")
+        accounts = self.bot.get_cog("PlayerAccounts")
+        if accounts is not None:
+            out["owned_kits"] = [k["name"] for k in accounts.my_kits(user_id)]
+        raid = self.plugin("raid_alerts")
+        if raid is not None:
+            out["raid"] = {"dm": raid.data.get(f"sub:{user_id}") is not None, "rf": raid.rf_of(user_id),
+                           "rf_on": bool(raid.setting("rf")),
+                           "last": [a for a in self.data.get(f"feed:{user_id}", []) if a["kind"] == "raid"][-3:]}
+        protection = self.plugin("offline_protection")
+        if protection is not None and player:
+            try:
+                z = await protection.zone_status(player)
+                zone = z.get("zone")
+                out["protection"] = {"team": z.get("team"), "leader": z.get("is_leader"),
+                                     "status": zone.get("status") if zone else None,
+                                     "deleted_at": zone.get("deleted_at") if zone else None,
+                                     "how": z.get("how_to_place_in_game")}
+            except Exception:
+                self.log.exception("Companion: protection status failed")
+        return out
+
+    async def claim(self, user_id: int, kit: str) -> dict:
+        custom = self.bot.get_cog("CustomKits")
+        member = await self.member(user_id)
+        if custom is None or member is None:
+            return {"ok": False, "message": "You aren't on this server's Discord (any more)."}
+        outcome = await custom.claim_for(member, str(kit)[:60], via="the Companion app")
+        return {"ok": outcome.ok, "message": outcome.message.replace("**", "").replace("`", ""),
+                "ready_at": outcome.ready_at}
+
     # ------------------------------------------------------------ the app's address on this server
 
     async def web_public(self, request, path: str):
@@ -133,8 +193,41 @@ class Companion(Plugin):
                                       "player": self.linked_player(uid), "website": self.site_url()})
         token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
         uid = self.user_of(token)
-        if path in ("feed", "unpair") and uid is None:
+        if path in ("feed", "unpair", "account", "claim", "alerts", "rf") and uid is None:
             return web.json_response({"error": "not paired"}, status=401)
+        if path == "account" and request.method == "GET":
+            return web.json_response(await self.account(uid), headers={"Cache-Control": "no-store"})
+        if path in ("claim", "alerts", "rf") and request.method == "POST":
+            try:
+                data = await request.json()
+            except (ValueError, UnicodeDecodeError):
+                data = {}
+            if path == "claim":
+                return web.json_response(await self.claim(uid, str(data.get("kit", ""))))
+            raid = self.plugin("raid_alerts")
+            if raid is None:
+                return web.json_response({"ok": False, "message": "Raid alerts aren't on on this server."})
+            if path == "alerts":
+                if data.get("on"):
+                    raid.data.set(f"sub:{uid}", uid)
+                else:
+                    raid.data.delete(f"sub:{uid}")
+                return web.json_response({"ok": True, "message": "Raid alerts on." if data.get("on") else
+                                          "Raid alerts off."})
+            if data.get("release"):
+                freq = raid.rf_of(uid)
+                if freq is not None:
+                    raid.data.delete(f"rf:{freq}")
+                return web.json_response({"ok": True, "message": "RF frequency released."})
+            if not self.linked_player(uid):
+                return web.json_response({"ok": False, "message": "Link your player first: /link on Discord."})
+            try:
+                freq = int(data.get("frequency"))
+            except (TypeError, ValueError):
+                return web.json_response({"ok": False, "message": "A frequency is 1 to 9999."})
+            text = raid.claim_rf(uid, freq)
+            return web.json_response({"ok": "taken" not in text and "1 to 9999" not in text,
+                                      "message": text.replace("**", "")})
         if path == "feed" and request.method == "GET":
             try:
                 since = int(request.query.get("since", 0))
