@@ -846,12 +846,8 @@ in.</span></p></div>""")
                                 "<a href=/dashboard>dashboard</a>.</p></div>"))
 
     async def android_app(request):
-        from web.server import ANDROID_APK
-        if not ANDROID_APK.is_file():
-            raise web.HTTPNotFound(text="The Android app isn't built yet.")
-        return web.FileResponse(ANDROID_APK, headers={
-            "Content-Type": "application/vnd.android.package-archive",
-            "Content-Disposition": 'attachment; filename="rce-panel.apk"', "Cache-Control": "no-cache"})
+        from web.server import apk_response
+        return apk_response(request.match_info.get("name", "rce-panel"))
 
     async def paypal_start(request):
         from control_plane import paypal_billing
@@ -972,7 +968,7 @@ in.</span></p></div>""")
     app.add_routes([web.get("/", index), web.get("/signup", signup_page), web.get("/login", login_page),
                     web.post("/billing/switch", switch_plan),
                     web.post("/billing/addon/domain/{on:on|off}", domain_addon),
-                    web.get("/app/rce-panel.apk", android_app), web.get("/app", app_home),
+                    web.get("/app/{name:rce-panel|rce-companion}.apk", android_app), web.get("/app", app_home),
                     web.post("/billing/paypal", paypal_start), web.get("/billing/paypal/return", paypal_return),
                     web.get("/billing/paypal/cancel", paypal_cancel),
                     web.post(r"/servers/{sid:\d+}/address", change_address),

@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "RCE Panel"
-include ':app'
+include ':app', ':companion'

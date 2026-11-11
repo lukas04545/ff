@@ -662,6 +662,11 @@ class PlayerWebsite(Plugin):
         join = self.setting("how_to_join").strip()
         if join:
             body += f'<div class="card"><h2>How to join</h2><div class="pre">{esc(join)}</div></div>'
+        if self.plugin("companion") is not None:          # the players' app: raid alerts on the phone
+            body += (f'<div class="card"><h2>📱 Companion app</h2>Raid alerts as notifications on your phone (Android): '
+                     f'<a href="/app/rce-companion.apk">download the app</a>, then use <b>/companion</b> on our '
+                     f'Discord to pair it. With an explosion sensor + RF broadcaster in your base and '
+                     f'<b>/raidalerts rf claim</b> you get an alert the moment someone blows a hole in it.</div>')
         early = self.plugin("early_bird")
         if early is not None and live["next_wipe"]:
             body += (f'<div class="card"><h2>🐦 Wipe day bonus</h2>The first {early.setting("players")} linked players '

@@ -1,0 +1,43 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.rcebot.companion'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.rcebot.companion'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        release {
+            // Same key as the panel app (not in the repository): RCE_APK_KEYSTORE / RCE_APK_PASSWORD
+            def ks = System.getenv('RCE_APK_KEYSTORE')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('RCE_APK_PASSWORD')
+                keyAlias 'rcepanel'
+                keyPassword System.getenv('RCE_APK_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            signingConfig System.getenv('RCE_APK_KEYSTORE') ? signingConfigs.release : null
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
