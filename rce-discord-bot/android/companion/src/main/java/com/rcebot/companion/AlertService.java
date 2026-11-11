@@ -1,5 +1,7 @@
 package com.rcebot.companion;
 
+import com.rcebot.ui.Http;
+
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -109,7 +111,7 @@ public class AlertService extends Service {
             String url = srv.optString("url"), name = srv.optString("name");
             try {
                 long since = srv.optLong("since", -1);
-                JSONObject feed = Api.call("GET", url + "/p/companion/feed?since=" + Math.max(since, 0),
+                JSONObject feed = Http.call("GET", url + "/p/companion/feed?since=" + Math.max(since, 0),
                         srv.optString("token"), null);
                 JSONArray alerts = feed.optJSONArray("alerts");
                 long newest = Math.max(since, 0);
@@ -125,7 +127,7 @@ public class AlertService extends Service {
                     status.append(st.optBoolean("online") ? "🟢 " + st.optInt("players") + "/" + st.optInt("max_players")
                             : "🔴").append(" ").append(name);
                 }
-            } catch (Api.Failure f) {
+            } catch (Http.Failure f) {
                 if (f.status == 401) {                 // unpaired on the server (/companion again or too many phones)
                     alert("Companion unpaired · " + name, "Pair this server again with /companion on its Discord.");
                     s.remove(i);

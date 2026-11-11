@@ -8,302 +8,349 @@ import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.text.InputType;
-import android.text.TextUtils;
-import android.view.Menu;
-import android.view.MenuItem;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
+import android.widget.Switch;
+import android.widget.TextView;
 import android.widget.Toast;
+
+import com.rcebot.ui.Http;
+import com.rcebot.ui.Ui;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+
 /**
- * RCE Companion: the players' app. Home: every server the player added – the linked player, their kits with claim
- * timers and a Claim button, raid alerts (DMs, RF raid alarm), offline protection. Tapping a server's website opens it
- * here. Raid alerts arrive in the background (AlertService). Servers are paired with /companion on their Discord.
+ * RCE Companion – the players' app, all native. Home: a card per server the player added: live status, the linked
+ * player, kits with a Claim button or a running countdown, raid alerts (switch, RF frequency, the latest alerts) and
+ * the offline protection zone. Raid alerts arrive in the background (AlertService).
  */
 public class MainActivity extends Activity {
-    private static final String CSS = "<style>body{background:#0b0e1a;color:#e8ecf8;font-family:sans-serif;margin:0;"
-            + "padding:12px}h2{margin:.2em 0;font-size:1.15rem}.card{background:#151a2e;border-radius:12px;padding:12px;"
-            + "margin:0 0 12px}.muted{color:#8f97b4;font-size:.85rem}.row{display:flex;justify-content:space-between;"
-            + "align-items:center;gap:8px;padding:7px 0;border-top:1px solid #222a44}a.btn{display:inline-block;"
-            + "background:#e5341c;color:#fff;padding:7px 12px;border-radius:8px;text-decoration:none;font-weight:600;"
-            + "white-space:nowrap}a.ghost{background:#222a44}.ok{color:#3ddc6a}.warn{color:#f1c40f}.bad{color:#e5341c}"
-            + "small{color:#8f97b4}</style>";
-
     private Store store;
-    private WebView web;
-    private boolean onHome = true;
-    private int siteServer = -1;
+    private Ui.Screen screen;
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final List<Object[]> timers = new ArrayList<>();          // {TextView, ready-at (s), prefix}
+    private boolean loading;
+    private final Runnable tick = new Runnable() {
+        @Override
+        public void run() {
+            boolean due = false;
+            long now = System.currentTimeMillis() / 1000;
+            for (Object[] t : timers) {
+                long at = (Long) t[1];
+                ((TextView) t[0]).setText(t[2] + Ui.until(at));
+                if (at <= now) due = true;
+            }
+            if (due && !loading) load();                              // a kit just became ready
+            ui.postDelayed(this, 1000);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         store = new Store(this);
         AlertService.channels(this);
-        web = new WebView(this);
-        web.setBackgroundColor(Color.parseColor("#0b0e1a"));
-        WebSettings s = web.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setUserAgentString(s.getUserAgentString() + " RCECompanion/1.1");
-        web.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                Uri uri = request.getUrl();
-                if ("rceapp".equals(uri.getScheme())) {
-                    action(uri);
-                    return true;
-                }
-                JSONObject srv = store.server(siteServer);
-                if (!onHome && srv != null && uri.getHost() != null
-                        && uri.getHost().equalsIgnoreCase(Uri.parse(srv.optString("url")).getHost())) return false;
-                outside(uri);
-                return true;
-            }
-        });
-        setContentView(web);
+        screen = Ui.screen(this, "Companion", "Your Rust servers");
+        Ui.action(screen, "＋", v -> askPairing());
+        Ui.action(screen, "⋮", this::menu);
+        screen.swipe.setOnRefreshListener(this::load);
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
         }
-        Uri link = getIntent() != null ? getIntent().getData() : null;
-        if (link != null && "pair".equals(link.getHost())) pair(link.getQueryParameter("url"), link.getQueryParameter("code"));
-        else home();
+        handle(getIntent());
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        Uri link = intent.getData();
-        if (link != null && "pair".equals(link.getHost())) pair(link.getQueryParameter("url"), link.getQueryParameter("code"));
+        handle(intent);
+    }
+
+    private void handle(Intent intent) {
+        Uri link = intent != null ? intent.getData() : null;
+        if (link != null && "pair".equals(link.getHost())) {
+            intent.setData(null);
+            pair(link.getQueryParameter("url"), link.getQueryParameter("code"));
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (onHome && store.paired()) home();               // fresh timers when coming back
+        load();
+        ui.removeCallbacks(tick);
+        ui.postDelayed(tick, 1000);
     }
 
-    private void outside(Uri uri) {
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, uri));
-        } catch (ActivityNotFoundException ignored) {
-        }
+    @Override
+    protected void onPause() {
+        super.onPause();
+        ui.removeCallbacks(tick);
     }
 
-    // ------------------------------------------------------------ Home: every server at a glance
+    // ------------------------------------------------------------ Loading and drawing
 
-    private static String esc(String s) {
-        return TextUtils.htmlEncode(s == null ? "" : s);
-    }
-
-    private static String until(long at) {
-        long left = at - System.currentTimeMillis() / 1000;
-        if (left <= 0) return "now";
-        long h = left / 3600, m = (left % 3600) / 60;
-        return h > 0 ? h + " h " + m + " min" : Math.max(1, m) + " min";
-    }
-
-    private void home() {
-        onHome = true;
-        siteServer = -1;
-        if (getActionBar() != null) getActionBar().setTitle(getString(R.string.app_name));
+    private void load() {
         if (!store.paired()) {
-            web.loadDataWithBaseURL(null, CSS + "<div class=card><h2>Welcome!</h2><p>Add the servers you play on: "
-                    + "on each server's Discord use <b>/companion</b>, then tap the link on this phone.</p>"
-                    + "<p><a class=btn href='rceapp://add'>➕ Add a server</a></p></div>", "text/html", "utf-8", null);
+            timers.clear();
+            screen.swipe.setRefreshing(false);
+            screen.content.removeAllViews();
+            LinearLayout hello = Ui.note(this, "🛡️", "Welcome to RCE Companion",
+                    "Raid alerts on your phone, your kits and their timers, your offline protection – for every "
+                            + "server you play on.\n\nOn the server's Discord type /companion and tap the link on "
+                            + "this phone.");
+            TextView add = Ui.button(this, "＋  Add a server", Ui.PRIMARY);
+            add.setOnClickListener(v -> askPairing());
+            hello.addView(add);
+            screen.content.addView(hello);
             return;
         }
-        web.loadDataWithBaseURL(null, CSS + "<p class=muted>Loading your servers …</p>", "text/html", "utf-8", null);
+        if (loading) return;
+        loading = true;
+        screen.swipe.setRefreshing(true);
         if (store.alerts()) AlertService.start(this);
+        final JSONArray all = store.servers();
         new Thread(() -> {
-            StringBuilder html = new StringBuilder(CSS);
-            JSONArray all = store.servers();
-            for (int i = 0; i < all.length(); i++) html.append(card(i, all.optJSONObject(i)));
-            html.append("<p><a class='btn ghost' href='rceapp://add'>➕ Add a server</a></p>");
-            runOnUiThread(() -> {
-                if (onHome) web.loadDataWithBaseURL(null, html.toString(), "text/html", "utf-8", null);
+            final Object[] results = new Object[all.length()];
+            for (int i = 0; i < all.length(); i++) {
+                JSONObject srv = all.optJSONObject(i);
+                try {
+                    results[i] = Http.call("GET", srv.optString("url") + "/p/companion/account", srv.optString("token"), null);
+                } catch (Http.Failure f) {
+                    results[i] = f;
+                }
+            }
+            ui.post(() -> {
+                loading = false;
+                if (isFinishing()) return;
+                screen.swipe.setRefreshing(false);
+                timers.clear();
+                screen.content.removeAllViews();
+                for (int i = 0; i < all.length(); i++) screen.content.addView(card(i, all.optJSONObject(i), results[i]));
+                screen.subtitle.setText(all.length() + (all.length() == 1 ? " server" : " servers")
+                        + (store.alerts() ? " · alerts on" : " · alerts off"));
             });
         }).start();
     }
 
-    private String card(int i, JSONObject srv) {
-        String name = srv.optString("name");
-        StringBuilder c = new StringBuilder("<div class=card><h2>" + esc(name) + "</h2>");
-        JSONObject acc;
-        try {
-            acc = Api.call("GET", srv.optString("url") + "/p/companion/account", srv.optString("token"), null);
-        } catch (Api.Failure f) {
-            return c.append("<p class=bad>").append(esc(f.status == 401 ? "Not paired any more – pair it again with "
-                    + "/companion." : f.getMessage())).append("</p><p><a class='btn ghost' href='rceapp://remove?s=")
-                    .append(i).append("'>Remove</a></p></div>").toString();
+    private View card(final int index, final JSONObject srv, Object result) {
+        LinearLayout c = Ui.card(this);
+        LinearLayout head = Ui.row(this);
+        head.addView(Ui.grow(Ui.text(this, srv.optString("name"), 19, Ui.TEXT, true)));
+        c.addView(head);
+        if (result instanceof Http.Failure) {
+            Http.Failure f = (Http.Failure) result;
+            head.addView(Ui.pill(this, f.status == 401 ? "not paired" : "unreachable", Ui.BAD));
+            c.addView(Ui.text(this, f.status == 401 ? "This phone isn't paired with the server any more – use "
+                    + "/companion on its Discord again." : f.getMessage(), 14, Ui.MUTED, false));
+            c.addView(footer(index, srv));
+            return c;
         }
-        String player = acc.optString("player", "");
-        c.append(player.isEmpty() ? "<p class=warn>Not linked – use /link on the server's Discord.</p>"
-                : "<p>🎮 Linked as <b>" + esc(player) + "</b> " + (acc.optBoolean("player_online")
-                ? "<span class=ok>● online</span>" : "<small>offline</small>") + "</p>");
-        // kits
+        JSONObject acc = (JSONObject) result;
+        JSONObject st = acc.optJSONObject("status");
+        if (st != null) {
+            head.addView(st.optBoolean("online")
+                    ? Ui.pill(this, "● " + st.optInt("players") + " / " + st.optInt("max_players"), Ui.OK)
+                    : Ui.pill(this, "offline", Ui.BAD));
+        }
+        String player = acc.isNull("player") ? "" : acc.optString("player");
+        LinearLayout who = Ui.row(this);
+        if (player.isEmpty()) {
+            who.addView(Ui.grow(Ui.text(this, "Not linked – use /link on the server's Discord.", 14, Ui.WARN, false)));
+        } else {
+            who.addView(Ui.grow(Ui.text(this, "🎮  " + player, 15, Ui.TEXT, false)));
+            who.addView(acc.optBoolean("player_online") ? Ui.pill(this, "in game", Ui.OK)
+                    : Ui.pill(this, "not in game", Ui.MUTED));
+        }
+        c.addView(who);
+        if (st != null && !st.isNull("next_wipe") && st.optLong("next_wipe") > System.currentTimeMillis() / 1000) {
+            TextView wipe = Ui.text(this, "", 13, Ui.MUTED, false);
+            timers.add(new Object[]{wipe, st.optLong("next_wipe"), "🧹  Next wipe in "});
+            wipe.setText("🧹  Next wipe in " + Ui.until(st.optLong("next_wipe")));
+            c.addView(wipe);
+        }
+
+        // ---- kits
+        c.addView(Ui.label(this, "Kits"));
         JSONArray kits = acc.optJSONArray("kits");
-        c.append("<h3>🎒 Kits</h3>");
-        if (kits == null || kits.length() == 0) c.append("<p class=muted>No kits for you on this server.</p>");
+        if (kits == null || kits.length() == 0) c.addView(Ui.text(this, "No kits for you on this server yet.", 14, Ui.MUTED, false));
         for (int k = 0; kits != null && k < kits.length(); k++) {
-            JSONObject kit = kits.optJSONObject(k);
-            String id = kit.optString("kit");
-            c.append("<div class=row><div><b>").append(esc(id)).append("</b><br><small>every ")
-                    .append(esc(kit.optString("cooldown"))).append(" · last: ").append(esc(kit.optString("last")))
-                    .append("</small></div>");
+            final JSONObject kit = kits.optJSONObject(k);
+            LinearLayout row = Ui.row(this);
+            LinearLayout names = Ui.column(this);
+            names.addView(Ui.text(this, kit.optString("kit"), 15, Ui.TEXT, true));
+            names.addView(Ui.text(this, "every " + kit.optString("cooldown") + " · last " + kit.optString("last"),
+                    12, Ui.MUTED, false));
+            row.addView(Ui.grow(names));
             if (kit.optBoolean("ready")) {
-                c.append("<a class=btn href='rceapp://claim?s=").append(i).append("&kit=").append(Uri.encode(id))
-                        .append("'>Claim</a>");
+                TextView claim = Ui.button(this, "Claim", Ui.PRIMARY);
+                claim.setOnClickListener(v -> {
+                    try {
+                        post(srv, "claim", new JSONObject().put("kit", kit.optString("kit")));
+                    } catch (Exception ignored) {
+                    }
+                });
+                row.addView(claim);
             } else {
-                c.append("<span class=warn>⏳ ").append(until(kit.optLong("ready_at"))).append("</span>");
+                TextView t = Ui.pill(this, "⏳ " + Ui.until(kit.optLong("ready_at")), Ui.WARN);
+                timers.add(new Object[]{t, kit.optLong("ready_at"), "⏳ "});
+                row.addView(t);
             }
-            c.append("</div>");
+            c.addView(row);
         }
         JSONArray owned = acc.optJSONArray("owned_kits");
         if (owned != null && owned.length() > 0) {
-            StringBuilder names = new StringBuilder();
+            StringBuilder names = new StringBuilder("Your own kits: ");
             for (int k = 0; k < owned.length(); k++) names.append(k > 0 ? ", " : "").append(owned.optString(k));
-            c.append("<p class=muted>Your own (bought) kits: ").append(esc(names.toString())).append("</p>");
+            c.addView(Ui.text(this, names, 12, Ui.MUTED, false));
         }
-        // raid alerts
-        JSONObject raid = acc.optJSONObject("raid");
+
+        // ---- raid alerts
+        final JSONObject raid = acc.optJSONObject("raid");
         if (raid != null) {
-            boolean dm = raid.optBoolean("dm");
-            c.append("<h3>🚨 Raid alerts</h3><div class=row><div>Alerts ").append(dm ? "<b class=ok>on</b>" : "<b>off</b>")
-                    .append("</div><a class='btn ghost' href='rceapp://alerts?s=").append(i).append("&on=")
-                    .append(dm ? "0" : "1").append("'>").append(dm ? "Switch off" : "Switch on").append("</a></div>");
+            c.addView(Ui.label(this, "Raid alerts"));
+            LinearLayout row = Ui.row(this);
+            row.addView(Ui.grow(Ui.text(this, "🚨  Alert me when I'm raided", 15, Ui.TEXT, false)));
+            Switch sw = new Switch(this);
+            sw.setChecked(raid.optBoolean("dm"));
+            sw.setOnCheckedChangeListener((b, on) -> {
+                try {
+                    post(srv, "alerts", new JSONObject().put("on", on));
+                } catch (Exception ignored) {
+                }
+            });
+            row.addView(sw);
+            c.addView(row);
             if (raid.optBoolean("rf_on")) {
-                c.append("<div class=row><div>📡 RF alarm: ").append(raid.isNull("rf") ? "<small>no frequency</small>"
-                        : "<b>" + raid.optInt("rf") + "</b>").append("<br><small>explosion sensor → RF broadcaster")
-                        .append("</small></div><a class='btn ghost' href='rceapp://rf?s=").append(i)
-                        .append("'>").append(raid.isNull("rf") ? "Set" : "Change").append("</a></div>");
+                LinearLayout rf = Ui.row(this);
+                LinearLayout names = Ui.column(this);
+                names.addView(Ui.text(this, "📡  RF alarm" + (raid.isNull("rf") ? "" : " · frequency " + raid.optInt("rf")),
+                        15, Ui.TEXT, false));
+                names.addView(Ui.text(this, "explosion sensor → RF broadcaster in your base", 12, Ui.MUTED, false));
+                rf.addView(Ui.grow(names));
+                TextView set = Ui.button(this, raid.isNull("rf") ? "Set" : "Change", Ui.GHOST);
+                set.setOnClickListener(v -> askFrequency(srv));
+                rf.addView(set);
+                c.addView(rf);
+            }
+            JSONArray last = raid.optJSONArray("last");
+            for (int k = last == null ? -1 : last.length() - 1; k >= 0; k--) {
+                JSONObject a = last.optJSONObject(k);
+                String when = new SimpleDateFormat("d MMM HH:mm", Locale.getDefault()).format(new Date(a.optLong("at") * 1000));
+                TextView line = Ui.text(this, when + "  " + a.optString("text"), 12, Ui.BAD, false);
+                line.setBackground(Ui.round(this, 0x22FF5C5C, 10));
+                line.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 10), Ui.dp(this, 6));
+                line.setLayoutParams(Ui.lp(this, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 4, 0, 0));
+                c.addView(line);
             }
         }
-        // offline protection
+
+        // ---- offline protection
         JSONObject prot = acc.optJSONObject("protection");
         if (prot != null) {
-            c.append("<h3>🛡️ Offline protection</h3>");
-            if (prot.isNull("team")) c.append("<p class=muted>Not in a team – only teams get a protection zone.</p>");
-            else if (prot.isNull("status")) c.append("<p class=warn>No zone yet. ").append(esc(prot.optString("how")))
-                    .append("</p>");
-            else {
-                String st = prot.optString("status");
-                c.append("<p>Zone: <b class=").append("red".equals(st) ? "ok" : "warn").append(">")
-                        .append("red".equals(st) ? "PROTECTED (team offline)" : "green (someone is online)")
-                        .append("</b>");
-                if (!prot.isNull("deleted_at")) c.append("<br><small>removed in ").append(until(prot.optLong("deleted_at")))
-                        .append(" if nobody comes online</small>");
-                c.append("</p>");
+            c.addView(Ui.label(this, "Offline protection"));
+            LinearLayout row = Ui.row(this);
+            if (prot.isNull("team")) {
+                row.addView(Ui.grow(Ui.text(this, "Only teams get a protection zone – you're not in a team.", 14, Ui.MUTED, false)));
+            } else if (prot.isNull("status")) {
+                row.addView(Ui.grow(Ui.text(this, "No zone yet. " + prot.optString("how"), 14, Ui.WARN, false)));
+            } else {
+                boolean red = "red".equals(prot.optString("status"));
+                row.addView(Ui.grow(Ui.text(this, red ? "🛡️  Your base is protected" : "🟢  Team online – raidable", 15, Ui.TEXT, false)));
+                row.addView(Ui.pill(this, red ? "PROTECTED" : "OPEN", red ? Ui.OK : Ui.WARN));
+            }
+            c.addView(row);
+            if (!prot.isNull("deleted_at")) {
+                TextView t = Ui.text(this, "", 12, Ui.MUTED, false);
+                timers.add(new Object[]{t, prot.optLong("deleted_at"), "Zone removed if nobody comes online in "});
+                t.setText("Zone removed if nobody comes online in " + Ui.until(prot.optLong("deleted_at")));
+                c.addView(t);
             }
         }
-        c.append("<p><a class='btn ghost' href='rceapp://site?s=").append(i).append("'>🌐 Website</a> "
-                + "<a class='btn ghost' href='rceapp://remove?s=").append(i).append("'>Remove</a></p></div>");
-        return c.toString();
+        c.addView(footer(index, srv));
+        return c;
     }
 
-    // ------------------------------------------------------------ Actions from the home screen
-
-    private void action(Uri uri) {
-        int i;
-        try {
-            i = Integer.parseInt(uri.getQueryParameter("s") == null ? "-1" : uri.getQueryParameter("s"));
-        } catch (NumberFormatException e) {
-            i = -1;
-        }
-        final JSONObject srv = store.server(i);
-        final int index = i;
-        switch (uri.getHost() == null ? "" : uri.getHost()) {
-            case "add": askPairing(); break;
-            case "site":
-                if (srv != null) {
-                    onHome = false;
-                    siteServer = index;
-                    if (getActionBar() != null) getActionBar().setTitle(srv.optString("name"));
-                    web.loadUrl(srv.optString("url") + "/");
-                }
-                break;
-            case "remove":
-                if (srv != null) new AlertDialog.Builder(this).setTitle("Remove " + srv.optString("name") + "?")
-                        .setMessage("No more alerts from this server on this phone.")
-                        .setPositiveButton("Remove", (d, w) -> {
-                            post(srv, "unpair", new JSONObject(), false);
-                            store.remove(index);
-                            home();
-                        }).setNegativeButton("Cancel", null).show();
-                break;
-            case "claim":
-                if (srv != null) {
-                    try {
-                        post(srv, "claim", new JSONObject().put("kit", uri.getQueryParameter("kit")), true);
-                    } catch (Exception ignored) {
-                    }
-                }
-                break;
-            case "alerts":
-                if (srv != null) {
-                    try {
-                        post(srv, "alerts", new JSONObject().put("on", "1".equals(uri.getQueryParameter("on"))), true);
-                    } catch (Exception ignored) {
-                    }
-                }
-                break;
-            case "rf":
-                if (srv != null) askFrequency(srv);
-                break;
-            default:
-                break;
-        }
+    private View footer(final int index, final JSONObject srv) {
+        LinearLayout f = Ui.row(this);
+        f.setGravity(Gravity.END);
+        f.setLayoutParams(Ui.lp(this, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 14, 0, 0));
+        TextView site = Ui.button(this, "🌐 Website & store", Ui.GHOST);
+        site.setOnClickListener(v -> startActivity(new Intent(this, WebActivity.class)
+                .putExtra("url", srv.optString("url") + "/").putExtra("title", srv.optString("name"))));
+        TextView remove = Ui.button(this, "Remove", Ui.GHOST);
+        remove.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("Remove " + srv.optString("name") + "?")
+                .setMessage("No more alerts from this server on this phone.")
+                .setPositiveButton("Remove", (d, w) -> {
+                    new Thread(() -> {
+                        try {
+                            Http.call("POST", srv.optString("url") + "/p/companion/unpair", srv.optString("token"), null);
+                        } catch (Http.Failure ignored) {
+                        }
+                    }).start();
+                    store.remove(index);
+                    load();
+                }).setNegativeButton("Cancel", null).show());
+        f.addView(site);
+        f.addView(remove);
+        return f;
     }
 
-    /** Calls the server for the player (claim, alerts, rf, unpair) and shows its answer. */
-    private void post(JSONObject srv, String path, JSONObject body, boolean refresh) {
+    /** Calls the server for the player (claim, alerts, rf), shows its answer and reloads. */
+    private void post(final JSONObject srv, final String path, final JSONObject body) {
+        screen.swipe.setRefreshing(true);
         new Thread(() -> {
             String msg;
             try {
-                JSONObject out = Api.call("POST", srv.optString("url") + "/p/companion/" + path, srv.optString("token"), body);
-                msg = out.optString("message", "");
-            } catch (Api.Failure f) {
+                msg = Http.call("POST", srv.optString("url") + "/p/companion/" + path, srv.optString("token"), body)
+                        .optString("message", "");
+            } catch (Http.Failure f) {
                 msg = f.getMessage();
             }
             final String text = msg;
-            runOnUiThread(() -> {
-                if (!text.isEmpty()) new AlertDialog.Builder(this).setMessage(text).setPositiveButton("OK", null).show();
-                if (refresh) home();
+            ui.post(() -> {
+                if ("claim".equals(path) || "rf".equals(path)) Ui.message(this, text);
+                else if (!text.isEmpty()) Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+                load();
             });
         }).start();
     }
 
-    private void askFrequency(JSONObject srv) {
-        final EditText f = new EditText(this);
-        f.setInputType(InputType.TYPE_CLASS_NUMBER);
-        f.setHint("1–9999");
-        new AlertDialog.Builder(this).setTitle("RF raid alarm frequency")
-                .setMessage("In your base: an explosion sensor powers an RF broadcaster set to this frequency. "
-                        + "Pick a number nobody else uses.")
-                .setView(f)
+    private void askFrequency(final JSONObject srv) {
+        final EditText f = Ui.input(this, "1 – 9999", InputType.TYPE_CLASS_NUMBER);
+        new AlertDialog.Builder(this).setTitle("📡 RF raid alarm")
+                .setMessage("In your base, wire an explosion sensor to an RF broadcaster and set the broadcaster to "
+                        + "this frequency. Pick a number nobody else uses.")
+                .setView(Ui.form(this, f))
                 .setPositiveButton("Save", (d, w) -> {
                     try {
-                        post(srv, "rf", new JSONObject().put("frequency", f.getText().toString()), true);
+                        post(srv, "rf", new JSONObject().put("frequency", f.getText().toString()));
                     } catch (Exception ignored) {
                     }
                 })
                 .setNeutralButton("Release", (d, w) -> {
                     try {
-                        post(srv, "rf", new JSONObject().put("release", true), true);
+                        post(srv, "rf", new JSONObject().put("release", true));
                     } catch (Exception ignored) {
                     }
                 })
@@ -313,23 +360,13 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------ Pairing
 
     private void askPairing() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (20 * getResources().getDisplayMetrics().density);
-        box.setPadding(pad, pad / 2, pad, 0);
-        final EditText url = new EditText(this);
-        url.setHint("Server website, e.g. https://myserver.example.com");
-        url.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
-        final EditText code = new EditText(this);
-        code.setHint("Pairing code, e.g. K7M2P9QX");
-        code.setInputType(InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
-        box.addView(url);
-        box.addView(code);
+        final EditText url = Ui.input(this, "Server website, e.g. myserver.example.com", InputType.TYPE_TEXT_VARIATION_URI);
+        final EditText code = Ui.input(this, "Pairing code, e.g. K7M2P9QX", InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
         new AlertDialog.Builder(this)
                 .setTitle("Add a server")
-                .setMessage("On the server's Discord use /companion – then tap the link on this phone, or type the "
+                .setMessage("On the server's Discord type /companion and tap the link on this phone – or enter the "
                         + "website address and the code here.")
-                .setView(box)
+                .setView(Ui.form(this, url, code))
                 .setPositiveButton("Pair", (d, w) -> pair(url.getText().toString(), code.getText().toString()))
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -343,30 +380,27 @@ public class MainActivity extends Activity {
         return Uri.parse(u).getHost() == null ? null : u;
     }
 
-    private void pair(String rawUrl, String code) {
+    private void pair(String rawUrl, final String code) {
         final String url = clean(rawUrl);
         if (url == null || code == null || code.trim().isEmpty()) {
             Toast.makeText(this, "The website address and the code are needed.", Toast.LENGTH_LONG).show();
-            home();
             return;
         }
-        Toast.makeText(this, "Pairing …", Toast.LENGTH_SHORT).show();
+        screen.swipe.setRefreshing(true);
         new Thread(() -> {
             try {
-                JSONObject body = new JSONObject().put("code", code.trim()).put("device", Build.MODEL);
-                JSONObject out = Api.call("POST", url + "/p/companion/exchange", null, body);
+                JSONObject out = Http.call("POST", url + "/p/companion/exchange", null,
+                        new JSONObject().put("code", code.trim()).put("device", Build.MODEL));
                 store.add(url, out.getString("token"), out.optString("server", "Rust server"));
-                runOnUiThread(() -> {
-                    Toast.makeText(this, "✅ Paired" + (out.optString("player").isEmpty() ? "" :
-                            " as " + out.optString("player")), Toast.LENGTH_LONG).show();
+                ui.post(() -> {
+                    Toast.makeText(this, "✅ Paired with " + out.optString("server"), Toast.LENGTH_LONG).show();
                     askBattery();
-                    home();
+                    load();
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> {
-                    Toast.makeText(this, e.getMessage() != null ? e.getMessage() : "Pairing failed.",
-                            Toast.LENGTH_LONG).show();
-                    home();
+                ui.post(() -> {
+                    screen.swipe.setRefreshing(false);
+                    Ui.message(this, e.getMessage() != null ? e.getMessage() : "Pairing failed.");
                 });
             }
         }).start();
@@ -374,7 +408,6 @@ public class MainActivity extends Activity {
 
     /** Alerts must arrive while the phone sleeps: ask once to let the app run in the background. */
     private void askBattery() {
-        if (Build.VERSION.SDK_INT < 23) return;
         PowerManager pm = getSystemService(PowerManager.class);
         if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
             try {
@@ -385,52 +418,31 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void testAlert() {
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, AlertService.CH_ALERTS)
-                : new Notification.Builder(this);
-        b.setSmallIcon(android.R.drawable.stat_sys_warning).setContentTitle("🚨 Test raid alert")
-                .setContentText("This is how a raid alert looks and sounds.").setAutoCancel(true)
-                .setPriority(Notification.PRIORITY_MAX);
-        getSystemService(NotificationManager.class).notify(99, b.build());
-    }
+    // ------------------------------------------------------------ Menu
 
-    // ------------------------------------------------------------ Menu & back
-
-    @Override
-    public void onBackPressed() {
-        if (!onHome && web.canGoBack()) web.goBack();
-        else if (!onHome) home();
-        else super.onBackPressed();
-    }
-
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        menu.clear();
-        menu.add(0, 1, 0, "My servers").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
-        menu.add(0, 2, 1, "Add a server");
-        menu.add(0, 3, 2, store.alerts() ? "Raid alerts on this phone: ON" : "Raid alerts on this phone: OFF");
-        menu.add(0, 4, 3, "Test alert");
-        return true;
-    }
-
-    @Override
-    public boolean onPrepareOptionsMenu(Menu menu) {
-        return onCreateOptionsMenu(menu);
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        switch (item.getItemId()) {
-            case 1: home(); return true;
-            case 2: askPairing(); return true;
-            case 3:
+    private void menu(View anchor) {
+        PopupMenu m = new PopupMenu(this, anchor);
+        m.getMenu().add(0, 1, 0, store.alerts() ? "Mute alerts on this phone" : "Unmute alerts on this phone");
+        m.getMenu().add(0, 2, 1, "Test alert");
+        m.getMenu().add(0, 3, 2, "Add a server");
+        m.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == 1) {
                 store.alerts(!store.alerts());
                 if (store.alerts() && store.paired()) AlertService.start(this);
                 else AlertService.stop(this);
-                Toast.makeText(this, store.alerts() ? "Raid alerts on" : "Raid alerts off", Toast.LENGTH_SHORT).show();
-                return true;
-            case 4: testAlert(); return true;
-            default: return super.onOptionsItemSelected(item);
-        }
+                load();
+            } else if (item.getItemId() == 2) {
+                Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, AlertService.CH_ALERTS)
+                        : new Notification.Builder(this);
+                b.setSmallIcon(android.R.drawable.stat_sys_warning).setContentTitle("🚨 Test raid alert")
+                        .setContentText("This is how a raid alert looks and sounds.").setAutoCancel(true)
+                        .setPriority(Notification.PRIORITY_MAX);
+                getSystemService(NotificationManager.class).notify(99, b.build());
+            } else {
+                askPairing();
+            }
+            return true;
+        });
+        m.show();
     }
 }

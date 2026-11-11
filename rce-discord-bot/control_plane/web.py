@@ -965,6 +965,8 @@ in.</span></p></div>""")
                                        "server's bot and website are paused right now. The community's admins can "
                                        "reactivate it – everything is kept.</p></div>")
 
+    from control_plane import app_api
+    app_api.register_portal(app, db, box, settings, limiter, _client_ip)       # the Android app's native screens
     app.add_routes([web.get("/", index), web.get("/signup", signup_page), web.get("/login", login_page),
                     web.post("/billing/switch", switch_plan),
                     web.post("/billing/addon/domain/{on:on|off}", domain_addon),
@@ -2180,6 +2182,8 @@ suggested it gets a notice in the channel within a minute.</p><p>{tabs}</p>
         return page("Audit", f"<p><a href={P}/>← back</a></p><h1>Audit log</h1><table><tr><th>When (UTC)</th><th>Who</th>"
                              f"<th>What</th><th>Customer</th><th>Server</th><th>Detail</th></tr>{body}</table>")
 
+    from control_plane import app_api
+    app_api.register_owner(app, db, box, settings, supervisor, limiter, user_limiter, role_of, _client_ip)
     app.add_routes([web.get("/login", login_page), web.post("/login", login), web.post("/logout", logout),
                     web.get("/passkey.js", passkey_js), web.post("/login/passkey/options", passkey_login_options),
                     web.post("/login/passkey", passkey_login), web.post("/passkeys/options", passkey_register_options),

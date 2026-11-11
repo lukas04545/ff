@@ -1,4 +1,4 @@
-package com.rcebot.companion;
+package com.rcebot.ui;
 
 import org.json.JSONObject;
 
@@ -9,18 +9,21 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-/** The server's companion address: /p/companion/exchange (pairing) and /p/companion/feed (alerts + status). */
-final class Api {
-    static final class Failure extends Exception {
-        final int status;
+/** JSON over HTTPS with a Bearer token – the apps' connection to the bot / the shop. Call it off the main thread. */
+public final class Http {
+    public static final class Failure extends Exception {
+        public final int status;
 
-        Failure(int status, String message) {
+        public Failure(int status, String message) {
             super(message);
             this.status = status;
         }
     }
 
-    static JSONObject call(String method, String url, String token, JSONObject body) throws Failure {
+    private Http() {
+    }
+
+    public static JSONObject call(String method, String url, String token, JSONObject body) throws Failure {
         HttpURLConnection c = null;
         try {
             c = (HttpURLConnection) new URL(url).openConnection();
@@ -28,13 +31,13 @@ final class Api {
             c.setConnectTimeout(10000);
             c.setReadTimeout(15000);
             c.setRequestProperty("Accept", "application/json");
-            c.setRequestProperty("User-Agent", "RCECompanion/1.0");
+            c.setRequestProperty("User-Agent", "RCEApp/2.0");
             if (token != null && !token.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + token);
-            if (body != null) {
+            if (body != null || "POST".equals(method)) {
                 c.setDoOutput(true);
                 c.setRequestProperty("Content-Type", "application/json");
                 try (OutputStream out = c.getOutputStream()) {
-                    out.write(body.toString().getBytes(StandardCharsets.UTF_8));
+                    out.write((body == null ? "{}" : body.toString()).getBytes(StandardCharsets.UTF_8));
                 }
             }
             int status = c.getResponseCode();

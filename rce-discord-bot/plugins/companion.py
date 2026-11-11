@@ -132,7 +132,12 @@ class Companion(Plugin):
 
     async def account(self, user_id: int) -> dict:
         player = self.linked_player(user_id)
-        out: dict = {"server": self.server_name, "player": player,
+        info = getattr(self.bot, "server_info", None) or {}
+        up = bool(self.bot.rcon.connected and info)
+        out: dict = {"server": self.server_name, "player": player, "website": self.site_url(),
+                     "status": {"online": up, "players": int(info.get("Players") or 0) if up else 0,
+                                "max_players": int(info.get("MaxPlayers") or 0) if up else 0,
+                                "next_wipe": self.next_wipe()},
                      "player_online": bool(player and self.online_name(player)), "kits": [], "owned_kits": []}
         custom = self.bot.get_cog("CustomKits")
         member = await self.member(user_id)

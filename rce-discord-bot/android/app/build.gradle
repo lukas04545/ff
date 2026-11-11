@@ -10,8 +10,8 @@ android {
         applicationId 'com.rcebot.panel'
         minSdk 24
         targetSdk 35
-        versionCode 2
-        versionName '1.1'
+        versionCode 3
+        versionName '2.0'
     }
 
     signingConfigs {
@@ -36,6 +36,10 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
             signingConfig System.getenv('RCE_APK_KEYSTORE') ? signingConfigs.release : null
         }
+    }
+
+    sourceSets {
+        main.java.srcDirs += '../shared/src'      // the shared look (Ui) and connection (Http)
     }
 
     compileOptions {

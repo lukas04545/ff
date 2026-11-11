@@ -30,5 +30,10 @@
                 <data android:scheme="rcepanel" />
             </intent-filter>
         </activity>
+        <activity android:name=".OverviewActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+        <activity android:name=".WebActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>
