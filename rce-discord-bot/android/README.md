@@ -1,5 +1,12 @@
 # RCE Panel – Android app
 
+Since 2.0 both apps are native (screens built in code with the shared kit in `shared/src/com/rcebot/ui`: `Ui` – dark
+cards, pills, gradient buttons, stat tiles – and `Http`). RCE Panel: a native home (your logins), a native customer
+overview and a native manager overview, fed by the JSON API in `control_plane/app_api.py` (`/app/api/…`, Bearer
+tokens). Only a server's full control panel (and the full dashboard / owner panel) opens as a web page inside the app
+(`WebActivity`) – it's far too large to rebuild natively. RCE Companion is native throughout; only a server's website
+and store open as a web page.
+
 The control panel as a real Android app (APK). On the first start you pick how to log in:
 
 * **🛒 Customer** – the shop account (address prefilled: `res/values/strings.xml` → `default_shop`). The app opens the

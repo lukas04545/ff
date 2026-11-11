@@ -35,6 +35,8 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".WebActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="false" />
+
         <service
             android:name=".AlertService"
             android:exported="false"
