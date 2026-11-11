@@ -429,3 +429,40 @@ def test_customer_switches_between_their_panels(cp, monkeypatch):
         finally:
             await a.close()
     asyncio.run(scenario())
+
+
+def test_customer_app_overview_and_login_return(cp):  # noqa: F811
+    from control_plane import slots
+    from control_plane import web as cpweb
+
+    async def changed():
+        pass
+
+    async def scenario():
+        a = TestClient(TestServer(cpweb.build_portal(cp.db, cp.box, cp.settings, changed)))
+        await a.start_server()
+        try:
+            r = await a.get("/app", allow_redirects=False)
+            assert r.status == 303 and r.headers["Location"] == "/login?next=/app"       # log in first
+            assert 'name=next value=/app' in await (await a.get("/login?next=/app")).text()
+            assert "name=next" not in await (await a.get("/login?next=https://evil.example")).text()
+            await a.post("/signup", data={"email": "a@x.io", "password": "password1234"})
+            cid = cp.db.one("SELECT id FROM customers WHERE email = 'a@x.io'")["id"]
+            paid(cp, cid)
+            slots.grant(cp.db, cid, 1, owner="boss")
+            await a.post("/servers", data={"name": "EU main", "csrf": csrf_of(await (await a.get("/dashboard")).text())})
+            sid = cp.db.one("SELECT id FROM servers")["id"]
+            cp.db.run("UPDATE servers SET status = 'active'")
+            page = await (await a.get("/app")).text()
+            assert "EU main" in page and f"/servers/{sid}/panel" in page and "Full dashboard" in page
+            assert "rcepanel://add?kind=shop" in await (await a.get("/dashboard")).text()
+            a.session.cookie_jar.clear()
+            r = await a.post("/login", data={"email": "a@x.io", "password": "password1234", "next": "/app"},
+                             allow_redirects=False)
+            assert r.headers["Location"] == "/app"
+            r = await a.post("/login", data={"email": "a@x.io", "password": "password1234",
+                                             "next": "https://evil.example"}, allow_redirects=False)
+            assert r.headers["Location"] == "/dashboard"                                 # no open redirect
+        finally:
+            await a.close()
+    asyncio.run(scenario())

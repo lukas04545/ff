@@ -92,6 +92,12 @@ public class MainActivity extends Activity {
     }
 
     private void addPanel(String name, String rawUrl) {
+        addPanel(name, rawUrl, "panel");
+    }
+
+    /** kind: "shop" (a customer's account: the overview of their servers), "owner" (the manager's owner panel –
+     *  every customer) or "panel" (one server's control panel). */
+    private void addPanel(String name, String rawUrl, String kind) {
         String url = cleanUrl(rawUrl);
         if (url == null) {
             Toast.makeText(this, "That isn't a valid address.", Toast.LENGTH_LONG).show();
@@ -105,8 +111,9 @@ public class MainActivity extends Activity {
         if (found < 0) {
             JSONObject p = new JSONObject();
             try {
-                p.put("name", name == null || name.trim().isEmpty() ? Uri.parse(url).getHost() : name.trim());
+                p.put("name", name == null || name.trim().isEmpty() ? defaultName(kind, url) : name.trim());
                 p.put("url", url);
+                p.put("kind", kind);
             } catch (JSONException ignored) {
             }
             list.put(p);
@@ -130,29 +137,56 @@ public class MainActivity extends Activity {
 
     // ------------------------------------------------------------ Screens
 
+    private static String defaultName(String kind, String url) {
+        if ("shop".equals(kind)) return "My servers";
+        if ("owner".equals(kind)) return "Manager";
+        return Uri.parse(url).getHost();
+    }
+
+    /** First start / "Add": who is logging in – a customer, the manager, or one server's panel. */
     private void askForPanel(boolean first) {
+        String[] kinds = {"🛒  Customer – log in with your shop account (all your servers)",
+                "🛡️  Manager – the owner panel (all customers)",
+                "🎛️  One server's control panel (its address)"};
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle(first ? "Welcome! How do you want to log in?" : "Add")
+                .setItems(kinds, (d, which) -> askAddress(first, which == 0 ? "shop" : which == 1 ? "owner" : "panel"));
+        if (first) b.setCancelable(false);
+        else b.setNegativeButton("Cancel", null);
+        b.show();
+    }
+
+    private void askAddress(boolean first, String kind) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (20 * getResources().getDisplayMetrics().density);
         box.setPadding(pad, pad / 2, pad, 0);
         final EditText url = new EditText(this);
-        url.setHint("Panel address, e.g. https://myserver.example.com/panel-abc123");
         url.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
         final EditText name = new EditText(this);
-        name.setHint("Name (optional), e.g. EU main");
+        name.setHint("Name (optional)");
+        String message;
+        if ("shop".equals(kind)) {
+            url.setText(getString(R.string.default_shop));
+            message = "The shop's address – you log in there with your e-mail and password next.";
+        } else if ("owner".equals(kind)) {
+            url.setHint("e.g. " + getString(R.string.default_shop) + "/management");
+            message = "The owner panel's address (with its secret path) – you log in there next. Tip: in the owner "
+                    + "panel on this phone tap \"Add the owner panel to the Android app\".";
+        } else {
+            url.setHint("e.g. https://myserver.example.com/panel-abc123");
+            message = "The address of the control panel (the page you log in on). Tip: in the panel tap "
+                    + "\"📲 Android app\" → \"Add this panel to the app\".";
+        }
         box.addView(url);
         box.addView(name);
         AlertDialog.Builder dialog = new AlertDialog.Builder(this)
-                .setTitle(first ? "Welcome! Add your control panel" : "Add a server")
-                .setMessage("Copy the address of your control panel from the browser (the page you log in on). "
-                        + "Tip: in the panel, \"📲 Android app\" → \"Add to app\" does it for you.")
+                .setTitle("shop".equals(kind) ? "Customer login" : "owner".equals(kind) ? "Manager login" : "Server panel")
+                .setMessage(message)
                 .setView(box)
-                .setPositiveButton("Add", (d, w) -> addPanel(name.getText().toString(), url.getText().toString()));
-        if (first) {
-            dialog.setCancelable(false);
-        } else {
-            dialog.setNegativeButton("Cancel", null);
-        }
+                .setPositiveButton("Continue", (d, w) -> addPanel(name.getText().toString(), url.getText().toString(), kind))
+                .setNegativeButton("Back", (d, w) -> askForPanel(first));
+        if (first) dialog.setCancelable(false);
         dialog.show();
     }
 
@@ -160,8 +194,12 @@ public class MainActivity extends Activity {
         JSONArray list = panels();
         String[] names = new String[list.length() + 1];
         for (int i = 0; i < list.length(); i++) names[i] = list.optJSONObject(i).optString("name");
-        names[list.length()] = "➕ Add a server";
-        new AlertDialog.Builder(this).setTitle("Your servers").setItems(names, (d, which) -> {
+        names[list.length()] = "➕ Add …";
+        for (int i = 0; i < list.length(); i++) {
+            String k = list.optJSONObject(i).optString("kind", "panel");
+            names[i] = ("shop".equals(k) ? "🛒 " : "owner".equals(k) ? "🛡️ " : "🎛️ ") + names[i];
+        }
+        new AlertDialog.Builder(this).setTitle("Switch").setItems(names, (d, which) -> {
             if (which == names.length - 1) {
                 askForPanel(false);
             } else {
@@ -180,12 +218,27 @@ public class MainActivity extends Activity {
             return;
         }
         if (getActionBar() != null) getActionBar().setTitle(p.optString("name"));
-        web.loadUrl(p.optString("url") + "/");
+        web.loadUrl(p.optString("url") + ("shop".equals(p.optString("kind")) ? "/app" : "/"));
     }
 
     private boolean samePanel(Uri uri) {
         JSONObject p = current();
-        return p != null && uri.getHost() != null && uri.getHost().equalsIgnoreCase(Uri.parse(p.optString("url")).getHost());
+        String host = uri.getHost();
+        if (p == null || host == null) return false;
+        String own = Uri.parse(p.optString("url")).getHost();
+        if (own == null) return false;
+        if (host.equalsIgnoreCase(own)) return true;
+        if ("panel".equals(p.optString("kind", "panel"))) return false;
+        // the shop / owner panel open the servers' panels: <server>.<the same domain>
+        String parent = parentDomain(own);
+        return parent != null && (host.equalsIgnoreCase(parent) || host.toLowerCase().endsWith("." + parent.toLowerCase()));
+    }
+
+    /** portal.example.com -> example.com (a two-part domain stays as it is). */
+    static String parentDomain(String host) {
+        String[] parts = host.split("\\.");
+        if (parts.length < 3) return host;
+        return host.substring(host.indexOf('.') + 1);
     }
 
     // ------------------------------------------------------------ The app
@@ -281,9 +334,13 @@ public class MainActivity extends Activity {
         if ("add".equals(uri.getHost()) && uri.getQueryParameter("url") != null) {
             String url = cleanUrl(uri.getQueryParameter("url"));
             if (url == null) return;
-            new AlertDialog.Builder(this).setTitle("Add this server?")
+            String k = uri.getQueryParameter("kind");
+            final String kind = "shop".equals(k) || "owner".equals(k) ? k : "panel";
+            String what = "shop".equals(kind) ? "your account (all your servers)" : "owner".equals(kind)
+                    ? "the owner panel (all customers)" : "this server";
+            new AlertDialog.Builder(this).setTitle("Add " + what + "?")
                     .setMessage((uri.getQueryParameter("name") != null ? uri.getQueryParameter("name") + "\n" : "") + url)
-                    .setPositiveButton("Add", (d, w) -> addPanel(uri.getQueryParameter("name"), url))
+                    .setPositiveButton("Add", (d, w) -> addPanel(uri.getQueryParameter("name"), url, kind))
                     .setNegativeButton("Cancel", (d, w) -> { if (current() != null) openCurrent(); })
                     .show();
         } else {
@@ -356,10 +413,10 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        menu.add(0, 1, 0, "Switch server").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+        menu.add(0, 1, 0, "Switch").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         menu.add(0, 2, 1, "Reload");
-        menu.add(0, 3, 2, "Add a server");
-        menu.add(0, 4, 3, "Remove this server");
+        menu.add(0, 3, 2, "Add …");
+        menu.add(0, 4, 3, "Remove from the app");
         menu.add(0, 5, 4, "Open in browser");
         return true;
     }

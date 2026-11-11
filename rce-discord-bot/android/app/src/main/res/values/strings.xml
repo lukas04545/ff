@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">RCE Panel</string>
+    <!-- The shop (customer login) the app suggests – change it for another platform -->
+    <string name="default_shop">https://portal.consolecorrosion.org</string>
 </resources>
