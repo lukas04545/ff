@@ -9,7 +9,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 H = {"X-Requested-With": "rce-web"}
 DEFAULT_ON = {"starter_kit", "lowpop_bonus", "early_bird", "bounties", "weekly_recap", "achievements", "wipe_poll",
-              "connect_info", "staff_activity"}
+              "connect_info", "staff_activity", "companion"}
 ALL = DEFAULT_ON | {"invites", "website", "filling_ping", "comeback", "casino", "offline_protection", "battlepass", "battle_royale",
                     "player_count", "streamers", "tp_home", "bank", "market", "clans", "challenges", "auto_events",
                     "zones", "leaderboard_panels", "raid_alerts", "dial_a_ride", "rcon_repeater", "random_items", "ingame_giveaways",

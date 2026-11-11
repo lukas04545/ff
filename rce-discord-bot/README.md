@@ -1695,6 +1695,14 @@ alt accounts from collecting twice. Plugins that pay points need **Points & shop
 | 🔌 Connect info (on) | `/connect` – how to join the server, players online, the website. |
 | 👮 Staff activity (on) | `/staffactivity [days]` – per staff member: admin commands and control panel changes, active days, the last action. |
 
+**🚨 RF raid alarm + 📱 RCE Companion (players' app):** in their base, a player wires an **explosion sensor** to an
+**RF broadcaster** set to their own frequency and claims it with `/raidalerts rf claim <1–9999>`. A powered broadcaster
+shows up in the server's broadcaster list (`rf.listboardcaster` – Console Edition spells it like that), which the bot
+checks every 15 s: the player and their linked in-game team get an alert by Discord DM and in the **RCE Companion** app
+(Android, `/app/rce-companion.apk`: raid alerts as loud notifications, the server status and the website; players pair
+it with `/companion`). Admins: `/raidalerts rftest` shows the server's raw broadcaster list and the frequencies the bot
+reads from it – check it once with a powered broadcaster.
+
 Also: **ticket categories** (Settings → Tickets → *Ticket categories*: players pick Support / Purchase / Refund / Admin abuse / …, or "❓ Not sure" and the AI picks one; the channel is named after it), a **🙋 Claim** button in every ticket (staff: "I'm handling this" – the AI pauses), an **🤖 AI check** on every player report (severity, kind, what to check – it never punishes), **raid statistics** (`/raidalerts stats`), **daily and monthly recaps** (Weekly recap plugin), the website's **Staff / Bans / Wipes** pages (Player website plugin), **discount codes** in the store (Store → 🏷️ Discount codes), **TikTok** in the Streamers plugin, and **cross-server profiles** (`/profile` shows the stats from your other servers). In-game mutes don't exist on Console Edition (there's no free text chat) – use `/mod timeout` for Discord.
 
 These features come from the KRYVON bot and have been rebuilt and extended here:

@@ -202,7 +202,9 @@ def placeholder_svg(shortname: str) -> str:
 
 
 APP_FILES = ("manifest.webmanifest", "sw.js", "app-icon-192.png", "app-icon-512.png")
-ANDROID_APK = Path(__file__).resolve().parents[1] / "android" / "dist" / "rce-panel.apk"
+ANDROID_DIST = Path(__file__).resolve().parents[1] / "android" / "dist"
+ANDROID_APK = ANDROID_DIST / "rce-panel.apk"           # the control panel app (staff, customers, the manager)
+ANDROID_APPS = ("rce-panel", "rce-companion")          # rce-companion: the players' app (raid alerts)
 # The app's service worker: no caching of the panel's data (it's private and live) – it only shows a short "offline"
 # page instead of the browser's error when there's no connection.
 APP_WORKER = """self.addEventListener("install", () => self.skipWaiting());
@@ -216,6 +218,15 @@ self.addEventListener("fetch", (e) => {
     'you are online.</p></div>', { headers: { "Content-Type": "text/html; charset=utf-8" } })));
 });
 """
+
+
+def apk_response(name: str) -> web.StreamResponse:
+    path = ANDROID_DIST / f"{name}.apk"
+    if name not in ANDROID_APPS or not path.is_file():
+        raise web.HTTPNotFound(text="This app isn't built yet.")
+    return web.FileResponse(path, headers={
+        "Content-Type": "application/vnd.android.package-archive",
+        "Content-Disposition": f'attachment; filename="{name}.apk"', "Cache-Control": "no-cache"})
 
 
 def make_app_icon(picture: bytes | None, size: int) -> bytes:
@@ -502,7 +513,7 @@ class WebInterface:
         r.add_get("/img/items/{name}", self.item_image)            # public: item pictures (cached by the bot)
         r.add_get("/img/kits/{kit_id:\\d+}.png", self.store_kit_image)  # public: picture of a kit for sale
         r.add_get("/img/bot-avatar.png", self.bot_avatar)
-        r.add_get("/app/rce-panel.apk", self.android_app)               # public: the panel's Android app          # public: the Discord bot's picture (panel logo)
+        r.add_get("/app/{name:rce-panel|rce-companion}.apk", self.android_app)   # public: the Android apps          # public: the Discord bot's picture (panel logo)
         r.add_get("/auth", self.auth_link)
         r.add_post("/api/login", self.login)
         r.add_post("/api/login/passkey/options", self.passkey_login_options)
@@ -1651,13 +1662,9 @@ class WebInterface:
     # ------------------------------------------------------------ The panel as an app (PWA: Android "Install app")
 
     async def android_app(self, request: web.Request) -> web.StreamResponse:
-        """The Android app (android/, built into android/dist/rce-panel.apk) – the same for every server; it asks
-        for the panel's address (or gets it from the panel's "Add to app" link)."""
-        if not ANDROID_APK.is_file():
-            raise web.HTTPNotFound(text="The Android app isn't built yet.")
-        return web.FileResponse(ANDROID_APK, headers={
-            "Content-Type": "application/vnd.android.package-archive",
-            "Content-Disposition": 'attachment; filename="rce-panel.apk"', "Cache-Control": "no-cache"})
+        """The Android apps (android/, built into android/dist/): rce-panel (the control panel) and rce-companion
+        (the players' app – raid alerts). The same for every server."""
+        return apk_response(request.match_info.get("name", "rce-panel"))
 
     async def _app_route(self, request: web.Request) -> web.StreamResponse:
         name = request.match_info["name"]

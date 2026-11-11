@@ -16,6 +16,13 @@ list of servers (switch in the menu ⋮) and shows the panel fullscreen. It reme
 
 The built app is `dist/rce-panel.apk` – every bot serves it at `/app/rce-panel.apk`, the shop at the same address.
 
+## RCE Companion (the players' app) – `companion/`
+
+Raid alerts as phone notifications (an alarm sound, also when the phone sleeps – a small "Watching your base"
+notification keeps it running), the server's status and the player website. Players pair it with **/companion** on the
+server's Discord (a one-time link / 8-letter code, 15 minutes); it then polls `/p/companion/feed` every 20 s with its
+own token. Built into `dist/rce-companion.apk`, served at `/app/rce-companion.apk`.
+
 ## Building
 
 Needs JDK 17+, Gradle 8.13+ and the Android SDK (platform 35, build-tools 35):
@@ -25,6 +32,7 @@ cd android
 echo "sdk.dir=/path/to/android-sdk" > local.properties
 gradle assembleRelease
 cp app/build/outputs/apk/release/app-release.apk dist/rce-panel.apk
+cp companion/build/outputs/apk/release/companion-release.apk dist/rce-companion.apk
 ```
 
 Raise `versionCode` / `versionName` in `app/build.gradle` for every new version.
