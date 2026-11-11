@@ -720,7 +720,9 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
 
 **Android app (APK):** download it at **your panel address → `/app/rce-panel.apk`** (or tap **📲 Android app** in the
 panel on your phone, or the 📲 card on the shop dashboard). Install it (Android asks once to allow apps from your
-browser), then in the panel on the phone tap **📲 Android app → Add this panel to the app**. Several servers: add each
+browser) and pick how to log in: **🛒 Customer** (shop account – all your servers, each panel opens signed in),
+**🛡️ Manager** (the owner panel – every customer) or **🎛️ one server's panel** – or in the panel on the phone tap
+**📲 Android app → Add this panel to the app**. Several servers: add each
 one and switch in the app's menu. Details and building: `android/README.md`.
 
 **Or without installing an APK:**

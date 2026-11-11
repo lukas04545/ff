@@ -195,6 +195,8 @@ async def exchange_code(settings: Settings, code: str) -> str:
     return str(guild["id"])
 
 
+AFTER_LOGIN = ("/app", "/dashboard")      # where a login may go back to (?next=) – nothing else
+
 # ================================================================== PORTAL (customers)
 
 def build_portal(db: DB, box: SecretBox, settings: Settings, changed: Callable[[], Awaitable[None]]) -> web.Application:
@@ -310,10 +312,12 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
 </button></form><p class=muted>Already have an account? <a href=/login>Sign in</a></p></div></div>""")
 
     async def login_page(request):
+        nxt = request.query.get("next", "")
+        nxt = nxt if nxt in AFTER_LOGIN else ""
         if me(request):
-            raise web.HTTPSeeOther("/dashboard")
+            raise web.HTTPSeeOther(nxt or "/dashboard")
         return shop(request, "Sign in", f"""<div class=auth>{flash(request)}<div class=card><h2>Sign in</h2>
-<form method=post action=/login><label>E-mail or username<input name=email required autocomplete=username></label>
+<form method=post action=/login>{f'<input type=hidden name=next value={nxt}>' if nxt else ''}<label>E-mail or username<input name=email required autocomplete=username></label>
 <label>Password<input name=password type=password required autocomplete=current-password></label>
 <button style="width:100%">Sign in</button></form><p class=muted>New here? <a href=/signup>Create an account</a></p>
 </div></div>""")
@@ -359,7 +363,8 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
         row = db.one("SELECT id, password_hash FROM customers WHERE email = ? AND status != 'deleted'", (email,))
         if row is None or not verify_password(str(data.get("password", "")), row["password_hash"]):
             raise web.HTTPSeeOther("/login?e=Wrong+login+or+password")
-        resp = web.HTTPSeeOther("/dashboard")
+        nxt = str(data.get("next", ""))
+        resp = web.HTTPSeeOther(nxt if nxt in AFTER_LOGIN else "/dashboard")
         sess.issue(resp, f"c{row['id']}", request)
         raise resp
 
@@ -478,7 +483,9 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
 <div class=card><h2>📲 Android app</h2><p>Your control panel as an app on your phone: <a class=btn href=/app/rce-panel.apk>
 Download the app</a></p><p class=muted>Install it (Android asks once to allow apps from your browser), then open your
 admin panel on the phone and tap <b>📲 Android app → Add this panel to the app</b>. Several servers: add each one and
-switch in the app's menu.</p></div>""")
+switch in the app's menu.</p><p><a class='btn ghost' href='rcepanel://add?kind=shop&url={quote_plus(settings.portal_url)}&name={quote_plus(settings.shop_name or "My servers")}'>
+➕ Add my account to the app</a> <span class=muted>– then the app shows all your servers and opens each panel signed
+in.</span></p></div>""")
 
     def support_card(c) -> str:
         """The code to link their Discord account in the support Discord (customer tickets, hq_tickets.py)."""
@@ -803,6 +810,41 @@ switch in the app's menu.</p></div>""")
             raise web.HTTPSeeOther("/#plans")
         raise await start_checkout(request, c, plan)
 
+    async def app_home(request):
+        """The customer's servers at a glance – the Android app's start page (phone-sized, a card per server)."""
+        c = me(request)
+        if c is None:
+            raise web.HTTPSeeOther("/login?next=/app")
+        rows = db.q("SELECT s.*, h.discord_ready, h.guild_name, h.rcon_connected, h.players_online, h.error "
+                    "FROM servers s LEFT JOIN health h ON h.server_id = s.id WHERE s.customer_id = ? AND "
+                    "s.status != 'deleted' ORDER BY s.id", (c["id"],))
+        sub = db.one("SELECT status, current_period_end FROM subscriptions WHERE customer_id = ?", (c["id"],))
+        plan = plans.current(db, c["id"])
+        running = billing.subscription_ok(db, c["id"])
+        cards = ""
+        for s_ in rows:
+            on = s_["status"] in ("active", "awaiting_token")
+            facts = " · ".join(x for x in (
+                ("🟢 Discord" + (f" ({esc(s_['guild_name'])})" if s_["guild_name"] else "")) if s_["discord_ready"]
+                else "⚪ Discord offline",
+                "🟢 RCON" if s_["rcon_connected"] else "⚪ RCON off",
+                f"👥 {s_['players_online']} online" if s_["players_online"] else "") if x)
+            cards += (f"<div class=card><h2>{esc(s_['name'])} {pill(s_['status'])}</h2><p>{facts}</p>"
+                      + (f"<p class=err>{esc(s_['error'])[:160]}</p>" if s_["error"] else "")
+                      + (f"<p class=row><a class=btn href=/servers/{s_['id']}/panel>🎛️ Open panel</a> "
+                         f"<a class='btn ghost' href='{esc(settings.url_for(s_['slug']))}'>🌐 Website</a></p>"
+                         if on else "<p class=muted>This server isn't running right now.</p>")
+                      + "</div>")
+        until = ""
+        if sub and sub["current_period_end"] and sub["status"] in ("trial", "paid"):
+            until = f" · until {time.strftime('%Y-%m-%d', time.gmtime(sub['current_period_end']))}"
+        head = (f"<div class=card><h2>Hi {esc(c['name'] or c['email'])} 👋</h2><p>"
+                f"{esc(plan['name']) if plan else 'No package'} · {pill('running' if running else 'stopped')}{until}"
+                f"</p><p><a href=/dashboard>Full dashboard (billing, domains, new servers) →</a></p></div>")
+        return shop(request, "My servers", f"{flash(request)}{head}"
+                    + (cards or "<div class=card><p class=muted>No server yet – create one on the "
+                                "<a href=/dashboard>dashboard</a>.</p></div>"))
+
     async def android_app(request):
         from web.server import ANDROID_APK
         if not ANDROID_APK.is_file():
@@ -930,7 +972,7 @@ switch in the app's menu.</p></div>""")
     app.add_routes([web.get("/", index), web.get("/signup", signup_page), web.get("/login", login_page),
                     web.post("/billing/switch", switch_plan),
                     web.post("/billing/addon/domain/{on:on|off}", domain_addon),
-                    web.get("/app/rce-panel.apk", android_app),
+                    web.get("/app/rce-panel.apk", android_app), web.get("/app", app_home),
                     web.post("/billing/paypal", paypal_start), web.get("/billing/paypal/return", paypal_return),
                     web.get("/billing/paypal/cancel", paypal_cancel),
                     web.post(r"/servers/{sid:\d+}/address", change_address),
@@ -1311,8 +1353,14 @@ open it yourself with 🔑 Open panel on the server's row. It still needs its Di
         attention = "".join(f"<tr><td>#{p['id']} {esc(p['name'])}</td><td>{pill(p['process'] or 'not started')}</td>"
                             f"<td class=err>{esc((p['error'] or 'Discord offline')[:160])}</td></tr>" for p in problems)
         paying = sum(1 for c in customers if c["sub_status"] in ("active", "trialing"))
+        own_url = (settings.portal_url.rstrip("/") + P) if P else \
+            f"{request.headers.get('X-Forwarded-Proto', request.scheme)}://{request.host}"
+        app_link = (f"<p class=muted style='margin:.2rem 0 .8rem'>📲 <a href='rcepanel://add?kind=owner&url="
+                    f"{quote_plus(own_url)}&name={quote_plus('Manager – ' + (settings.shop_name or 'all customers'))}'>"
+                    f"Add the owner panel to the Android app</a> (on your phone, with the app installed – "
+                    f"<a href='{esc(settings.portal_url)}/app/rce-panel.apk'>get the app</a>)</p>")
         return page("Owner", f"""<div class=kicker>LIVE PLATFORM OPERATIONS</div><h1>Owner panel · Overview <span class=muted
-style="font-size:1rem">· {esc(who)}</span></h1>
+style="font-size:1rem">· {esc(who)}</span></h1>{app_link}
 <div class=stats>{owner_ui.stat("Customers", len(customers), f"{paying} paying")}
 {owner_ui.stat("Servers", f"{counts['a'] or 0} / {counts['n'] or 0}", f"{running} processes running")}
 {owner_ui.stat("Bots online", live['d'] or 0, f"RCON {live['r'] or 0}")}
