@@ -718,6 +718,13 @@ enter a name, the server's IP, RCON port and password, and choose its Discord bo
 
 ### 📲 The panel as an app (Android, also PC)
 
+**Android app (APK):** download it at **your panel address → `/app/rce-panel.apk`** (or tap **📲 Android app** in the
+panel on your phone, or the 📲 card on the shop dashboard). Install it (Android asks once to allow apps from your
+browser), then in the panel on the phone tap **📲 Android app → Add this panel to the app**. Several servers: add each
+one and switch in the app's menu. Details and building: `android/README.md`.
+
+**Or without installing an APK:**
+
 The control panel installs like an app: open it in Chrome on your phone (its normal address, over https) and tap
 **📲 Install app** at the bottom of the menu – or in Chrome's menu ⋮ → *Install app* / *Add to Home screen*. It then
 opens from its own icon (your Discord server's picture), fullscreen, without the browser bar. Every server's panel

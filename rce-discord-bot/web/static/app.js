@@ -549,12 +549,39 @@ let installPrompt = null;
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
   installPrompt = e;
-  $("#install-app")?.classList.remove("hidden");
+  if (!IN_APP) $("#install-app")?.classList.remove("hidden");
 });
 window.addEventListener("appinstalled", () => { installPrompt = null; $("#install-app")?.classList.add("hidden"); });
+const IN_APP = navigator.userAgent.includes("RCEPanelApp");          // inside the Android app (android/)
+const ON_ANDROID = /Android/i.test(navigator.userAgent);
+
+// Android (in the browser): the real app – download the APK, then "Add to app" puts this panel into it
+function androidAppDialog() {
+  const base = me.panel_path || location.pathname.replace(/\/$/, "");
+  const name = ($("#srv-name")?.textContent || "").trim();
+  const add = "rcepanel://add?url=" + encodeURIComponent(location.origin + base) + (name ? "&name=" + encodeURIComponent(name) : "");
+  const d = h("dialog", { style: "max-width:420px;border:1px solid var(--line,#333);border-radius:12px;background:var(--card,#151a2e);color:inherit;padding:18px" },
+    h("h2", { text: "📲 Android app", style: "margin-top:0" }),
+    h("p", {}, h("strong", { text: "1. " }), h("a", { href: "/app/rce-panel.apk", class: "btn primary", text: "Download the app" })),
+    h("p", { class: "muted", text: "2. Open the downloaded file and install it. Android asks once to allow installs from your browser – that's normal for apps outside the Play Store." }),
+    h("p", {}, h("strong", { text: "3. " }), h("a", { href: add, class: "btn", text: "Add this panel to the app" })),
+    h("p", { class: "muted", text: "Several servers? Open each server's panel here and tap \"Add this panel to the app\" – switch between them in the app's menu." }),
+    h("button", { class: "ghost small", text: "Close", onclick: () => d.close() }));
+  document.body.append(d);
+  d.showModal();
+  d.addEventListener("close", () => d.remove());
+}
+
 function setupApp() {
   const base = me.panel_path;
   const btn = $("#install-app");
+  if (IN_APP) { btn?.classList.add("hidden"); return; }              // already the app
+  if (btn && ON_ANDROID) {
+    btn.querySelector("span").textContent = "Android app";
+    btn.classList.remove("hidden");
+    if (!btn.dataset.ready) { btn.dataset.ready = "1"; btn.addEventListener("click", androidAppDialog); }
+    return;
+  }
   if (btn && !btn.dataset.ready) {
     btn.dataset.ready = "1";
     btn.addEventListener("click", async () => {

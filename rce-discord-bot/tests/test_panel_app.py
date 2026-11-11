@@ -25,3 +25,15 @@ def test_panel_is_an_installable_app(bot):  # noqa: F811
         c.session.cookie_jar.clear()
         assert (await c.get("/manifest.webmanifest")).status == 404            # only under the secret address
     run(bot, scenario)
+
+
+def test_android_app_download(bot):  # noqa: F811
+    from web.server import ANDROID_APK
+    assert ANDROID_APK.is_file() and ANDROID_APK.read_bytes()[:2] == b"PK"               # a real APK (zip)
+
+    async def scenario(c):
+        r = await c.get("/app/rce-panel.apk")
+        assert r.status == 200 and r.headers["Content-Type"] == "application/vnd.android.package-archive"
+        assert "rce-panel.apk" in r.headers["Content-Disposition"]
+        assert (await r.read())[:2] == b"PK"
+    run(bot, scenario)
