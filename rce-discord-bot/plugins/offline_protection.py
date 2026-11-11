@@ -526,7 +526,8 @@ class OfflineProtection(Plugin):
             out["zone"] = {"name": zone["name"], "status": zone["state"] or "green",
                            "position": [round(zone["x"]), round(zone["y"]), round(zone["z"])],
                            "placed_discord": f"<t:{zone['placed']}:R>" if zone.get("placed") else None,
-                           "deleted_discord": f"<t:{int(expires)}:R>" if expires else None}
+                           "deleted_discord": f"<t:{int(expires)}:R>" if expires else None,
+                           "placed_at": zone.get("placed"), "deleted_at": int(expires) if expires else None}
         return out
 
     async def place_for_support(self, player: str, via: str) -> dict:

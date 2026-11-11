@@ -18,8 +18,10 @@ The built app is `dist/rce-panel.apk` – every bot serves it at `/app/rce-panel
 
 ## RCE Companion (the players' app) – `companion/`
 
-Raid alerts as phone notifications (an alarm sound, also when the phone sleeps – a small "Watching your base"
-notification keeps it running), the server's status and the player website. Players pair it with **/companion** on the
+Home screen: every server the player added (one pairing per server) – the linked player, the kits they can claim
+(Claim button, or the timer until the next claim), their bought kits, raid alerts (on/off, RF frequency) and the
+offline protection zone. Raid alerts as phone notifications (an alarm sound, also when the phone sleeps – a small
+"Watching your base" notification keeps it running) and the server's website. Players pair it with **/companion** on the
 server's Discord (a one-time link / 8-letter code, 15 minutes); it then polls `/p/companion/feed` every 20 s with its
 own token. Built into `dist/rce-companion.apk`, served at `/app/rce-companion.apk`.
 

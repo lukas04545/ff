@@ -1246,6 +1246,7 @@ class CustomKits(commands.Cog):
                 "last_claimed": (f"{format_minutes(max(1, int(since)))} ago" if since is not None else "never"),
                 "can_claim_now": ready_at is None,
                 "can_claim_again_discord": f"<t:{ready_at}:R>" if ready_at else None,
+                "ready_at": ready_at,
             })
         for row in self.ingame_access(member):
             if any(k["kit"].lower() == row["kit"].lower() for k in kits):
@@ -1258,7 +1259,8 @@ class CustomKits(commands.Cog):
                          "cooldown": format_minutes(cooldown),
                          "last_claimed": (f"{format_minutes(max(1, int(since)))} ago" if since is not None else "never"),
                          "can_claim_now": ready_at is None,
-                         "can_claim_again_discord": f"<t:{ready_at}:R>" if ready_at else None})
+                         "can_claim_again_discord": f"<t:{ready_at}:R>" if ready_at else None,
+                         "ready_at": ready_at})
         return {"linked_player": player, "player_online": online, "claimable_kits": kits}
 
     async def claim_for(self, member: discord.abc.User, kit: str, *, via: str) -> ClaimOutcome:

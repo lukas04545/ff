@@ -79,7 +79,7 @@ public class AlertService extends Service {
     public void onCreate() {
         super.onCreate();
         channels(this);
-        Notification note = statusNote(new Store(this).server());
+        Notification note = statusNote(new Store(this).count() + " server(s)");
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(STATUS_ID, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         } else {
@@ -102,33 +102,40 @@ public class AlertService extends Service {
             stopSelf();
             return;
         }
-        try {
-            long since = s.since();
-            JSONObject feed = Api.call("GET", s.url() + "/p/companion/feed?since=" + Math.max(since, 0), s.token(), null);
-            JSONArray alerts = feed.optJSONArray("alerts");
-            long newest = Math.max(since, 0);
-            for (int i = 0; alerts != null && i < alerts.length(); i++) {
-                JSONObject a = alerts.getJSONObject(i);
-                if (since >= 0) alert(a.optString("title"), a.optString("text"));   // not the old ones at pairing
-                newest = Math.max(newest, a.optLong("id"));
+        StringBuilder status = new StringBuilder();
+        JSONArray all = s.servers();
+        for (int i = 0; i < all.length(); i++) {
+            JSONObject srv = all.optJSONObject(i);
+            String url = srv.optString("url"), name = srv.optString("name");
+            try {
+                long since = srv.optLong("since", -1);
+                JSONObject feed = Api.call("GET", url + "/p/companion/feed?since=" + Math.max(since, 0),
+                        srv.optString("token"), null);
+                JSONArray alerts = feed.optJSONArray("alerts");
+                long newest = Math.max(since, 0);
+                for (int j = 0; alerts != null && j < alerts.length(); j++) {
+                    JSONObject a = alerts.getJSONObject(j);
+                    if (since >= 0) alert(a.optString("title") + " · " + name, a.optString("text"));  // not old ones
+                    newest = Math.max(newest, a.optLong("id"));
+                }
+                if (newest != since) s.since(url, newest);
+                JSONObject st = feed.optJSONObject("server");
+                if (st != null) {
+                    if (status.length() > 0) status.append("  ·  ");
+                    status.append(st.optBoolean("online") ? "🟢 " + st.optInt("players") + "/" + st.optInt("max_players")
+                            : "🔴").append(" ").append(name);
+                }
+            } catch (Api.Failure f) {
+                if (f.status == 401) {                 // unpaired on the server (/companion again or too many phones)
+                    alert("Companion unpaired · " + name, "Pair this server again with /companion on its Discord.");
+                    s.remove(i);
+                    break;                             // the list changed – the next round goes on
+                }
+            } catch (Exception ignored) {
+                // a bad answer: try again next time
             }
-            s.since(newest);
-            JSONObject srv = feed.optJSONObject("server");
-            if (srv != null) {
-                String text = srv.optBoolean("online") ? "🟢 " + srv.optInt("players") + "/" + srv.optInt("max_players")
-                        + " online · " + srv.optString("name") : "🔴 " + srv.optString("name") + " is offline";
-                getSystemService(NotificationManager.class).notify(STATUS_ID, statusNote(text));
-            }
-        } catch (Api.Failure f) {
-            if (f.status == 401) {                     // unpaired on the server (/companion again or too many phones)
-                s.unpair();
-                alert("Companion unpaired", "Pair the app again with /companion on Discord.");
-                stopSelf();
-                return;
-            }
-        } catch (Exception ignored) {
-            // a bad answer: try again next time
         }
+        if (status.length() > 0) getSystemService(NotificationManager.class).notify(STATUS_ID, statusNote(status.toString()));
         handler.postDelayed(this::check, EVERY_MS);
     }
 
