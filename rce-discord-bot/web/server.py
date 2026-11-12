@@ -661,6 +661,7 @@ class WebInterface:
         r.add_post("/api/webshop/kits", self.webshop_kit_create)
         r.add_put("/api/webshop/kits/{kit_id:\\d+}", self.webshop_kit_update)
         r.add_delete("/api/webshop/kits/{kit_id:\\d+}", self.webshop_kit_delete)
+        r.add_post("/api/webshop/paypal-test", self.webshop_paypal_test)
         r.add_post("/api/webshop/discounts", self.webshop_discount_create)
         r.add_post("/api/webshop/discounts/{code}/toggle", self.webshop_discount_toggle)
         r.add_delete("/api/webshop/discounts/{code}", self.webshop_discount_delete)
@@ -1561,6 +1562,12 @@ class WebInterface:
         if "enabled" in data:
             out["enabled"] = 1 if data.get("enabled") else 0
         return out
+
+    async def webshop_paypal_test(self, request: web.Request) -> web.Response:
+        """Asks PayPal whether the saved keys work in the saved mode (and says if they belong to the other mode)."""
+        from support.paypal import diagnose
+        cfg = self.bot.config
+        return web.json_response(await diagnose(cfg.paypal_client_id, cfg.paypal_secret, cfg.paypal_mode))
 
     async def webshop_discount_create(self, request: web.Request) -> web.Response:
         data = await self._json(request)

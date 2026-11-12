@@ -2090,7 +2090,18 @@ token with <b>Account › Cloudflare Tunnel › Edit</b>, <b>Zone › DNS › Ed
 once for the setup and <b>not stored</b>. Creates the tunnel, the record *.{esc(settings.base_domain)} and moves the old
 addresses of your adopted servers. No Caddy and no open ports needed.</p>
 <form method=post action={P}/cloudflare>{hidden(request)}<input name=api_token type=password autocomplete=off
-style="width:100%" placeholder="Cloudflare API token" required><br><br><button>Set up Cloudflare</button></form></div>""")
+style="width:100%" placeholder="Cloudflare API token" required><br><br><button>Set up Cloudflare</button></form></div>
+<div class=card><h2>🅿️ PayPal</h2><p>Mode now: <b>{esc(settings.paypal_mode)}</b>
+{'' if settings.paypal_client_id else '– no keys saved yet'}. Sandbox and live use <b>different</b> Client IDs and
+Secrets – for real payments set the mode to <code>live</code> and enter the keys of your <b>Live</b> app.</p>
+<form method=post action={P}/paypal-test>{hidden(request)}<button>🔌 Test PayPal</button></form></div>""")
+
+    async def paypal_test(request):
+        owner(request)
+        await sess.form(request)
+        from support.paypal import diagnose
+        out = await diagnose(settings.paypal_client_id, settings.paypal_secret, settings.paypal_mode)
+        return settings_form(request, "PayPal test: " + esc(out["text"]))
 
     async def settings_page(request):
         who = owner(request)
@@ -2195,7 +2206,7 @@ suggested it gets a notice in the channel within a minute.</p><p>{tabs}</p>
                     web.post(r"/owners/{name:[A-Za-z0-9_.-]{3,32}}/remove", owner_remove),
                     web.get("/invite/{token}", invite_page), web.post("/invite/{token}", invite_use),
                     web.get("/settings", settings_page), web.post("/settings", settings_save),
-                    web.post("/cloudflare", cloudflare_setup),
+                    web.post("/cloudflare", cloudflare_setup), web.post("/paypal-test", paypal_test),
                     web.get("/plans", plans_page), web.post("/plans", plan_save),
                     web.get("/domains", domains_page), web.post("/domains/activate", domains_activate),
                     web.post("/domains/add", domains_add),

@@ -95,3 +95,18 @@ def test_wrong_amount_cancel_and_forgotten_returns(cp, monkeypatch):  # noqa: F8
     asyncio.run(go())
     states = [r["status"] for r in cp.db.q("SELECT status FROM paypal_payments ORDER BY id")]
     assert states == ["review", "cancelled", "paid"]
+
+
+def test_paypal_test_names_keys_of_the_wrong_mode(monkeypatch):
+    from support import paypal
+
+    async def token(self, session):
+        if self.mode != "sandbox":                                # these keys are sandbox keys
+            raise paypal.PayPalError("rejected")
+        return "t"
+    monkeypatch.setattr(paypal.PayPalClient, "_access_token", token)
+    out = asyncio.run(paypal.diagnose("id", "sec", "Live"))
+    assert not out["ok"] and "SANDBOX keys" in out["text"] and out["mode"] == "live"
+    assert asyncio.run(paypal.diagnose("id", "sec", "sandbox"))["ok"]
+    assert not asyncio.run(paypal.diagnose("", "", "live"))["ok"]
+    assert paypal.normalize_mode(" Production ") == "live" and paypal.normalize_mode("x") == "sandbox"
