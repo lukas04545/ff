@@ -4442,6 +4442,7 @@ views.webstore = async (main) => {
 
     // --- Status
     const pill = (ok, yes, no) => h("span", { class: "pill " + (ok ? "ok" : "warn"), text: ok ? yes : no });
+    const ppOut = h("div");
     const status = h("div", { class: "card" }, h("h2", { text: "⚙️ Setup" }),
       h("div", { class: "row" },
         pill(st.paypal, `PayPal connected (${st.paypal_mode})`, "PayPal not set up"),
@@ -4452,7 +4453,13 @@ views.webstore = async (main) => {
       h("p", { class: "muted", style: "margin:.6rem 0 0" },
         "PayPal, currency and gift card values: Settings → 💳 Store. The store shows up on the player website (Plugins → Player website) at ",
         h("a", { href: "/store", target: "_blank", rel: "noopener", text: "/store" }), "."),
-      st.paypal && st.paypal_mode === "sandbox" ? h("div", { class: "banner warn", style: "margin:.6rem 0 0", text: "PayPal is in sandbox (test) mode – no real money. Switch PAYPAL_MODE to live with your live Client ID/Secret when you're ready." }) : null);
+      st.paypal && st.paypal_mode === "sandbox" ? h("div", { class: "banner warn", style: "margin:.6rem 0 0", text: "PayPal is in sandbox (test) mode – no real money. For real payments: Settings → 💳 Store → PayPal mode = live AND the Client ID + Secret of your LIVE app (they differ from the sandbox ones)." }) : null,
+      h("div", { class: "row", style: "margin-top:.6rem" }, h("button", { text: "🔌 Test PayPal", onclick: async (ev) => {
+        ev.target.disabled = true;
+        const r = await act(() => api("/api/webshop/paypal-test", { method: "POST" }));
+        ev.target.disabled = false;
+        if (r) ppOut.replaceChildren(h("div", { class: "banner " + (r.ok ? "ok" : "bad"), style: "margin:.6rem 0 0", text: r.text }));
+      } })), ppOut);
 
     // --- Kits for sale
     const kName = h("input", { placeholder: "Name on the website, e.g. Raid kit" });

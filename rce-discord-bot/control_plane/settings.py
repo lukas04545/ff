@@ -63,7 +63,7 @@ class Settings:
     # PayPal: customers pay months in advance (billing.py, "paid" until current_period_end)
     paypal_client_id: str = field(default_factory=lambda: os.environ.get("CP_PAYPAL_CLIENT_ID", ""))
     paypal_secret: str = field(default_factory=lambda: os.environ.get("CP_PAYPAL_SECRET", ""))
-    paypal_mode: str = field(default_factory=lambda: os.environ.get("CP_PAYPAL_MODE", "sandbox").strip().lower())
+    paypal_mode: str = field(default_factory=lambda: "live" if os.environ.get("CP_PAYPAL_MODE", "").strip().lower() in ("live", "production", "prod", "real") else "sandbox")
     grace_days: int = field(default_factory=lambda: _int("CP_GRACE_DAYS", 3))
     # The platform's shared bot (default for every server): token + OAuth app for "Add to Discord"
     shared_bot_token: str = field(default_factory=lambda: os.environ.get("CP_SHARED_BOT_TOKEN", ""))

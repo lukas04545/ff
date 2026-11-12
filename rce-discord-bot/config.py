@@ -455,7 +455,8 @@ def load_config(env_file: str | os.PathLike = ".env") -> Config:
         tip4serv_name_match=_bool("TIP4SERV_NAME_MATCH", True),
         paypal_client_id=_get("PAYPAL_CLIENT_ID"),
         paypal_secret=_get("PAYPAL_SECRET"),
-        paypal_mode="live" if _get("PAYPAL_MODE").lower() == "live" else "sandbox",
+        paypal_mode="live" if _get("PAYPAL_MODE").strip().lower() in ("live", "production", "prod", "real")
+        else "sandbox",
         store_currency=_get("STORE_CURRENCY").upper()[:3],
         store_custom_kits=_bool("STORE_CUSTOM_KITS", True),
         store_giftcard_values=tuple(sorted({round(float(v), 2) for v in _get("STORE_GIFTCARD_VALUES").split(",")

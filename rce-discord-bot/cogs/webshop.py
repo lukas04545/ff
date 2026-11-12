@@ -705,6 +705,8 @@ class WebShop(commands.Cog):
         except PayPalError as exc:
             self._release(order_id, "cancelled", f"PayPal error: {exc}")
             log.warning("PayPal order for store order #%s failed: %s", order_id, exc)
+            self.bot.audit(f"⚠️ Store: PayPal refused a checkout – {safe_md(str(exc))[:300]} (Store → 🔌 Test PayPal "
+                           "shows what's wrong)")
             raise CheckoutError("PayPal is not available right now – please try again in a few minutes.") from exc
         db.update_store_order(order_id, paypal_order=pp_id)
         return {"token": token, "redirect": url}

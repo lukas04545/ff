@@ -28,6 +28,47 @@ class PayPalError(Exception):
     pass
 
 
+def normalize_mode(text) -> str:
+    """"live" (also Live, production, prod, real) or "sandbox" – anything else is sandbox (test money)."""
+    return "live" if str(text or "").strip().lower() in ("live", "production", "prod", "real") else "sandbox"
+
+
+async def diagnose(client_id: str, secret: str, mode: str, *, session_factory=None) -> dict:
+    """Asks PayPal whether it accepts these keys in this mode – and, if not, whether they belong to the OTHER mode
+    (the usual mistake: sandbox keys with mode live). Returns {"ok", "mode", "text"}."""
+    mode = normalize_mode(mode)
+    other = "sandbox" if mode == "live" else "live"
+    if not str(client_id or "").strip() or not str(secret or "").strip():
+        return {"ok": False, "mode": mode, "text": "Enter the Client ID and the Secret first."}
+
+    async def accepted(m: str) -> bool:
+        client = PayPalClient(client_id, secret, m, session_factory=session_factory)
+        async with client._session_factory() as session:
+            try:
+                await client._access_token(session)
+                return True
+            except PayPalError:
+                return False
+    try:
+        if await accepted(mode):
+            return {"ok": True, "mode": mode, "text": f"✅ PayPal accepts these keys in {mode.upper()} mode"
+                    + (" – real payments work." if mode == "live" else " (test money only – switch the mode to "
+                       "live with your LIVE keys for real payments).")}
+        if await accepted(other):
+            return {"ok": False, "mode": mode, "text": (
+                f"❌ These are {other.upper()} keys, but the mode is {mode}. Sandbox and live have different keys: on "
+                f"developer.paypal.com → Apps & Credentials switch the toggle at the top to "
+                f"\"{mode.capitalize()}\", open (or create) your app there and copy ITS Client ID and Secret."
+                + (" A live app needs a PayPal Business account with a confirmed e-mail address." if mode == "live"
+                   else ""))}
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        return {"ok": False, "mode": mode, "text": f"PayPal couldn't be reached ({exc.__class__.__name__}) – try "
+                                                   "again in a moment."}
+    return {"ok": False, "mode": mode, "text": "❌ PayPal rejects these keys in both modes – copy the Client ID and the "
+                                               "Secret again (complete, no spaces) from developer.paypal.com → Apps "
+                                               "& Credentials."}
+
+
 def money(amount: float | Decimal, currency: str) -> str:
     """Amount as PayPal expects it ("12.50", or "1250" for currencies without decimals)."""
     places = Decimal("1") if currency.upper() in NO_DECIMALS else Decimal("0.01")
@@ -50,7 +91,7 @@ class PayPalClient:
     def __init__(self, client_id: str, secret: str, mode: str = "sandbox", *, session_factory=None) -> None:
         self.client_id = client_id.strip()
         self.secret = secret.strip()
-        self.mode = mode if mode in API else "sandbox"
+        self.mode = normalize_mode(mode)
         self.base = API[self.mode]
         self._token: tuple[str, float] | None = None
         self._lock = asyncio.Lock()
