@@ -153,3 +153,29 @@ def test_staff_application_accept_gives_the_role(pb, monkeypatch):  # noqa: F811
     assert roles and "Accepted" in replies[-1] and p.data.get("app:1")["state"] == "accepted"
     run(p.decide(it(9, guild), 1, False))
     assert "already decided" in replies[-1]
+
+
+def test_auto_nuke_warns_launches_and_reschedules(pb, monkeypatch):  # noqa: F811
+    p = plug(pb, "auto_nuke", every_hours=2, warn_minutes=10, points=50, min_players=1, announce_ingame=True)
+    monkeypatch.setattr(type(p), "points_enabled", property(lambda self: True))
+    dropped = []
+
+    class Eco:
+        enabled = True
+
+        async def drop_nuke(self, buyer, title, points, max_claims, channel):
+            dropped.append((title, points, max_claims))
+    real = pb.bot.get_cog
+    monkeypatch.setattr(pb.bot, "get_cog", lambda n: Eco() if n == "Economy" else real(n))
+    t0 = p.now()
+    at = p.next_at()
+    assert abs(at - (t0 + 7200)) < 5 and run(p.tick(t0)) == ""
+    assert run(p.tick(at - 300)) == "warned" and "drops in **5 min**" in pb.posted[-1].content
+    assert any("NUKE" in c for c in pb.said) and run(p.tick(at - 200)) == ""          # warned once
+    pb.bot.online_players = {}
+    assert run(p.tick(at + 1)) == "waiting" and dropped == []                         # too few players
+    pb.bot.online_players = {"Bob": {}}
+    assert run(p.tick(at + 60)) == "launched" and dropped == [("Auto nuke", 50, 0)]
+    assert p.next_at() == at + 60 + 7200 and p.data.get("warned") is False
+    p.data.set("paused", True)
+    assert run(p.tick(p.next_at() + 10)) == "" and len(dropped) == 1                  # paused: nothing
