@@ -1692,6 +1692,7 @@ alt accounts from collecting twice. Plugins that pay points need **Points & shop
 | 🛡️ Anti-raid | Join waves on Discord (more than N joins in M seconds) alert staff and start raid mode: brand-new accounts are timed out or kicked. Optional: always keep accounts younger than X days out. Needs the Server Members intent. |
 | 🏆 Event sign-ups | `/signup create` posts an event with Join / Leave (solo or teams, live countdown, max players); everyone gets a DM when it starts. `/signup winners` records winners (points reward), `/signup leaderboard`. |
 | ❓ Trivia | `/trivia ask` (or automatically every N minutes): a question with 4 answer buttons, the first right answer wins points. Built-in Rust questions + your own. `/trivia top`. |
+| 💣 Auto nuke | Drops a nuke (points for everyone who presses Claim) on Discord every N hours: a warning beforehand in Discord and in game, your points / claim limit / title / channel, an optional role ping, an optional minimum of players online. `/autonuke status`, admins: `/autonuke now`, `skip`, `on`, `off`. |
 | 🔌 Connect info (on) | `/connect` – how to join the server, players online, the website. |
 | 👮 Staff activity (on) | `/staffactivity [days]` – per staff member: admin commands and control panel changes, active days, the last action. |
 
