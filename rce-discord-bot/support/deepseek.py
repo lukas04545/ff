@@ -11,6 +11,9 @@ as JSON with "reply"/"escalate".
 """
 from __future__ import annotations
 
+import json
+import re
+
 import logging
 
 import aiohttp
@@ -35,6 +38,35 @@ _HTTP_HINTS = {
     500: "DeepSeek server error.",
     503: "DeepSeek is overloaded.",
 }
+
+
+_BAR = r"[\s|｜]*"                                           # "<｜DSML｜", "< | DSML | " – any spacing
+_TAG = rf"<{_BAR}(?:DSML{_BAR})?"
+_END = rf"</{_BAR}(?:DSML{_BAR})?"
+_INVOKE = re.compile(rf"{_TAG}invoke\s+name=\"([^\"]+)\"\s*>(.*?){_END}invoke\s*>", re.S)
+_PARAM = re.compile(rf"{_TAG}parameter\s+name=\"([^\"]+)\"([^>]*)>(.*?){_END}parameter\s*>", re.S)
+_BLOCK = re.compile(rf"{_TAG}(?:function_calls|calls)\s*>.*?(?:{_END}(?:function_calls|calls)\s*>|\Z)", re.S)
+
+
+def parse_text_tool_calls(content: str) -> tuple[str, list[dict]]:
+    """Tool calls the model wrote as text -> (the text without them, tool_calls in the API's format)."""
+    calls = []
+    for i, m in enumerate(_INVOKE.finditer(content)):
+        args = {}
+        for p in _PARAM.finditer(m.group(2)):
+            value = p.group(3).strip()
+            if 'string="true"' not in p.group(2):
+                try:
+                    value = json.loads(value)
+                except ValueError:
+                    pass
+            args[p.group(1)] = value
+        calls.append({"id": f"text_call_{i}", "type": "function",
+                      "function": {"name": m.group(1).strip(), "arguments": json.dumps(args)}})
+    if not calls:
+        return content, []
+    text = _INVOKE.sub("", _BLOCK.sub("", content))
+    return re.sub(rf"{_END}?(?:function_calls|calls)\s*>|{_TAG}(?:function_calls|calls)\s*>", "", text).strip(), calls
 
 
 class DeepSeekClient:
@@ -104,6 +136,10 @@ class DeepSeekClient:
             raise DeepSeekError("Unexpected response format from DeepSeek.")
         content = message.get("content") or ""
         calls = message.get("tool_calls") or []
+        if tools and not calls and "invoke" in content:
+            # the model sometimes writes its tool calls into the text ("<｜DSML｜function_calls>…") instead of
+            # sending them – read them from there so they run (and never show up as an answer)
+            content, calls = parse_text_tool_calls(content)
         if not content.strip() and not calls:
             raise DeepSeekError(f"Empty response (finish_reason={finish}).")
         return {"content": content, "tool_calls": calls, "finish_reason": finish}

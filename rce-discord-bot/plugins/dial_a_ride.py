@@ -12,6 +12,7 @@ Discord: /ride list · /ride spawn <vehicle> <player> (admins: test or gift a ri
 """
 from __future__ import annotations
 
+import re
 import time
 
 import discord
@@ -30,7 +31,14 @@ RIDES = {
 }
 START_DEFAULT = "Let's go!"
 FUEL_ITEM = "lowgradefuel"
-SPAWN_DEFAULT = "entity.spawnat {prefab} ({x},{y},{z})"
+OLD_DEFAULT = "entity.spawnat {prefab} ({x},{y},{z})"       # what older versions sent (often refused by the server)
+# Tried in this order until the server doesn't answer with an error. The first is Console Edition's documented form
+# (the same the battle royale uses); the form that worked is remembered per ride.
+SPAWN_FORMS = ("entity.spawn {prefab} {x},{y},{z}", "entity.spawnatpos {prefab} {x},{y},{z}", OLD_DEFAULT)
+PREFAB_ALSO = {"minicopter": ("minicopter",), "scrapheli": ("scraptransporthelicopter.entity",),
+               "attackheli": ("attackhelicopter",), "horse": ("ridablehorse",)}
+SPAWN_ERROR = re.compile(r"not found|unknown|invalid|couldn.?t|could not|fail|no such|usage|error|doesn.?t exist|"
+                         r"does not exist|no entity|can.?t", re.I)
 OFFSET = 4.0                      # metres beside the player, so it doesn't spawn inside them
 
 
@@ -66,8 +74,9 @@ class DialARide(Plugin):
         Setting("linked_only", "Only linked players", "bool", False,
                 help="Only players who linked their Discord account (/link)."),
         Setting("role", "Only players with this Discord role (all rides)", "role", help="Empty = everyone."),
-        Setting("spawn_command", "Spawn command (experts)", default=SPAWN_DEFAULT,
-                help="RCON command that spawns the vehicle. Placeholders: {prefab} {x} {y} {z} {name}."),
+        Setting("spawn_command", "Spawn command (experts)", default="",
+                help="Empty = automatic: the bot tries the known spawn commands and remembers the one your server "
+                     "accepts. Or your own, with the placeholders {prefab} {x} {y} {z} {name}."),
     )
 
     ride = app_commands.Group(name="ride", description="Dial-a-ride", guild_only=True)
@@ -193,13 +202,9 @@ class DialARide(Plugin):
             await self.say(f"{name}: couldn't find where you are – try again in a moment.")
             return False
         x, y, z = pos
-        command = str(self.setting("spawn_command") or SPAWN_DEFAULT)
-        try:
-            await self.bot.rcon.command(command.format(prefab=self.setting(f"{key}_prefab") or RIDES[key][3],
-                                                       x=round(x + OFFSET, 2), y=round(y + 1, 2), z=round(z, 2),
-                                                       name=name), expect_response=False)
-        except (RconError, KeyError, IndexError, ValueError) as exc:
-            self.log.warning("Ride %s for %s failed: %s", key, name, exc)
+        ok, reply = await self.spawn(key, x + OFFSET, y + 1, z, name)
+        if not ok:
+            self.log.warning("Ride %s for %s failed: %s", key, name, reply)
             if uid is not None:
                 self.give_points(uid, price, f"refund: {label} (spawn failed)")
             await self.say(f"{name}: the {label} couldn't be spawned right now.")
@@ -223,6 +228,52 @@ class DialARide(Plugin):
             feed.add_line(f"{icon} Dial-a-ride: **{self.md(name)}** got a {label}"
                           + (" (admin gift)" if free else f" ({price} points)" if price else ""))
         return True
+
+    def spawn_attempts(self, key: str) -> list[tuple[str, str]]:
+        """(command form, entity name) to try, best first."""
+        own = str(self.setting("spawn_command") or "").strip()
+        prefab = str(self.setting(f"{key}_prefab") or RIDES[key][3]).strip()
+        if own and own != OLD_DEFAULT:
+            return [(own, prefab)]                           # the owner's own command: exactly that
+        prefabs = list(dict.fromkeys((prefab, RIDES[key][3], *PREFAB_ALSO.get(key, ()))))
+        out = [(form, p) for p in prefabs for form in SPAWN_FORMS]
+        works = self.data.get(f"works:{key}")
+        if isinstance(works, list) and tuple(works) in out:
+            out.remove(tuple(works))
+            out.insert(0, tuple(works))
+        return out
+
+    async def spawn(self, key: str, x: float, y: float, z: float, name: str) -> tuple[bool, str]:
+        """Spawns the ride. Reads the server's answer: an error means the next command form / entity name is tried.
+        Returns (worked, the server's last answer)."""
+        reply, tried = "", []
+        for form, prefab in self.spawn_attempts(key):
+            try:
+                command = form.format(prefab=prefab, x=round(x, 2), y=round(y, 2), z=round(z, 2), name=name)
+                reply = (await self.bot.rcon.command(command, expect_response=False) or "").strip()
+            except (RconError, KeyError, IndexError, ValueError) as exc:
+                reply = f"{type(exc).__name__}: {exc}"
+                tried.append((form, reply))
+                if isinstance(exc, RconError):
+                    break                                    # no connection: the other forms won't work either
+                continue
+            tried.append((command, reply))
+            if not SPAWN_ERROR.search(reply):
+                self.data.set(f"works:{key}", [form, prefab])
+                self.data.set("last", {"at": int(time.time()), "ride": key, "ok": True, "command": command,
+                                       "reply": reply[:200]})
+                return True, reply
+        self.data.set("last", {"at": int(time.time()), "ride": key, "ok": False,
+                               "tried": [[c, r[:120]] for c, r in tried[-6:]]})
+        return False, "; ".join(f"`{c}` → {r[:80] or 'no answer'}" for c, r in tried[-4:])
+
+    def last_spawn(self) -> str:
+        last = self.data.get("last")
+        if not last:
+            return "No spawn tried yet."
+        if last.get("ok"):
+            return f"`{last['command']}` → {last['reply'] or 'accepted (no answer)'}"
+        return "; ".join(f"`{c}` → {r or 'no answer'}" for c, r in last.get("tried", []))
 
     # ------------------------------------------------------------ Discord
 
@@ -256,8 +307,9 @@ class DialARide(Plugin):
         await interaction.response.defer(ephemeral=True)
         ok = await self.call(player, vehicle, free=True)
         await interaction.followup.send(
-            f"{RIDES[vehicle][1]} {RIDES[vehicle][0]} spawned next to **{self.md(player)}**." if ok else
-            "It didn't work – check the spawn command (Plugins → Dial-a-ride → experts) and the bot log.",
+            f"{RIDES[vehicle][1]} {RIDES[vehicle][0]} spawned next to **{self.md(player)}** ({self.last_spawn()[:300]}). "
+            "Nothing there? Tell me what the server answered." if ok else
+            ("It didn't work. What the server answered: " + self.last_spawn())[:1900],
             ephemeral=True)
 
     @spawn_cmd.autocomplete("player")
@@ -296,4 +348,5 @@ class DialARide(Plugin):
         return out
 
     def status(self) -> dict:
-        return {RIDES[k][0]: int(self.data.get(f"rides:{k}", 0)) for k in RIDES}
+        return {**{RIDES[k][0]: int(self.data.get(f"rides:{k}", 0)) for k in RIDES},
+                "Last spawn": self.last_spawn()[:300]}

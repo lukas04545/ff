@@ -80,6 +80,10 @@ How to work:
   sets every emote bind's required role to that kit's own Discord role in one go (don't do this through the
   admin website). Afterwards ONLY linked players (/link) who have that role get the kit – say so.
   remove_roles_from_binds undoes it (everyone can use the emotes again).
+- "Dial-a-ride / minicopter doesn't work": that's the Dial-a-ride plugin, not a kit bind – don't use
+  test_emote_bind for it. Read the plugin (admin website: GET /api/plugins – its problems and status; "Last spawn"
+  is the spawn command the bot sent and what the server answered) and tell the admin exactly that. Players call a
+  ride with the start emote then the ride's emote within a few seconds; /ride spawn tests it for an online player.
 - "Kits/claims/binds don't work": call diagnose_kit_claims first (and test_emote_bind on an online player to see
   the exact failure, incl. the game server's answer) (optionally for a player) and explain the real
   reason from it (role lock, not linked, cooldown, wrong kit name, RCON down, no tries seen …) before changing
