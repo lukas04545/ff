@@ -150,7 +150,12 @@ public final class Ui {
         LinearLayout v = column(c);
         v.setBackground(round(c, CARD2, 14));
         v.setPadding(dp(c, 12), dp(c, 12), dp(c, 12), dp(c, 12));
-        v.addView(text(c, value, 22, color, true));
+        TextView big = text(c, value, value.length() > 7 ? 16 : 22, color, true);
+        big.setSingleLine(true);
+        big.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        big.setMinHeight(dp(c, 30));
+        big.setGravity(Gravity.CENTER_VERTICAL);
+        v.addView(big);
         TextView n = text(c, name.toString().toUpperCase(), 10, MUTED, true);
         n.setLetterSpacing(0.1f);
         v.addView(n);
@@ -158,6 +163,137 @@ public final class Ui {
         p.setMargins(dp(c, 4), dp(c, 4), dp(c, 4), dp(c, 4));
         v.setLayoutParams(p);
         return v;
+    }
+
+    private static final int[] AVATARS = {0xFFFF5A36, 0xFF5B8CFF, 0xFF3DDC84, 0xFFF5C542, 0xFFB57BFF, 0xFF2EC4B6,
+            0xFFFF7EB6};
+
+    /** A round badge with the first letter – servers, players, customers. */
+    public static TextView avatar(Context c, String name, float sizeDp) {
+        String n = name == null ? "" : name.trim();
+        String letter = "?";
+        for (int i = 0; i < n.length(); i++) {
+            if (Character.isLetterOrDigit(n.charAt(i))) {
+                letter = n.substring(i, i + 1).toUpperCase();
+                break;
+            }
+        }
+        int color = AVATARS[Math.abs(n.toLowerCase().hashCode()) % AVATARS.length];
+        TextView v = text(c, letter, sizeDp * 0.42f, 0xFFFFFFFF, true);
+        v.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{color, (color & 0x00FFFFFF) | 0xAA000000});
+        bg.setShape(GradientDrawable.OVAL);
+        v.setBackground(bg);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp));
+        p.setMargins(0, 0, dp(c, 12), 0);
+        v.setLayoutParams(p);
+        return v;
+    }
+
+    /** A small status light. */
+    public static View dot(Context c, int color) {
+        View v = new View(c);
+        GradientDrawable d = new GradientDrawable();
+        d.setShape(GradientDrawable.OVAL);
+        d.setColor(color);
+        v.setBackground(d);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(c, 9), dp(c, 9));
+        p.setMargins(0, 0, dp(c, 7), 0);
+        v.setLayoutParams(p);
+        return v;
+    }
+
+    /** "● Discord" – a light with a word. */
+    public static LinearLayout state(Context c, String word, boolean on) {
+        LinearLayout v = new LinearLayout(c);
+        v.setGravity(Gravity.CENTER_VERTICAL);
+        v.addView(dot(c, on ? OK : 0xFF4A5375));
+        v.addView(text(c, word, 13, on ? TEXT : MUTED, false));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.setMargins(0, 0, dp(c, 16), 0);
+        v.setLayoutParams(p);
+        return v;
+    }
+
+    /** A thin progress bar (0..1). */
+    public static LinearLayout progress(Context c, float fraction, int color) {
+        float f = Math.max(0f, Math.min(1f, fraction));
+        LinearLayout track = new LinearLayout(c);
+        track.setBackground(round(c, CARD2, 4));
+        View fill = new View(c), rest = new View(c);
+        fill.setBackground(round(c, color, 4));
+        track.addView(fill, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, f));
+        track.addView(rest, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f - f));
+        track.setLayoutParams(lp(c, ViewGroup.LayoutParams.MATCH_PARENT, dp(c, 5), 0, 6, 0, 2));
+        return track;
+    }
+
+    /** A list row: avatar, two lines, something on the right. */
+    public static LinearLayout item(Context c, String title, String sub, View right) {
+        LinearLayout row = row(c);
+        row.addView(avatar(c, title, 38));
+        LinearLayout names = column(c);
+        names.addView(text(c, title, 15, TEXT, true));
+        if (sub != null && !sub.isEmpty()) names.addView(text(c, sub, 12, MUTED, false));
+        row.addView(grow(names));
+        if (right != null) row.addView(right);
+        return row;
+    }
+
+    /** The bar of tabs at the bottom of a screen. */
+    public static final class Tabs {
+        public LinearLayout bar;
+        public int selected;
+        private TextView[] labels;
+        private View[] marks;
+
+        public void select(int i) {
+            selected = i;
+            for (int k = 0; k < labels.length; k++) {
+                labels[k].setTextColor(k == i ? ACCENT2 : MUTED);
+                marks[k].setBackgroundColor(k == i ? ACCENT : 0x00000000);
+            }
+        }
+    }
+
+    public interface OnTab {
+        void show(int index);
+    }
+
+    public static Tabs tabs(Screen s, String[] names, final OnTab onTab) {
+        Context c = s.root.getContext();
+        final Tabs t = new Tabs();
+        t.bar = new LinearLayout(c);
+        t.bar.setBackgroundColor(0xFF10142A);
+        t.labels = new TextView[names.length];
+        t.marks = new View[names.length];
+        for (int i = 0; i < names.length; i++) {
+            final int index = i;
+            LinearLayout cell = column(c);
+            cell.setGravity(Gravity.CENTER_HORIZONTAL);
+            t.marks[i] = new View(c);
+            cell.addView(t.marks[i], new LinearLayout.LayoutParams(dp(c, 36), dp(c, 3)));
+            t.labels[i] = text(c, names[i], 13, MUTED, true);
+            t.labels[i].setGravity(Gravity.CENTER);
+            t.labels[i].setPadding(0, dp(c, 12), 0, dp(c, 14));
+            cell.addView(t.labels[i]);
+            cell.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null));
+            cell.setClickable(true);
+            cell.setOnClickListener(v -> {
+                t.select(index);
+                onTab.show(index);
+            });
+            t.bar.addView(cell, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        }
+        View line = new View(c);
+        line.setBackgroundColor(LINE);
+        s.root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(c, 1)));
+        s.root.addView(t.bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        t.select(0);
+        return t;
     }
 
     /** A whole screen: a header (title, subtitle, action buttons) over a pull-to-refresh list of cards. */
