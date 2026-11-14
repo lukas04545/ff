@@ -147,10 +147,14 @@ public class ServerActivity extends Activity {
                 final JSONObject a = full ? get("account") : null;
                 final JSONObject lines = get("chat?since=" + lastChat);
                 final JSONObject m = full && tabs.selected == 3 ? get("map") : null;
+                final android.graphics.Bitmap pic = m == null ? null : picture(m.isNull("image") ? "" : m.optString("image"));
                 ui.post(() -> {
                     boolean fresh = takeChat(lines.optJSONArray("lines"));
                     if (a != null) acc = a;
-                    if (m != null) map = m;
+                    if (m != null) {
+                        map = m;
+                        mapPicture = pic;
+                    }
                     if (tabs.selected == 2) {
                         if (fresh) chatLines();
                     } else if ((a != null || m != null) && !typing()) {
@@ -533,10 +537,11 @@ public class ServerActivity extends Activity {
         again.setOnClickListener(v -> loadMap());
         card.addView(again);
         card.addView(Ui.text(this, "Shows you and your online team mates. Positions are up to 20 seconds old."
-                + (mapPicture != null ? "" : map != null && !map.isNull("image")
+                + (mapPicture != null ? (map == null || map.optString("credit").isEmpty() ? "" : " " + map.optString("credit") + ".")
+                        : map != null && !map.isNull("image")
                         ? " The map picture couldn't be loaded (" + mapPictureProblem + ") – tap Refresh."
-                        : " No map picture on this server yet – its owner uploads it in the control panel: "
-                        + "Plugins → Companion app → Map picture."), 11, Ui.MUTED, false));
+                        : map != null && !map.optString("no_picture").isEmpty() ? " " + map.optString("no_picture")
+                        : ""), 11, Ui.MUTED, false));
         screen.content.addView(card);
     }
 

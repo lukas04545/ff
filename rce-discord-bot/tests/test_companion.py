@@ -277,3 +277,40 @@ def test_team_chat_map_events_and_notifications_like_rust_plus(pb, monkeypatch):
     acc = run(c.account(8))
     assert acc["team"]["id"] == 5 and [e["name"] for e in acc["events"]] == ["🚢 Cargo Ship", "🚁 Patrol Helicopter"]
     assert acc["prefs"]["events"] is True and acc["chat_send"] is True and "kills" in (acc["stats"] or {"kills": 0})
+
+
+def test_map_picture_comes_from_rcemaps_by_seed_and_size(pb, monkeypatch, tmp_path):  # noqa: F811
+    c = plug(pb, "companion", map_terrain="elevation_hill=0.8&seed=9&bad name=1&oceanlevel=5")
+    assert c._convar('server.seed: "1234567"') == 1234567 and c._convar("server.worldsize: 4500") == 4500
+    assert c._convar("Unknown command") is None
+    assert c._terrain() == [("elevation_hill", "0.8"), ("oceanlevel", "5")]       # never seed / size / odd names
+    monkeypatch.setattr(c.manager, "files_dir", tmp_path, raising=False)
+    answers = {"server.seed": 'server.seed: "777"', "server.worldsize": 'server.worldsize: "4500"'}
+    asked = []
+
+    async def command(cmd, **kw):
+        asked.append(cmd)
+        return answers[cmd]
+    monkeypatch.setattr(pb.bot.rcon, "command", command)
+    monkeypatch.setattr(type(pb.bot.rcon), "connected", property(lambda self: True), raising=False)
+    got = []
+
+    async def download(seed, size, path):
+        got.append((seed, size))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x89PNG....")
+    monkeypatch.setattr(c, "_download_map", download)
+
+    async def go():
+        first = await c.map_picture()
+        assert first[0] is None and "being fetched" in first[3] and first[2] == 4500
+        await c._map_job
+        path, version, size, why = await c.map_picture()
+        assert path.is_file() and version.startswith("rce-777-4500-") and why == "" and got == [(777, 4500)]
+        await c.map_picture()
+        assert got == [(777, 4500)] and asked == ["server.seed", "server.worldsize"]      # kept: nothing asked again
+        spots = await c.positions(1)
+        assert spots["image"] == version and spots["credit"] == "Map: rcemaps.com" and spots["size"] == 4500
+    run(go())
+    c2 = plug(pb, "companion", map_auto=False)
+    assert run(c2.map_picture())[1] is None

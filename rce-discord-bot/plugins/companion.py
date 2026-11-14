@@ -10,11 +10,16 @@ push(user_id, title, text). Tokens are stored hashed; /companion again (or "Unpa
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import html
 import json
+import re
 import secrets
 import time
+from urllib.parse import parse_qsl, urlencode
+
+import aiohttp
 
 import discord
 from aiohttp import web
@@ -44,15 +49,26 @@ class Companion(Plugin):
         Setting("map", "Team map in the app", "bool", True,
                 help="Shows the player and their online team mates on a grid (asks the server for their positions, "
                      "at most every 20 seconds per team)."),
-        Setting("map_image", "Map picture", "image",
-                help="A picture of your in-game map – it is shown behind the grid in the app. Open the map in game "
-                     "(fully zoomed out), take a screenshot and cut it to the square map so its edges are the "
-                     "map's edges. Upload a new one after a map wipe. Without a picture the app shows the grid only."),
+        Setting("map_auto", "Get the map picture from rcemaps.com", "bool", True,
+                help="The bot asks rcemaps.com for the picture of your map (from its seed and size), keeps it and "
+                     "shows it behind the grid in the app. A new seed after a wipe gets a new picture by itself."),
+        Setting("map_seed", "Map seed", "text", "",
+                help="Empty = the bot asks the game server (server.seed). Enter it here if the map stays empty – "
+                     "it's the seed in your server's settings at your host."),
+        Setting("map_terrain", "Custom terrain (optional)", "text", "",
+                help="Only if your server starts with terrain / biome commands: write them like rcemaps.com does, "
+                     "e.g. elevation_hill=0.8&oceanlevel=5 – otherwise the picture shows the stock map of the seed."),
+        Setting("map_image", "Own map picture (optional)", "image",
+                help="Replaces the picture from rcemaps.com: a square picture of your map whose edges are the "
+                     "map's edges (e.g. a custom map). Upload a new one after a map wipe."),
         Setting("map_size", "Map size (metres)", "int", 4000, min=1000, max=8000,
-                help="The world size of your map – the grid in the app is drawn for it."),
+                help="The world size of your map – used when the game server doesn't tell it (server.worldsize)."),
     )
     PREFS = {"team": True, "death": True, "events": False, "wipe": True}     # which notifications a player gets
     CHAT_KEEP, EVENT_KEEP, CHAT_EVERY, MAP_EVERY = 200, 30, 10, 20
+    MAP_API = "https://rcemaps.com/api/v1/map.png"          # public API for bots (rcemaps.com/api), 512/1024 px PNG
+    MAP_SIZES = (1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500)
+    MAP_RETRY, MAP_ASK_EVERY = 600, 900                     # after a failed download / between asking the server
 
     def __init__(self, *a, **kw) -> None:
         super().__init__(*a, **kw)
@@ -67,6 +83,9 @@ class Companion(Plugin):
         self._chat_n = 0
         self._last_sent: dict[int, float] = {}                  # user -> when they last wrote from the app
         self._map_cache: dict[int, tuple[float, list]] = {}     # team (or -user) -> (when, positions)
+        self._world: tuple[float, int | None, int | None] = (0.0, None, None)   # (asked at, seed, size) from RCON
+        self._map_tried: dict[str, float] = {}                  # picture name -> last download attempt
+        self._map_job: asyncio.Task | None = None
 
     # ------------------------------------------------------------ pairing
 
@@ -212,9 +231,9 @@ class Companion(Plugin):
 
     async def positions(self, user_id: int) -> dict:
         """Where the player and their online team mates stand – only their own team, cached for 20 seconds."""
-        size = int(self.setting("map_size"))
         if not self.setting("map"):
-            return {"on": False, "size": size, "players": [], "image": None}
+            return {"on": False, "size": int(self.setting("map_size")), "players": [], "image": None}
+        _, version, size, no_picture = await self.map_picture()
         player = self.linked_player(user_id)
         found = self.bot.db.team_of(player) if player else None
         names = found[1] if found else ([player] if player else [])
@@ -234,17 +253,97 @@ class Companion(Plugin):
         why = ("" if cached[1] else "Link your player first: /link on the server's Discord." if not player else
                "You (and your team) aren't in game right now." if not online else
                "The game server didn't tell the positions – try again in a moment.")
-        return {"on": True, "size": size, "at": int(cached[0]), "image": self.map_version(), "why": why,
+        return {"on": True, "size": size, "at": int(cached[0]), "image": version, "why": why,
+                "no_picture": no_picture, "credit": "Map: rcemaps.com" if version and version.startswith("rce-") else "",
                 "players": [dict(sp, me=bool(player) and sp["name"].lower() == player.lower()) for sp in cached[1]]}
 
-    def map_version(self) -> str | None:
-        """Changes when another map picture is uploaded (the app keeps the picture until then). None = no picture."""
-        path = self.file("map_image")
+    # ---- the map picture: the owner's upload, else rcemaps.com (by seed and size)
+
+    @staticmethod
+    def _convar(reply: str) -> int | None:
+        """The number in a console variable's answer: 'server.seed: "1234567"' -> 1234567."""
+        m = re.search(r"[:=]\s*\"?(-?\d+)", str(reply or "")) or re.fullmatch(r"\s*\"?(\d+)\"?\s*", str(reply or ""))
+        return int(m.group(1)) if m else None
+
+    async def world(self) -> tuple[int | None, int]:
+        """(seed, size) of the running map: the settings first, else what the game server says (asked every 15
+        minutes at most)."""
+        seed_text = str(self.setting("map_seed") or "").strip()
+        seed = int(seed_text) if seed_text.isdigit() else None
+        asked, got_seed, got_size = self._world
+        if time.time() - asked > self.MAP_ASK_EVERY and self.bot.rcon.connected:
+            got_seed = got_size = None
+            for name in ("server.seed", "server.worldsize"):
+                try:
+                    value = self._convar(await self.bot.rcon.command(name, timeout=6))
+                except Exception as exc:                       # no answer: the settings are used
+                    self.log.debug("%s: %s", name, exc)
+                    value = None
+                if name == "server.seed":
+                    got_seed = value if value is not None and 0 <= value <= 2147483647 else None
+                else:
+                    got_size = value if value is not None and 500 <= value <= 8000 else None
+            self._world = (time.time(), got_seed, got_size)
+        return (seed if seed is not None else got_seed), int(got_size or self.setting("map_size"))
+
+    def _terrain(self) -> list[tuple[str, str]]:
+        """The owner's terrain / biome commands as query parameters (names and values checked)."""
+        pairs = parse_qsl(str(self.setting("map_terrain") or "").strip().lstrip("&?"), keep_blank_values=False)
+        reserved = {"seed", "size", "clean", "quality", "q", "style", "key"}
+        return [(k, v) for k, v in pairs if re.fullmatch(r"[a-z_]{2,40}", k) and k not in reserved
+                and re.fullmatch(r"[A-Za-z0-9=,.\-]{1,120}", v)][:20]
+
+    def _auto_path(self, seed: int, size: int):
+        tag = hashlib.sha256(urlencode(self._terrain()).encode()).hexdigest()[:8]
+        return self.manager.files_dir / self.plugin_id / f"rcemap_{seed}_{size}_{tag}.png"
+
+    async def _download_map(self, seed: int, size: int, path) -> None:
+        params = [("seed", str(seed)), ("size", str(size)), ("clean", "1"), ("quality", "quality1024"), *self._terrain()]
         try:
-            st = path.stat() if path is not None else None
-        except OSError:
-            st = None
-        return f"{int(st.st_mtime)}-{st.st_size}" if st else None
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
+                async with session.get(self.MAP_API, params=params, headers={"User-Agent": "RCE-Discord-Bot"}) as resp:
+                    data = await resp.read()
+                    if resp.status != 200 or data[:4] != b"\x89PNG" or len(data) > 4_000_000:
+                        self.log.warning("rcemaps.com: no map for seed %s size %s (HTTP %s: %s)", seed, size,
+                                         resp.status, data[:200].decode("utf-8", "replace"))
+                        return
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            self.log.warning("rcemaps.com isn't reachable: %s", exc)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for old in path.parent.glob("rcemap_*.png"):             # one map at a time
+            old.unlink(missing_ok=True)
+        tmp = path.with_suffix(".part")
+        tmp.write_bytes(data)
+        tmp.replace(path)
+        self.log.info("Map picture for seed %s, size %s saved (rcemaps.com)", seed, size)
+
+    async def map_picture(self) -> tuple[object | None, str | None, int, str]:
+        """(file, version, world size, why there is none). The owner's upload wins; else the picture from
+        rcemaps.com, downloaded once per seed in the background."""
+        seed, size = await self.world() if self.manager is not None else (None, int(self.setting("map_size")))
+        own = self.file("map_image")
+        if own is not None:
+            try:
+                st = own.stat()
+                return own, f"own-{int(st.st_mtime)}-{st.st_size}", size, ""
+            except OSError:
+                pass
+        if not self.setting("map_auto"):
+            return None, None, size, "No map picture on this server yet."
+        if seed is None:
+            return None, None, size, ("The server's map seed isn't known yet – its owner enters it in the control "
+                                      "panel: Plugins → Companion app → Map seed.")
+        if size not in self.MAP_SIZES:
+            return None, None, size, f"There's no map picture for a map size of {size} m."
+        path = self._auto_path(seed, size)
+        if path.is_file():
+            return path, f"rce-{seed}-{size}-{path.stem[-8:]}", size, ""
+        if time.time() - self._map_tried.get(path.name, 0) > self.MAP_RETRY and (
+                self._map_job is None or self._map_job.done()):
+            self._map_tried[path.name] = time.time()
+            self._map_job = asyncio.create_task(self._download_map(seed, size, path))
+        return None, None, size, "The map picture is being fetched – tap Refresh in a moment."
 
     @Plugin.listener()
     async def on_rce_chat(self, ev) -> None:
@@ -399,7 +498,7 @@ class Companion(Plugin):
             return web.json_response({"lines": self.chat(uid, since), "can_send": bool(self.setting("chat_send"))},
                                      headers={"Cache-Control": "no-store"})
         if path == "mapimage" and request.method == "GET":
-            picture = self.file("map_image") if self.setting("map") else None
+            picture = (await self.map_picture())[0] if self.setting("map") else None
             if picture is None or not picture.is_file():
                 raise web.HTTPNotFound(text="No map picture.")
             return web.FileResponse(picture, headers={"Cache-Control": "private, max-age=86400"})
