@@ -199,7 +199,33 @@ public class MainActivity extends Activity {
         String url = Accounts.clean(uri.getQueryParameter("url"));
         if (!"add".equals(uri.getHost()) || url == null) return;
         String kind = uri.getQueryParameter("kind"), name = uri.getQueryParameter("name");
-        if ("shop".equals(kind) || "owner".equals(kind)) login(kind, url, name == null ? "" : name);
-        else panel(url, name == null ? "" : name);
+        final String k = "shop".equals(kind) || "owner".equals(kind) ? kind : "panel", n = name == null ? "" : name;
+        final Runnable go = () -> {
+            if ("panel".equals(k)) panel(url, n);
+            else login(k, url, n);
+        };
+        if (trusted(url)) {
+            go.run();
+            return;
+        }
+        // a link can come from any website: never type a password into an address you don't know
+        new AlertDialog.Builder(this).setTitle("⚠️ Unknown address")
+                .setMessage(Uri.parse(url).getHost() + "\n\nThis link wants to add a login at an address this app "
+                        + "doesn't know yet. Only continue if it is really your shop / panel – otherwise your "
+                        + "password could be stolen.")
+                .setPositiveButton("I trust it", (d, w) -> go.run())
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    /** The official shop, or an address this app already has a login for. */
+    private boolean trusted(String url) {
+        String host = Uri.parse(url).getHost(), shop = Uri.parse(getString(R.string.default_shop)).getHost();
+        if (host == null) return false;
+        if (host.equalsIgnoreCase(shop)) return true;
+        JSONArray all = accounts.all();
+        for (int i = 0; i < all.length(); i++) {
+            if (host.equalsIgnoreCase(Uri.parse(all.optJSONObject(i).optString("url")).getHost())) return true;
+        }
+        return false;
     }
 }

@@ -644,7 +644,10 @@ class HQ:
             known = {r["id"] for r in self.db.q("SELECT id FROM servers WHERE customer_id = ? AND status != 'deleted'",
                                                 (cid,))}
         sid, rest = None, text.strip()
-        m = SERVER_PREFIX.match(text) or re.search(r"(?:^|\s)(?:on |for |server )?#(\d+)\b[.!?]?", text, re.I)
+        # "#5 do this", just "#5", or "… on/for/server #5" – a bare "#3" inside a sentence is something else
+        # (a bind, a ticket, a suggestion) and stays part of the request
+        m = SERVER_PREFIX.match(text) or re.fullmatch(r"\s*#(\d+)\s*[.!?]?\s*", text) \
+            or re.search(r"(?:^|\s)(?:on|for|server)\s+#(\d+)\b[.!?]?", text, re.I)
         if m:
             sid = int(m[1])
             rest = (m[2].strip() if m.re is SERVER_PREFIX else (text[:m.start()] + " " + text[m.end():]).strip())

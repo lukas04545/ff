@@ -201,6 +201,7 @@ def placeholder_svg(shortname: str) -> str:
             'text-anchor="middle">' + text + '</text></svg>')
 
 
+COMPANION_API = ("feed", "account", "claim", "alerts", "rf", "unpair", "exchange")
 APP_FILES = ("manifest.webmanifest", "sw.js", "app-icon-192.png", "app-icon-512.png")
 ANDROID_DIST = Path(__file__).resolve().parents[1] / "android" / "dist"
 ANDROID_APK = ANDROID_DIST / "rce-panel.apk"           # the control panel app (staff, customers, the manager)
@@ -2177,7 +2178,11 @@ class WebInterface:
         raise web.HTTPMovedPermanently(f"/{tail}{query}")
 
     async def plugin_public(self, request: web.Request, pid: str | None = None) -> web.StreamResponse:
-        self._public_limit(request)
+        # the players' app polls its own API often – it has its own per-phone limits (plugins/companion.py) and
+        # must not use up the website's shared visitor limit
+        if not ((pid or request.match_info.get("pid")) == "companion"
+                and request.match_info.get("tail", "").strip("/") in COMPANION_API):
+            self._public_limit(request)
         await self._knock(request, request.path.strip("/"))
         return await self._serve_plugin(request, pid or request.match_info["pid"])
 
