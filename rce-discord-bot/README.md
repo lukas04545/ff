@@ -1707,9 +1707,11 @@ with a Claim button or its timer**, the latest server events), **Team** (members
 **offline protection** zone), **Chat** (the game chat – team chat only for the team's members – and writing into the
 global chat as "📱 Name: text", one message every 10 s; switch it off with *Players can write in the game chat from
 the app*), **Map** (you and your online team mates on the lettered grid, over the **picture of your in-game map**:
-upload it under Plugins → Companion app → *Map picture* – a screenshot of the fully zoomed-out map, cut to the
-square so its edges are the map's edges – and set *Map size*; a console server doesn't hand the map out itself, so
-upload a new picture after a map wipe) and **Alarms** (raid alarm on/off, the RF frequency, and which
+the bot gets it by itself from [rcemaps.com](https://rcemaps.com/api) – it asks the game server for the seed and
+size (`server.seed`, `server.worldsize`), downloads the picture once per seed and keeps it; a new seed after a wipe
+gets a new picture. If the server doesn't tell its seed, enter it under Plugins → Companion app → *Map seed*;
+servers that start with terrain / biome commands add them under *Custom terrain*; *Own map picture* replaces it
+all with an upload. Map sizes 1000–4500 in steps of 500) and **Alarms** (raid alarm on/off, the RF frequency, and which
 notifications you get: team mate online, killed, server events, wipe). Raid alarms ring loud; the others use a
 normal notification. Both apps have an **Update the app** button (and check at the start): they ask the server's
 `/app/versions.json` and download the newer APK – it installs over the old one, logins stay. **Not possible on Console Edition:** smart switches, storage monitors and cameras – the game
