@@ -33,9 +33,11 @@ def normalize_mode(text) -> str:
     return "live" if str(text or "").strip().lower() in ("live", "production", "prod", "real") else "sandbox"
 
 
-async def diagnose(client_id: str, secret: str, mode: str, *, session_factory=None) -> dict:
+async def diagnose(client_id: str, secret: str, mode: str, *, session_factory=None,
+                   probe_currency: str | None = None) -> dict:
     """Asks PayPal whether it accepts these keys in this mode – and, if not, whether they belong to the OTHER mode
-    (the usual mistake: sandbox keys with mode live). Returns {"ok", "mode", "text"}."""
+    (the usual mistake: sandbox keys with mode live). With probe_currency it also creates a test order of 1.00 (never
+    paid, PayPal drops it by itself) to see whether the ACCOUNT may take payments. Returns {"ok", "mode", "text"}."""
     mode = normalize_mode(mode)
     other = "sandbox" if mode == "live" else "live"
     if not str(client_id or "").strip() or not str(secret or "").strip():
@@ -51,8 +53,17 @@ async def diagnose(client_id: str, secret: str, mode: str, *, session_factory=No
                 return False
     try:
         if await accepted(mode):
+            if probe_currency:
+                try:
+                    await PayPalClient(client_id, secret, mode, session_factory=session_factory).create_order(
+                        amount=1, currency=probe_currency, description="Connection test", brand="Test",
+                        reference=f"test-{int(time.time())}", return_url="https://example.com/",
+                        cancel_url="https://example.com/")
+                except PayPalError as exc:
+                    return {"ok": False, "mode": mode, "text": f"❌ The keys are right ({mode.upper()}), but PayPal "
+                            f"doesn't let this account take a payment: {exc}"}
             return {"ok": True, "mode": mode, "text": f"✅ PayPal accepts these keys in {mode.upper()} mode"
-                    + (" – real payments work." if mode == "live" else " (test money only – switch the mode to "
+                    + (" – PayPal takes orders for this account." if mode == "live" else " (test money only – switch the mode to "
                        "live with your LIVE keys for real payments).")}
         if await accepted(other):
             return {"ok": False, "mode": mode, "text": (
@@ -67,6 +78,39 @@ async def diagnose(client_id: str, secret: str, mode: str, *, session_factory=No
     return {"ok": False, "mode": mode, "text": "❌ PayPal rejects these keys in both modes – copy the Client ID and the "
                                                "Secret again (complete, no spaces) from developer.paypal.com → Apps "
                                                "& Credentials."}
+
+
+# PayPal's reasons (issue codes) in words the shop owner can act on
+ISSUES = {
+    "PAYEE_ACCOUNT_RESTRICTED": "your PayPal account is restricted – open paypal.com → Resolution Centre / the bell "
+                                "and finish what PayPal asks for (identity, business details)",
+    "PAYEE_ACCOUNT_LOCKED_OR_CLOSED": "your PayPal account is locked or closed – contact PayPal",
+    "PAYEE_ACCOUNT_INVALID": "the PayPal account behind these keys can't receive payments – confirm its e-mail "
+                             "address and make it a Business account",
+    "PAYEE_NOT_ENABLED_FOR_CARD_PROCESSING": "card payments aren't enabled on your PayPal account",
+    "COMPLIANCE_VIOLATION": "PayPal's compliance check refused this payment (the 'international regulations' "
+                            "message) – PayPal decides that for your account or for this buyer; see the PayPal help "
+                            "on the settings page",
+    "TRANSACTION_REFUSED": "PayPal refused the payment (its risk / compliance check) – the buyer can try another "
+                           "funding source, or pay another way",
+    "PAYER_ACCOUNT_RESTRICTED": "the buyer's PayPal account is restricted – they have to sort that out with PayPal",
+    "PAYER_ACCOUNT_LOCKED_OR_CLOSED": "the buyer's PayPal account is locked or closed",
+    "PAYER_CANNOT_PAY": "the buyer can't pay with this PayPal account (PayPal's decision) – another funding source "
+                        "or another way to pay",
+    "INSTRUMENT_DECLINED": "the buyer's bank or card declined – they can pick another funding source in PayPal",
+    "TRANSACTION_RECEIVING_LIMIT_EXCEEDED": "your PayPal account reached its receiving limit – lift it on paypal.com",
+    "CURRENCY_NOT_SUPPORTED": "your PayPal account can't receive this currency",
+    "ORDER_NOT_APPROVED": "the buyer didn't approve the payment",
+}
+
+
+def issue_of(data: dict) -> str | None:
+    return next((d.get("issue") for d in (data.get("details") or []) if isinstance(d, dict) and d.get("issue")), None)
+
+
+def explain(issue: str | None) -> str:
+    """A PayPal issue code in plain words (the code itself for ones not known here)."""
+    return ISSUES.get(str(issue or ""), str(issue or "unknown reason"))
 
 
 def money(amount: float | Decimal, currency: str) -> str:
@@ -150,8 +194,10 @@ class PayPalClient:
         }
         status, data = await self._call("POST", "/v2/checkout/orders", body, request_id=f"create-{reference}")
         if status not in (200, 201) or not data.get("id"):
+            issue = issue_of(data)
             raise PayPalError(f"PayPal could not create the order (HTTP {status}: "
-                              f"{data.get('message') or data.get('name') or 'unknown error'}).")
+                              + (f"{issue} – {explain(issue)}" if issue else
+                                 f"{data.get('message') or data.get('name') or 'unknown error'}") + ").")
         link = next((link["href"] for link in data.get("links", []) if link.get("rel") in ("payer-action", "approve")),
                     None)
         if not link:
@@ -171,9 +217,10 @@ class PayPalClient:
         if status == 422 and "ORDER_ALREADY_CAPTURED" in str(data):
             data, status = await self.get_order(order_id), 200
         if status not in (200, 201):
-            issue = next((d.get("issue") for d in data.get("details", []) if isinstance(d, dict)), None)
+            issue = issue_of(data)
             return Capture(False, issue or data.get("name") or f"HTTP {status}", None, None, None, None, None,
-                           problem=data.get("message") or "PayPal refused the capture.")
+                           problem=(f"{issue}: {explain(issue)}" if issue else
+                                    data.get("message") or "PayPal refused the capture."))
         return self.check(data, amount=amount, currency=currency)
 
     @staticmethod

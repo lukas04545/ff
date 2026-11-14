@@ -143,7 +143,7 @@ STAFF_CAN = tuple((m, re.compile(p)) for m, p in (
     ("GET", r"^/?$"), ("GET", r"^/customers$"), ("GET", r"^/customers/\d+$"), ("GET", r"^/servers$"),
     ("GET", r"^/settings$"), ("GET", r"^/passkey\.js$"), ("GET", r"^/suggestions$"),
     ("POST", r"^/suggestions/\d+$"),
-    ("POST", r"^/customers/new$"), ("POST", r"^/customers/\d+/(trial|server|dashboard)$"),
+    ("POST", r"^/customers/new$"), ("POST", r"^/customers/\d+/(trial|days|server|dashboard)$"),
     ("POST", r"^/servers/\d+/(open|password-link|rcon-reset)$"),
     ("POST", r"^/passkeys(/options)?$"), ("POST", r"^/passkeys/[A-Za-z0-9_-]+/remove$"), ("POST", r"^/logout$"),
 ))
@@ -461,14 +461,14 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
                 f"({esc(plans.price_text(p))})</button></form> " for p in others)
         package = (f"<b>{esc(plan['name'])}</b> · {esc(plans.price_text(plan))} / month · " if plan else "") + \
             f"{pill(sub['status'] if sub else 'none')}"
-        until = paypal_billing.paid_until(db, c["id"])
-        if until:                                         # paid with PayPal: until when, and extend
-            left = max(0, int((until - time.time()) // 86400))
-            package += (f"<p>🅿️ Paid with PayPal until <b>{time.strftime('%Y-%m-%d', time.gmtime(until))}</b> "
-                        f"({left} day{'s' if left != 1 else ''} left){' – extend it in time so your servers keep running' if left <= 7 else ''}."
-                        f"</p>" + (paypal_form(hidden, plan, "Extend with PayPal") if plan else ""))
-        elif sub and sub["status"] == "paid" and plan:    # paid time is over
-            package += "<p>Your paid time has ended – pay again to switch your servers on.</p>" + paypal_form(hidden, plan)
+        info = billing.summary(db, c["id"])
+        if info["status"] != "none":                      # one clear line: what runs, how it's paid, until when
+            warn = info["left"] is not None and info["left"] < 7 * 86400
+            package += (f"<p>{'⏳ ' if warn else ''}{esc(info['text'])}"
+                        f"{' Extend it in time so your servers keep running.' if warn else ''}"
+                        f"<br><span class=muted>{esc(info['via'])}</span></p>")
+        if info["status"] == "paid" and plan:             # paid in advance: extend (or pay again when it's over)
+            package += paypal_form(hidden, plan, "Extend with PayPal" if info["running"] else "Pay with PayPal")
         return shop(request, "Dashboard", f"""{flash(request)}
 <h1>Hi {esc(c['name'] or c['email'])} 👋</h1>
 {'' if done else f"<div class=card><h2>Get started</h2><div class=steps>{steps}</div></div>"}
@@ -835,9 +835,7 @@ in.</span></p></div>""")
                          f"<a class='btn ghost' href='{esc(settings.url_for(s_['slug']))}'>🌐 Website</a></p>"
                          if on else "<p class=muted>This server isn't running right now.</p>")
                       + "</div>")
-        until = ""
-        if sub and sub["current_period_end"] and sub["status"] in ("trial", "paid"):
-            until = f" · until {time.strftime('%Y-%m-%d', time.gmtime(sub['current_period_end']))}"
+        until = f"<br><span class=muted>{esc(billing.summary(db, c['id'])['text'])}</span>"
         head = (f"<div class=card><h2>Hi {esc(c['name'] or c['email'])} 👋</h2><p>"
                 f"{esc(plan['name']) if plan else 'No package'} · {pill('running' if running else 'stopped')}{until}"
                 f"</p><p><a href=/dashboard>Full dashboard (billing, domains, new servers) →</a></p></div>")
@@ -885,7 +883,9 @@ in.</span></p></div>""")
     async def paypal_cancel(request):
         from control_plane import paypal_billing
         paypal_billing.cancel(db, request.query.get("o", ""))
-        return _hop("/dashboard?m=" + quote_plus("PayPal payment cancelled – nothing was charged."))
+        return _hop("/dashboard?m=" + quote_plus("PayPal payment cancelled – nothing was charged. If PayPal declined it, try "
+                                                    "another funding source in PayPal or contact us – we can switch "
+                                                    "you on after another way of payment."))
 
     def paypal_form(hidden: str, plan: dict, label: str = "Pay with PayPal") -> str:
         from control_plane import paypal_billing
@@ -1436,6 +1436,20 @@ style="width:5rem"> days (trial) <button>Create customer</button></form></div>
 Password: {esc(password)}</pre><p class=muted>Access: {esc(access_text)}.</p>
 <p><a class=btn href={P}/customers/{cid}>Open the customer</a></p></div>""")
 
+    async def customer_days(request):
+        who = owner(request)
+        data = await sess.form(request)
+        cid = int(request.match_info["id"])
+        if db.one("SELECT 1 FROM customers WHERE id = ?", (cid,)) is None:
+            raise web.HTTPNotFound()
+        try:
+            billing.add_days(db, cid, int(data.get("days") or 30), actor=f"owner:{who}")
+        except ValueError as exc:
+            return page("Not possible", f"<div class=card><p class=err>{esc(exc)}</p><a href={P}/customers/{cid}>Back</a>"
+                                        "</div>")
+        await changed()
+        raise go(f"/customers/{cid}")
+
     async def customer_trial(request):
         who = owner(request)
         data = await sess.form(request)
@@ -1501,14 +1515,16 @@ Password: {esc(password)}</pre><p class=muted>Access: {esc(access_text)}.</p>
 <div class=card>Account {pill(c['status'])} {esc(c['suspend_reason'] or '')} · Subscription
 {pill(sub['status'] if sub else 'none')} {esc(sub['stripe_subscription_id'] or '') if sub else ''}
 {('· grace until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['grace_until']))) if sub and sub['grace_until'] else ''}
-{('· trial until ' + time.strftime('%Y-%m-%d %H:%M', time.gmtime(sub['current_period_end'])) + ' UTC') if sub and sub['status'] == 'trial' and sub['current_period_end'] else ''}
-{('· paid with PayPal until ' + time.strftime('%Y-%m-%d', time.gmtime(sub['current_period_end']))) if sub and sub['status'] == 'paid' and sub['current_period_end'] else ''}
+<p><b>{esc(billing.summary(db, cid)['text'])}</b><br><span class=muted>{esc(billing.summary(db, cid)['via'])}</span></p>
 {paypal_list(cid)}<br><br><form method=post action={P}/customers/{cid}/dashboard class=inline target=_blank>{hidden(request)}<button>
 🔑 Open dashboard</button></form> {acct} {comp} {button(request, f'/customers/{cid}/remove', 'Remove customer', danger=True,
                                        confirm='Remove the customer and all their servers?')}
 <form method=post action={P}/customers/{cid}/trial class=inline>{hidden(request)}<input name=days type=number min=1
 max=365 value=14 style="width:5rem"> days <button>{'Extend' if sub and sub['status'] == 'trial' else 'Start'} free trial
-</button></form></div>
+</button></form>
+<form method=post action={P}/customers/{cid}/days class=inline title="For customers who paid another way (bank
+transfer, PayPal directly …) – added to the time they still have">{hidden(request)}<input name=days type=number min=1
+max=3660 value=30 style="width:5rem"> days <button>➕ Add paid time</button></form></div>
 <div class=card><h2>Package</h2><p>{esc((plans.current(db, cid) or {}).get('name') or 'none')}
 <span class=muted>– sets the server slots and the add-ons below (paid packages come from Stripe by themselves)</span></p>
 <form method=post action={P}/customers/{cid}/plan>{hidden(request)}<select name=plan>{''.join(f"<option value={p['id']}>{esc(p['name'])} – {esc(plans.price_text(p))} ({p['slots']} servers)</option>" for p in plans.listed(db, all_=True))}</select>
@@ -2094,13 +2110,32 @@ style="width:100%" placeholder="Cloudflare API token" required><br><br><button>S
 <div class=card><h2>🅿️ PayPal</h2><p>Mode now: <b>{esc(settings.paypal_mode)}</b>
 {'' if settings.paypal_client_id else '– no keys saved yet'}. Sandbox and live use <b>different</b> Client IDs and
 Secrets – for real payments set the mode to <code>live</code> and enter the keys of your <b>Live</b> app.</p>
-<form method=post action={P}/paypal-test>{hidden(request)}<button>🔌 Test PayPal</button></form></div>""")
+<form method=post action={P}/paypal-test>{hidden(request)}<button>🔌 Test PayPal</button></form>
+<p class=muted>The test also creates a 1.00 test order (never paid) to see whether PayPal lets your account take
+payments.</p>
+<details><summary>A customer sees “Transaction declined – to comply with international regulations”</summary>
+<p>That page comes from PayPal's own compliance check – the order was created correctly, PayPal then refuses the
+payment. The bot can't switch this off. What causes it, most likely first:</p><ol>
+<li><b>Your PayPal account isn't fully verified.</b> Log in on paypal.com and look at the bell / Resolution Centre:
+finish everything PayPal asks for (confirm e-mail, identity, address, business details, bank account). The account
+behind the Live keys must be a <b>Business</b> account.</li>
+<li><b>The buyer.</b> Their country, a VPN, or a restriction on their PayPal account. Ask them to switch the VPN off
+and try again, or to pay with another PayPal account.</li>
+<li><b>You paid yourself</b> – a payment from the same PayPal account (or one linked to it) that receives the money
+is always refused. Test with a different account.</li>
+<li><b>Countries.</b> Some countries can only pay abroad or only receive from abroad (e.g. India, Turkey, Brazil,
+Egypt) – buyer and seller in such a country don't work together.</li></ol>
+<p>If the Test button above is green and it still happens for every buyer, only PayPal's support can tell you the
+reason (ask for “compliance decline on Orders v2 checkout”). Until then: let the customer pay another way and use
+<b>➕ Add paid time</b> on their customer page (or <b>+30 days</b> in their HQ channel).</p></details></div>""")
 
     async def paypal_test(request):
         owner(request)
         await sess.form(request)
         from support.paypal import diagnose
-        out = await diagnose(settings.paypal_client_id, settings.paypal_secret, settings.paypal_mode)
+        first = next(iter(plans.listed(db)), None)
+        out = await diagnose(settings.paypal_client_id, settings.paypal_secret, settings.paypal_mode,
+                             probe_currency=(first["currency"] if first else "eur").upper())
         return settings_form(request, "PayPal test: " + esc(out["text"]))
 
     async def settings_page(request):
@@ -2217,6 +2252,7 @@ suggested it gets a notice in the channel within a minute.</p><p>{tabs}</p>
                     web.post(r"/suggestions/{id:\d+}", suggestion_save),
                     web.post(r"/customers/{id:\d+}/{action:grant|suspend|reactivate|comp|remove}", act),
                     web.post("/customers/new", customer_new), web.post(r"/customers/{id:\d+}/server", customer_server), web.post(r"/customers/{id:\d+}/trial", customer_trial),
+                    web.post(r"/customers/{id:\d+}/days", customer_days),
                     web.post(r"/grants/{id:\d+}/revoke", act),
                     web.post(r"/servers/{id:\d+}/{action:suspend|reactivate|restart|remove|purge|rcon-reset}", act),
                     web.post(r"/customers/{id:\d+}/feature/{feature:custom_bot|ai|custom_domain}/{on:on|off}", feature_action),

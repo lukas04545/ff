@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import time
 
-from control_plane import features, provisioning, slots
+from control_plane import billing, features, provisioning, slots
 from control_plane.db import DB
 from control_plane.settings import Settings
 
 SERVER_ACTIONS = ("suspend", "reactivate", "restart", "remove", "purge")
-CUSTOMER_ACTIONS = ("grant", "suspend", "reactivate", "comp", "remove")
+CUSTOMER_ACTIONS = ("grant", "suspend", "reactivate", "comp", "month", "remove")
 
 
 async def server(db: DB, settings: Settings, supervisor, sid: int, action: str, *, actor: str) -> str:
@@ -59,6 +59,9 @@ def customer(db: DB, cid: int, action: str, *, actor: str, owner: str, slots_n: 
         db.run("UPDATE subscriptions SET status = ?, updated_at = ? WHERE customer_id = ?", (new, int(time.time()), cid))
         db.audit(actor, f"subscription.{new}", customer_id=cid)
         return "comped (free)" if new == "comped" else "comp removed"
+    if action == "month":                               # paid another way: +30 days by hand
+        until = billing.add_days(db, cid, 30, actor=actor)
+        return f"+30 days – runs until {time.strftime('%Y-%m-%d', time.gmtime(until))}"
     if action == "remove":
         for s in db.q("SELECT id FROM servers WHERE customer_id = ? AND status != 'deleted'", (cid,)):
             provisioning.remove_server(db, s["id"], actor=actor)

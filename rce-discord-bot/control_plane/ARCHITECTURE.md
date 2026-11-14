@@ -118,6 +118,16 @@ Every server runs on one of two bots:
   * A buyer who closes the page after paying is completed on their next dashboard visit and by a 5-minute check.
     Unpaid orders expire after 3 hours.
   * Customers with a running Stripe subscription can't also pay with PayPal.
+  * **One summary everywhere** (`billing.summary`): package, state, how it's paid, until when and how long that
+    still is – on the dashboard, in the owner panel, in the apps and in the customer's channel of the HQ Discord
+    (the end counts down there by itself). `#hq-alerts` says when a trial / paid time ends within 3 days and when it
+    has ended. The management AI gets the same facts with every request, so "when does this account expire?" works.
+  * **Paid another way** (bank transfer, PayPal directly): the owner adds the time by hand – *➕ Add paid time* on
+    the customer page or **+30 days** in their HQ channel. It's added to the time they still have.
+  * *Test PayPal* (Settings) checks the keys **and** creates a 1.00 test order that is never paid – that shows
+    whether PayPal lets the account take payments (restricted accounts are named). PayPal's own "Transaction
+    declined – to comply with international regulations" page is PayPal's compliance check (account not fully
+    verified, the buyer's country / VPN, paying yourself); the settings page lists what to check.
   * Payments are listed on the customer's page in the owner panel.
   * Without Stripe keys, the package cards only show PayPal.
 * **Owner panel → 🛒 Packages:**
