@@ -205,3 +205,63 @@ def test_companion_api_has_its_own_limits(bot):  # noqa: F811
         run_web(bot, scenario)
     finally:
         mp.undo()
+
+
+def test_team_chat_map_events_and_notifications_like_rust_plus(pb, monkeypatch):  # noqa: F811
+    from rce.log_parser import ChatEvent, KillEvent, KillerType, ServerEvent
+    c = plug(pb, "companion")
+    for uid, name in ((7, "Bob"), (8, "Ann"), (9, "Eve")):
+        pb.db.link_player(uid, name)
+        c.exchange(c.new_code(uid))
+    pb.db.team_event("create", "Bob", 5)
+    pb.db.team_event("join", "Ann", 5, "Bob")
+    pb.bot.online_players = {"Bob": {}}
+    team = c.team("Ann")
+    assert team["leader"] == "Bob" and [(m["name"], m["online"], m["leader"]) for m in team["members"]] == [
+        ("Ann", False, False), ("Bob", True, True)]
+    assert c.team("Eve") is None
+
+    # chat: global for everyone, team chat only for the team, local never
+    run(c.on_rce_chat(ChatEvent("GLOBAL", "Eve", "hi all", "hi all")))
+    run(c.on_rce_chat(ChatEvent("TEAM", "Bob", "base at K12", "base at K12")))
+    run(c.on_rce_chat(ChatEvent("LOCAL", "Bob", "psst", "psst")))
+    assert [line["text"] for line in c.chat(8)] == ["hi all", "base at K12"]
+    assert [line["text"] for line in c.chat(9)] == ["hi all"]
+    said = []
+
+    async def command(cmd, **kw):
+        said.append(cmd)
+        return "(100.5, 20.0, -300.25)"
+    monkeypatch.setattr(pb.bot.rcon, "command", command)
+    out = run(c.send_chat(7, "need <b>scrap</b>\nanyone?"))
+    assert out["ok"] and said[-1].startswith("say 📱 Bob: need") and "<" not in said[-1] and "\n" not in said[-1]
+    assert not run(c.send_chat(7, "again"))["ok"]                     # one message every 10 seconds
+    assert c.chat(9, 0)[-1]["channel"] == "APP" and c.chat(9, c.chat(9)[-1]["id"]) == []
+    assert not run(c.send_chat(1234, "x"))["ok"]                      # not linked
+
+    # map: only the own team's online members, cached
+    spots = run(c.positions(8))
+    assert spots["on"] and spots["size"] == 4000 and spots["players"] == [
+        {"name": "Bob", "x": 100.5, "z": -300.2, "me": False}] or spots["players"][0]["z"] == -300.25
+    asked = len(said)
+    assert run(c.positions(7))["players"][0]["me"] is True and len(said) == asked     # from the cache
+    assert run(c.positions(9))["players"] == []                       # Eve: no team, not online
+
+    # notifications: team mate online, killed, events (off by default), wipe
+    run(c.on_rce_player_join("Bob"))
+    assert [a["kind"] for a in c.feed(8)["alerts"]] == ["team"] and c.feed(7)["alerts"] == []
+    run(c.on_rce_kill(KillEvent("Ann", KillerType.PLAYER, "Eve", KillerType.PLAYER)))
+    assert c.feed(8)["alerts"][-1]["kind"] == "death" and "Eve" in c.feed(8)["alerts"][-1]["text"]
+    run(c.on_rce_server_event(ServerEvent("event_cargoship", "🚢 Cargo Ship")))
+    assert all(a["kind"] != "event" for a in c.feed(8)["alerts"])
+    assert c.set_prefs(8, {"events": True, "death": False, "nonsense": True}) == {
+        "team": True, "death": False, "events": True, "wipe": True}
+    run(c.on_rce_server_event(ServerEvent("event_helicopter", "🚁 Patrol Helicopter")))
+    run(c.on_rce_kill(KillEvent("Ann", KillerType.PLAYER, "Eve", KillerType.PLAYER)))
+    kinds = [a["kind"] for a in c.feed(8)["alerts"]]
+    assert kinds.count("event") == 1 and kinds.count("death") == 1
+    run(c.on_rce_wiped(None))
+    assert c.feed(9)["alerts"][-1]["kind"] == "wipe"
+    acc = run(c.account(8))
+    assert acc["team"]["id"] == 5 and [e["name"] for e in acc["events"]] == ["🚢 Cargo Ship", "🚁 Patrol Helicopter"]
+    assert acc["prefs"]["events"] is True and acc["chat_send"] is True and "kills" in (acc["stats"] or {"kills": 0})

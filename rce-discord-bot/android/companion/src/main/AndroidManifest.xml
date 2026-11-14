@@ -35,6 +35,9 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".ServerActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".WebActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="false" />
 
         <service

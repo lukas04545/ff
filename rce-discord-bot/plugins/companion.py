@@ -39,7 +39,16 @@ class Companion(Plugin):
     DEFAULT_ENABLED = True
     SETTINGS = (
         Setting("max_devices", "Phones per player", "int", 3, min=1, max=10),
+        Setting("chat_send", "Players can write in the game chat from the app", "bool", True,
+                help="Shown in game as \"📱 Name: text\" (global chat). One message every 10 seconds per player."),
+        Setting("map", "Team map in the app", "bool", True,
+                help="Shows the player and their online team mates on a grid (asks the server for their positions, "
+                     "at most every 20 seconds per team)."),
+        Setting("map_size", "Map size (metres)", "int", 4000, min=1000, max=8000,
+                help="The world size of your map – the grid in the app is drawn for it."),
     )
+    PREFS = {"team": True, "death": True, "events": False, "wipe": True}     # which notifications a player gets
+    CHAT_KEEP, EVENT_KEEP, CHAT_EVERY, MAP_EVERY = 200, 30, 10, 20
 
     def __init__(self, *a, **kw) -> None:
         super().__init__(*a, **kw)
@@ -48,6 +57,12 @@ class Companion(Plugin):
         self._writes = RateLimiter(12, 60)           # per phone: claim, alerts, rf
         self._pair_tries = RateLimiter(10, 900)      # per visitor: wrong pairing codes
         self._bad_tokens = RateLimiter(30, 300)      # per visitor: requests with an unknown token
+        from collections import deque
+        self._chat: deque = deque(maxlen=self.CHAT_KEEP)        # the game chat the app shows (memory only)
+        self._events: deque = deque(maxlen=self.EVENT_KEEP)     # cargo ship, helicopter, air drop …
+        self._chat_n = 0
+        self._last_sent: dict[int, float] = {}                  # user -> when they last wrote from the app
+        self._map_cache: dict[int, tuple[float, list]] = {}     # team (or -user) -> (when, positions)
 
     # ------------------------------------------------------------ pairing
 
@@ -124,6 +139,129 @@ class Companion(Plugin):
                 "player": player, "player_online": bool(player and self.online_name(player)),
                 "alerts": [a for a in self.data.get(f"feed:{user_id}", []) if a["id"] > since]}
 
+    # ------------------------------------------------------------ team, chat, events, map (like Rust+)
+
+    def prefs(self, user_id: int) -> dict:
+        saved = self.data.get(f"prefs:{int(user_id)}") or {}
+        return {k: bool(saved.get(k, default)) for k, default in self.PREFS.items()}
+
+    def set_prefs(self, user_id: int, changes: dict) -> dict:
+        new = self.prefs(user_id)
+        new.update({k: bool(v) for k, v in changes.items() if k in self.PREFS})
+        self.data.set(f"prefs:{int(user_id)}", new)
+        return new
+
+    def paired_users(self) -> set[int]:
+        return {int(row["uid"]) for row in self.data.items("tok:").values()}
+
+    def team(self, player: str | None) -> dict | None:
+        """The player's in-game team: leader and members with who is online and who is in the app's Discord."""
+        found = self.bot.db.team_of(player) if player else None
+        if found is None:
+            return None
+        row, members = found
+        return {"id": row["team_id"], "leader": row["leader"],
+                "members": [{"name": m, "online": self.online_name(m) is not None,
+                             "leader": bool(row["leader"]) and m.lower() == str(row["leader"]).lower()}
+                            for m in sorted(members, key=str.lower)]}
+
+    def stats(self, player: str | None) -> dict | None:
+        row = self.bot.db.player(player) if player else None
+        if row is None:
+            return None
+        deaths = int(row["deaths"] or 0)
+        return {"kills": int(row["kills"] or 0), "deaths": deaths,
+                "kd": round(int(row["kills"] or 0) / deaths, 2) if deaths else float(row["kills"] or 0),
+                "playtime": int(row["playtime_seconds"] or 0)}
+
+    def chat(self, user_id: int, since: int = 0) -> list[dict]:
+        """Global and server chat for everyone – team chat only for the members of that team."""
+        player = self.linked_player(user_id)
+        found = self.bot.db.team_of(player) if player else None
+        mates = {m.lower() for m in found[1]} if found else ({player.lower()} if player else set())
+        return [line for line in self._chat if line["id"] > since
+                and (line["channel"] != "TEAM" or line["player"].lower() in mates)]
+
+    def _chat_line(self, channel: str, player: str, text: str) -> None:
+        self._chat_n += 1
+        self._chat.append({"id": self._chat_n, "at": self.now(), "channel": channel, "player": player[:40],
+                           "text": text[:300]})
+
+    async def send_chat(self, user_id: int, text: str) -> dict:
+        from utils import sanitize_ingame_text
+        player = self.linked_player(user_id)
+        if not self.setting("chat_send"):
+            return {"ok": False, "message": "Writing from the app is switched off on this server."}
+        if not player:
+            return {"ok": False, "message": "Link your player first: /link on Discord."}
+        text = sanitize_ingame_text(" ".join(str(text or "").split()), 140)
+        if not text:
+            return {"ok": False, "message": "Type a message first."}
+        wait = self.CHAT_EVERY - (time.time() - self._last_sent.get(user_id, 0))
+        if wait > 0:
+            return {"ok": False, "message": f"Wait {int(wait) + 1} s before the next message."}
+        self._last_sent[user_id] = time.time()
+        if not await self.say(f"📱 {player}: {text}"):
+            return {"ok": False, "message": "The game server isn't reachable right now."}
+        self._chat_line("APP", player, text)
+        return {"ok": True, "message": ""}
+
+    async def positions(self, user_id: int) -> dict:
+        """Where the player and their online team mates stand – only their own team, cached for 20 seconds."""
+        size = int(self.setting("map_size"))
+        if not self.setting("map"):
+            return {"on": False, "size": size, "players": []}
+        player = self.linked_player(user_id)
+        found = self.bot.db.team_of(player) if player else None
+        names = found[1] if found else ([player] if player else [])
+        key = int(found[0]["team_id"]) if found else -int(user_id)
+        cached = self._map_cache.get(key)
+        if cached is None or time.time() - cached[0] > self.MAP_EVERY:
+            spots = []
+            for name in [n for n in names if self.online_name(n)][:8]:
+                pos = await self.position(name)
+                if pos is not None:
+                    spots.append({"name": name, "x": round(pos[0], 1), "z": round(pos[2], 1)})
+            cached = (time.time(), spots)
+            self._map_cache[key] = cached
+            for old in [k for k, v in self._map_cache.items() if time.time() - v[0] > 600]:
+                self._map_cache.pop(old, None)
+        return {"on": True, "size": size, "at": int(cached[0]),
+                "players": [dict(sp, me=bool(player) and sp["name"].lower() == player.lower()) for sp in cached[1]]}
+
+    @Plugin.listener()
+    async def on_rce_chat(self, ev) -> None:
+        if ev.channel == "LOCAL" or (ev.channel == "SERVER" and ev.text.startswith("📱")):
+            return                                   # local chat stays local; our own lines are in already
+        self._chat_line(ev.channel, ev.player, ev.text)
+
+    @Plugin.listener()
+    async def on_rce_server_event(self, ev) -> None:
+        self._events.append({"at": self.now(), "key": ev.key, "name": ev.name})
+        for uid in self.paired_users():
+            if self.prefs(uid)["events"]:
+                self.push(uid, ev.name, f"Started on {self.server_name}.", kind="event")
+
+    @Plugin.listener()
+    async def on_rce_kill(self, ev) -> None:
+        uid = self.linked_user(ev.victim) if ev.victim else None
+        if uid is not None and self.prefs(uid)["death"]:
+            self.push(uid, "💀 You were killed", f"{ev.victim} was killed by {ev.killer}.", kind="death")
+
+    @Plugin.listener()
+    async def on_rce_player_join(self, player) -> None:
+        found = self.bot.db.team_of(player)
+        for mate in (found[1] if found else []):
+            uid = self.linked_user(mate)
+            if uid is not None and mate.lower() != str(player).lower() and self.prefs(uid)["team"]:
+                self.push(uid, "🟢 Team mate online", f"{player} joined {self.server_name}.", kind="team")
+
+    @Plugin.listener()
+    async def on_rce_wiped(self, *_args) -> None:
+        for uid in self.paired_users():
+            if self.prefs(uid)["wipe"]:
+                self.push(uid, "🧹 Server wiped", f"{self.server_name} just wiped – fresh start!", kind="wipe")
+
     # ------------------------------------------------------------ the player's account (the app's home screen)
 
     async def member(self, user_id: int):
@@ -145,8 +283,16 @@ class Companion(Plugin):
         out: dict = {"server": self.server_name, "player": player, "website": self.site_url(),
                      "status": {"online": up, "players": int(info.get("Players") or 0) if up else 0,
                                 "max_players": int(info.get("MaxPlayers") or 0) if up else 0,
-                                "next_wipe": self.next_wipe()},
-                     "player_online": bool(player and self.online_name(player)), "kits": [], "owned_kits": []}
+                                "next_wipe": self.next_wipe(),
+                                "queued": int(info.get("Queued") or 0) if up else 0,
+                                "game_time": str(info.get("GameTime") or "") if up else "",
+                                "map": str(info.get("Map") or "") if up else "",
+                                "uptime": int(info.get("Uptime") or 0) if up else 0},
+                     "player_online": bool(player and self.online_name(player)), "kits": [], "owned_kits": [],
+                     "team": self.team(player), "stats": self.stats(player), "events": list(self._events)[-12:],
+                     "prefs": self.prefs(user_id), "chat_send": bool(self.setting("chat_send")),
+                     "map": bool(self.setting("map")),
+                     "alerts": list(self.data.get(f"feed:{user_id}", []))[-15:]}
         custom = self.bot.get_cog("CustomKits")
         member = await self.member(user_id)
         if custom is not None and member is not None:
@@ -218,7 +364,7 @@ class Companion(Plugin):
                                       "player": self.linked_player(uid), "website": self.site_url()})
         token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
         uid = self.user_of(token)
-        if path in ("feed", "unpair", "account", "claim", "alerts", "rf") and uid is None:
+        if path in ("feed", "unpair", "account", "claim", "alerts", "rf", "chat", "map", "prefs") and uid is None:
             if (blocked := self._limited("bad:" + ip, self._bad_tokens)) is not None:
                 return blocked                                   # guessing tokens
             return web.json_response({"error": "not paired"}, status=401)
@@ -228,11 +374,26 @@ class Companion(Plugin):
                 return blocked
         if path == "account" and request.method == "GET":
             return web.json_response(await self.account(uid), headers={"Cache-Control": "no-store"})
-        if path in ("claim", "alerts", "rf") and request.method == "POST":
+        if path == "chat" and request.method == "GET":
+            try:
+                since = int(request.query.get("since", 0))
+            except ValueError:
+                since = 0
+            return web.json_response({"lines": self.chat(uid, since), "can_send": bool(self.setting("chat_send"))},
+                                     headers={"Cache-Control": "no-store"})
+        if path == "map" and request.method == "GET":
+            return web.json_response(await self.positions(uid), headers={"Cache-Control": "no-store"})
+        if path in ("claim", "alerts", "rf", "chat", "prefs") and request.method == "POST":
             try:
                 data = await request.json()
             except (ValueError, UnicodeDecodeError):
                 data = {}
+            if not isinstance(data, dict):
+                data = {}
+            if path == "chat":
+                return web.json_response(await self.send_chat(uid, str(data.get("text", ""))[:300]))
+            if path == "prefs":
+                return web.json_response({"ok": True, "prefs": self.set_prefs(uid, data)})
             if path == "claim":
                 return web.json_response(await self.claim(uid, str(data.get("kit", ""))))
             raid = self.plugin("raid_alerts")

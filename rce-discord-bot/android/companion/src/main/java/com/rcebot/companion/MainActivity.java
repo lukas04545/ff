@@ -22,7 +22,6 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -69,7 +68,8 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         store = new Store(this);
         AlertService.channels(this);
-        screen = Ui.screen(this, "Companion", "Your Rust servers");
+        Ui.rust();
+        screen = Ui.screen(this, "Companion", "Your servers");
         Ui.action(screen, "＋", v -> askPairing());
         Ui.action(screen, "⋮", this::menu);
         screen.swipe.setOnRefreshListener(this::load);
@@ -123,8 +123,8 @@ public class MainActivity extends Activity {
             screen.swipe.setRefreshing(false);
             screen.content.removeAllViews();
             LinearLayout hello = Ui.note(this, "🛡️", "Welcome to RCE Companion",
-                    "Raid alerts on your phone, your kits and their timers, your offline protection – for every "
-                            + "server you play on.\n\nOn the server's Discord type /companion and tap the link on "
+                    "Your team, the game chat, a team map, raid alarms on your phone, your kits and their timers "
+                            + "– for every server you play on.\n\nOn the server's Discord type /companion and tap the link on "
                             + "this phone.");
             TextView add = Ui.button(this, "＋  Add a server", Ui.PRIMARY);
             add.setOnClickListener(v -> askPairing());
@@ -160,10 +160,14 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /** One server in the list: name, players, your player – a tap opens it (hub, team, chat, map, alarms). */
     private View card(final int index, final JSONObject srv, Object result) {
         LinearLayout c = Ui.card(this);
         LinearLayout head = Ui.row(this);
-        head.addView(Ui.grow(Ui.text(this, srv.optString("name"), 19, Ui.TEXT, true)));
+        head.addView(Ui.avatar(this, srv.optString("name"), 46));
+        LinearLayout names = Ui.column(this);
+        names.addView(Ui.text(this, srv.optString("name"), 18, Ui.TEXT, true));
+        head.addView(Ui.grow(names));
         c.addView(head);
         if (result instanceof Http.Failure) {
             Http.Failure f = (Http.Failure) result;
@@ -175,126 +179,37 @@ public class MainActivity extends Activity {
         }
         JSONObject acc = (JSONObject) result;
         JSONObject st = acc.optJSONObject("status");
-        if (st != null) {
-            head.addView(st.optBoolean("online")
-                    ? Ui.pill(this, "● " + st.optInt("players") + " / " + st.optInt("max_players"), Ui.OK)
-                    : Ui.pill(this, "offline", Ui.BAD));
-        }
+        boolean up = st != null && st.optBoolean("online");
         String player = acc.isNull("player") ? "" : acc.optString("player");
-        LinearLayout who = Ui.row(this);
-        if (player.isEmpty()) {
-            who.addView(Ui.grow(Ui.text(this, "Not linked – use /link on the server's Discord.", 14, Ui.WARN, false)));
-        } else {
-            who.addView(Ui.grow(Ui.text(this, "🎮  " + player, 15, Ui.TEXT, false)));
-            who.addView(acc.optBoolean("player_online") ? Ui.pill(this, "in game", Ui.OK)
-                    : Ui.pill(this, "not in game", Ui.MUTED));
+        LinearLayout lights = new LinearLayout(this);
+        lights.setPadding(0, Ui.dp(this, 3), 0, 0);
+        lights.addView(Ui.state(this, up ? st.optInt("players") + " / " + st.optInt("max_players") + " online" : "Offline", up));
+        if (!player.isEmpty()) lights.addView(Ui.state(this, player, acc.optBoolean("player_online")));
+        names.addView(lights);
+        if (st != null && st.optInt("max_players") > 0) {
+            c.addView(Ui.progress(this, st.optInt("players") / (float) st.optInt("max_players"), Ui.OK));
         }
-        c.addView(who);
+        if (player.isEmpty()) c.addView(Ui.text(this, "Not linked – use /link on the server's Discord.", 13, Ui.WARN, false));
         if (st != null && !st.isNull("next_wipe") && st.optLong("next_wipe") > System.currentTimeMillis() / 1000) {
             TextView wipe = Ui.text(this, "", 13, Ui.MUTED, false);
-            timers.add(new Object[]{wipe, st.optLong("next_wipe"), "🧹  Next wipe in "});
-            wipe.setText("🧹  Next wipe in " + Ui.until(st.optLong("next_wipe")));
+            timers.add(new Object[]{wipe, st.optLong("next_wipe"), "Next wipe in "});
+            wipe.setText("Next wipe in " + Ui.until(st.optLong("next_wipe")));
+            wipe.setPadding(0, Ui.dp(this, 8), 0, 0);
             c.addView(wipe);
         }
-
-        // ---- kits
-        c.addView(Ui.label(this, "Kits"));
         JSONArray kits = acc.optJSONArray("kits");
-        if (kits == null || kits.length() == 0) c.addView(Ui.text(this, "No kits for you on this server yet.", 14, Ui.MUTED, false));
-        for (int k = 0; kits != null && k < kits.length(); k++) {
-            final JSONObject kit = kits.optJSONObject(k);
-            LinearLayout row = Ui.row(this);
-            LinearLayout names = Ui.column(this);
-            names.addView(Ui.text(this, kit.optString("kit"), 15, Ui.TEXT, true));
-            names.addView(Ui.text(this, "every " + kit.optString("cooldown") + " · last " + kit.optString("last"),
-                    12, Ui.MUTED, false));
-            row.addView(Ui.grow(names));
-            if (kit.optBoolean("ready")) {
-                TextView claim = Ui.button(this, "Claim", Ui.PRIMARY);
-                claim.setOnClickListener(v -> {
-                    try {
-                        post(srv, "claim", new JSONObject().put("kit", kit.optString("kit")));
-                    } catch (Exception ignored) {
-                    }
-                });
-                row.addView(claim);
-            } else {
-                TextView t = Ui.pill(this, "⏳ " + Ui.until(kit.optLong("ready_at")), Ui.WARN);
-                timers.add(new Object[]{t, kit.optLong("ready_at"), "⏳ "});
-                row.addView(t);
-            }
-            c.addView(row);
-        }
-        JSONArray owned = acc.optJSONArray("owned_kits");
-        if (owned != null && owned.length() > 0) {
-            StringBuilder names = new StringBuilder("Your own kits: ");
-            for (int k = 0; k < owned.length(); k++) names.append(k > 0 ? ", " : "").append(owned.optString(k));
-            c.addView(Ui.text(this, names, 12, Ui.MUTED, false));
-        }
-
-        // ---- raid alerts
-        final JSONObject raid = acc.optJSONObject("raid");
-        if (raid != null) {
-            c.addView(Ui.label(this, "Raid alerts"));
-            LinearLayout row = Ui.row(this);
-            row.addView(Ui.grow(Ui.text(this, "🚨  Alert me when I'm raided", 15, Ui.TEXT, false)));
-            Switch sw = new Switch(this);
-            sw.setChecked(raid.optBoolean("dm"));
-            sw.setOnCheckedChangeListener((b, on) -> {
-                try {
-                    post(srv, "alerts", new JSONObject().put("on", on));
-                } catch (Exception ignored) {
-                }
-            });
-            row.addView(sw);
-            c.addView(row);
-            if (raid.optBoolean("rf_on")) {
-                LinearLayout rf = Ui.row(this);
-                LinearLayout names = Ui.column(this);
-                names.addView(Ui.text(this, "📡  RF alarm" + (raid.isNull("rf") ? "" : " · frequency " + raid.optInt("rf")),
-                        15, Ui.TEXT, false));
-                names.addView(Ui.text(this, "explosion sensor → RF broadcaster in your base", 12, Ui.MUTED, false));
-                rf.addView(Ui.grow(names));
-                TextView set = Ui.button(this, raid.isNull("rf") ? "Set" : "Change", Ui.GHOST);
-                set.setOnClickListener(v -> askFrequency(srv));
-                rf.addView(set);
-                c.addView(rf);
-            }
-            JSONArray last = raid.optJSONArray("last");
-            for (int k = last == null ? -1 : last.length() - 1; k >= 0; k--) {
-                JSONObject a = last.optJSONObject(k);
-                String when = new SimpleDateFormat("d MMM HH:mm", Locale.getDefault()).format(new Date(a.optLong("at") * 1000));
-                TextView line = Ui.text(this, when + "  " + a.optString("text"), 12, Ui.BAD, false);
-                line.setBackground(Ui.round(this, 0x22FF5C5C, 10));
-                line.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 10), Ui.dp(this, 6));
-                line.setLayoutParams(Ui.lp(this, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 4, 0, 0));
-                c.addView(line);
-            }
-        }
-
-        // ---- offline protection
-        JSONObject prot = acc.optJSONObject("protection");
-        if (prot != null) {
-            c.addView(Ui.label(this, "Offline protection"));
-            LinearLayout row = Ui.row(this);
-            if (prot.isNull("team")) {
-                row.addView(Ui.grow(Ui.text(this, "Only teams get a protection zone – you're not in a team.", 14, Ui.MUTED, false)));
-            } else if (prot.isNull("status")) {
-                row.addView(Ui.grow(Ui.text(this, "No zone yet. " + prot.optString("how"), 14, Ui.WARN, false)));
-            } else {
-                boolean red = "red".equals(prot.optString("status"));
-                row.addView(Ui.grow(Ui.text(this, red ? "🛡️  Your base is protected" : "🟢  Team online – raidable", 15, Ui.TEXT, false)));
-                row.addView(Ui.pill(this, red ? "PROTECTED" : "OPEN", red ? Ui.OK : Ui.WARN));
-            }
-            c.addView(row);
-            if (!prot.isNull("deleted_at")) {
-                TextView t = Ui.text(this, "", 12, Ui.MUTED, false);
-                timers.add(new Object[]{t, prot.optLong("deleted_at"), "Zone removed if nobody comes online in "});
-                t.setText("Zone removed if nobody comes online in " + Ui.until(prot.optLong("deleted_at")));
-                c.addView(t);
-            }
-        }
-        c.addView(footer(index, srv));
+        int ready = 0;
+        for (int k = 0; kits != null && k < kits.length(); k++) if (kits.optJSONObject(k).optBoolean("ready")) ready++;
+        LinearLayout f = Ui.row(this);
+        f.setLayoutParams(Ui.lp(this, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 12, 0, 0));
+        f.addView(Ui.grow(ready > 0 ? Ui.text(this, ready + (ready == 1 ? " kit" : " kits") + " ready to claim", 13, Ui.OK, true)
+                : Ui.text(this, "", 13, Ui.MUTED, false)));
+        TextView open = Ui.button(this, "Open", Ui.PRIMARY);
+        View.OnClickListener go = v -> startActivity(new Intent(this, ServerActivity.class).putExtra("index", index));
+        open.setOnClickListener(go);
+        c.setOnClickListener(go);
+        f.addView(open);
+        c.addView(f);
         return c;
     }
 
@@ -302,7 +217,7 @@ public class MainActivity extends Activity {
         LinearLayout f = Ui.row(this);
         f.setGravity(Gravity.END);
         f.setLayoutParams(Ui.lp(this, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 14, 0, 0));
-        TextView site = Ui.button(this, "🌐 Website & store", Ui.GHOST);
+        TextView site = Ui.button(this, "Website", Ui.GHOST);
         site.setOnClickListener(v -> startActivity(new Intent(this, WebActivity.class)
                 .putExtra("url", srv.optString("url") + "/").putExtra("title", srv.optString("name"))));
         TextView remove = Ui.button(this, "Remove", Ui.GHOST);
@@ -321,47 +236,6 @@ public class MainActivity extends Activity {
         f.addView(site);
         f.addView(remove);
         return f;
-    }
-
-    /** Calls the server for the player (claim, alerts, rf), shows its answer and reloads. */
-    private void post(final JSONObject srv, final String path, final JSONObject body) {
-        screen.swipe.setRefreshing(true);
-        new Thread(() -> {
-            String msg;
-            try {
-                msg = Http.call("POST", srv.optString("url") + "/p/companion/" + path, srv.optString("token"), body)
-                        .optString("message", "");
-            } catch (Http.Failure f) {
-                msg = f.getMessage();
-            }
-            final String text = msg;
-            ui.post(() -> {
-                if ("claim".equals(path) || "rf".equals(path)) Ui.message(this, text);
-                else if (!text.isEmpty()) Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-                load();
-            });
-        }).start();
-    }
-
-    private void askFrequency(final JSONObject srv) {
-        final EditText f = Ui.input(this, "1 – 9999", InputType.TYPE_CLASS_NUMBER);
-        new AlertDialog.Builder(this).setTitle("📡 RF raid alarm")
-                .setMessage("In your base, wire an explosion sensor to an RF broadcaster and set the broadcaster to "
-                        + "this frequency. Pick a number nobody else uses.")
-                .setView(Ui.form(this, f))
-                .setPositiveButton("Save", (d, w) -> {
-                    try {
-                        post(srv, "rf", new JSONObject().put("frequency", f.getText().toString()));
-                    } catch (Exception ignored) {
-                    }
-                })
-                .setNeutralButton("Release", (d, w) -> {
-                    try {
-                        post(srv, "rf", new JSONObject().put("release", true));
-                    } catch (Exception ignored) {
-                    }
-                })
-                .setNegativeButton("Cancel", null).show();
     }
 
     // ------------------------------------------------------------ Pairing
