@@ -44,6 +44,10 @@ class Companion(Plugin):
         Setting("map", "Team map in the app", "bool", True,
                 help="Shows the player and their online team mates on a grid (asks the server for their positions, "
                      "at most every 20 seconds per team)."),
+        Setting("map_image", "Map picture", "image",
+                help="A picture of your in-game map – it is shown behind the grid in the app. Open the map in game "
+                     "(fully zoomed out), take a screenshot and cut it to the square map so its edges are the "
+                     "map's edges. Upload a new one after a map wipe. Without a picture the app shows the grid only."),
         Setting("map_size", "Map size (metres)", "int", 4000, min=1000, max=8000,
                 help="The world size of your map – the grid in the app is drawn for it."),
     )
@@ -210,7 +214,7 @@ class Companion(Plugin):
         """Where the player and their online team mates stand – only their own team, cached for 20 seconds."""
         size = int(self.setting("map_size"))
         if not self.setting("map"):
-            return {"on": False, "size": size, "players": []}
+            return {"on": False, "size": size, "players": [], "image": None}
         player = self.linked_player(user_id)
         found = self.bot.db.team_of(player) if player else None
         names = found[1] if found else ([player] if player else [])
@@ -226,8 +230,17 @@ class Companion(Plugin):
             self._map_cache[key] = cached
             for old in [k for k, v in self._map_cache.items() if time.time() - v[0] > 600]:
                 self._map_cache.pop(old, None)
-        return {"on": True, "size": size, "at": int(cached[0]),
+        return {"on": True, "size": size, "at": int(cached[0]), "image": self.map_version(),
                 "players": [dict(sp, me=bool(player) and sp["name"].lower() == player.lower()) for sp in cached[1]]}
+
+    def map_version(self) -> str | None:
+        """Changes when another map picture is uploaded (the app keeps the picture until then). None = no picture."""
+        path = self.file("map_image")
+        try:
+            st = path.stat() if path is not None else None
+        except OSError:
+            st = None
+        return f"{int(st.st_mtime)}-{st.st_size}" if st else None
 
     @Plugin.listener()
     async def on_rce_chat(self, ev) -> None:
@@ -364,7 +377,7 @@ class Companion(Plugin):
                                       "player": self.linked_player(uid), "website": self.site_url()})
         token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
         uid = self.user_of(token)
-        if path in ("feed", "unpair", "account", "claim", "alerts", "rf", "chat", "map", "prefs") and uid is None:
+        if path in ("feed", "unpair", "account", "claim", "alerts", "rf", "chat", "map", "mapimage", "prefs") and uid is None:
             if (blocked := self._limited("bad:" + ip, self._bad_tokens)) is not None:
                 return blocked                                   # guessing tokens
             return web.json_response({"error": "not paired"}, status=401)
@@ -381,6 +394,11 @@ class Companion(Plugin):
                 since = 0
             return web.json_response({"lines": self.chat(uid, since), "can_send": bool(self.setting("chat_send"))},
                                      headers={"Cache-Control": "no-store"})
+        if path == "mapimage" and request.method == "GET":
+            picture = self.file("map_image") if self.setting("map") else None
+            if picture is None or not picture.is_file():
+                raise web.HTTPNotFound(text="No map picture.")
+            return web.FileResponse(picture, headers={"Cache-Control": "private, max-age=86400"})
         if path == "map" and request.method == "GET":
             return web.json_response(await self.positions(uid), headers={"Cache-Control": "no-store"})
         if path in ("claim", "alerts", "rf", "chat", "prefs") and request.method == "POST":

@@ -95,6 +95,18 @@ def test_companion_web_endpoints(bot):  # noqa: F811
         r = await c.get("/app/rce-companion.apk")
         assert r.status == 200 and (await r.read())[:2] == b"PK"
         assert (await c.get("/app/other.apk")).status == 404
+        versions = await (await c.get("/app/versions.json")).json()            # "Update the app"
+        assert versions["rce-companion"]["code"] >= 7 and versions["rce-panel"]["name"]
+        auth = {"Authorization": f"Bearer {token}"}
+        assert (await c.get("/p/companion/mapimage")).status == 401
+        assert (await c.get("/p/companion/mapimage", headers=auth)).status == 404        # nothing uploaded yet
+        assert (await (await c.get("/p/companion/map", headers=auth)).json())["image"] is None
+        png = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+               b"\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82")
+        await m.save_file("companion", "map_image", png)
+        r = await c.get("/p/companion/mapimage", headers=auth)
+        assert r.status == 200 and (await r.read())[:4] == b"\x89PNG"
+        assert (await (await c.get("/p/companion/map", headers=auth)).json())["image"]
 
     async def setup():
         bot.plugins = PluginManager(bot)

@@ -27,6 +27,7 @@ import android.widget.Toast;
 
 import com.rcebot.ui.Http;
 import com.rcebot.ui.Ui;
+import com.rcebot.ui.Updater;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -78,6 +79,21 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
         }
         handle(getIntent());
+        update(true);
+    }
+
+    private void update(boolean quiet) {
+        JSONArray all = store.servers();
+        String[] sites = new String[all.length()];
+        for (int i = 0; i < sites.length; i++) sites[i] = all.optJSONObject(i).optString("url");
+        Updater.check(this, sites, "rce-companion", quiet);
+    }
+
+    private View updateButton() {
+        TextView b = Ui.button(this, "Update the app  ·  version " + Updater.installedName(this), Ui.GHOST);
+        b.setLayoutParams(Ui.lp(this, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 4, 0, 0));
+        b.setOnClickListener(v -> update(false));
+        return b;
     }
 
     @Override
@@ -154,6 +170,7 @@ public class MainActivity extends Activity {
                 timers.clear();
                 screen.content.removeAllViews();
                 for (int i = 0; i < all.length(); i++) screen.content.addView(card(i, all.optJSONObject(i), results[i]));
+                screen.content.addView(updateButton());
                 screen.subtitle.setText(all.length() + (all.length() == 1 ? " server" : " servers")
                         + (store.alerts() ? " · alerts on" : " · alerts off"));
             });
@@ -311,6 +328,7 @@ public class MainActivity extends Activity {
         m.getMenu().add(0, 1, 0, store.alerts() ? "Mute alerts on this phone" : "Unmute alerts on this phone");
         m.getMenu().add(0, 2, 1, "Test alert");
         m.getMenu().add(0, 3, 2, "Add a server");
+        m.getMenu().add(0, 4, 3, "Update the app");
         m.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == 1) {
                 store.alerts(!store.alerts());
@@ -324,6 +342,8 @@ public class MainActivity extends Activity {
                         .setContentText("This is how a raid alert looks and sounds.").setAutoCancel(true)
                         .setPriority(Notification.PRIORITY_MAX);
                 getSystemService(NotificationManager.class).notify(99, b.build());
+            } else if (item.getItemId() == 4) {
+                update(false);
             } else {
                 askPairing();
             }

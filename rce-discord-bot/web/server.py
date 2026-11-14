@@ -221,6 +221,17 @@ self.addEventListener("fetch", (e) => {
 """
 
 
+def app_versions() -> web.Response:
+    """Which versions of the Android apps this server hands out (android/dist/versions.json, written at build time)
+    – the apps compare it with their own and offer the update."""
+    try:
+        data = json.loads((ANDROID_DIST / "versions.json").read_text())
+    except (OSError, ValueError):
+        data = {}
+    return web.json_response({k: v for k, v in data.items() if k in ANDROID_APPS},
+                             headers={"Cache-Control": "no-cache"})
+
+
 def apk_response(name: str) -> web.StreamResponse:
     path = ANDROID_DIST / f"{name}.apk"
     if name not in ANDROID_APPS or not path.is_file():
@@ -514,6 +525,7 @@ class WebInterface:
         r.add_get("/img/items/{name}", self.item_image)            # public: item pictures (cached by the bot)
         r.add_get("/img/kits/{kit_id:\\d+}.png", self.store_kit_image)  # public: picture of a kit for sale
         r.add_get("/img/bot-avatar.png", self.bot_avatar)
+        r.add_get("/app/versions.json", self.android_versions)                   # public: for "Update the app"
         r.add_get("/app/{name:rce-panel|rce-companion}.apk", self.android_app)   # public: the Android apps          # public: the Discord bot's picture (panel logo)
         r.add_get("/auth", self.auth_link)
         r.add_post("/api/login", self.login)
@@ -1668,6 +1680,9 @@ class WebInterface:
     # ------------------------------------------------------------ Item pictures
 
     # ------------------------------------------------------------ The panel as an app (PWA: Android "Install app")
+
+    async def android_versions(self, request: web.Request) -> web.Response:
+        return app_versions()
 
     async def android_app(self, request: web.Request) -> web.StreamResponse:
         """The Android apps (android/, built into android/dist/): rce-panel (the control panel) and rce-companion
