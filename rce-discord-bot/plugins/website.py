@@ -601,7 +601,8 @@ class PlayerWebsite(Plugin):
         if store.startswith("https://") and len(store) < 300:
             buttons += f'<a class="btn alt" href="{esc(store)}" rel="noopener">Store</a>'
         if self.plugin("companion") is not None:          # the players' Android app
-            buttons += '<a class="btn alt" href="/app/rce-companion.apk" download>📱 Download the app</a>'
+            buttons += ('<a class="btn alt" href="/app/rce-companion.apk" download>📱 Android app</a>'
+                        '<a class="btn alt" href="/p/companion/app">📱 iPhone app</a>')
         players = (f'{live["players"]} / {live["max_players"]}' if live["max_players"] else str(live["players"])) \
             if live["online"] else "–"
         if live["next_wipe"]:
@@ -665,9 +666,11 @@ class PlayerWebsite(Plugin):
         if join:
             body += f'<div class="card"><h2>How to join</h2><div class="pre">{esc(join)}</div></div>'
         if self.plugin("companion") is not None:          # the players' app: raid alerts on the phone
-            body += (f'<div class="card"><h2>📱 Companion app</h2>Your kits, timers and raid alerts as notifications on your phone '
-                     f'(Android).<p><a class="btn" href="/app/rce-companion.apk" download>📱 Download the app</a></p>'
-                     f'Install it, then use <b>/companion</b> on our Discord to pair it. With an explosion sensor + RF broadcaster in your base and '
+            body += (f'<div class="card"><h2>📱 Companion app</h2>Your kits, timers and raid alerts as notifications on your phone.'
+                     f'<p><a class="btn" href="/app/rce-companion.apk" download>📱 Android app</a> '
+                     f'<a class="btn" href="/p/companion/app">📱 iPhone app</a></p>'
+                     f'iPhone: open it in Safari and choose Share → Add to Home Screen. '
+                     f'Then use <b>/companion</b> on our Discord to pair it. With an explosion sensor + RF broadcaster in your base and '
                      f'<b>/raidalerts rf claim</b> you get an alert the moment someone blows a hole in it.</div>')
         early = self.plugin("early_bird")
         if early is not None and live["next_wipe"]:

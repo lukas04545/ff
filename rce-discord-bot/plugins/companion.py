@@ -1,4 +1,5 @@
-"""RCE Companion: the players' Android app – raid alerts as phone notifications, server status and the website.
+"""RCE Companion: the players' app (Android app, and a web app for the iPhone's Home Screen at /p/companion/app
+with web push) – raid alerts as phone notifications, server status and the website.
 
   /companion   on Discord: the app download and a one-time pairing link / code (15 minutes) for YOUR account
 
@@ -25,11 +26,21 @@ import discord
 from aiohttp import web
 from discord import app_commands
 
+from pathlib import Path
+
 from plugin_api import Plugin, Setting
 
 CODE_TTL = 15 * 60
 FEED_KEEP = 50
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+# The web app (iPhone: Share → Add to Home Screen; any browser): plugins/companion_app/
+APP_DIR = Path(__file__).resolve().parent / "companion_app"
+APP_FILES = {"app.js": "text/javascript", "app.css": "text/css", "sw.js": "text/javascript",
+             "icon-180.png": "image/png", "icon-192.png": "image/png", "icon-512.png": "image/png"}
+APP_CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; "
+           "connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; "
+           "frame-ancestors 'none'")
+MAX_WEB_PUSH = 5                                      # browsers per player that get web push
 
 
 def _hash(token: str) -> str:
@@ -126,6 +137,9 @@ class Companion(Plugin):
         return int(row["uid"]) if row else None
 
     def unpair(self, token: str) -> bool:
+        for key, row in list(self.data.items("wp:").items()):          # this phone's web push goes with it
+            if row.get("tok") == _hash(token):
+                self.data.delete(key)
         return self.data.delete(f"tok:{_hash(token)}")
 
     def unpair_all(self, user_id: int) -> int:
@@ -149,7 +163,82 @@ class Companion(Plugin):
         self.data.set("next", n)
         feed.append({"id": n, "at": self.now(), "kind": kind, "title": str(title)[:100], "text": str(text)[:400]})
         self.data.set(f"feed:{int(user_id)}", feed[-FEED_KEEP:])
+        subs = self.web_subs(int(user_id))
+        if subs:                                         # the web app (iPhone): a push through the browser's service
+            try:
+                asyncio.get_running_loop().create_task(self._web_push(subs, str(title)[:100], str(text)[:300], kind))
+            except RuntimeError:
+                pass                                     # no running loop (a test): the feed has it anyway
         return n
+
+    # ------------------------------------------------------------ web push (the web app on an iPhone)
+
+    def vapid(self) -> dict:
+        """This server's own key pair for web push – made once, kept in the plugin's storage."""
+        from support import webpush
+        keys = self.data.get("vapid")
+        if not keys:
+            keys = webpush.new_keys()
+            self.data.set("vapid", keys)
+        return keys
+
+    def web_subs(self, user_id: int) -> dict[str, dict]:
+        return {k: v for k, v in self.data.items("wp:").items() if v.get("uid") == int(user_id)}
+
+    def web_subscribe(self, user_id: int, token: str, sub) -> dict:
+        from support import webpush
+        if not webpush.valid(sub):
+            return {"ok": False, "message": "This browser's notification address isn't supported."}
+        mine = sorted(self.web_subs(user_id).items(), key=lambda kv: kv[1].get("at", 0))
+        for key, _ in mine[:max(0, len(mine) - MAX_WEB_PUSH + 1)]:
+            self.data.delete(key)
+        clean = {"endpoint": str(sub["endpoint"]), "keys": {"p256dh": str(sub["keys"]["p256dh"]),
+                                                             "auth": str(sub["keys"]["auth"])}}
+        self.data.set(f"wp:{_hash(clean['endpoint'])}", {"uid": int(user_id), "tok": _hash(token), "at": self.now(),
+                                                         "sub": clean})
+        return {"ok": True, "message": "Notifications are on for this phone."}
+
+    def web_unsubscribe(self, user_id: int, endpoint: str) -> None:
+        row = self.data.get(f"wp:{_hash(str(endpoint))}")
+        if row and row.get("uid") == int(user_id):
+            self.data.delete(f"wp:{_hash(str(endpoint))}")
+
+    async def _web_push(self, subs: dict[str, dict], title: str, text: str, kind: str) -> None:
+        from support import webpush
+        subject = self.site_url() if self.site_url().startswith("https://") else "https://example.invalid"
+        for key, row in subs.items():
+            try:
+                await webpush.send(row["sub"], {"title": title, "body": text, "kind": kind}, self.vapid(), subject,
+                                   urgent=kind == "raid")
+            except webpush.PushError as exc:
+                if exc.gone:
+                    self.data.delete(key)
+                else:
+                    self.log.info("Web push failed: %s", exc)
+            except Exception:
+                self.log.exception("Web push failed")
+
+    def _app_file(self, path: str) -> web.Response:
+        """The web app's page and files (plugins/companion_app/)."""
+        headers = {"Content-Security-Policy": APP_CSP, "X-Content-Type-Options": "nosniff"}
+        if path == "manifest.webmanifest":
+            name = self.server_name
+            return web.json_response({
+                "name": f"{name} – Companion", "short_name": "Companion", "start_url": "app", "scope": "./",
+                "display": "standalone", "background_color": "#100f0d", "theme_color": "#100f0d",
+                "icons": [{"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
+                          {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"}]},
+                content_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
+        if path == "app":
+            page = (APP_DIR / "index.html").read_text(encoding="utf-8")
+            version = str(int(max((APP_DIR / f).stat().st_mtime for f in ("app.js", "app.css"))))
+            page = (page.replace("__NAME__", html.escape(self.server_name)).replace("__SHORT__", "Companion")
+                    .replace("__V__", version))
+            return web.Response(text=page, content_type="text/html", headers={**headers, "Cache-Control": "no-cache"})
+        kind = APP_FILES[path]
+        cache = "no-cache" if path == "sw.js" else "public, max-age=3600"
+        return web.Response(body=(APP_DIR / path).read_bytes(), content_type=kind,
+                            headers={**headers, "Cache-Control": cache})
 
     def feed(self, user_id: int, since: int = 0) -> dict:
         info = getattr(self.bot, "server_info", None) or {}
@@ -463,6 +552,8 @@ class Companion(Plugin):
         ip = WebInterface._client_ip(request)
         if path == "pair" and request.method == "GET":
             return self._pair_page(str(request.query.get("code", ""))[:12])
+        if request.method == "GET" and (path in ("app", "manifest.webmanifest") or path in APP_FILES):
+            return self._app_file(path)
         if path == "exchange" and request.method == "POST":
             if self._pair_tries.retry_after(ip) is not None:
                 return web.json_response({"error": "Too many wrong codes – wait 15 minutes."}, status=429)
@@ -480,7 +571,8 @@ class Companion(Plugin):
                                       "player": self.linked_player(uid), "website": self.site_url()})
         token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
         uid = self.user_of(token)
-        if path in ("feed", "unpair", "account", "claim", "alerts", "rf", "chat", "map", "mapimage", "prefs") and uid is None:
+        if path in ("feed", "unpair", "account", "claim", "alerts", "rf", "chat", "map", "mapimage", "prefs", "push/key",
+                    "push/subscribe", "push/unsubscribe") and uid is None:
             if (blocked := self._limited("bad:" + ip, self._bad_tokens)) is not None:
                 return blocked                                   # guessing tokens
             return web.json_response({"error": "not paired"}, status=401)
@@ -490,6 +582,19 @@ class Companion(Plugin):
                 return blocked
         if path == "account" and request.method == "GET":
             return web.json_response(await self.account(uid), headers={"Cache-Control": "no-store"})
+        if path == "push/key" and request.method == "GET":
+            return web.json_response({"key": self.vapid()["public"]})
+        if path in ("push/subscribe", "push/unsubscribe") and request.method == "POST":
+            try:
+                data = await request.json()
+            except (ValueError, UnicodeDecodeError):
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            if path == "push/subscribe":
+                return web.json_response(self.web_subscribe(uid, token, data.get("subscription")))
+            self.web_unsubscribe(uid, str(data.get("endpoint", ""))[:1000])
+            return web.json_response({"ok": True})
         if path == "chat" and request.method == "GET":
             try:
                 since = int(request.query.get("since", 0))
@@ -566,6 +671,11 @@ class Companion(Plugin):
                    f"<p>Or type this code in the app: <b style='font-size:1.6rem;letter-spacing:.15em'>"
                    f"{html.escape(code)}</b><br><small>Server address: {html.escape(site)}</small></p>"
                    if link else "<p>Get your pairing code on our Discord with <b>/companion</b>.</p>")
+                + (f"<h2 style='margin-top:28px'>iPhone</h2><p><a style='display:inline-block;padding:12px 18px;"
+                   f"background:#e5341c;color:#fff;border-radius:8px;text-decoration:none' href='{html.escape(site)}"
+                   f"/p/companion/app?code={html.escape(code)}'>Open the web app</a></p><p>In Safari tap <b>Share → "
+                   f"Add to Home Screen</b>, then open <b>Companion</b> from your Home Screen – it pairs by itself "
+                   f"(or type the code there).</p>" if site else "")
                 + "<p><small>The code works once, for 15 minutes.</small></p>")
         return web.Response(text=body, content_type="text/html", headers={"Cache-Control": "no-store"})
 
@@ -588,7 +698,8 @@ class Companion(Plugin):
         await interaction.response.send_message(
             f"📱 **RCE Companion** – raid alerts as phone notifications.\n"
             f"**On your phone:** {site}/p/companion/pair?code={code}\n"
-            f"(download + one tap to pair) – or type the code **{code}** in the app (server address: {site}).\n"
+            f"(Android: download + one tap to pair · iPhone: the web app for your Home Screen) – or type the code "
+            f"**{code}** in the app (server address: {site}).\n"
             f"The code works once, for 15 minutes."
             + (f"\n{paired} phone(s) paired already." if paired else ""), ephemeral=True)
 
