@@ -42,6 +42,8 @@ public class ServerActivity extends Activity {
     private Ui.Screen screen;
     private Ui.Tabs tabs;
     JSONObject acc, map;
+    android.graphics.Bitmap mapPicture;
+    private String mapPictureVersion = "";
     final JSONArray chat = new JSONArray();
     private long lastChat;
     private boolean shown;
@@ -168,14 +170,45 @@ public class ServerActivity extends Activity {
         new Thread(() -> {
             try {
                 final JSONObject m = get("map");
+                final android.graphics.Bitmap pic = picture(m.isNull("image") ? "" : m.optString("image"));
                 ui.post(() -> {
                     map = m;
+                    mapPicture = pic;
                     if (tabs.selected == 3) draw();
                 });
             } catch (final Http.Failure f) {
                 ui.post(() -> Toast.makeText(this, f.getMessage(), Toast.LENGTH_SHORT).show());
             }
         }).start();
+    }
+
+    /** The in-game map picture: kept on the phone until the server has another one. Runs on a worker thread. */
+    private android.graphics.Bitmap picture(String version) {
+        if (version.isEmpty()) {
+            mapPictureVersion = "";
+            return null;
+        }
+        if (version.equals(mapPictureVersion) && mapPicture != null) return mapPicture;
+        java.io.File file = new java.io.File(getCacheDir(), "map-" + Integer.toHexString(srv.optString("url").hashCode())
+                + "-" + version.replaceAll("[^0-9-]", "") + ".img");
+        try {
+            if (!file.isFile()) {
+                byte[] data = Http.bytes(srv.optString("url") + "/p/companion/mapimage", srv.optString("token"));
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                    out.write(data);
+                }
+            }
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(file.getPath(), o);
+            o.inSampleSize = Math.max(1, Math.max(o.outWidth, o.outHeight) / 1600);   // never a huge bitmap in memory
+            o.inJustDecodeBounds = false;
+            android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeFile(file.getPath(), o);
+            if (b != null) mapPictureVersion = version;
+            return b;
+        } catch (Exception e) {
+            return null;                                   // no picture: the grid alone
+        }
     }
 
     private boolean typing() {
@@ -472,6 +505,7 @@ public class ServerActivity extends Activity {
         JSONArray who = map == null ? new JSONArray() : map.optJSONArray("players");
         float size = map == null ? 4000f : (float) map.optDouble("size", 4000);
         view.show(size, who);
+        view.picture(mapPicture);
         card.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         if (map == null) {
             card.addView(Ui.text(this, "Loading positions …", 13, Ui.MUTED, false));
@@ -490,8 +524,8 @@ public class ServerActivity extends Activity {
         again.setLayoutParams(Ui.lp(this, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 10, 0, 0));
         again.setOnClickListener(v -> loadMap());
         card.addView(again);
-        card.addView(Ui.text(this, "Shows you and your online team mates. Positions are up to 20 seconds old; the "
-                + "terrain itself isn't available from console servers.", 11, Ui.MUTED, false));
+        card.addView(Ui.text(this, "Shows you and your online team mates. Positions are up to 20 seconds old."
+                + (mapPicture == null ? " The server's owner hasn't uploaded a map picture yet." : ""), 11, Ui.MUTED, false));
         screen.content.addView(card);
     }
 

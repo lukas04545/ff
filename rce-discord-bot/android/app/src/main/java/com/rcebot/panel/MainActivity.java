@@ -16,6 +16,7 @@ import android.widget.TextView;
 
 import com.rcebot.ui.Http;
 import com.rcebot.ui.Ui;
+import com.rcebot.ui.Updater;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -39,6 +40,15 @@ public class MainActivity extends Activity {
         Uri link = getIntent() != null ? getIntent().getData() : null;
         if (link != null) link(link);
         else if (state == null && accounts.all().length() == 1) open(0);      // one login: straight in
+        update(true);
+    }
+
+    private void update(boolean quiet) {
+        JSONArray all = accounts.all();
+        String[] sites = new String[all.length() + 1];
+        for (int i = 0; i < all.length(); i++) sites[i] = all.optJSONObject(i).optString("url");
+        sites[all.length()] = getString(R.string.default_shop);
+        Updater.check(this, sites, "rce-panel", quiet);
     }
 
     @Override
@@ -104,6 +114,10 @@ public class MainActivity extends Activity {
         more.setLayoutParams(Ui.lp(this, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 4, 0, 0));
         more.setOnClickListener(v -> add());
         screen.content.addView(more);
+        TextView upd = Ui.button(this, "Update the app  ·  version " + Updater.installedName(this), Ui.GHOST);
+        upd.setLayoutParams(Ui.lp(this, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 8, 0, 0));
+        upd.setOnClickListener(v -> update(false));
+        screen.content.addView(upd);
     }
 
     private void open(int index) {

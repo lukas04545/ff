@@ -1706,10 +1706,13 @@ app: **Hub** (players, queue, game time, map, uptime, next wipe, your kills / de
 with a Claim button or its timer**, the latest server events), **Team** (members, who is online, the leader, the
 **offline protection** zone), **Chat** (the game chat – team chat only for the team's members – and writing into the
 global chat as "📱 Name: text", one message every 10 s; switch it off with *Players can write in the game chat from
-the app*), **Map** (you and your online team mates on the lettered grid; set *Map size* in the plugin; no terrain
-picture – a console server doesn't hand it out) and **Alarms** (raid alarm on/off, the RF frequency, and which
+the app*), **Map** (you and your online team mates on the lettered grid, over the **picture of your in-game map**:
+upload it under Plugins → Companion app → *Map picture* – a screenshot of the fully zoomed-out map, cut to the
+square so its edges are the map's edges – and set *Map size*; a console server doesn't hand the map out itself, so
+upload a new picture after a map wipe) and **Alarms** (raid alarm on/off, the RF frequency, and which
 notifications you get: team mate online, killed, server events, wipe). Raid alarms ring loud; the others use a
-normal notification. **Not possible on Console Edition:** smart switches, storage monitors and cameras – the game
+normal notification. Both apps have an **Update the app** button (and check at the start): they ask the server's
+`/app/versions.json` and download the newer APK – it installs over the old one, logins stay. **Not possible on Console Edition:** smart switches, storage monitors and cameras – the game
 has no interface for them. Admins: `/raidalerts rftest` shows the server's raw broadcaster list and the frequencies the bot
 reads from it – check it once with a powered broadcaster.
 

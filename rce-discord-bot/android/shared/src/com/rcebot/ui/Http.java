@@ -81,6 +81,36 @@ public final class Http {
         }
     }
 
+    /** Downloads a file (a picture) with the app's token. */
+    public static byte[] bytes(String url, String token) throws Failure {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(url).openConnection();
+            c.setConnectTimeout(10000);
+            c.setReadTimeout(20000);
+            c.setRequestProperty("User-Agent", "RCEApp/2.0");
+            if (token != null && !token.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + token);
+            int status = c.getResponseCode();
+            if (status >= 400) throw new Failure(status, "The server answered " + status + ".");
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            try (InputStream in = c.getInputStream()) {
+                byte[] chunk = new byte[8192];
+                int n;
+                while ((n = in.read(chunk)) > 0) {
+                    buf.write(chunk, 0, n);
+                    if (buf.size() > 4_000_000) throw new Failure(0, "The picture is too big.");
+                }
+            }
+            return buf.toByteArray();
+        } catch (Failure f) {
+            throw f;
+        } catch (Exception e) {
+            throw new Failure(0, "No connection to the server.");
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
     public static JSONObject call(String method, String url, String token, JSONObject body) throws Failure {
         return request(method, url, token, body, null);
     }

@@ -843,6 +843,10 @@ in.</span></p></div>""")
                     + (cards or "<div class=card><p class=muted>No server yet – create one on the "
                                 "<a href=/dashboard>dashboard</a>.</p></div>"))
 
+    async def android_versions(request):
+        from web.server import app_versions
+        return app_versions()
+
     async def android_app(request):
         from web.server import apk_response
         return apk_response(request.match_info.get("name", "rce-panel"))
@@ -971,6 +975,7 @@ in.</span></p></div>""")
                     web.post("/billing/switch", switch_plan),
                     web.post("/billing/addon/domain/{on:on|off}", domain_addon),
                     web.get("/app/{name:rce-panel|rce-companion}.apk", android_app), web.get("/app", app_home),
+                    web.get("/app/versions.json", android_versions),
                     web.post("/billing/paypal", paypal_start), web.get("/billing/paypal/return", paypal_return),
                     web.get("/billing/paypal/cancel", paypal_cancel),
                     web.post(r"/servers/{sid:\d+}/address", change_address),

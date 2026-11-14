@@ -1,7 +1,9 @@
 package com.rcebot.companion;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.RectF;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.view.View;
@@ -13,13 +15,15 @@ import org.json.JSONObject;
 
 /**
  * The team map: the world as a grid (cells of about 146 m, lettered across and numbered down like the in-game
- * map) with a marker for the player and each online team mate. No terrain – the game server doesn't hand it out.
+ * map) with a marker for the player and each online team mate, over the picture of the in-game map when the
+ * server's owner uploaded one (the game server itself doesn't hand the terrain out).
  */
 public class MapView extends View {
     private static final float CELL = 146.3f;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private JSONArray players = new JSONArray();
     private float size = 4000f;
+    private Bitmap picture;                                // the server's in-game map, if its owner uploaded one
 
     public MapView(Context c) {
         super(c);
@@ -28,6 +32,11 @@ public class MapView extends View {
     void show(float worldSize, JSONArray who) {
         size = worldSize > 0 ? worldSize : 4000f;
         players = who == null ? new JSONArray() : who;
+        invalidate();
+    }
+
+    void picture(Bitmap map) {
+        picture = map;
         invalidate();
     }
 
@@ -56,13 +65,17 @@ public class MapView extends View {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(0xFF15140F);
         c.drawRect(pad, pad, w, w, paint);
+        if (picture != null) {
+            paint.setFilterBitmap(true);
+            c.drawBitmap(picture, null, new RectF(pad, pad, w, w), paint);
+        }
         paint.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
         paint.setTextSize(Ui.dp(getContext(), 9));
         paint.setTextAlign(Paint.Align.CENTER);
         int step = cells > 20 ? 2 : 1;                       // labels on every second line on big maps
         for (int i = 0; i <= cells; i++) {
             float at = pad + Math.min(side, i * CELL * scale);
-            paint.setColor(Ui.LINE);
+            paint.setColor(picture != null ? 0x40000000 : Ui.LINE);     // a faint grid over the picture
             paint.setStrokeWidth(1f);
             c.drawLine(at, pad, at, w, paint);
             c.drawLine(pad, at, w, at, paint);
