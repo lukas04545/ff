@@ -10,8 +10,8 @@ android {
         applicationId 'com.rcebot.panel'
         minSdk 24
         targetSdk 35
-        versionCode 4
-        versionName '2.1'
+        versionCode 5
+        versionName '2.2'
     }
 
     signingConfigs {
@@ -42,6 +42,13 @@ android {
         main.java.srcDirs += '../shared/src'      // the shared look (Ui) and connection (Http)
     }
 
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            all { systemProperty 'shots', System.getProperty('shots', '') }
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -50,4 +57,10 @@ android {
 
 dependencies {
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+}
+
+dependencies {
+    // screenshots of the screens without a phone (src/test): gradle :app:testDebugUnitTest -Dshots=/some/folder
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
 }

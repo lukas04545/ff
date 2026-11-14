@@ -36,7 +36,7 @@ public class OverviewActivity extends Activity {
     private JSONObject account;
     private boolean owner;
     private Ui.Screen screen;
-    private JSONObject data;
+    JSONObject data;
     private String filter = "";
     private LinearLayout list;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -99,7 +99,7 @@ public class OverviewActivity extends Activity {
         return new SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(new Date(at * 1000));
     }
 
-    private void draw() {
+    void draw() {
         if (isFinishing() || data == null) return;
         screen.content.removeAllViews();
         if (owner) drawManager();
@@ -110,15 +110,30 @@ public class OverviewActivity extends Activity {
 
     private void drawCustomer() {
         LinearLayout head = Ui.card(this);
-        head.addView(Ui.text(this, "Hi " + data.optString("name") + " 👋", 20, Ui.TEXT, true));
         LinearLayout row = Ui.row(this);
-        row.addView(Ui.grow(Ui.text(this, data.isNull("package") ? "No package yet" : "📦  " + data.optString("package"),
-                15, Ui.TEXT, false)));
+        row.addView(Ui.avatar(this, data.optString("name"), 46));
+        LinearLayout who = Ui.column(this);
+        who.addView(Ui.text(this, data.optString("name"), 19, Ui.TEXT, true));
+        who.addView(Ui.text(this, data.isNull("package") ? "No package yet" : data.optString("package") + " package",
+                13, Ui.MUTED, false));
+        row.addView(Ui.grow(who));
         row.addView(data.optBoolean("running") ? Ui.pill(this, "RUNNING", Ui.OK) : Ui.pill(this, "STOPPED", Ui.BAD));
         head.addView(row);
-        if (!data.isNull("until")) {
-            head.addView(Ui.text(this, ("trial".equals(data.optString("subscription")) ? "Free trial" : "Paid")
-                    + " until " + date(data.optLong("until")), 13, Ui.MUTED, false));
+        if (!data.isNull("until")) {                       // trial / paid in advance: how much of it is left
+            long left = data.optLong("until") - System.currentTimeMillis() / 1000;
+            LinearLayout line = Ui.row(this);
+            line.setPadding(0, Ui.dp(this, 14), 0, 0);
+            line.addView(Ui.grow(Ui.text(this, ("trial".equals(data.optString("subscription")) ? "Free trial" : "Paid")
+                    + " until " + date(data.optLong("until")), 13, Ui.MUTED, false)));
+            line.addView(Ui.text(this, left > 0 ? Math.max(1, left / 86400) + " days left" : "ended", 13,
+                    left > 7 * 86400 ? Ui.TEXT : Ui.WARN, true));
+            head.addView(line);
+            head.addView(Ui.progress(this, Math.min(1f, Math.max(0f, left / (30f * 86400))),
+                    left > 7 * 86400 ? Ui.OK : left > 0 ? Ui.WARN : Ui.BAD));
+        } else if (!data.optString("subscription_text").isEmpty()) {
+            TextView t = Ui.text(this, data.optString("subscription_text"), 13, Ui.MUTED, false);
+            t.setPadding(0, Ui.dp(this, 10), 0, 0);
+            head.addView(t);
         }
         screen.content.addView(head);
         JSONArray servers = data.optJSONArray("servers");
@@ -148,7 +163,7 @@ public class OverviewActivity extends Activity {
         stats.addView(r1);
         stats.addView(r2);
         screen.content.addView(stats);
-        EditText search = Ui.input(this, "🔍  Search customers and servers", 0);
+        EditText search = Ui.input(this, "Search customers and servers", 0);
         search.setText(filter);
         search.setBackground(Ui.round(this, Ui.CARD, 14));
         search.setPadding(Ui.dp(this, 14), Ui.dp(this, 12), Ui.dp(this, 14), Ui.dp(this, 12));
@@ -182,6 +197,7 @@ public class OverviewActivity extends Activity {
             LinearLayout card = Ui.card(this);
             LinearLayout head = Ui.row(this);
             LinearLayout names = Ui.column(this);
+            head.addView(Ui.avatar(this, c.optString("name").isEmpty() ? c.optString("email") : c.optString("name"), 40));
             names.addView(Ui.text(this, "#" + c.optInt("id") + "  " + c.optString("name"), 17, Ui.TEXT, true));
             names.addView(Ui.text(this, c.optString("email") + (c.isNull("plan") ? "" : " · " + c.optString("plan"))
                     + (c.isNull("until") ? "" : " · until " + date(c.optLong("until"))), 12, Ui.MUTED, false));
@@ -205,21 +221,25 @@ public class OverviewActivity extends Activity {
     private void server(LinearLayout card, final JSONObject s, boolean customer) {
         String status = s.optString("status");
         LinearLayout head = Ui.row(this);
-        head.addView(Ui.grow(Ui.text(this, (customer ? "" : "#" + s.optInt("id") + "  ") + s.optString("name"),
-                customer ? 18 : 15, Ui.TEXT, true)));
+        if (customer) head.addView(Ui.avatar(this, s.optString("name"), 42));
+        LinearLayout names = Ui.column(this);
+        names.addView(Ui.text(this, (customer ? "" : "#" + s.optInt("id") + "  ") + s.optString("name"),
+                customer ? 17 : 15, Ui.TEXT, true));
+        LinearLayout lights = new LinearLayout(this);
+        lights.setPadding(0, Ui.dp(this, 3), 0, 0);
+        lights.addView(Ui.state(this, s.optBoolean("discord") ? (s.isNull("guild") ? "Discord" : s.optString("guild"))
+                : "Discord off", s.optBoolean("discord")));
+        lights.addView(Ui.state(this, s.optBoolean("rcon") ? s.optInt("players") + " online" : "Server off",
+                s.optBoolean("rcon")));
+        names.addView(lights);
+        head.addView(Ui.grow(names));
         head.addView(Ui.pill(this, status.replace('_', ' '), "active".equals(status) ? Ui.OK : "awaiting_token".equals(status) ? Ui.WARN : Ui.BAD));
         card.addView(head);
-        LinearLayout chips = Ui.row(this);
-        chips.addView(chip(s.optBoolean("discord") ? "Discord" + (s.isNull("guild") ? "" : " · " + s.optString("guild")) : "Discord off",
-                s.optBoolean("discord")));
-        chips.addView(chip(s.optBoolean("rcon") ? "RCON" : "RCON off", s.optBoolean("rcon")));
-        if (s.optInt("players") > 0) chips.addView(Ui.pill(this, "👥 " + s.optInt("players"), Ui.ACCENT2));
-        card.addView(chips);
         if (!s.isNull("error")) card.addView(Ui.text(this, s.optString("error"), 12, Ui.BAD, false));
         LinearLayout buttons = Ui.row(this);
         buttons.setGravity(Gravity.END);
         if (customer && !s.isNull("website")) {
-            TextView site = Ui.button(this, "🌐 Website", Ui.GHOST);
+            TextView site = Ui.button(this, "Website", Ui.GHOST);
             site.setOnClickListener(v -> WebActivity.open(this, s.optString("name"), s.optString("website") + "/"));
             buttons.addView(site);
         }
@@ -232,17 +252,12 @@ public class OverviewActivity extends Activity {
             buttons.addView(restart);
         }
         if (s.optBoolean("can_open")) {
-            TextView open = Ui.button(this, "🎛️ Open panel", Ui.PRIMARY);
-            open.setOnClickListener(v -> post("servers/" + s.optInt("id") + "/panel", s.optString("name")));
+            TextView open = Ui.button(this, "Manage", Ui.PRIMARY);
+            open.setOnClickListener(v -> ServerActivity.open(this, index, s.optInt("id"), s.optString("name")));
             buttons.addView(open);
+            card.setOnClickListener(customer ? v -> ServerActivity.open(this, index, s.optInt("id"), s.optString("name")) : null);
         }
         if (buttons.getChildCount() > 0) card.addView(buttons);
-    }
-
-    private TextView chip(String text, boolean on) {
-        TextView v = Ui.pill(this, (on ? "● " : "○ ") + text, on ? Ui.OK : Ui.MUTED);
-        ((LinearLayout.LayoutParams) v.getLayoutParams()).setMargins(0, 0, Ui.dp(this, 6), 0);
-        return v;
     }
 
     /** POST; a {url} answer opens that panel (title = panelTitle), a {message} is shown. */

@@ -53,10 +53,6 @@ public class MainActivity extends Activity {
         draw();
     }
 
-    private static String icon(String kind) {
-        return "shop".equals(kind) ? "🛒" : "owner".equals(kind) ? "🛡️" : "🎛️";
-    }
-
     private static String kindName(String kind) {
         return "shop".equals(kind) ? "Customer account" : "owner".equals(kind) ? "Manager" : "Control panel";
     }
@@ -80,9 +76,7 @@ public class MainActivity extends Activity {
             String kind = a.optString("kind", "panel");
             LinearLayout card = Ui.card(this);
             LinearLayout row = Ui.row(this);
-            TextView emoji = Ui.text(this, icon(kind), 30, Ui.TEXT, false);
-            emoji.setPadding(0, 0, Ui.dp(this, 14), 0);
-            row.addView(emoji);
+            row.addView(Ui.avatar(this, a.optString("name"), 44));
             LinearLayout names = Ui.column(this);
             names.addView(Ui.text(this, a.optString("name"), 17, Ui.TEXT, true));
             names.addView(Ui.text(this, kindName(kind) + " · " + Uri.parse(a.optString("url")).getHost(), 12, Ui.MUTED, false));
@@ -117,7 +111,7 @@ public class MainActivity extends Activity {
         if (a == null) return;
         String kind = a.optString("kind", "panel");
         if ("panel".equals(kind)) {
-            WebActivity.open(this, a.optString("name"), a.optString("url") + "/");
+            ServerActivity.open(this, index, 0, a.optString("name"));
         } else if (a.optString("token").isEmpty()) {
             login(kind, a.optString("url"), a.optString("name"));
         } else {
@@ -128,8 +122,8 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------ Adding and logging in
 
     private void add() {
-        String[] kinds = {"🛒  Customer – your shop account, all your servers",
-                "🛡️  Manager – the owner panel, every customer", "🎛️  One server's control panel"};
+        String[] kinds = {"Customer – your shop account, all your servers",
+                "Manager – the owner panel, every customer", "One server's control panel"};
         new AlertDialog.Builder(this).setTitle("Add a login").setItems(kinds, (d, which) -> {
             if (which == 0) login("shop", getString(R.string.default_shop), "");
             else if (which == 1) login("owner", "", "");
@@ -142,7 +136,7 @@ public class MainActivity extends Activity {
         u.setText(url);
         final EditText n = Ui.input(this, "Name (optional)", 0);
         n.setText(name);
-        new AlertDialog.Builder(this).setTitle("🎛️ Control panel")
+        new AlertDialog.Builder(this).setTitle("Control panel")
                 .setMessage("The address of the control panel (the page you log in on).")
                 .setView(Ui.form(this, u, n))
                 .setPositiveButton("Add", (d, w) -> {
@@ -163,7 +157,7 @@ public class MainActivity extends Activity {
         final EditText user = Ui.input(this, owner ? "Username" : "E-mail or username", InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
         final EditText pass = Ui.input(this, "Password", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         final EditText code = Ui.input(this, "Two-factor code (6 digits)", InputType.TYPE_CLASS_NUMBER);
-        new AlertDialog.Builder(this).setTitle(owner ? "🛡️ Manager login" : "🛒 Customer login")
+        new AlertDialog.Builder(this).setTitle(owner ? "Manager login" : "Customer login")
                 .setView(owner ? Ui.form(this, u, user, pass, code) : Ui.form(this, u, user, pass))
                 .setPositiveButton("Log in", (d, w) -> {
                     final String clean = Accounts.clean(u.getText().toString());
