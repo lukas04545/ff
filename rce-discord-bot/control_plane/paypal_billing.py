@@ -119,7 +119,7 @@ async def complete(db: DB, settings, token: str):
                   "status = 'pending'", (cap.capture_id, int(time.time()), pay["id"])).rowcount:
             until = _apply(db, pay)
             db.run("UPDATE paypal_payments SET until = ? WHERE id = ?", (until, pay["id"]))
-    elif cap.capture_id or cap.status in ("PENDING", "DECLINED", "FAILED"):
+    elif cap.status != "ORDER_NOT_APPROVED":                  # refused or waiting: the owner looks at it
         if db.run("UPDATE paypal_payments SET status = 'review', capture_id = ? WHERE id = ? AND status = 'pending'",
                   (cap.capture_id, pay["id"])).rowcount:
             db.audit("paypal", "billing.paypal_review", customer_id=pay["customer_id"],

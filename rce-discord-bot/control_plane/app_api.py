@@ -122,6 +122,7 @@ def register_portal(app: web.Application, db: DB, box, settings, limiter, client
             "name": c["name"] or c["email"], "package": plan["name"] if plan else None,
             "running": billing.subscription_ok(db, c["id"]), "subscription": sub["status"] if sub else "none",
             "until": sub["current_period_end"] if sub and sub["status"] in ("trial", "paid") else None,
+            "subscription_text": billing.summary(db, c["id"])["text"],
             "dashboard": f"{settings.portal_url}/dashboard",
             "servers": [{**_server(s), "website": settings.url_for(s["slug"])} for s in rows]},
             headers={"Cache-Control": "no-store"})

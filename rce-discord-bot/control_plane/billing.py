@@ -61,6 +61,98 @@ def subscription_ok(db: DB, customer_id: int, now: float | None = None) -> bool:
     return row["status"] == "past_due" and (row["grace_until"] or 0) > (now or time.time())
 
 
+STATES = {   # status -> (what the customer / owner reads, how it is paid)
+    "active": ("Active", "Card (Stripe), renews automatically"),
+    "trialing": ("Trial", "Card (Stripe), first payment at the end of the trial"),
+    "past_due": ("Payment failed", "Card (Stripe)"),
+    "canceled": ("Cancelled", "Card (Stripe)"), "unpaid": ("Unpaid", "Card (Stripe)"),
+    "incomplete": ("Payment not finished", "Card (Stripe)"),
+    "incomplete_expired": ("Payment not finished", "Card (Stripe)"),
+    "trial": ("Free trial", "Free trial – nothing paid yet"),
+    "paid": ("Paid in advance", "Paid in advance (PayPal / manual), no automatic renewal"),
+    "comped": ("Free", "Free – given by the owner, no end"),
+    "none": ("No subscription", "–"),
+}
+
+
+def span(seconds: float) -> str:
+    """"3 months 4 days", "12 days", "5 hours" – how long something still runs (or ran)."""
+    seconds = max(0, int(seconds))
+    days = seconds // 86400
+    if days >= 60:
+        return f"{days // 30} months" + (f" {days % 30} day{'s' if days % 30 != 1 else ''}" if days % 30 else "")
+    if days >= 1:
+        return f"{days} day{'s' if days != 1 else ''}"
+    hours = seconds // 3600
+    return f"{hours} hour{'s' if hours != 1 else ''}" if hours else "less than an hour"
+
+
+def summary(db: DB, customer_id: int, now: float | None = None) -> dict:
+    """Everything about one customer's subscription in one place (dashboard, owner panel, HQ Discord, apps):
+    package, state, how it is paid, whether the servers run, until when and how long that still is."""
+    from control_plane import plans
+    now = now or time.time()
+    row = db.one("SELECT * FROM subscriptions WHERE customer_id = ?", (customer_id,))
+    cust = db.one("SELECT created_at FROM customers WHERE id = ?", (customer_id,))
+    status = (row["status"] if row else None) or "none"
+    label, via = STATES.get(status, (status, "–"))
+    plan = plans.current(db, customer_id)
+    running = subscription_ok(db, customer_id, now)
+    end = int(row["current_period_end"] or 0) if row else 0
+    grace = int(row["grace_until"] or 0) if row else 0
+    ends = renews = None
+    if status in ("trial", "paid"):
+        ends = end or None
+        if not running:
+            label = "Free trial ended" if status == "trial" else "Paid time ended"
+    elif status == "past_due":
+        ends = grace or None
+    elif status in RUNNING:
+        renews = end or None
+    day = lambda t: time.strftime("%Y-%m-%d", time.gmtime(t))     # noqa: E731
+    if status == "comped":
+        text = "Free, with no end date."
+    elif status in ("trial", "paid") and ends:
+        text = (f"{label} – runs until {day(ends)} ({span(ends - now)} left)." if running else
+                f"{label} on {day(ends)} ({span(now - ends)} ago) – the servers are stopped until it is paid.")
+    elif status == "past_due":
+        text = (f"The last card payment failed – the servers keep running until {day(ends)} ({span(ends - now)} left)."
+                if running and ends else "The last card payment failed – the servers are stopped until it is paid.")
+    elif status in RUNNING:
+        text = f"{label}, pays by card every month" + (f" – next payment on {day(renews)} (in {span(renews - now)})."
+                                                         if renews and renews > now else ".")
+    elif status == "none":
+        text = "No subscription yet."
+    else:
+        text = f"{label} – the servers are stopped."
+    return {"status": status, "label": label, "via": via, "running": running, "plan": plan["name"] if plan else None,
+            "price": plans.price_text(plan) if plan else None, "ends": ends, "renews": renews,
+            "left": max(0, int(ends - now)) if ends and running else None,
+            "since": int(cust["created_at"]) if cust else None, "text": text}
+
+
+def add_days(db: DB, customer_id: int, days: int, *, actor: str) -> int:
+    """The owner adds paid time by hand (a customer paid another way: bank transfer, PayPal directly …). Added to
+    the running end like a PayPal payment. Not for card (Stripe) subscriptions – Stripe decides those. Returns the
+    new end."""
+    days = int(days)
+    if not 1 <= days <= 3660:
+        raise ValueError("Add 1 to 3660 days.")
+    now = int(time.time())
+    row = db.one("SELECT status, current_period_end, stripe_subscription_id FROM subscriptions WHERE customer_id = ?",
+                 (customer_id,))
+    if row and row["stripe_subscription_id"] and row["status"] in ("active", "trialing", "past_due"):
+        raise ValueError("This customer pays by card (Stripe) – their time is managed by Stripe.")
+    running_end = int(row["current_period_end"] or 0) if row and row["status"] in ("paid", "trial") else 0
+    until = max(now, running_end) + days * 86400
+    db.run("INSERT INTO subscriptions (customer_id, status, current_period_end, updated_at) VALUES (?, 'paid', ?, ?) "
+           "ON CONFLICT(customer_id) DO UPDATE SET status = 'paid', current_period_end = excluded.current_period_end, "
+           "grace_until = NULL, updated_at = excluded.updated_at", (customer_id, until, now))
+    db.audit(actor, "subscription.days_added", customer_id=customer_id,
+             detail=f"+{days} days, until {time.strftime('%Y-%m-%d', time.gmtime(until))}")
+    return until
+
+
 def start_trial(db: DB, customer_id: int, days: int, *, actor: str) -> int:
     """A free trial from the owner: the servers run for `days` days from now (no Stripe). Returns its end."""
     days = int(days)

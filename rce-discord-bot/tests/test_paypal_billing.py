@@ -110,3 +110,43 @@ def test_paypal_test_names_keys_of_the_wrong_mode(monkeypatch):
     assert asyncio.run(paypal.diagnose("id", "sec", "sandbox"))["ok"]
     assert not asyncio.run(paypal.diagnose("", "", "live"))["ok"]
     assert paypal.normalize_mode(" Production ") == "live" and paypal.normalize_mode("x") == "sandbox"
+
+
+def test_subscription_summary_and_paid_time_by_hand(cp):  # noqa: F811
+    plans.seed(cp.db)
+    cid = cp.db.run("INSERT INTO customers (email, name, password_hash, created_at) VALUES ('s@x.io', '', 'x', ?)",
+                    (int(time.time()),)).lastrowid
+    assert billing.summary(cp.db, cid)["status"] == "none" and not billing.summary(cp.db, cid)["running"]
+    billing.start_trial(cp.db, cid, 2, actor="t")
+    info = billing.summary(cp.db, cid)
+    assert info["running"] and info["label"] == "Free trial" and "left" in info["text"] and info["left"] > 86400
+    until = billing.add_days(cp.db, cid, 30, actor="owner:t")              # added to the running trial
+    info = billing.summary(cp.db, cid)
+    assert info["status"] == "paid" and info["ends"] == until and until > time.time() + 31 * 86400
+    assert "1 month" not in info["text"] and "32 days left" in info["text"] or "31 days left" in info["text"]
+    later = billing.summary(cp.db, cid, now=until + 3 * 86400)
+    assert not later["running"] and later["label"] == "Paid time ended" and "3 days ago" in later["text"]
+    cp.db.run("UPDATE subscriptions SET status = 'active', stripe_subscription_id = 'sub_1' WHERE customer_id = ?", (cid,))
+    try:
+        billing.add_days(cp.db, cid, 30, actor="owner:t")
+        raise AssertionError("card customers are managed by Stripe")
+    except ValueError as exc:
+        assert "Stripe" in str(exc)
+    assert billing.span(65 * 86400) == "2 months 5 days" and billing.span(7200) == "2 hours"
+
+
+def test_paypal_reasons_in_plain_words_and_the_account_probe(monkeypatch):
+    from support import paypal
+
+    async def token(self, session):
+        return "t"
+
+    async def call(self, method, path, body=None, *, request_id=None):
+        return 422, {"name": "UNPROCESSABLE_ENTITY", "details": [{"issue": "PAYEE_ACCOUNT_RESTRICTED"}]}
+    monkeypatch.setattr(paypal.PayPalClient, "_access_token", token)
+    monkeypatch.setattr(paypal.PayPalClient, "_call", call)
+    out = asyncio.run(paypal.diagnose("id", "sec", "live", probe_currency="EUR"))
+    assert not out["ok"] and "PAYEE_ACCOUNT_RESTRICTED" in out["text"] and "restricted" in out["text"]
+    cap = asyncio.run(paypal.PayPalClient("id", "sec").capture("O1", amount=5, currency="EUR"))
+    assert not cap.ok and cap.status == "PAYEE_ACCOUNT_RESTRICTED" and "Resolution" in cap.problem
+    assert "compliance" in paypal.explain("COMPLIANCE_VIOLATION") and paypal.explain("X_Y") == "X_Y"

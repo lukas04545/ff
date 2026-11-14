@@ -39,7 +39,7 @@ from typing import Awaitable, Callable
 
 import discord
 
-from control_plane import actions, features, hq_ideas, hq_tickets, manage_ai, provisioning, slots, updates
+from control_plane import actions, billing, features, hq_ideas, hq_tickets, manage_ai, provisioning, slots, updates
 from control_plane.crypto import SecretBox
 from control_plane.db import DB
 from control_plane.settings import Settings
@@ -287,12 +287,20 @@ class HQ:
         sub = self.db.one("SELECT * FROM subscriptions WHERE customer_id = ?", (cid,))
         on = features.active(self.db, cid)
         sl = slots.summary(self.db, cid)
-        tone = "bad" if c["status"] != "active" else ("ok" if sub and sub["status"] in ("active", "trialing", "trial",
-                                                                                          "comped") else "warn")
+        info = billing.summary(self.db, cid)
+        soon = info["left"] is not None and info["left"] < 3 * 86400
+        tone = "bad" if c["status"] != "active" or not info["running"] else ("warn" if soon else "ok")
         e = discord.Embed(title=f"👤 #{cid} {c['email']}", description=c["name"] or None, color=COLORS[tone])
-        e.add_field(name="Account", value=c["status"] + (f" – {c['suspend_reason']}" if c["suspend_reason"] else ""))
-        e.add_field(name="Subscription", value=(sub["status"] if sub else "none")
-                    + (f"\ngrace until <t:{sub['grace_until']}:f>" if sub and sub["grace_until"] else ""))
+        e.add_field(name="Account", value=c["status"] + (f" – {c['suspend_reason']}" if c["suspend_reason"] else "")
+                    + (f"\ncustomer since <t:{info['since']}:D>" if info["since"] else ""))
+        lines = [f"{'🟢' if info['running'] else '🔴'} **{info['label']}**"
+                 + (f" · {info['plan']} ({info['price']} / month)" if info["plan"] else ""), info["via"]]
+        if info["ends"]:                               # <t:…:R> counts down by itself in Discord
+            lines.append((f"{'⚠️ ' if soon else ''}runs until <t:{info['ends']}:D> – ends <t:{info['ends']}:R>"
+                          if info["running"] else f"ended <t:{info['ends']}:D> (<t:{info['ends']}:R>) – servers stopped"))
+        elif info["renews"] and info["renews"] > time.time():
+            lines.append(f"next payment <t:{info['renews']}:D> (<t:{info['renews']}:R>)")
+        e.add_field(name="Subscription", value="\n".join(lines), inline=False)
         e.add_field(name="Slots", value=f"{sl['used']} used of {sl['limit']} ({c['base_slots']} in the plan)")
         e.add_field(name="Add-ons", inline=False, value="\n".join(
             f"{'✅' if f in on else '▫️'} {label}" for f, label in features.FEATURES.items()))
@@ -306,6 +314,9 @@ class HQ:
         v.add_item(discord.ui.Button(label="+1 slot", custom_id=f"hq:c:grant:{cid}", emoji="➕"))
         v.add_item(discord.ui.Button(label="Remove comp" if sub and sub["status"] == "comped" else "Comp (free)",
                                      custom_id=f"hq:c:comp:{cid}"))
+        if not (sub and sub["stripe_subscription_id"] and sub["status"] in ("active", "trialing", "past_due")):
+            v.add_item(discord.ui.Button(label="+30 days (paid another way)", custom_id=f"hq:c:month:{cid}",
+                                         emoji="📅"))
         for f, label in features.FEATURES.items():
             v.add_item(discord.ui.Button(label=f"{label}: {'on → off' if f in on else 'off → on'}",
                                          custom_id=f"hq:f:{f}:{'off' if f in on else 'on'}:{cid}", row=1,
@@ -393,6 +404,11 @@ class HQ:
         custs = {r["id"]: dict(r) for r in self.db.q(
             "SELECT c.id, c.email, c.status, s.status AS sub FROM customers c LEFT JOIN subscriptions s "
             "ON s.customer_id = c.id WHERE c.status != 'deleted'")}
+        for cid, c in custs.items():                   # trial / paid time: running, ending soon, ended
+            info = billing.summary(self.db, cid)
+            c["phase"] = ("" if info["status"] not in ("trial", "paid") else "ended" if not info["running"] else
+                          "soon" if (info["left"] or 0) < 3 * 86400 else "ok")
+            c["sub_text"] = info["text"]
         old, self._snap = self._snap, {"servers": servers, "customers": custs}
         if old is None:                                # first look after a start: nothing to compare with
             return []
@@ -404,6 +420,8 @@ class HQ:
                 continue
             if c["sub"] != before["sub"] and c["sub"] in ("past_due", "unpaid", "canceled"):
                 out.append(f"💳 #{cid} {c['email']}: subscription **{c['sub']}**")
+            if c["phase"] != before.get("phase") and c["phase"] in ("soon", "ended"):
+                out.append(f"{'⏳' if c['phase'] == 'soon' else '⛔'} #{cid} {c['email']}: {c['sub_text']}")
             if c["status"] != before["status"]:
                 out.append(f"👤 #{cid} {c['email']}: account {before['status']} → **{c['status']}**")
         for sid, s in servers.items():

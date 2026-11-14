@@ -1,6 +1,7 @@
 """The management Discord (HQ): channels and panels per customer, buttons, the management AI, access control."""
 import asyncio
 import itertools
+import time
 from types import SimpleNamespace as NS
 
 import pytest
@@ -493,3 +494,32 @@ def test_the_ai_conversation_survives_a_restart(world, monkeypatch):
     fresh = hqmod.HQ(w.cp.db, w.cp.box, w.cp.settings, w.hq.changed, w.sup, client=w.hq.client)   # a restart
     asyncio.run(go(fresh))
     assert seen[0] == [] and any("banana" in x["content"] for x in seen[1])
+
+
+def test_customer_channel_shows_the_subscription_and_its_end(world):
+    from control_plane import billing
+    w = world
+
+    def sub_field():
+        panel = _channel(w, hqmod.channel_name(w.cid, "a@x.io")).sent[0]
+        return next(f.value for f in panel.embed.fields if f.name == "Subscription"), panel
+
+    async def go():
+        until = billing.start_trial(w.cp.db, w.cid, 10, actor="t")
+        await w.hq.sync()
+        text, panel = sub_field()
+        assert "Free trial" in text and f"<t:{until}:D>" in text and f"<t:{until}:R>" in text and "🟢" in text
+        assert f"hq:c:month:{w.cid}" in [c.custom_id for c in panel.view.children]
+        await w.hq.on_interaction(interaction(w.guild, f"hq:c:month:{w.cid}"))       # paid another way: +30 days
+        text, _ = sub_field()
+        assert "Paid in advance" in text and f"<t:{until + 30 * 86400}:D>" in text
+        w.cp.db.run("UPDATE subscriptions SET current_period_end = ? WHERE customer_id = ?", (int(time.time()) + 3600, w.cid))
+        assert any("⏳" in line and "left" in line for line in w.hq.alerts())           # ending soon: once
+        assert not any("⏳" in line for line in w.hq.alerts())
+        w.cp.db.run("UPDATE subscriptions SET current_period_end = ? WHERE customer_id = ?", (int(time.time()) - 60, w.cid))
+        assert any("⛔" in line for line in w.hq.alerts())
+        await w.hq.sync()
+        assert "🔴" in sub_field()[0] and "servers stopped" in sub_field()[0]
+    asyncio.run(go())
+    note = manage_ai.account_note(w.cp.db, w.sid)
+    assert "Paid time ended" in note and "subscription" in note
