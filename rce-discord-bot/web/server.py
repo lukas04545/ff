@@ -201,7 +201,8 @@ def placeholder_svg(shortname: str) -> str:
             'text-anchor="middle">' + text + '</text></svg>')
 
 
-COMPANION_API = ("feed", "account", "claim", "alerts", "rf", "unpair", "exchange")
+COMPANION_API = ("feed", "account", "claim", "alerts", "rf", "unpair", "exchange", "chat", "map", "mapimage", "prefs",
+                 "push/key", "push/subscribe", "push/unsubscribe")
 APP_FILES = ("manifest.webmanifest", "sw.js", "app-icon-192.png", "app-icon-512.png")
 ANDROID_DIST = Path(__file__).resolve().parents[1] / "android" / "dist"
 ANDROID_APK = ANDROID_DIST / "rce-panel.apk"           # the control panel app (staff, customers, the manager)

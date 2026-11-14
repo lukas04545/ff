@@ -1713,7 +1713,13 @@ gets a new picture. If the server doesn't tell its seed, enter it under Plugins 
 servers that start with terrain / biome commands add them under *Custom terrain*; *Own map picture* replaces it
 all with an upload. Map sizes 1000–4500 in steps of 500) and **Alarms** (raid alarm on/off, the RF frequency, and which
 notifications you get: team mate online, killed, server events, wipe). Raid alarms ring loud; the others use a
-normal notification. Both apps have an **Update the app** button (and check at the start): they ask the server's
+normal notification. **iPhone:** the same app as a web app at `/p/companion/app` (button *iPhone app* on the
+player website, link on the `/companion` pairing page): open it in Safari, *Share → Add to Home Screen*, open
+*Companion* from the Home Screen and pair with the code. It has the same five tabs; raid alarms and the other
+notifications arrive as web push (iOS 16.4 or newer, only for the Home Screen app; switch them on under Alarms →
+*This phone*). iOS plays its normal notification sound – a loud alarm that breaks through silent mode isn't
+possible for web apps. Web push needs no account anywhere: the bot makes its own key and only talks to the
+browsers' push services (Apple, Google, Mozilla, Microsoft). Both Android apps have an **Update the app** button (and check at the start): they ask the server's
 `/app/versions.json` and download the newer APK – it installs over the old one, logins stay. **Not possible on Console Edition:** smart switches, storage monitors and cameras – the game
 has no interface for them. Admins: `/raidalerts rftest` shows the server's raw broadcaster list and the frequencies the bot
 reads from it – check it once with a powered broadcaster.

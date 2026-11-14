@@ -95,6 +95,38 @@ def test_companion_web_endpoints(bot):  # noqa: F811
         r = await c.get("/app/rce-companion.apk")
         assert r.status == 200 and (await r.read())[:2] == b"PK"
         assert (await c.get("/app/other.apk")).status == 404
+        # the web app (iPhone home screen) and its web push
+        r = await c.get("/p/companion/app")
+        page = await r.text()
+        assert r.status == 200 and "apple-mobile-web-app-capable" in page and "script-src 'self'" in \
+            r.headers["Content-Security-Policy"] and "__NAME__" not in page
+        for name, kind in (("app.js", "javascript"), ("app.css", "css"), ("sw.js", "javascript"), ("icon-180.png", "png")):
+            r = await c.get(f"/p/companion/{name}")
+            assert r.status == 200 and kind in r.headers["Content-Type"], name
+        manifest = await (await c.get("/p/companion/manifest.webmanifest")).json(content_type=None)
+        assert manifest["display"] == "standalone" and manifest["start_url"] == "app"
+        auth0 = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        assert (await c.get("/p/companion/push/key")).status == 401
+        key = (await (await c.get("/p/companion/push/key", headers=auth0)).json())["key"]
+        assert len(key) > 80 and key == comp.vapid()["public"]
+        bad = await (await c.post("/p/companion/push/subscribe", headers=auth0, data=json.dumps(
+            {"subscription": {"endpoint": "https://evil.example/x", "keys": {"p256dh": "a", "auth": "b"}}}))).json()
+        assert bad["ok"] is False and comp.web_subs(7) == {}
+        from tests.test_webpush import _browser
+        sub = _browser()[2]
+        ok = await (await c.post("/p/companion/push/subscribe", headers=auth0,
+                                 data=json.dumps({"subscription": sub}))).json()
+        assert ok["ok"] and len(comp.web_subs(7)) == 1
+        sent = []
+
+        async def fake_push(subs, title, text, kind):
+            sent.append((len(subs), title, kind))
+        comp._web_push = fake_push
+        comp.push(7, "🚨 Raid alert", "boom", kind="raid")
+        await asyncio.sleep(0)
+        assert sent == [(1, "🚨 Raid alert", "raid")]
+        await c.post("/p/companion/push/unsubscribe", headers=auth0, data=json.dumps({"endpoint": sub["endpoint"]}))
+        assert comp.web_subs(7) == {}
         versions = await (await c.get("/app/versions.json")).json()            # "Update the app"
         assert versions["rce-companion"]["code"] >= 7 and versions["rce-panel"]["name"]
         auth = {"Authorization": f"Bearer {token}"}
