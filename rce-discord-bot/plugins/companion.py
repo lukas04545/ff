@@ -230,7 +230,11 @@ class Companion(Plugin):
             self._map_cache[key] = cached
             for old in [k for k, v in self._map_cache.items() if time.time() - v[0] > 600]:
                 self._map_cache.pop(old, None)
-        return {"on": True, "size": size, "at": int(cached[0]), "image": self.map_version(),
+        online = [n for n in names if self.online_name(n)]
+        why = ("" if cached[1] else "Link your player first: /link on the server's Discord." if not player else
+               "You (and your team) aren't in game right now." if not online else
+               "The game server didn't tell the positions – try again in a moment.")
+        return {"on": True, "size": size, "at": int(cached[0]), "image": self.map_version(), "why": why,
                 "players": [dict(sp, me=bool(player) and sp["name"].lower() == player.lower()) for sp in cached[1]]}
 
     def map_version(self) -> str | None:

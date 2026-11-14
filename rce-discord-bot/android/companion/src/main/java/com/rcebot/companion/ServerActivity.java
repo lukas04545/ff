@@ -43,7 +43,7 @@ public class ServerActivity extends Activity {
     private Ui.Tabs tabs;
     JSONObject acc, map;
     android.graphics.Bitmap mapPicture;
-    private String mapPictureVersion = "";
+    private String mapPictureVersion = "", mapPictureProblem = "";
     final JSONArray chat = new JSONArray();
     private long lastChat;
     private boolean shown;
@@ -204,9 +204,16 @@ public class ServerActivity extends Activity {
             o.inSampleSize = Math.max(1, Math.max(o.outWidth, o.outHeight) / 1600);   // never a huge bitmap in memory
             o.inJustDecodeBounds = false;
             android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeFile(file.getPath(), o);
-            if (b != null) mapPictureVersion = version;
+            if (b != null) {
+                mapPictureVersion = version;
+                mapPictureProblem = "";
+            } else {
+                mapPictureProblem = "this phone can't read the picture";
+                file.delete();
+            }
             return b;
         } catch (Exception e) {
+            mapPictureProblem = e.getMessage() == null ? "unknown error" : e.getMessage();
             return null;                                   // no picture: the grid alone
         }
     }
@@ -510,7 +517,8 @@ public class ServerActivity extends Activity {
         if (map == null) {
             card.addView(Ui.text(this, "Loading positions …", 13, Ui.MUTED, false));
         } else if (who == null || who.length() == 0) {
-            card.addView(Ui.text(this, "Nobody of your team is in game right now.", 13, Ui.MUTED, false));
+            card.addView(Ui.text(this, map.optString("why").isEmpty() ? "Nobody of your team is in game right now."
+                    : map.optString("why"), 13, Ui.WARN, false));
         }
         for (int i = 0; who != null && i < who.length(); i++) {
             JSONObject p = who.optJSONObject(i);
@@ -525,7 +533,10 @@ public class ServerActivity extends Activity {
         again.setOnClickListener(v -> loadMap());
         card.addView(again);
         card.addView(Ui.text(this, "Shows you and your online team mates. Positions are up to 20 seconds old."
-                + (mapPicture == null ? " The server's owner hasn't uploaded a map picture yet." : ""), 11, Ui.MUTED, false));
+                + (mapPicture != null ? "" : map != null && !map.isNull("image")
+                        ? " The map picture couldn't be loaded (" + mapPictureProblem + ") – tap Refresh."
+                        : " No map picture on this server yet – its owner uploads it in the control panel: "
+                        + "Plugins → Companion app → Map picture."), 11, Ui.MUTED, false));
         screen.content.addView(card);
     }
 
