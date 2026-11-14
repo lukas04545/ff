@@ -466,7 +466,8 @@ def test_the_ai_remembers_the_server_and_the_waiting_question(world):
     assert pick(ch.id, "status?")[0] == w.sid                                               # the new pick stays
     sid, text, note = pick(ch.id, f"#{s2['id']}")                                           # nothing waiting
     assert sid == s2["id"] and "What should I do" in note
-    assert "isn't one of" in pick(ch.id, "check #9999")[2]
+    assert "isn't one of" in pick(ch.id, "check on #9999")[2]
+    assert pick(ch.id, "delete bind #3")[:2] == (s2["id"], "delete bind #3")     # not a server pick
     # #hq-ai: any server, remembered per channel too
     ai = _channel(w, hqmod.AI_CHANNEL)
     assert pick(ai.id, "list binds")[2].startswith("Which server?")

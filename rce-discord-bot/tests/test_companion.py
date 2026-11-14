@@ -178,3 +178,30 @@ def test_app_switches_alerts_and_rf(bot):  # noqa: F811
         run_web(bot, scenario)
     finally:
         mp.undo()
+
+
+def test_companion_api_has_its_own_limits(bot):  # noqa: F811
+    from plugin_api import Plugin
+    from plugin_manager import PluginManager
+
+    async def scenario(c):
+        comp = bot.plugins.running("companion")
+        token, _ = comp.exchange(comp.new_code(7))
+        auth = {"Authorization": f"Bearer {token}"}
+        codes = [(await c.get("/p/companion/feed", headers=auth)).status for _ in range(45)]
+        assert codes[:40] == [200] * 40 and codes[-1] == 429            # per phone, not the website's shared limit
+        bad = [(await c.post("/p/companion/exchange", data=json.dumps({"code": "WRONG123"}),
+                             headers={"Content-Type": "application/json"})).status for _ in range(12)]
+        assert bad[0] == 400 and bad[-1] == 429                          # wrong pairing codes are limited
+
+    async def setup():
+        bot.plugins = PluginManager(bot)
+        await bot.plugins.load_all()
+    import pytest
+    mp = pytest.MonkeyPatch()
+    mp.setattr(Plugin, "_loops", lambda self: [])
+    asyncio.run(setup())
+    try:
+        run_web(bot, scenario)
+    finally:
+        mp.undo()

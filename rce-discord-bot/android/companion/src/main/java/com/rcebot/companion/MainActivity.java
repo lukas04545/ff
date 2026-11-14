@@ -90,7 +90,14 @@ public class MainActivity extends Activity {
         Uri link = intent != null ? intent.getData() : null;
         if (link != null && "pair".equals(link.getHost())) {
             intent.setData(null);
-            pair(link.getQueryParameter("url"), link.getQueryParameter("code"));
+            final String url = clean(link.getQueryParameter("url")), code = link.getQueryParameter("code");
+            if (url == null || code == null) return;
+            // a link can come from anywhere: the player sees which server it is before the phone pairs with it
+            new AlertDialog.Builder(this).setTitle("Pair with this server?")
+                    .setMessage(Uri.parse(url).getHost() + "\n\nOnly continue if this is your server's website "
+                            + "and you just used /companion on its Discord.")
+                    .setPositiveButton("Pair", (d, w) -> pair(url, code))
+                    .setNegativeButton("Cancel", null).show();
         }
     }
 
@@ -377,7 +384,12 @@ public class MainActivity extends Activity {
         if (u.isEmpty()) return null;
         if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u;
         while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
-        return Uri.parse(u).getHost() == null ? null : u;
+        String host = Uri.parse(u).getHost();
+        if (host == null || host.isEmpty()) return null;
+        boolean local = host.equals("localhost") || host.startsWith("192.168.") || host.startsWith("10.")
+                || host.startsWith("127.");
+        if (u.startsWith("http://") && !local) u = "https://" + u.substring(7);     // never send the token unencrypted
+        return u;
     }
 
     private void pair(String rawUrl, final String code) {

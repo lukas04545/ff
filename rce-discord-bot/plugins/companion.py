@@ -41,6 +41,14 @@ class Companion(Plugin):
         Setting("max_devices", "Phones per player", "int", 3, min=1, max=10),
     )
 
+    def __init__(self, *a, **kw) -> None:
+        super().__init__(*a, **kw)
+        from web.ratelimit import RateLimiter
+        self._reads = RateLimiter(40, 60)            # per phone: feed + account
+        self._writes = RateLimiter(12, 60)           # per phone: claim, alerts, rf
+        self._pair_tries = RateLimiter(10, 900)      # per visitor: wrong pairing codes
+        self._bad_tokens = RateLimiter(30, 300)      # per visitor: requests with an unknown token
+
     # ------------------------------------------------------------ pairing
 
     def site_url(self) -> str:
@@ -181,16 +189,28 @@ class Companion(Plugin):
 
     # ------------------------------------------------------------ the app's address on this server
 
+    def _limited(self, key: str, limiter) -> web.Response | None:
+        wait = limiter.hit(key)
+        if wait is None:
+            return None
+        return web.json_response({"error": "Too many requests – wait a moment."}, status=429,
+                                 headers={"Retry-After": str(int(wait) + 1)})
+
     async def web_public(self, request, path: str):
+        from web.server import WebInterface
+        ip = WebInterface._client_ip(request)
         if path == "pair" and request.method == "GET":
             return self._pair_page(str(request.query.get("code", ""))[:12])
         if path == "exchange" and request.method == "POST":
+            if self._pair_tries.retry_after(ip) is not None:
+                return web.json_response({"error": "Too many wrong codes – wait 15 minutes."}, status=429)
             try:
                 data = await request.json()
             except (ValueError, UnicodeDecodeError):
                 data = {}
             got = self.exchange(str(data.get("code", "")), str(data.get("device", "")))
             if got is None:
+                self._pair_tries.hit(ip)
                 return web.json_response({"error": "This code is wrong or expired – get a new one with /companion."},
                                          status=400)
             token, uid = got
@@ -199,7 +219,13 @@ class Companion(Plugin):
         token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
         uid = self.user_of(token)
         if path in ("feed", "unpair", "account", "claim", "alerts", "rf") and uid is None:
+            if (blocked := self._limited("bad:" + ip, self._bad_tokens)) is not None:
+                return blocked                                   # guessing tokens
             return web.json_response({"error": "not paired"}, status=401)
+        if uid is not None:
+            limiter = self._writes if request.method == "POST" else self._reads
+            if (blocked := self._limited(_hash(token), limiter)) is not None:
+                return blocked
         if path == "account" and request.method == "GET":
             return web.json_response(await self.account(uid), headers={"Cache-Control": "no-store"})
         if path in ("claim", "alerts", "rf") and request.method == "POST":

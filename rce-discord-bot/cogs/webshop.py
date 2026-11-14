@@ -692,6 +692,10 @@ class WebShop(commands.Cog):
             self._add_cart_children(order_id, lines, fields)
         if gift_amount and not db.take_gift_balance(gift_row["code"], gift_amount, int(time.time())):
             db.update_store_order(order_id, status="cancelled", result="gift card balance changed")
+            if fields.get("discount_code"):                       # the code wasn't used after all
+                db.return_store_discount(fields["discount_code"])
+            for child in db.store_order_children(order_id):       # a basket: its kits are cancelled with it
+                db.move_store_order(child["id"], "pending", "cancelled", result="gift card balance changed")
             raise CheckoutError("The gift card's balance just changed – please try again.")
         if paypal_amount <= 0:
             db.move_store_order(order_id, "pending", "paid", paid_at=int(time.time()))
