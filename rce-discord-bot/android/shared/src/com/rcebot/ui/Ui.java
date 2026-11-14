@@ -21,9 +21,39 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 /** The look of both apps, built in code: dark screens, rounded cards, pills, gradient buttons, stat tiles. */
 public final class Ui {
-    public static final int BG = 0xFF0B0E1A, CARD = 0xFF151A2E, CARD2 = 0xFF1D2442, LINE = 0xFF283055,
+    public static int BG = 0xFF0B0E1A, CARD = 0xFF151A2E, CARD2 = 0xFF1D2442, LINE = 0xFF283055,
             TEXT = 0xFFE8ECF8, MUTED = 0xFF8F97B4, ACCENT = 0xFFFF5A36, ACCENT2 = 0xFFFF9A3C, OK = 0xFF3DDC84,
-            WARN = 0xFFF5C542, BAD = 0xFFFF5C5C, BLUE = 0xFF5B8CFF;
+            WARN = 0xFFF5C542, BAD = 0xFFFF5C5C, BLUE = 0xFF5B8CFF, BAR = 0xFF10142A, OFF = 0xFF4A5375;
+    /** Corner scale (1 = rounded, small = blocky) and whether headings and buttons are upper case. */
+    public static float CORNER = 1f;
+    public static boolean CAPS = false;
+
+    /**
+     * The players' app: a survival-game look – near-black, rust red, warm off-white, blocky tiles and condensed
+     * upper-case headings. Call once before the first screen is built.
+     */
+    public static void rust() {
+        BG = 0xFF100F0D;
+        CARD = 0xFF1B1A17;
+        CARD2 = 0xFF272521;
+        LINE = 0xFF34312B;
+        TEXT = 0xFFE6DCD2;
+        MUTED = 0xFF8D867A;
+        ACCENT = 0xFFCB4129;
+        ACCENT2 = 0xFFCB4129;
+        OK = 0xFF9DC23C;
+        WARN = 0xFFE0A63A;
+        BAD = 0xFFD9503C;
+        BLUE = 0xFF7FA6B8;
+        BAR = 0xFF161512;
+        OFF = 0xFF4B4740;
+        CORNER = 0.18f;
+        CAPS = true;
+    }
+
+    private static CharSequence caps(CharSequence t) {
+        return CAPS && t != null ? t.toString().toUpperCase() : t;
+    }
     public static final int PRIMARY = 0, GHOST = 1, DANGER = 2;
 
     private Ui() {
@@ -36,7 +66,7 @@ public final class Ui {
     public static GradientDrawable round(Context c, int color, float radiusDp) {
         GradientDrawable d = new GradientDrawable();
         d.setColor(color);
-        d.setCornerRadius(dp(c, radiusDp));
+        d.setCornerRadius(dp(c, radiusDp * CORNER));
         return d;
     }
 
@@ -51,7 +81,7 @@ public final class Ui {
         v.setText(t);
         v.setTextSize(sp);
         v.setTextColor(color);
-        if (bold) v.setTypeface(Typeface.DEFAULT_BOLD);
+        if (bold) v.setTypeface(CAPS ? Typeface.create("sans-serif-condensed", Typeface.BOLD) : Typeface.DEFAULT_BOLD);
         return v;
     }
 
@@ -96,7 +126,7 @@ public final class Ui {
     }
 
     public static TextView pill(Context c, CharSequence t, int color) {
-        TextView v = text(c, t, 12, color, true);
+        TextView v = text(c, caps(t), 12, color, true);
         v.setBackground(round(c, (color & 0x00FFFFFF) | 0x2A000000, 50));
         v.setPadding(dp(c, 10), dp(c, 4), dp(c, 10), dp(c, 4));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -107,11 +137,12 @@ public final class Ui {
     }
 
     public static TextView button(Context c, CharSequence t, int style) {
-        TextView v = text(c, t, 14, style == GHOST ? TEXT : 0xFFFFFFFF, true);
+        TextView v = text(c, caps(t), 14, style == GHOST ? TEXT : 0xFFFFFFFF, true);
+        if (CAPS) v.setLetterSpacing(0.06f);
         GradientDrawable bg;
         if (style == PRIMARY) {
             bg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{ACCENT, ACCENT2});
-            bg.setCornerRadius(dp(c, 12));
+            bg.setCornerRadius(dp(c, 12 * CORNER));
         } else {
             bg = round(c, style == DANGER ? 0xFF7A2030 : CARD2, 12);
             bg.setStroke(dp(c, 1), style == DANGER ? BAD : LINE);
@@ -179,6 +210,16 @@ public final class Ui {
             }
         }
         int color = AVATARS[Math.abs(n.toLowerCase().hashCode()) % AVATARS.length];
+        if (CAPS) {                                    // blocky badge in muted, earthy colours
+            int[] earth = {0xFF8C3B2A, 0xFF5E6B3A, 0xFF4F6470, 0xFF8A6A2F, 0xFF6B4A5E, 0xFF3F6B5E};
+            TextView sq = text(c, letter, sizeDp * 0.42f, 0xFFE6DCD2, true);
+            sq.setGravity(Gravity.CENTER);
+            sq.setBackground(round(c, earth[Math.abs(n.toLowerCase().hashCode()) % earth.length], 14));
+            LinearLayout.LayoutParams q = new LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp));
+            q.setMargins(0, 0, dp(c, 12), 0);
+            sq.setLayoutParams(q);
+            return sq;
+        }
         TextView v = text(c, letter, sizeDp * 0.42f, 0xFFFFFFFF, true);
         v.setGravity(Gravity.CENTER);
         GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
@@ -208,7 +249,7 @@ public final class Ui {
     public static LinearLayout state(Context c, String word, boolean on) {
         LinearLayout v = new LinearLayout(c);
         v.setGravity(Gravity.CENTER_VERTICAL);
-        v.addView(dot(c, on ? OK : 0xFF4A5375));
+        v.addView(dot(c, on ? OK : OFF));
         v.addView(text(c, word, 13, on ? TEXT : MUTED, false));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -252,7 +293,7 @@ public final class Ui {
         public void select(int i) {
             selected = i;
             for (int k = 0; k < labels.length; k++) {
-                labels[k].setTextColor(k == i ? ACCENT2 : MUTED);
+                labels[k].setTextColor(k == i ? (CAPS ? TEXT : ACCENT2) : MUTED);
                 marks[k].setBackgroundColor(k == i ? ACCENT : 0x00000000);
             }
         }
@@ -266,7 +307,7 @@ public final class Ui {
         Context c = s.root.getContext();
         final Tabs t = new Tabs();
         t.bar = new LinearLayout(c);
-        t.bar.setBackgroundColor(0xFF10142A);
+        t.bar.setBackgroundColor(BAR);
         t.labels = new TextView[names.length];
         t.marks = new View[names.length];
         for (int i = 0; i < names.length; i++) {
@@ -275,7 +316,7 @@ public final class Ui {
             cell.setGravity(Gravity.CENTER_HORIZONTAL);
             t.marks[i] = new View(c);
             cell.addView(t.marks[i], new LinearLayout.LayoutParams(dp(c, 36), dp(c, 3)));
-            t.labels[i] = text(c, names[i], 13, MUTED, true);
+            t.labels[i] = text(c, caps(names[i]), 13, MUTED, true);
             t.labels[i].setGravity(Gravity.CENTER);
             t.labels[i].setPadding(0, dp(c, 12), 0, dp(c, 14));
             cell.addView(t.labels[i]);
@@ -315,7 +356,7 @@ public final class Ui {
         head.setGravity(Gravity.CENTER_VERTICAL);
         head.setPadding(dp(a, 18), dp(a, 14), dp(a, 12), dp(a, 12));
         LinearLayout titles = column(a);
-        s.title = text(a, title, 24, TEXT, true);
+        s.title = text(a, caps(title), 24, TEXT, true);
         s.subtitle = text(a, subtitle, 13, MUTED, false);
         titles.addView(s.title);
         titles.addView(s.subtitle);
@@ -326,7 +367,7 @@ public final class Ui {
         s.root.addView(head);
         View accent = new View(a);
         accent.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{ACCENT, ACCENT2, 0x00FF9A3C}));
+                new int[]{ACCENT, ACCENT2, CAPS ? ACCENT : 0x00FF9A3C}));
         s.root.addView(accent, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(a, 2)));
         s.swipe = new SwipeRefreshLayout(a);
         s.swipe.setColorSchemeColors(ACCENT, ACCENT2);

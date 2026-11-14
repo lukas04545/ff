@@ -28,6 +28,7 @@ import org.json.JSONObject;
 public class AlertService extends Service {
     static final String CH_ALERTS = "raid";
     static final String CH_STATUS = "status";
+    static final String CH_INFO = "info";                 // team mate online, killed, events, wipe: a normal sound
     private static final int STATUS_ID = 1;
     private static final long EVERY_MS = 20_000;
 
@@ -55,6 +56,8 @@ public class AlertService extends Service {
         raid.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM), new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM).build());
         nm.createNotificationChannel(raid);
+        nm.createNotificationChannel(new NotificationChannel(CH_INFO, "Team, events and wipes",
+                NotificationManager.IMPORTANCE_DEFAULT));
         NotificationChannel status = new NotificationChannel(CH_STATUS, "Watching your base",
                 NotificationManager.IMPORTANCE_MIN);
         status.setShowBadge(false);
@@ -117,7 +120,7 @@ public class AlertService extends Service {
                 long newest = Math.max(since, 0);
                 for (int j = 0; alerts != null && j < alerts.length(); j++) {
                     JSONObject a = alerts.getJSONObject(j);
-                    if (since >= 0) alert(a.optString("title") + " · " + name, a.optString("text"));  // not old ones
+                    if (since >= 0) alert(a.optString("title") + " · " + name, a.optString("text"), "raid".equals(a.optString("kind", "raid")));  // not old ones
                     newest = Math.max(newest, a.optLong("id"));
                 }
                 if (newest != since) s.since(url, newest);
@@ -129,7 +132,7 @@ public class AlertService extends Service {
                 }
             } catch (Http.Failure f) {
                 if (f.status == 401) {                 // unpaired on the server (/companion again or too many phones)
-                    alert("Companion unpaired · " + name, "Pair this server again with /companion on its Discord.");
+                    alert("Companion unpaired · " + name, "Pair this server again with /companion on its Discord.", false);
                     s.remove(i);
                     break;                             // the list changed – the next round goes on
                 }
@@ -141,17 +144,17 @@ public class AlertService extends Service {
         handler.postDelayed(this::check, EVERY_MS);
     }
 
-    private void alert(String title, String text) {
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CH_ALERTS)
+    private void alert(String title, String text, boolean raid) {
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, raid ? CH_ALERTS : CH_INFO)
                 : new Notification.Builder(this);
-        b.setSmallIcon(android.R.drawable.stat_sys_warning)
+        b.setSmallIcon(raid ? android.R.drawable.stat_sys_warning : android.R.drawable.stat_notify_chat)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setContentIntent(openApp())
                 .setAutoCancel(true)
-                .setCategory(Notification.CATEGORY_ALARM)
-                .setPriority(Notification.PRIORITY_MAX);
+                .setCategory(raid ? Notification.CATEGORY_ALARM : Notification.CATEGORY_STATUS)
+                .setPriority(raid ? Notification.PRIORITY_MAX : Notification.PRIORITY_DEFAULT);
         getSystemService(NotificationManager.class).notify(alertId++, b.build());
     }
 
