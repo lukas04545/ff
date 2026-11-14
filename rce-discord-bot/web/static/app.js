@@ -549,7 +549,6 @@ let installPrompt = null;
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
   installPrompt = e;
-  if (!IN_APP) $("#install-app")?.classList.remove("hidden");
 });
 window.addEventListener("appinstalled", () => { installPrompt = null; $("#install-app")?.classList.add("hidden"); });
 const IN_APP = navigator.userAgent.includes("RCEPanelApp");          // inside the Android app (android/)
@@ -566,6 +565,8 @@ function androidAppDialog() {
     h("p", { class: "muted", text: "2. Open the downloaded file and install it. Android asks once to allow installs from your browser – that's normal for apps outside the Play Store." }),
     h("p", {}, h("strong", { text: "3. " }), h("a", { href: add, class: "btn", text: "Add this panel to the app" })),
     h("p", { class: "muted", text: "Several servers? Open each server's panel here and tap \"Add this panel to the app\" – switch between them in the app's menu." }),
+    ON_ANDROID ? null : h("p", { class: "muted", text: "The app is for Android phones – open this page on your phone to install it. On an iPhone or a PC use the browser's menu → \"Add to Home screen\" / \"Install app\" instead." }),
+    !ON_ANDROID && installPrompt ? h("p", {}, h("button", { class: "small", text: "Install on this device", onclick: async () => { d.close(); installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; } })) : null,
     h("button", { class: "ghost small", text: "Close", onclick: () => d.close() }));
   document.body.append(d);
   d.showModal();
@@ -576,26 +577,11 @@ function setupApp() {
   const base = me.panel_path;
   const btn = $("#install-app");
   if (IN_APP) { btn?.classList.add("hidden"); return; }              // already the app
-  if (btn && ON_ANDROID) {
-    btn.querySelector("span").textContent = "Android app";
+  if (btn) {                                                          // every device: the download button
     btn.classList.remove("hidden");
     if (!btn.dataset.ready) { btn.dataset.ready = "1"; btn.addEventListener("click", androidAppDialog); }
-    return;
-  }
-  if (btn && !btn.dataset.ready) {
-    btn.dataset.ready = "1";
-    btn.addEventListener("click", async () => {
-      if (!installPrompt) {
-        toast("In your browser's menu (⋮) choose \"Install app\" or \"Add to Home screen\".");
-        return;
-      }
-      installPrompt.prompt();
-      const { outcome } = await installPrompt.userChoice;
-      if (outcome === "accepted") { installPrompt = null; btn.classList.add("hidden"); }
-    });
   }
   if (!base || !location.pathname.startsWith(base) || !("serviceWorker" in navigator)) return;
-  if (window.matchMedia("(display-mode: standalone)").matches) btn?.classList.add("hidden");   // running as the app
   navigator.serviceWorker.register(base + "/sw.js", { scope: base + "/" }).catch(() => {});
 }
 
