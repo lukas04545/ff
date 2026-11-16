@@ -382,9 +382,58 @@ footer nav{justify-content:center;margin:0 0 10px;gap:4px 14px}footer nav a{padd
 .hero .logo{grid-row:auto;width:min(240px,62vw)}.hero h1::after{margin-left:auto;margin-right:auto}
 .hero .kicker{justify-content:center;font-size:.9rem;letter-spacing:.16em}.hero .acts{justify-content:center}
 .podium{grid-template-columns:1fr}.podium .p1{order:-1}.av{margin-right:8px}
-.tiles{grid-template-columns:1fr 1fr;gap:10px}a.tile{padding:11px 10px;gap:9px}a.tile b{font-size:.92rem;letter-spacing:.03em;overflow-wrap:anywhere}a.tile small{font-size:.76rem}
+.tiles{grid-template-columns:1fr 1fr;gap:10px}a.tile{padding:11px 10px;gap:9px}a.tile b{font-size:.8rem;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}a.tile .ic{font-size:1.25rem}a.tile small{font-size:.76rem}
 footer nav{display:flex;width:auto;margin:0 0 10px;flex-wrap:wrap;overflow:visible}}
 @media (prefers-reduced-motion:reduce){.live .dot.on{animation:none}a.tile,.card{transition:none}}
+
+/* ---- 2.1 polish: glowing hero, section titles, medals, rule and staff cards, richer footer */
+::selection{background:var(--red);color:#fff}html{scrollbar-color:var(--red) #0b0b0b;scroll-behavior:smooth}
+.bar,main,footer{max-width:1160px}nav a{transition:color .15s,background .15s;border-radius:3px}
+nav a:hover{background:rgba(255,255,255,.06)}
+main>*{animation:rise .45s ease-out both}main>*:nth-child(2){animation-delay:.05s}main>*:nth-child(3){animation-delay:.1s}
+main>*:nth-child(4){animation-delay:.15s}main>*:nth-child(n+5){animation-delay:.2s}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.hero{position:relative;padding:44px 0 40px;isolation:isolate}
+.hero::before{content:"";position:absolute;z-index:-1;left:-6%;top:50%;width:min(520px,60vw);aspect-ratio:1;
+transform:translateY(-50%);background:radial-gradient(circle,color-mix(in srgb,var(--red) 55%,transparent) 0%,
+color-mix(in srgb,var(--orange) 22%,transparent) 38%,transparent 68%);filter:blur(26px);opacity:.7;
+animation:glow 7s ease-in-out infinite alternate;pointer-events:none}
+@keyframes glow{from{opacity:.45;transform:translateY(-50%) scale(.94)}to{opacity:.8;transform:translateY(-50%) scale(1.05)}}
+.hero .logo{transition:transform .4s cubic-bezier(.2,.8,.2,1)}.hero .logo:hover{transform:scale(1.03) rotate(-1.5deg)}
+.hero h1{color:#fff}
+.btn{position:relative;overflow:hidden;transition:filter .15s,transform .15s}.btn:hover{transform:translateY(-1px)}
+.btn::after{content:"";position:absolute;top:0;bottom:0;left:-60%;width:40%;background:linear-gradient(100deg,transparent,
+rgba(255,255,255,.28),transparent);transform:skewX(-18deg);transition:left .5s}.btn:hover::after{left:130%}
+.sec{display:flex;align-items:center;gap:14px;margin:26px 0 12px;font-family:var(--head);text-transform:uppercase;
+letter-spacing:.14em;font-size:1.05rem;color:#fff}.sec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,
+var(--line),transparent)}.sec small{color:var(--muted);letter-spacing:.04em;font-family:system-ui,sans-serif;
+text-transform:none;font-size:.85rem}
+.card{background:linear-gradient(180deg,color-mix(in srgb,var(--card2) 55%,transparent),transparent 120px),var(--card)}
+.stats .card:hover,.podium .card:hover,.people .card:hover{border-color:color-mix(in srgb,var(--orange) 60%,transparent);
+transform:translateY(-2px)}
+.stats .card h2 .ic{font-size:1.15rem;margin-right:2px}
+.stats .card h2{justify-content:flex-start;gap:8px}.stats .card h2 .pill{margin-left:auto}
+td.n{font-size:1.15rem}td.n.m{font-size:1.25rem;width:2.9rem}
+tbody tr,table tr{transition:background .12s}
+.phead{margin:6px 0 18px}.phead h1{margin:0}.phead p{margin:10px 0 0;color:var(--muted);max-width:62ch}
+.rulelist{display:grid;gap:10px;counter-reset:rl}.rule{counter-increment:rl;display:flex;gap:16px;align-items:flex-start;
+background:var(--card);border:1px solid var(--line);padding:14px 18px;
+clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px));transition:border-color .15s}
+.rule:hover{border-color:color-mix(in srgb,var(--orange) 60%,transparent)}
+.rule::before{content:counter(rl,decimal-leading-zero);font-family:var(--head);font-size:1.7rem;line-height:1.1;
+background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;flex:none;min-width:2.4rem}
+.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.people .card{margin:0;display:flex;align-items:center;gap:4px;padding:16px}.people .av{width:48px;height:48px;font-size:1.25rem;
+margin-right:14px}.people b{display:block;color:#fff;font-size:1.05rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.people .role{display:inline-block;margin-top:3px;font-size:.74rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+color:var(--orange)}.people .card>div{min-width:0}
+footer{padding-top:26px;border-top:0;position:relative}footer::before{content:"";position:absolute;left:16px;right:16px;top:0;
+height:1px;background:linear-gradient(90deg,transparent,var(--line),transparent)}
+footer .fbrand{display:flex;align-items:center;justify-content:center;gap:10px;font-family:var(--head);text-transform:uppercase;
+letter-spacing:.08em;color:#fff;font-size:1.1rem;margin-bottom:10px}footer .fbrand img{width:34px;height:34px;border-radius:50%}
+@media (max-width:760px){.hero{padding:16px 0 26px}.hero::before{left:50%;top:22%;transform:translate(-50%,-50%);
+width:min(420px,96vw);animation:none}.sec{margin-top:20px}.rule{padding:12px 14px;gap:12px}.rule::before{font-size:1.35rem;min-width:2rem}}
+@media (prefers-reduced-motion:reduce){main>*,.hero::before{animation:none}.btn::after{display:none}html{scroll-behavior:auto}}
 """.replace("NOISE", NOISE)
 
 
@@ -623,7 +672,7 @@ class PlayerWebsite(Plugin):
                 f'title="{"Online" if live["online"] else "Offline"}"></span></a>'
                 f'<input type="checkbox" id="mnav" hidden><label for="mnav" class="burger" aria-label="Menu">☰'
                 f'</label><nav>{nav}</nav></div>{spider}</header>'
-                f'<main>{body}</main><footer>{pumpkins}<nav>{foot}</nav>{motto}Updated {esc(updated)} · '
+                f'<main>{body}</main><footer>{pumpkins}<div class="fbrand"><img src="{base}/logo?s={HEADER_LOGO}&amp;v={version}" alt="" width="34" height="34" loading="lazy">{esc(site)}</div><nav>{foot}</nav>{motto}Updated {esc(updated)} · '
                 f'{esc(self.bot.config.rust_server_platform)}</footer></body></html>')
 
     def item_tiles(self, items) -> str:
@@ -642,7 +691,7 @@ class PlayerWebsite(Plugin):
         count = (f"{players} / {max_players}" if max_players else str(players)) if online else "–"
         meter = (f'<div class="meter"><i style="width:{min(100, round(100 * players / max_players))}%"></i></div>'
                  if online and max_players else "")
-        return (f'<div class="card"><h2>{esc(title)} <span class="pill{" on" if online else ""}">'
+        return (f'<div class="card"><h2><span class="ic">👥</span>{esc(title)} <span class="pill{" on" if online else ""}">'
                 f'{"Online" if online else "Offline"}</span></h2><div class="big">{esc(count)}</div>'
                 f'<div class="muted">{str(queued) + " in queue" if queued else "players online"}</div>{meter}</div>')
 
@@ -701,17 +750,17 @@ class PlayerWebsite(Plugin):
                 + status + (f'<div class="acts">{buttons}</div>' if buttons else "")
                 + '</section><div class="stats">'
                 + self._server_cards(players, live) +
-                f'<div class="card"><h2>Next wipe</h2><div class="big" style="font-size:1.45rem;line-height:1.3">'
+                f'<div class="card"><h2><span class="ic">🧹</span>Next wipe</h2><div class="big" style="font-size:1.45rem;line-height:1.3">'
                 f'{esc(wipe)}</div><div class="muted">{esc(wipe_sub)}</div></div>')
         if live["peak_24h"]:
-            body += (f'<div class="card"><h2>Busiest today</h2><div class="big">{live["peak_24h"]}</div>'
+            body += (f'<div class="card"><h2><span class="ic">📈</span>Busiest today</h2><div class="big">{live["peak_24h"]}</div>'
                      f'<div class="muted">players at the peak (24 h)</div></div>')
         body += "</div>"
         tiles = "".join(f'<a class="tile" href="{base}/{path}"><span class="ic">{self.TILES[path][0]}</span><span>'
                         f'<b>{esc(label)}</b><small>{self.TILES[path][1]}</small></span></a>'
                         for path, label in self.nav_links() if path in self.TILES)
         if tiles:
-            body += f'<div class="tiles">{tiles}</div>'
+            body += f'<div class="sec">Explore <small>everything this server has</small></div><div class="tiles">{tiles}</div>'
         about, join = self.setting("about").strip(), self.setting("how_to_join").strip()
         intro = []
         if about:
@@ -723,7 +772,7 @@ class PlayerWebsite(Plugin):
                      if len(lines) > 1 and all(numbered) else f'<div class="pre">{esc(join)}</div>')
             intro.append(f'<div class="card"><h2>How to join</h2>{steps}</div>')
         if intro:
-            body += f'<div class="two">{"".join(intro)}</div>'
+            body += f'<div class="sec">The server</div><div class="two">{"".join(intro)}</div>'
         shots = [i for i in range(1, GALLERY + 1) if self.file(f"gallery_{i}") is not None]
         if shots:
             pics = "".join(f'<a href="{base}/gallery/{i}?v={self._file_version(f"gallery_{i}")}" target="_blank">'
@@ -737,7 +786,7 @@ class PlayerWebsite(Plugin):
         if self.setting("leaderboards"):
             top = [r for r in self.bot.db.leaderboard("kills", 5) if r["kills"]]
             if top:
-                rows = "".join(f'<tr><td class="n">{i}</td><td>{self.who(base, r["name"])}<div class="barline">'
+                rows = "".join(f'<tr>{self.rank(i)}<td>{self.who(base, r["name"])}<div class="barline">'
                                f'<i style="width:{round(100 * r["kills"] / top[0]["kills"])}%"></i></div></td>'
                                f'<td class="r">{r["kills"]}</td></tr>' for i, r in enumerate(top, 1))
                 cols.append(f'<div class="card"><h2>⚔️ Top killers</h2><table>{rows}</table>'
@@ -749,7 +798,7 @@ class PlayerWebsite(Plugin):
             cols.append(f'<div class="card"><h2>🎯 Bounties</h2><table>{rows}</table>'
                         f'<p class="muted">Kill them to collect – /bounty on Discord.</p></div>')
         if cols:
-            body += f'<div class="grid">{"".join(cols)}</div>'
+            body += f'<div class="sec">Hall of fame</div><div class="grid">{"".join(cols)}</div>'
         if self.plugin("companion") is not None:          # the players' app: raid alerts on the phone
             body += ('<div class="card appcard" id="app"><span class="ph" aria-hidden="true">📱</span><div class="txt">'
                      '<h2>Companion app</h2>Your team, the game chat, a team map, your kits with their timers and '
@@ -770,6 +819,11 @@ class PlayerWebsite(Plugin):
         letter = next((ch for ch in str(name) if ch.isalnum()), "?").upper()
         return (f'<span class="av {cls}" style="background:linear-gradient(135deg,hsl({hue} 62% 46%),'
                 f'hsl({(hue + 40) % 360} 58% 30%))" aria-hidden="true">{esc(letter)}</span>')
+
+    @staticmethod
+    def rank(i: int) -> str:
+        """The rank cell of a table: medals for the first three."""
+        return (f'<td class="n m">{("🥇", "🥈", "🥉")[i - 1]}</td>' if 1 <= i <= 3 else f'<td class="n">{i}</td>')
 
     def who(self, base: str, name: str) -> str:
         """Avatar + linked name, for tables."""
@@ -794,7 +848,7 @@ class PlayerWebsite(Plugin):
         else:
             rows = [r for r in self.bot.db.leaderboard(by, 50) if r["kills"] or r["playtime_seconds"]]
             body = "".join(
-                f'<tr><td class="n">{i}</td><td>{self.who(base, r["name"])}</td><td class="r">{r["kills"]}</td>'
+                f'<tr>{self.rank(i)}<td>{self.who(base, r["name"])}</td><td class="r">{r["kills"]}</td>'
                 f'<td class="r">{r["deaths"]}</td><td class="r">{r["kills"] / max(r["deaths"], 1):.2f}</td>'
                 f'<td class="r">{esc(format_duration(r["playtime_seconds"]))}</td></tr>' for i, r in enumerate(rows, 1))
             table = (f'<table><tr><th></th><th>Player</th><th class="r">Kills</th><th class="r">Deaths</th>'
@@ -812,7 +866,7 @@ class PlayerWebsite(Plugin):
                 for place, medal, r in ((2, "🥈", rows[1]), (1, "🥇", rows[0]), (3, "🥉", rows[2])))
             podium = f'<div class="podium">{spots}</div>'
         return self.page(base, "leaderboard", "Leaderboard",
-                         f'<h1>Leaderboard</h1><div class="tabs">{tabs}</div>{podium}'
+                         f'<div class="phead"><h1>Leaderboard</h1><p>Kills, K/D, playtime and teams – updated live from the server.</p></div><div class="tabs">{tabs}</div>{podium}'
                          f'<div class="card" style="overflow-x:auto">{table}</div>')
 
     def player(self, base: str, name: str) -> str:
@@ -903,8 +957,10 @@ class PlayerWebsite(Plugin):
     def rules(self, base: str) -> str:
         from cogs.community import load_rules
         rules = load_rules(self.bot.config.rules_file)
-        items = "".join(f"<li>{esc(strip_rich_text(r))}</li>" for r in rules)
-        body = f'<h1>Rules</h1><div class="card"><ol class="rules">{items}</ol></div>' if items else \
+        items = "".join(f'<div class="rule"><div>{esc(strip_rich_text(r))}</div></div>' for r in rules)
+        head = ('<div class="phead"><h1>Rules</h1><p>Play fair and everyone has a good wipe. Breaking them can get '
+                'you kicked or banned.</p></div>')
+        body = f'{head}<div class="rulelist">{items}</div>' if items else \
             '<h1>Rules</h1><p class="muted">No rules yet.</p>'
         return self.page(base, "rules", "Rules", body)
 
@@ -931,8 +987,11 @@ class PlayerWebsite(Plugin):
 
     def staff_page(self, base: str) -> str:
         rows = self.staff_list()
-        cards = "".join(f'<div class="card"><h2>{esc(n)}</h2><div class="muted">{esc(r)}</div></div>' for n, r in rows)
-        body = (f'<h1>Staff</h1><div class="grid">{cards}</div>' if cards else
+        cards = "".join(f'<div class="card">{self.avatar(n)}<div><b>{esc(n)}</b><span class="role">{esc(r)}</span></div>'
+                        f'</div>' for n, r in rows)
+        head = ('<div class="phead"><h1>Staff</h1><p>The people who keep the server running. Need help? Open a '
+                'ticket on our Discord.</p></div>')
+        body = (f'{head}<div class="people">{cards}</div>' if cards else
                 '<h1>Staff</h1><p class="muted">The team list is coming soon.</p>')
         return self.page(base, "staff", "Staff", body)
 
