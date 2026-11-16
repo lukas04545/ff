@@ -439,7 +439,7 @@ def test_website_halloween_theme_and_phone_menu(pb, monkeypatch):
         monkeypatch.setattr(type(site), "now", staticmethod(lambda: int(october)))
         assert site.seasonal() == "halloween"
         page = site.home("")
-        assert 'class="halloween theme-rust shape-angled' in page and 'class="bat b1"' in page and "hw-banner" in page and "🕷" in page
+        assert 'class="halloween theme-rust shape-rounded' in page and 'class="bat b1"' in page and "hw-banner" in page and "🕷" in page
         assert 'id="mnav"' in page and 'class="burger"' in page                      # ☰ menu on phones
         monkeypatch.setattr(type(site), "now", staticmethod(lambda: int(june)))
         page = site.home("")

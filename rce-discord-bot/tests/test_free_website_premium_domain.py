@@ -134,7 +134,7 @@ def test_website_owner_choices(pb):  # noqa: F811
         await pb.m.set_enabled("website", True)
         site = pb.m.running("website")
         page = site.home("")
-        assert "shape-angled font-bold hero-side" in page and 'class="ann"' not in page and ' has-bg"' not in page
+        assert "shape-rounded font-modern hero-side" in page and 'class="ann"' not in page and ' has-bg"' not in page
         assert site.render("", "info", {})[0] == 404
         await pb.m.save_settings("website", {
             "shape": "rounded", "font": "mono", "hero_layout": "centered", "accent2": "#00e5ff",
