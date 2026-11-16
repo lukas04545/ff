@@ -126,3 +126,33 @@ def test_portal_sells_the_addon(cp, monkeypatch):  # noqa: F811
         finally:
             await c.close()
     asyncio.run(scenario())
+
+
+def test_website_owner_choices(pb):  # noqa: F811
+    async def main():
+        await pb.m.load_all()
+        await pb.m.set_enabled("website", True)
+        site = pb.m.running("website")
+        page = site.home("")
+        assert "shape-angled font-bold hero-side" in page and 'class="ann"' not in page and ' has-bg">' not in page
+        assert site.render("", "info", {})[0] == 404
+        await pb.m.save_settings("website", {
+            "shape": "rounded", "font": "mono", "hero_layout": "centered", "accent2": "#00e5ff",
+            "announcement": "Wipe on <b>Thursday</b>", "footer_text": "Not affiliated with Facepunch.",
+            "extra_links": "TikTok | https://www.tiktok.com/@kryvon\nBad | javascript:alert(1)\nPlain | http://x.io\n"
+                           "Vote | https://vote.example/kryvon?x=1",
+            "page_title": "VIP", "page_text": "# Perks\nQueue skip and a kit.\n\nAsk <admins> on Discord.",
+            "show_tiles": False, "show_hall": False, "show_app": False})
+        await pb.m.save_file("website", "background", _png((5, 5, 5)))
+        page = site.home("")
+        assert 'shape-rounded font-mono hero-centered has-bg">' in page and "--orange:#00e5ff" in page
+        assert "/background?v=" in page and "Wipe on &lt;b&gt;Thursday&lt;/b&gt;" in page
+        assert 'href="https://www.tiktok.com/@kryvon"' in page and "https://vote.example/kryvon?x=1" in page
+        assert "javascript:" not in page and "http://x.io" not in page          # only https links
+        assert "Not affiliated with Facepunch." in page and 'class="sec">Explore' not in page
+        assert 'href="/info"' in page and ">VIP<" in page
+        code, info = site.render("", "info", {})
+        assert code == 200 and "<h2>Perks</h2>" in info and "Ask &lt;admins&gt; on Discord." in info
+        await pb.m.save_settings("website", {"accent2": "red; background:url(x)", "shape": "angled"})
+        assert "background:url(x)" not in site.home("")                           # not a hex colour: ignored
+    asyncio.run(main())

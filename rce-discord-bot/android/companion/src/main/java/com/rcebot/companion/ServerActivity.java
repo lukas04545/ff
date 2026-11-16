@@ -569,9 +569,9 @@ public class ServerActivity extends Activity {
             card.addView(toggle("Alert me when I'm raided", "Loud notification on this phone", raid.optBoolean("dm"), "alerts", "on"));
             if (raid.optBoolean("rf_on")) {
                 card.addView(Ui.divider(this));
-                TextView set = Ui.button(this, raid.isNull("rf") ? "Set" : "Change", Ui.GHOST);
+                TextView set = Ui.button(this, raid.isNull("rf") ? "Set up" : "Manage", Ui.GHOST);
                 set.setOnClickListener(v -> askFrequency());
-                card.addView(Ui.item(this, "RF alarm" + (raid.isNull("rf") ? "" : " · " + raid.optInt("rf")),
+                card.addView(Ui.item(this, (raid.optBoolean("rf_team") ? "Team RF alarm" : "RF alarm") + (raid.isNull("rf") ? "" : " · " + raid.optInt("rf")),
                         "Explosion sensor → RF broadcaster in your base", set));
             }
         }
@@ -607,14 +607,23 @@ public class ServerActivity extends Activity {
         screen.content.addView(log);
     }
 
+    /** The team's RF frequency: picked at random by the server, one per team – never typed in. */
     private void askFrequency() {
-        final EditText f = Ui.input(this, "1 – 9999", InputType.TYPE_CLASS_NUMBER);
-        new AlertDialog.Builder(this).setTitle("RF raid alarm")
-                .setMessage("In your base, wire an explosion sensor to an RF broadcaster and set the broadcaster to "
-                        + "this frequency. Pick a number nobody else uses.")
-                .setView(Ui.form(this, f))
-                .setPositiveButton("Save", (d, w) -> post("rf", json("frequency", f.getText().toString()), true))
-                .setNeutralButton("Release", (d, w) -> post("rf", json("release", true), true))
-                .setNegativeButton("Cancel", null).show();
+        JSONObject raid = acc.optJSONObject("raid");
+        boolean has = raid != null && !raid.isNull("rf"), team = raid != null && raid.optBoolean("rf_team");
+        AlertDialog.Builder d = new AlertDialog.Builder(this).setTitle("RF raid alarm")
+                .setMessage((has ? "Your " + (team ? "team's " : "") + "frequency is " + raid.optInt("rf") + ".\n\n"
+                        : "You get a random frequency that nobody else has" + (team ? " – one for your whole team" : "")
+                        + ".\n\n")
+                        + "In your base, wire an explosion sensor to an RF broadcaster and set the broadcaster to "
+                        + "this frequency. Keep the number to yourselves.")
+                .setNegativeButton("Close", null);
+        if (has) {
+            d.setPositiveButton("New frequency", (x, w) -> post("rf", json("new", true), true))
+                    .setNeutralButton("Release", (x, w) -> post("rf", json("release", true), true));
+        } else {
+            d.setPositiveButton("Get my frequency", (x, w) -> post("rf", new JSONObject(), true));
+        }
+        d.show();
     }
 }

@@ -514,7 +514,7 @@ class Companion(Plugin):
         raid = self.plugin("raid_alerts")
         if raid is not None:
             out["raid"] = {"dm": raid.data.get(f"sub:{user_id}") is not None, "rf": raid.rf_of(user_id),
-                           "rf_on": bool(raid.setting("rf")),
+                           "rf_team": raid._team(user_id)[0] is not None, "rf_on": bool(raid.setting("rf")),
                            "last": [a for a in self.data.get(f"feed:{user_id}", []) if a["kind"] == "raid"][-3:]}
         protection = self.plugin("offline_protection")
         if protection is not None and player:
@@ -633,19 +633,11 @@ class Companion(Plugin):
                 return web.json_response({"ok": True, "message": "Raid alerts on." if data.get("on") else
                                           "Raid alerts off."})
             if data.get("release"):
-                freq = raid.rf_of(uid)
-                if freq is not None:
-                    raid.data.delete(f"rf:{freq}")
+                raid.release_rf(uid)
                 return web.json_response({"ok": True, "message": "RF frequency released."})
-            if not self.linked_player(uid):
-                return web.json_response({"ok": False, "message": "Link your player first: /link on Discord."})
-            try:
-                freq = int(data.get("frequency"))
-            except (TypeError, ValueError):
-                return web.json_response({"ok": False, "message": "A frequency is 1 to 9999."})
-            text = raid.claim_rf(uid, freq)
-            return web.json_response({"ok": "taken" not in text and "1 to 9999" not in text,
-                                      "message": text.replace("**", "")})
+            # a random frequency for the player's team (older apps still send a number – it isn't used any more)
+            text = raid.setup_rf(uid, new=bool(data.get("new")))
+            return web.json_response({"ok": raid.rf_of(uid) is not None, "message": text.replace("**", "")})
         if path == "feed" and request.method == "GET":
             try:
                 since = int(request.query.get("since", 0))

@@ -14,12 +14,14 @@ the player's own frequency. A powered broadcaster shows up in the server's broad
 rf.listboardcaster – Console Edition spells it like that), which the bot checks every few seconds. When a claimed
 frequency appears, the player who claimed it and their linked in-game team get an alert (Discord DM, the RCE
 Companion app, the channel).
-  /raidalerts rf claim <frequency>   claim your frequency (1–9999, one per player, unique on the server)
-  /raidalerts rf release · /raidalerts rf mine   ·   /raidalerts rftest (admins): the server's raw answer
+  /raidalerts rf claim               your team's frequency: picked at random, one per team (or per player without
+                                     a team), never given to anyone else
+  /raidalerts rf new · /raidalerts rf release · /raidalerts rf mine   ·   /raidalerts rftest (admins): the server's raw answer
 """
 from __future__ import annotations
 
 import re
+import secrets
 import time
 from collections import deque
 
@@ -47,7 +49,7 @@ class RaidAlerts(Plugin):
         Setting("cooldown", "Alerts per player at most every … minutes", "int", 5, min=1, max=240),
         Setting("channel", "Also post in this channel", "channel", help="Empty = only DMs to the players."),
         Setting("rf", "RF raid alarm (explosion sensor + RF broadcaster)", "bool", True,
-                help="Players claim a frequency with /raidalerts rf claim; a powered broadcaster on it = alert."),
+                help="Players get a random frequency for their team with /raidalerts rf claim; a powered broadcaster on it = alert."),
         Setting("rf_command", "Command that lists the RF broadcasters", "text", "rf.listboardcaster",
                 help="Console Edition: rf.listboardcaster (with that spelling). Check with /raidalerts rftest."),
         Setting("rf_seconds", "Check the broadcasters every … seconds", "int", 15, min=5, max=300),
@@ -61,6 +63,7 @@ class RaidAlerts(Plugin):
         super().__init__(*a, **kw)
         self.seen: deque = deque(maxlen=40)
         self.rf_active: set[int] = set()            # claimed frequencies broadcasting at the last check
+        self.rf_seen: set[int] = set()              # every frequency broadcasting at the last check
         self._rf_last = 0.0
 
     # ------------------------------------------------------------ Matching
@@ -177,25 +180,87 @@ class RaidAlerts(Plugin):
 
     # ------------------------------------------------------------ RF raid alarm
 
-    def rf_claims(self) -> dict[int, int]:
-        """frequency -> Discord user id."""
-        return {int(k[3:]): int(v) for k, v in self.data.items("rf:").items()}
+    RF_RESERVED = range(4760, 4791)       # left out when a frequency is picked (often used by the game itself)
+
+    def rf_claims(self) -> dict[int, dict]:
+        """frequency -> {"uid": who set it up, "team": the in-game team it belongs to (None = that player alone),
+        "at": when}. One frequency per team (or per player without a team), each frequency only once."""
+        out = {}
+        for key, value in self.data.items("rf:").items():
+            row = dict(value) if isinstance(value, dict) else {"uid": int(value), "team": None, "at": 0}
+            out[int(key[3:])] = {"uid": int(row.get("uid") or 0), "team": row.get("team"), "at": int(row.get("at") or 0)}
+        return out
+
+    def _team(self, user_id: int) -> tuple[int | None, list[str]]:
+        """(team id, members) of the player's in-game team – (None, []) without one."""
+        player = self.linked_player(user_id)
+        found = self.bot.db.team_of(player) if player else None
+        return (int(found[0]["team_id"]), list(found[1])) if found else (None, [])
 
     def rf_of(self, user_id: int) -> int | None:
-        return next((f for f, uid in self.rf_claims().items() if uid == user_id), None)
+        """The frequency of the player's team (or their own without a team). Keeps "one per team" true as teams
+        change: a player's own frequency becomes their new team's; if the team has one already, theirs is freed."""
+        claims = self.rf_claims()
+        team, members = self._team(user_id)
+        if team is None:
+            for freq, row in claims.items():
+                if row["uid"] == user_id and (row["team"] is None or self.bot.db.team_by_id(int(row["team"])) is None):
+                    if row["team"] is not None:                  # their old team is gone: it's theirs alone again
+                        self.data.set(f"rf:{freq}", {**row, "team": None})
+                    return freq
+            return None
+        mates = {uid for uid in (self.linked_user(m) for m in members) if uid is not None} | {user_id}
+        mine = sorted((row["at"], freq) for freq, row in claims.items()
+                      if row["team"] == team or (row["team"] is None and row["uid"] in mates))
+        if not mine:
+            return None
+        keep = next((f for _, f in mine if claims[f]["team"] == team), mine[0][1])
+        for _, freq in mine:
+            if freq != keep:
+                self.data.delete(f"rf:{freq}")                   # a second one in the same team: freed
+        if claims[keep]["team"] != team:
+            self.data.set(f"rf:{keep}", {**claims[keep], "team": team})
+        return keep
 
-    def claim_rf(self, user_id: int, frequency: int) -> str:
-        if not 1 <= frequency <= 9999:
-            return "A frequency is 1 to 9999."
-        owner = self.rf_claims().get(frequency)
-        if owner is not None and owner != user_id:
-            return f"Frequency {frequency} is taken – pick another one."
-        old = self.rf_of(user_id)
-        if old is not None and old != frequency:
-            self.data.delete(f"rf:{old}")
-        self.data.set(f"rf:{frequency}", user_id)
-        return (f"📡 Your raid alarm frequency is **{frequency}**. In your base: an **explosion sensor** → power → an "
-                f"**RF broadcaster** set to {frequency}. When something explodes there, you get an alert.")
+    def _free_frequency(self) -> int | None:
+        taken = set(self.rf_claims()) | self.rf_seen
+        for _ in range(200):
+            freq = secrets.randbelow(9000) + 1000                # 1000–9999: nothing easy to guess
+            if freq not in taken and freq not in self.RF_RESERVED:
+                return freq
+        return next((f for f in range(1000, 10000) if f not in taken and f not in self.RF_RESERVED), None)
+
+    RF_HOWTO = ("In your base: an **explosion sensor** → power → an **RF broadcaster** set to {freq}. When "
+                "something explodes there, {who} get an alert. Keep the number to yourselves.")
+
+    def setup_rf(self, user_id: int, *, new: bool = False) -> str:
+        """Gives the player's team (or the player alone) its frequency – a random one nobody else has. With
+        new=True the old one is dropped and another is picked."""
+        if not self.linked_player(user_id):
+            return "Link your in-game player first: /link."
+        team, _ = self._team(user_id)
+        who = "you and your team" if team is not None else "you"
+        freq = self.rf_of(user_id)
+        if freq is not None and not new:
+            return f"📡 {'Your team already has' if team is not None else 'You already have'} the frequency " \
+                   f"**{freq}**. " + self.RF_HOWTO.format(freq=freq, who=who)
+        if freq is not None:
+            self.data.delete(f"rf:{freq}")
+            self.data.delete(f"rflast:{freq}")
+        freq = self._free_frequency()
+        if freq is None:
+            return "No free frequency is left right now – ask an admin."
+        self.data.set(f"rf:{freq}", {"uid": int(user_id), "team": team, "at": self.now()})
+        return (f"📡 Your {'team\'s ' if team is not None else ''}raid alarm frequency is **{freq}** – picked at random "
+                f"and only yours. " + self.RF_HOWTO.format(freq=freq, who=who))
+
+    def release_rf(self, user_id: int) -> bool:
+        freq = self.rf_of(user_id)
+        if freq is None:
+            return False
+        self.data.delete(f"rf:{freq}")
+        self.data.delete(f"rflast:{freq}")
+        return True
 
     @staticmethod
     def parse_frequencies(text: str) -> set[int]:
@@ -222,28 +287,35 @@ class RaidAlerts(Plugin):
             raw = await self.bot.rcon.command(str(self.setting("rf_command") or "rf.listboardcaster"), timeout=8)
         except Exception:                                         # RCON down: try again next time
             return []
-        active = {f for f in self.parse_frequencies(raw) if f in claims}
+        self.rf_seen = self.parse_frequencies(raw)             # every frequency in use (never handed out again)
+        active = {f for f in self.rf_seen if f in claims}
         fresh = sorted(active - self.rf_active)
         self.rf_active = active
         alerted = []
         now = time.time()
         for freq in fresh:
-            uid = claims[freq]
+            row = claims[freq]
+            uid = row["uid"]
             if now - float(self.data.get(f"rflast:{freq}", 0)) < self.setting("cooldown") * 60:
                 continue
             self.data.set(f"rflast:{freq}", now)
             player = self.linked_player(uid) or "your base"
-            self.count_raid({player})
-            line = f"📡 RF raid alarm on frequency {freq} – an explosion at {player}'s base!"
-            for target_uid, target_player in self.rf_targets(uid, player):
+            targets = self.rf_targets(uid, player, row["team"])
+            self.count_raid({name for _, name in targets} or {player})
+            line = (f"📡 RF raid alarm on frequency {freq} – an explosion at your team's base!" if row["team"] is not None
+                    else f"📡 RF raid alarm on frequency {freq} – an explosion at {player}'s base!")
+            for target_uid, target_player in targets:
                 await self._alert(target_uid, target_player, line)
             alerted.append(freq)
         return alerted
 
-    def rf_targets(self, uid: int, player: str) -> list[tuple[int, str]]:
-        """The frequency's owner and their linked in-game teammates."""
-        out = {uid: player}
-        found = self.bot.db.team_of(player) if player else None
+    def rf_targets(self, uid: int, player: str, team: int | None = None) -> list[tuple[int, str]]:
+        """Who is alerted: every linked member of the frequency's team – or its owner (and their team mates)."""
+        out: dict[int, str] = {}
+        found = self.bot.db.team_by_id(int(team)) if team is not None else None
+        if found is None:
+            out[uid] = player
+            found = self.bot.db.team_of(player) if player else None
         for mate in (found[1] if found else []):
             mate_uid = self.linked_user(mate)
             if mate_uid is not None:
@@ -279,26 +351,26 @@ class RaidAlerts(Plugin):
         self.data.delete(f"sub:{interaction.user.id}")
         await interaction.response.send_message("Raid alerts off.", ephemeral=True)
 
-    @rf.command(name="claim", description="Claim your RF raid alarm frequency (explosion sensor + RF broadcaster).")
-    async def rf_claim_cmd(self, interaction: discord.Interaction, frequency: app_commands.Range[int, 1, 9999]) -> None:
-        if not self.linked_player(interaction.user.id):
-            await interaction.response.send_message("Link your in-game player first: /link.", ephemeral=True)
-            return
-        await interaction.response.send_message(self.claim_rf(interaction.user.id, frequency), ephemeral=True)
+    @rf.command(name="claim", description="Get your team's RF raid alarm frequency (explosion sensor + RF broadcaster).")
+    async def rf_claim_cmd(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_message(self.setup_rf(interaction.user.id), ephemeral=True)
 
-    @rf.command(name="release", description="Give your RF frequency back.")
+    @rf.command(name="new", description="Get a NEW random frequency (the old one stops working).")
+    async def rf_new_cmd(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_message(self.setup_rf(interaction.user.id, new=True), ephemeral=True)
+
+    @rf.command(name="release", description="Give your (team's) RF frequency back.")
     async def rf_release_cmd(self, interaction: discord.Interaction) -> None:
-        freq = self.rf_of(interaction.user.id)
-        if freq is not None:
-            self.data.delete(f"rf:{freq}")
-        await interaction.response.send_message("Released." if freq else "You have no frequency.", ephemeral=True)
+        await interaction.response.send_message("Released." if self.release_rf(interaction.user.id)
+                                                else "You have no frequency.", ephemeral=True)
 
-    @rf.command(name="mine", description="Your RF raid alarm frequency and how to set it up.")
+    @rf.command(name="mine", description="Your (team's) RF raid alarm frequency and how to set it up.")
     async def rf_mine_cmd(self, interaction: discord.Interaction) -> None:
         freq = self.rf_of(interaction.user.id)
+        team, _ = self._team(interaction.user.id)
         await interaction.response.send_message(
-            (f"📡 Your frequency: **{freq}** – explosion sensor → RF broadcaster on {freq}." if freq else
-             "No frequency yet – /raidalerts rf claim <1–9999>.")
+            (f"📡 Your {'team\'s ' if team is not None else ''}frequency: **{freq}** – explosion sensor → RF "
+             f"broadcaster on {freq}." if freq else "No frequency yet – /raidalerts rf claim gives you one.")
             + ("" if self.setting("rf") else " (The RF alarm is switched off on this server.)"), ephemeral=True)
 
     @raidalerts.command(name="rftest", description="The server's RF broadcaster list as the bot sees it (admins).")
