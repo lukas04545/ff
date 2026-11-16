@@ -333,13 +333,15 @@
   function alarms() {
     const raid = acc.raid, prefs = acc.prefs || {};
     const phone = card("This phone", h("p", { class: "muted", id: "push-note", text: "Checking …" }));
-    const rf = h("input", { type: "number", min: "1", max: "9999", placeholder: "1 – 9999", inputmode: "numeric" });
     main.replaceChildren(phone,
       card("Raid alarm", !raid ? h("p", { class: "muted", text: "Raid alerts aren't switched on on this server." }) : [
         toggle("Alert me when I'm raided", "Notification on this phone and a Discord message", raid.dm, (on) => post("alerts", { on })),
-        raid.rf_on ? h("div", {}, h("div", { class: "row" }, h("div", { class: "grow" }, h("b", { text: "RF alarm" + (raid.rf ? " · " + raid.rf : "") }), h("small", { text: "Explosion sensor → RF broadcaster in your base, set to your frequency" }))),
-          h("div", { class: "send" }, rf, h("button", { class: "btn", text: "Save", onclick: () => post("rf", { frequency: rf.value }, true) }),
-            raid.rf ? h("button", { class: "btn", text: "Release", onclick: () => post("rf", { release: true }, true) }) : null)) : null]),
+        raid.rf_on ? h("div", {}, h("div", { class: "row" }, h("div", { class: "grow" }, h("b", { text: (raid.rf_team ? "Team RF alarm" : "RF alarm") + (raid.rf ? " · " + raid.rf : "") }),
+            h("small", { text: raid.rf ? "Explosion sensor → RF broadcaster in your base, set to this frequency. Keep the number to yourselves."
+              : "You get a random frequency nobody else has" + (raid.rf_team ? " – one for your whole team." : ".") }))),
+          h("div", { class: "send" }, raid.rf ? [h("button", { class: "btn", text: "New frequency", onclick: () => confirm("Get a new frequency? The old one stops working.") && post("rf", { new: true }, true) }),
+            h("button", { class: "btn", text: "Release", onclick: () => post("rf", { release: true }, true) })]
+            : h("button", { class: "btn primary", text: "Get my frequency", onclick: () => post("rf", {}, true) }))) : null]),
       card("Notifications", toggle("Team mate comes online", null, prefs.team, (v) => post("prefs", { team: v })),
         toggle("I was killed", null, prefs.death, (v) => post("prefs", { death: v })),
         toggle("Server events", "Cargo ship, helicopter, air drop …", prefs.events, (v) => post("prefs", { events: v })),

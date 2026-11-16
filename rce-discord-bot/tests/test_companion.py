@@ -46,30 +46,67 @@ def test_rf_raid_alarm_alerts_owner_and_team_once(pb, monkeypatch):  # noqa: F81
     comp = plug(pb, "companion")
     pb.db.link_player(7, "Bob")
     pb.db.link_player(8, "Ann")
-    monkeypatch.setattr(pb.db, "team_of", lambda player: (NS(team_id=1), ["Bob", "Ann"]))
+    pb.db.team_event("create", "Bob", 1)
+    pb.db.team_event("join", "Ann", 1, "Bob")
     sent = []
 
     async def alert(uid, player, line):
         sent.append((uid, player, line))
         return 1
     monkeypatch.setattr(p, "_alert", alert)
-    assert "taken" not in p.claim_rf(7, 1234)
-    assert "taken" in p.claim_rf(8, 1234)
-    answers = iter(["", "Broadcaster frequency 1234 range 250", "Broadcaster frequency 1234 range 250", "",
-                    "Broadcaster frequency 1234 range 250"])
+    assert "random" in p.setup_rf(7)
+    freq = p.rf_of(7)
+    assert 1000 <= freq <= 9999 and p.rf_of(8) == freq                 # one frequency for the whole team
+    assert "already has" in p.setup_rf(8) and len(p.rf_claims()) == 1  # a team mate gets the same one, no second
+    on = f"Broadcaster frequency {freq} range 250"
+    answers = iter(["", on, on, "", on])
 
     async def command(cmd, **kw):
         assert cmd == "rf.listboardcaster"
         return next(answers)
     monkeypatch.setattr(pb.bot.rcon, "command", command)
     assert run(p.rf_check()) == []                              # nothing on
-    assert run(p.rf_check()) == [1234]                          # the sensor powered the broadcaster
-    assert sorted(u for u, _, _ in sent) == [7, 8] and "1234" in sent[0][2]
+    assert run(p.rf_check()) == [freq]                          # the sensor powered the broadcaster
+    assert sorted(u for u, _, _ in sent) == [7, 8] and str(freq) in sent[0][2] and "team" in sent[0][2]
     assert run(p.rf_check()) == []                              # still on: no second alert
     run(p.rf_check())                                           # off again
     assert run(p.rf_check()) == []                              # on again within the cooldown: quiet
     assert p.raid_stats(7)["total"] == 1
     assert comp is not None
+
+
+def test_rf_frequency_is_random_unique_and_follows_the_team(pb):  # noqa: F811
+    p = plug(pb, "raid_alerts", rf=True)
+    for uid, name in ((1, "Solo"), (2, "Lea"), (3, "Max"), (4, "Zoe")):
+        pb.db.link_player(uid, name)
+    assert "Link your in-game player" in p.setup_rf(99)                 # not linked: nothing handed out
+    p.rf_seen = set(range(1000, 9990))                                  # frequencies already in use on the server …
+    p.setup_rf(1)
+    solo = p.rf_of(1)
+    assert solo >= 9990 and solo not in p.rf_seen                       # … are never handed out
+    p.rf_seen = set()
+    seen = {solo}
+    for uid in (2, 3):
+        p.setup_rf(uid)
+        assert p.rf_of(uid) not in seen and p.rf_of(uid) not in p.RF_RESERVED
+        seen.add(p.rf_of(uid))
+    lea, old_max = p.rf_of(2), p.rf_of(3)
+    # Lea and Max team up: one of the two frequencies stays for the team, the other is freed
+    pb.db.team_event("create", "Lea", 5)
+    pb.db.team_event("join", "Max", 5, "Lea")
+    team = p.rf_of(2)
+    assert team == p.rf_of(3) and team in (lea, old_max) and len(p.rf_claims()) == 2
+    assert p.rf_claims()[team]["team"] == 5
+    pb.db.team_event("join", "Zoe", 5, "Lea")
+    assert p.rf_of(4) == team                                           # a new member has it straight away
+    assert "random" in p.setup_rf(4, new=True) and p.rf_of(2) != team and p.rf_of(2) == p.rf_of(4)
+    pb.db.team_event("leave", "Zoe", 5)
+    assert p.rf_of(4) is None and p.rf_of(2) is not None                # it stays with the team, not the leaver
+    assert p.release_rf(3) and p.rf_of(2) is None and not p.release_rf(3)
+    assert p.rf_of(1) == solo                                           # nobody else's was touched
+    p.data.set("rf:4321", 1)                                            # an old claim (before teams): still read
+    p.data.delete(f"rf:{solo}")
+    assert p.rf_of(1) == 4321
 
 
 def test_companion_web_endpoints(bot):  # noqa: F811
@@ -158,7 +195,7 @@ def test_account_overview_and_kit_claim(pb, monkeypatch):  # noqa: F811
     c = plug(pb, "companion")
     raid = plug(pb, "raid_alerts", rf=True)
     pb.db.link_player(7, "Bob")
-    raid.claim_rf(7, 4242)
+    raid.data.set("rf:4242", {"uid": 7, "team": None, "at": 1})
     member = NS(id=7, roles=[])
 
     async def get_member(uid):
@@ -201,8 +238,11 @@ def test_app_switches_alerts_and_rf(bot):  # noqa: F811
         auth = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         r = await c.post("/p/companion/alerts", data=json.dumps({"on": True}), headers=auth)
         assert (await r.json())["ok"] and raid.data.get("sub:7") == 7
-        r = await c.post("/p/companion/rf", data=json.dumps({"frequency": "555"}), headers=auth)
-        assert (await r.json())["ok"] and raid.rf_of(7) == 555
+        r = await c.post("/p/companion/rf", data=json.dumps({"frequency": "555"}), headers=auth)     # an old app
+        first = raid.rf_of(7)
+        assert (await r.json())["ok"] and first != 555 and first >= 1000          # random, not the typed number
+        r = await c.post("/p/companion/rf", data=json.dumps({"new": True}), headers=auth)
+        assert (await r.json())["ok"] and raid.rf_of(7) not in (None, first)
         r = await c.post("/p/companion/rf", data=json.dumps({"release": True}), headers=auth)
         assert raid.rf_of(7) is None
         acc = await (await c.get("/p/companion/account", headers=auth)).json()

@@ -434,6 +434,39 @@ letter-spacing:.08em;color:#fff;font-size:1.1rem;margin-bottom:10px}footer .fbra
 @media (max-width:760px){.hero{padding:16px 0 26px}.hero::before{left:50%;top:22%;transform:translate(-50%,-50%);
 width:min(420px,96vw);animation:none}.sec{margin-top:20px}.rule{padding:12px 14px;gap:12px}.rule::before{font-size:1.35rem;min-width:2rem}}
 @media (prefers-reduced-motion:reduce){main>*,.hero::before{animation:none}.btn::after{display:none}html{scroll-behavior:auto}}
+
+/* ---- the owner's own choices: shape, font, hero layout, background picture, announcement */
+body.shape-rounded .card,body.shape-rounded a.tile,body.shape-rounded .rule,body.shape-rounded .btn,
+body.shape-rounded .tabs a,body.shape-rounded .meter,body.shape-rounded ol.steps li::before,body.shape-rounded .ann,
+body.shape-rounded form.search input,body.shape-rounded form.search button{clip-path:none;border-radius:12px}
+body.shape-rounded .pill{clip-path:none;border-radius:99px}body.shape-rounded .card::before{left:14px;border-radius:0 0 3px 3px}
+body.shape-rounded h1::after,body.shape-rounded nav a.active::after{clip-path:none;border-radius:2px}
+body.shape-square .card,body.shape-square a.tile,body.shape-square .rule,body.shape-square .btn,body.shape-square .tabs a,
+body.shape-square .meter,body.shape-square ol.steps li::before,body.shape-square .pill,body.shape-square .ann,
+body.shape-square h1::after,body.shape-square nav a.active::after{clip-path:none;border-radius:0}
+body.font-modern{--head:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body.font-modern h1,body.font-modern h2,body.font-modern h3,body.font-modern .brand,body.font-modern nav a,
+body.font-modern .tabs a,body.font-modern .btn,body.font-modern th,body.font-modern .big,body.font-modern .kicker,
+body.font-modern .sec,body.font-modern a.tile b{font-weight:800;letter-spacing:.03em}
+body.font-mono{--head:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+body.font-mono h1,body.font-mono h2,body.font-mono .brand,body.font-mono nav a,body.font-mono .btn,body.font-mono .big,
+body.font-mono .sec,body.font-mono a.tile b{font-weight:700;letter-spacing:.02em}
+body.font-mono nav a{font-size:.92rem}
+body.hero-centered .hero{grid-template-columns:1fr;text-align:center;justify-items:center}
+body.hero-centered .hero .logo{grid-row:auto}body.hero-centered .hero h1::after{margin-left:auto;margin-right:auto}
+body.hero-centered .hero .kicker,body.hero-centered .hero .acts{justify-content:center}
+body.hero-centered .hero .kicker::before{display:block}
+body.hero-centered .hero::before{left:50%;top:26%;transform:translate(-50%,-50%);animation:none}
+body.has-bg::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.2;
+background:var(--bgimg) center/cover no-repeat}
+.ann{display:flex;gap:12px;align-items:center;background:linear-gradient(90deg,color-mix(in srgb,var(--red) 26%,transparent),
+color-mix(in srgb,var(--orange) 12%,transparent));border:1px solid color-mix(in srgb,var(--orange) 55%,transparent);
+padding:11px 16px;margin-bottom:6px;font-weight:600;color:#fff;
+clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px))}.ann .ic{font-size:1.25rem;flex:none}
+.prose h2{margin:22px 0 8px;font-size:1.25rem;color:#fff}.prose h2:first-child{margin-top:0}.prose p{margin:0 0 12px;
+white-space:pre-wrap;overflow-wrap:anywhere}.prose p:last-child{margin-bottom:0}
+footer .foot-note{margin-top:8px;opacity:.85}footer .ext{margin:0 0 10px;display:flex;gap:6px 16px;justify-content:center;
+flex-wrap:wrap}footer .ext a{color:var(--orange);text-decoration:none}footer .ext a:hover{text-decoration:underline}
 """.replace("NOISE", NOISE)
 
 
@@ -496,6 +529,33 @@ class PlayerWebsite(Plugin):
         Setting("halloween_message", "Halloween banner on the home page", "text",
                 "Happy Halloween! Spooky loot and frightful raids all month long.",
                 help="Shown at the top of the home page while the Halloween look is on. Empty = no banner."),
+        # ---- make it yours
+        Setting("accent2", "Second colour", "text", "",
+                help="Hex colour, e.g. #f7931e – the colour the main colour blends into (buttons, lines, numbers). "
+                     "Empty = the look's own."),
+        Setting("shape", "Shape of cards and buttons", "choice", "angled", choices=("angled", "rounded", "square"),
+                help="angled: cut corners (the Rust look) · rounded: soft corners · square: plain boxes."),
+        Setting("font", "Heading font", "choice", "bold", choices=("bold", "modern", "mono"),
+                help="bold: heavy condensed capitals · modern: clean sans-serif · mono: typewriter / terminal."),
+        Setting("hero_layout", "Top of the home page", "choice", "side", choices=("side", "centered"),
+                help="side: logo on the left, name and buttons next to it · centered: everything in the middle."),
+        Setting("background", "Background picture", "image",
+                help="A picture behind every page (dimmed, so text stays readable). A dark screenshot works best."),
+        Setting("announcement", "Announcement on the home page", "text", "",
+                help="One line at the very top of the home page, e.g. \"Wipe on Thursday 19:00 – 2x gather all "
+                     "weekend\". Empty = none."),
+        Setting("extra_links", "Your own buttons (one per line: Label | https://…)", "textarea", "",
+                help="Up to 6 – e.g. \"TikTok | https://www.tiktok.com/@you\" or \"Vote for us | https://…\". They show "
+                     "as buttons at the top of the home page and as links at the bottom of every page."),
+        Setting("show_tiles", "Home page: quick-link tiles (Explore)", "bool", True),
+        Setting("show_hall", "Home page: top killers and bounties", "bool", True),
+        Setting("show_app", "Home page: the Companion app", "bool", True),
+        Setting("page_title", "Your own page: title", "text", "",
+                help="Adds a page to the menu with your own text – e.g. \"VIP\", \"Events\" or \"FAQ\"."),
+        Setting("page_text", "Your own page: text", "textarea", "",
+                help="Plain text. An empty line starts a new block; a line that starts with # is a heading."),
+        Setting("footer_text", "Text at the bottom of every page", "text", "",
+                help="E.g. \"Not affiliated with Facepunch or Double Eleven.\""),
     )
 
     def __init__(self, *args, **kwargs) -> None:
@@ -605,6 +665,32 @@ class PlayerWebsite(Plugin):
 
     # ------------------------------------------------------------ Layout
 
+    def extra_links(self) -> list[tuple[str, str]]:
+        """The owner's own buttons: (label, https address) – only https, at most 6."""
+        out = []
+        for line in str(self.setting("extra_links") or "").splitlines():
+            label, _, url = line.partition("|")
+            label, url = label.strip()[:30], url.strip()
+            if label and re.fullmatch(r"https://[^\s\"'<>]{4,300}", url):
+                out.append((label, url))
+        return out[:6]
+
+    def own_page(self) -> tuple[str, str] | None:
+        title, text = str(self.setting("page_title") or "").strip()[:24], str(self.setting("page_text") or "").strip()
+        return (title, text) if title and text else None
+
+    def info_page(self, base: str) -> str:
+        title, text = self.own_page()
+        blocks = []
+        for block in re.split(r"\n\s*\n", text):
+            block = block.strip()
+            if block.startswith("#"):
+                head, _, rest = block.partition("\n")
+                blocks.append(f"<h2>{esc(head.lstrip('#').strip())}</h2>" + (f"<p>{esc(rest.strip())}</p>" if rest.strip() else ""))
+            elif block:
+                blocks.append(f"<p>{esc(block)}</p>")
+        return self.page(base, "info", title, f'<h1>{esc(title)}</h1><div class="card prose">{"".join(blocks)}</div>')
+
     def nav_links(self) -> list[tuple[str, str]]:
         """(path, label) of every page that is switched on – the menu, the footer and the home page's tiles."""
         links = [("", "Home")]
@@ -630,6 +716,8 @@ class PlayerWebsite(Plugin):
             links.append(("bans", "Bans"))
         if self.setting("show_wipes"):
             links.append(("wipes", "Wipes"))
+        if self.own_page() is not None:
+            links.append(("info", self.own_page()[0]))
         return links
 
     def page(self, base: str, active: str, title: str, body: str) -> str:
@@ -652,6 +740,18 @@ class PlayerWebsite(Plugin):
             f"body.theme-{theme}{{--red:{accent}}}"
                                         if theme != "rust" and accent.lower() != "#e5341c" else "")
         # --grad is set on :root with :root's colours – on body it follows the theme's --red/--orange too
+        accent2 = str(self.setting("accent2") or "").strip()
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", accent2):
+            theme_css += f"body.theme-{theme}{{--orange:{accent2}}}"
+        shape = self.setting("shape") if self.setting("shape") in ("angled", "rounded", "square") else "angled"
+        font = self.setting("font") if self.setting("font") in ("bold", "modern", "mono") else "bold"
+        looks = f"shape-{shape} font-{font} hero-{'centered' if self.setting('hero_layout') == 'centered' else 'side'}"
+        if self.file("background") is not None:
+            looks += " has-bg"
+            theme_css += f"body{{--bgimg:url('{base}/background?v={self._file_version('background')}')}}"
+        ext = "".join(f'<a href="{esc(url)}" rel="noopener nofollow" target="_blank">{esc(label)}</a>'
+                      for label, url in self.extra_links())
+        foot_note = str(self.setting("footer_text") or "").strip()[:200]
         extra_css = (MENU_CSS + theme_css + "body{--grad:linear-gradient(90deg,var(--red),var(--orange))}"
                      + (HALLOWEEN_CSS if season == "halloween" else ""))
         decor = spider = pumpkins = ""
@@ -665,15 +765,16 @@ class PlayerWebsite(Plugin):
                 f'<title>{esc(title + " – " if title else "")}{esc(site)}</title>'
                 f'<meta name="description" content="{esc(self.setting("tagline"))}">'
                 f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon?v={version}">'
-                f'<style>{self._style[1]}{extra_css}</style></head><body class="{season} theme-{theme}">{decor}'
+                f'<style>{self._style[1]}{extra_css}</style></head><body class="{season} theme-{theme} {looks}">{decor}'
                 f'<header><div class="bar"><a class="brand" href="{base}/"><img src="{base}/logo?s={HEADER_LOGO}'
                 f'&amp;v={version}" alt="" width="42" height="42" decoding="async">'
                 f'<span class="name">{esc(site)}</span><span class="dot{" on" if live["online"] else ""}" '
                 f'title="{"Online" if live["online"] else "Offline"}"></span></a>'
                 f'<input type="checkbox" id="mnav" hidden><label for="mnav" class="burger" aria-label="Menu">☰'
                 f'</label><nav>{nav}</nav></div>{spider}</header>'
-                f'<main>{body}</main><footer>{pumpkins}<div class="fbrand"><img src="{base}/logo?s={HEADER_LOGO}&amp;v={version}" alt="" width="34" height="34" loading="lazy">{esc(site)}</div><nav>{foot}</nav>{motto}Updated {esc(updated)} · '
-                f'{esc(self.bot.config.rust_server_platform)}</footer></body></html>')
+                f'<main>{body}</main><footer>{pumpkins}<div class="fbrand"><img src="{base}/logo?s={HEADER_LOGO}&amp;v={version}" alt="" width="34" height="34" loading="lazy">{esc(site)}</div><nav>{foot}</nav>{f'<div class="ext">{ext}</div>' if ext else ""}{motto}Updated {esc(updated)} · '
+                f'{esc(self.bot.config.rust_server_platform)}'
+                + (f'<div class="foot-note">{esc(foot_note)}</div>' if foot_note else "") + '</footer></body></html>')
 
     def item_tiles(self, items) -> str:
         tiles = []
@@ -709,7 +810,8 @@ class PlayerWebsite(Plugin):
              "casino": ("🎰", "Bet your points"), "streams": ("📺", "Who is live right now"),
              "account": ("👤", "Your kits, orders and coins"), "shop": ("💰", "Spend your points"),
              "rules": ("📜", "Read them before you play"), "staff": ("🛡️", "The team behind the server"),
-             "bans": ("🔨", "Who got banned and why"), "wipes": ("🧹", "Past and next wipes")}
+             "bans": ("🔨", "Who got banned and why"), "wipes": ("🧹", "Past and next wipes"),
+             "info": ("📌", "More about this server")}
 
     def home(self, base: str) -> str:
         live, tz = self.live(), self.tz
@@ -719,7 +821,9 @@ class PlayerWebsite(Plugin):
             buttons += f'<a class="btn" href="{esc(invite)}" rel="noopener">Join our Discord</a>'
         if store.startswith("https://") and len(store) < 300:
             buttons += f'<a class="btn alt" href="{esc(store)}" rel="noopener">Store</a>'
-        if self.plugin("companion") is not None:          # the players' Android app
+        for label, url in self.extra_links():
+            buttons += f'<a class="btn alt" href="{esc(url)}" rel="noopener nofollow" target="_blank">{esc(label)}</a>'
+        if self.plugin("companion") is not None and self.setting("show_app"):          # the players' app
             buttons += '<a class="btn alt" href="#app">📱 Get the app</a>'
         players = (f'{live["players"]} / {live["max_players"]}' if live["max_players"] else str(live["players"])) \
             if live["online"] else "–"
@@ -742,6 +846,9 @@ class PlayerWebsite(Plugin):
         status = (f'<div class="live"><span class="dot{" on" if live["online"] else ""}"></span>'
                   + (f'<span><b>{esc(players)}</b> players online</span>' if live["online"] else "<span>Server offline</span>")
                   + "</div>")
+        news = str(self.setting("announcement") or "").strip()[:240]
+        if news:
+            banner += f'<div class="ann"><span class="ic">📣</span><span>{esc(news)}</span></div>'
         body = (banner + f'<section class="hero"{hero_bg}><img class="logo" src="{base}/logo?v={self.picture_version()}" '
                 f'alt="" width="300" height="300" fetchpriority="high">'
                 f'<h1>{esc(self.site_title())}</h1>'
@@ -759,7 +866,7 @@ class PlayerWebsite(Plugin):
         tiles = "".join(f'<a class="tile" href="{base}/{path}"><span class="ic">{self.TILES[path][0]}</span><span>'
                         f'<b>{esc(label)}</b><small>{self.TILES[path][1]}</small></span></a>'
                         for path, label in self.nav_links() if path in self.TILES)
-        if tiles:
+        if tiles and self.setting("show_tiles"):
             body += f'<div class="sec">Explore <small>everything this server has</small></div><div class="tiles">{tiles}</div>'
         about, join = self.setting("about").strip(), self.setting("how_to_join").strip()
         intro = []
@@ -797,9 +904,9 @@ class PlayerWebsite(Plugin):
                            for n, a in bounties)
             cols.append(f'<div class="card"><h2>🎯 Bounties</h2><table>{rows}</table>'
                         f'<p class="muted">Kill them to collect – /bounty on Discord.</p></div>')
-        if cols:
+        if cols and self.setting("show_hall"):
             body += f'<div class="sec">Hall of fame</div><div class="grid">{"".join(cols)}</div>'
-        if self.plugin("companion") is not None:          # the players' app: raid alerts on the phone
+        if self.plugin("companion") is not None and self.setting("show_app"):          # the players' app
             body += ('<div class="card appcard" id="app"><span class="ph" aria-hidden="true">📱</span><div class="txt">'
                      '<h2>Companion app</h2>Your team, the game chat, a team map, your kits with their timers and '
                      'raid alarms as notifications on your phone. Pair it with <b>/companion</b> on our Discord. '
@@ -1066,6 +1173,8 @@ class PlayerWebsite(Plugin):
             return 200, self.bans_page(base)
         if path == "wipes" and self.setting("show_wipes"):
             return 200, self.wipes_page(base)
+        if path == "info" and self.own_page() is not None:
+            return 200, self.info_page(base)
         return 404, self.not_found(base)
 
     def asset(self, name: str) -> tuple[bytes, str]:
@@ -1183,9 +1292,9 @@ class PlayerWebsite(Plugin):
             return conditional(request, data, "application/javascript",
                                YEAR if request.query.get("v") == version else "no-cache", charset="utf-8",
                                headers={k: v for k, v in headers.items() if k != "Cache-Control"})
-        if path == "banner" or (path.startswith("gallery/") and path[8:].isdigit()):
-            key = "banner" if path == "banner" else f"gallery_{path[8:]}"
-            custom = self.file(key) if key == "banner" or 1 <= int(path[8:]) <= GALLERY else None
+        if path in ("banner", "background") or (path.startswith("gallery/") and path[8:].isdigit()):
+            key = path if path in ("banner", "background") else f"gallery_{path[8:]}"
+            custom = self.file(key) if key in ("banner", "background") or 1 <= int(path[8:]) <= GALLERY else None
             if custom is None or not custom.exists():
                 return web.Response(status=404, text="Not found.", headers=headers)
             from web.item_images import image_type
