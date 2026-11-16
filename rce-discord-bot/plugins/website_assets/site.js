@@ -33,4 +33,25 @@
     } catch (e) { /* the next round tries again */ }
   }
   setInterval(refresh, 30000);
+
+  // "Copy" next to the server's name (to paste it into the game's server search)
+  document.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-copy]");
+    if (b) {
+      try {
+        await navigator.clipboard.writeText(b.dataset.copy);
+        const label = b.querySelector("span"), old = label.textContent;
+        b.classList.add("ok");
+        label.textContent = "Copied";
+        setTimeout(() => { b.classList.remove("ok"); label.textContent = old; }, 1600);
+      } catch (err) { /* no clipboard: the name is right there to type */ }
+      return;
+    }
+    // the "More" menu closes when you click anywhere else
+    for (const d of document.querySelectorAll("header details[open]")) if (!d.contains(e.target)) d.open = false;
+  });
+  // the phone menu closes when a page in it is picked
+  document.querySelector(".sheet")?.addEventListener("click", (e) => {
+    if (e.target.closest("a")) document.getElementById("mnav").checked = false;
+  });
 })();

@@ -307,7 +307,7 @@ def test_the_server_decides_and_keeps_its_secrets(casino_env, monkeypatch):
             text = await r.text()
             assert "10♠" in text and "9♥" not in text and "2♠" not in text          # hole card + deck stay hidden
             assert "shoe" not in text and casino_env.m.running("casino").bj_state(7)["dealer"][1] == card("9", 1)
-            assert set(re.findall(r'<(?:input|select|button)[^>]*\bname="(\w+)"', text)) <= {"action", "step", "bet"}
+            assert set(re.findall(r'<(?:input|select|button)[^>]*\bname="(\w+)"', text)) <= {"action", "step", "bet", "name"}   # "name": the player search in the page header
         finally:
             await c.close()
             await casino_env.bot.rcon.close()

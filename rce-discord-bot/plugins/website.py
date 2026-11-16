@@ -85,18 +85,6 @@ linear-gradient(180deg,#140821 0%,#08050c 60%)}}
 """.replace("BAT", _BAT).replace("WEB", _WEB)
 
 # Phone menu: a ☰ button opens the full menu (no script needed – a checkbox and a label)
-MENU_CSS = """
-.burger{display:none;cursor:pointer;margin-left:auto;padding:4px 12px;border:1px solid var(--line);font-size:1.35rem;
-line-height:1.2;color:#fff;user-select:none}
-@media (max-width:640px){.burger{display:block}
-.bar nav{display:none;width:100%;margin:0;padding:6px 0 4px;flex-direction:column;gap:0;overflow:visible}
-.bar nav a{padding:10px 6px;font-size:1.05rem;border-top:1px solid rgba(255,255,255,.06)}
-.bar nav a.active::after{left:6px;right:auto;width:40px;bottom:4px}
-#mnav:checked~nav{display:flex}#mnav:checked~.burger{border-color:var(--orange);color:var(--orange)}
-.brand{min-width:0;flex:1}.brand .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bar{flex-wrap:wrap}}
-"""                     # px of the small logo in the header (2× its 42 px for sharp phone screens)
-
 ASSETS = Path(__file__).resolve().parent / "website_assets"     # default logo (replace it on the Plugins page)
 NOISE = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E"
          "%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E"
@@ -253,243 +241,50 @@ def discord_theme_css(palette: tuple[str, str] | None) -> str:
             f"body.theme-discord h1{{text-shadow:0 2px 0 #000,0 0 24px {rgba(main, .45)}}}")
 
 # Dark, burnt "Rust" look: black background with a sunset glow, rusty red/orange accents, rugged cut corners
-STYLE = """
-:root{--bg:#060606;--card:rgba(18,13,11,.88);--card2:rgba(34,22,17,.9);--text:#f1ebe6;--muted:#a8998f;
---line:rgba(229,84,40,.22);--red:ACCENT;--orange:#f7931e;--ok:#3ddc6a;--bad:#e5341c;--gold:#ffb627;
---grad:linear-gradient(90deg,var(--red),var(--orange));--cut:14px;
---head:Impact,"Haettenschweiler","Arial Narrow Bold","Franklin Gothic Heavy","Oswald",sans-serif}
-*{box-sizing:border-box}html{-webkit-text-size-adjust:100%;background:var(--bg)}
-body{margin:0;color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh}
-body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-background:url("NOISE"),radial-gradient(ellipse 90% 55% at 50% -8%,rgba(247,110,30,.32),transparent 70%),
-radial-gradient(ellipse 60% 40% at 85% 10%,rgba(229,52,28,.18),transparent 70%),
-linear-gradient(180deg,#120a07 0%,var(--bg) 55%)}
-a{color:inherit}a:hover{color:var(--orange)}td a,.card p a{text-decoration:none;border-bottom:1px solid var(--line)}
-h1,h2,h3,.brand,nav a,.tabs a,.btn,th,.big,.kicker{font-family:var(--head);text-transform:uppercase;letter-spacing:.06em;
-font-weight:400}
-header{background:rgba(6,6,6,.94);position:sticky;top:0;z-index:5}
-header::after{content:"";display:block;height:2px;background:var(--grad);opacity:.85}
-.bar{max-width:1080px;margin:0 auto;padding:8px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.brand{font-size:1.3rem;text-decoration:none;display:flex;align-items:center;gap:10px;color:#fff}
-.brand img{width:42px;height:42px;border-radius:50%;box-shadow:0 0 14px rgba(247,110,30,.45)}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--bad);display:inline-block;box-shadow:0 0 8px currentColor;
-color:var(--bad)}.dot.on{background:var(--ok);color:var(--ok)}
-nav{display:flex;gap:2px;flex-wrap:wrap;margin-left:auto}nav a{text-decoration:none;padding:7px 12px;color:var(--muted);
-font-size:1.02rem;position:relative}nav a:hover{color:#fff}
-nav a.active{color:#fff}nav a.active::after{content:"";position:absolute;left:10px;right:10px;bottom:2px;height:3px;
-background:var(--grad);clip-path:polygon(0 0,100% 0,96% 100%,4% 100%)}
-main{max-width:1080px;margin:0 auto;padding:26px 16px 40px}
-h1{font-size:2.3rem;margin:.2rem 0 1rem;color:#fff;text-shadow:0 2px 0 #000,0 0 22px rgba(229,52,28,.35)}
-h1::after{content:"";display:block;width:90px;height:4px;margin-top:6px;background:var(--grad);
-clip-path:polygon(0 0,100% 0,94% 100%,0 100%)}
-.hero{text-align:center;padding:10px 0 26px}
-.hero .logo{width:min(360px,74vw);height:auto;aspect-ratio:1;filter:drop-shadow(0 0 28px rgba(247,90,30,.45)) drop-shadow(0 6px 18px #000)}
-.hero h1{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
-.kicker{display:flex;align-items:center;justify-content:center;gap:14px;color:#e9dfd8;font-size:1.15rem;
-letter-spacing:.32em;margin:10px 0 2px}.kicker::before,.kicker::after{content:"";height:3px;width:min(70px,12vw);
-background:var(--grad)}.motto{color:var(--red);font-family:var(--head);letter-spacing:.25em;text-transform:uppercase;
-font-size:.95rem;margin:6px 0 0;text-shadow:0 0 12px rgba(229,52,28,.5)}
-.btn{display:inline-block;margin:18px 6px 0;background:var(--grad);color:#fff;padding:11px 26px;text-decoration:none;
-font-size:1.15rem;clip-path:polygon(10px 0,100% 0,calc(100% - 10px) 100%,0 100%);box-shadow:0 0 20px rgba(229,52,28,.35)}
-.btn:hover{color:#fff;filter:brightness(1.12)}.btn.alt{background:rgba(255,255,255,.08);outline:1px solid var(--line)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:14px}
-.card{background:var(--card);border:1px solid var(--line);padding:18px 20px;margin-bottom:14px;position:relative;
-clip-path:polygon(0 0,calc(100% - var(--cut)) 0,100% var(--cut),100% 100%,var(--cut) 100%,0 calc(100% - var(--cut)));
-box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
-.card::before{content:"";position:absolute;left:0;top:0;width:60px;height:3px;background:var(--grad)}
-.grid .card{margin-bottom:0}.card h2{margin:0 0 10px;font-size:1.25rem;color:#fff}.muted{color:var(--muted)}
-.big{font-size:2.4rem;line-height:1.1;background:var(--grad);-webkit-background-clip:text;background-clip:text;
-color:transparent}.pill{display:inline-block;padding:1px 10px;font-size:.78rem;font-weight:800;color:#fff;
-background:var(--bad);letter-spacing:.08em;text-transform:uppercase;clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%)}
-.pill.on{background:#1f9d4a}
-table{width:100%;border-collapse:collapse}td,th{padding:9px 6px;border-bottom:1px solid rgba(255,255,255,.06);text-align:left}
-th{font-size:.9rem;color:var(--muted)}td.n{width:2.6rem;font-family:var(--head);color:var(--orange);font-size:1.1rem}
-tr:nth-child(1) td.n{color:var(--gold)}td.r,th.r{text-align:right}tr:last-child td{border-bottom:0}
-tbody tr:hover,table tr:hover td{background:rgba(255,255,255,.04)}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}.tabs a{text-decoration:none;padding:6px 16px;
-background:var(--card2);border:1px solid var(--line);font-size:1rem;clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)}
-.tabs a.active{background:var(--grad);color:#fff;border-color:transparent}
-form.search{display:flex;gap:8px}form.search input{flex:1;min-width:0;padding:11px 13px;border:1px solid var(--line);
-background:rgba(0,0,0,.45);color:var(--text);font:inherit;outline:none}form.search input:focus{border-color:var(--orange)}
-form.search button{flex:none;padding:10px 20px;border:0;background:var(--grad);color:#fff;font-family:var(--head);font-size:1.05rem;
-letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
-.items{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.it{position:relative;width:60px;height:60px;
-background:radial-gradient(circle at 50% 40%,rgba(255,255,255,.07),rgba(0,0,0,.35));border:1px solid rgba(255,255,255,.08);
-display:flex;align-items:center;justify-content:center}.it img{width:46px;height:46px;object-fit:contain}
-.it .q{position:absolute;right:4px;bottom:0;font-size:.74rem;font-weight:800;text-shadow:0 1px 2px #000}
-.price{font-family:var(--head);font-size:1.3rem;letter-spacing:.04em;color:var(--gold)}
-.badges{display:flex;flex-wrap:wrap;gap:6px}.badge{background:var(--card2);border:1px solid var(--line);padding:3px 12px;
-font-size:.9rem}ol.rules{padding-left:1.5rem;margin:0}ol.rules li{margin:8px 0;padding-left:4px}
-ol.rules li::marker{color:var(--orange);font-family:var(--head)}.pre{white-space:pre-wrap}
-footer{max-width:1080px;margin:0 auto;padding:18px 16px 34px;font-size:.82rem;color:var(--muted);text-align:center;
-border-top:1px solid rgba(255,255,255,.06)}footer .motto{font-size:.85rem;margin-bottom:4px}
-@media (max-width:640px){h1{font-size:1.8rem}.big{font-size:1.9rem}.bar{gap:6px 10px}
-nav{margin:0 -16px;padding:0 10px;width:calc(100% + 32px);flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
-nav a{padding:6px 9px;font-size:.95rem;white-space:nowrap}.kicker{font-size:.9rem;letter-spacing:.16em;gap:10px;
-white-space:nowrap}.kicker::before,.kicker::after{width:22px}.motto{font-size:.8rem;letter-spacing:.15em}
-.btn{padding:10px 20px;font-size:1.05rem}}
+# The look lives in website_assets/style.css – it is put into every page (the site's CSP allows no outside files).
+STYLE = (ASSETS / "style.css").read_text(encoding="utf-8").replace("NOISE", NOISE)
 
-/* ---- 2.0 look: hero with the name, stat tiles, explore tiles, avatars, podium, steps */
-.card{transition:border-color .15s,transform .15s}
-.hero{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 40px;align-items:center;text-align:left;
-padding:26px 0 30px}
-.hero .logo{width:min(300px,34vw);grid-row:1/span 6}
-.hero h1{position:static;width:auto;height:auto;overflow:visible;clip:auto;font-size:clamp(2.2rem,4.6vw,3.6rem);
-line-height:1.02;margin:0;overflow-wrap:anywhere}
-.hero h1::after{width:120px;margin-top:10px}
-.hero .kicker{justify-content:flex-start;margin:4px 0 0;font-size:1.05rem;letter-spacing:.26em}
-.hero .kicker::before{display:none}.hero .motto{margin:0}
-.hero .acts{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}.hero .acts .btn{margin:0}
-.live{display:inline-flex;align-items:center;gap:8px;padding:5px 14px 5px 10px;background:rgba(0,0,0,.45);
-border:1px solid var(--line);border-radius:999px;font-size:.92rem;width:max-content;max-width:100%;margin-top:6px}
-.live b{color:#fff}.live .dot.on{animation:pulse 2s ease-out infinite}
-@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(61,220,106,.6)}100%{box-shadow:0 0 0 9px rgba(61,220,106,0)}}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:14px}
-.stats .card{margin:0;padding:16px 18px 14px}.stats .card h2{font-size:.95rem;color:var(--muted);margin-bottom:4px;
-display:flex;align-items:center;gap:8px;justify-content:space-between}
-.stats .big{font-size:2.1rem}.meter{height:6px;background:rgba(255,255,255,.08);margin-top:10px;overflow:hidden;
-clip-path:polygon(4px 0,100% 0,calc(100% - 4px) 100%,0 100%)}.meter i{display:block;height:100%;background:var(--grad)}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:14px}
-a.tile{display:flex;gap:12px;align-items:center;text-decoration:none;background:var(--card2);border:1px solid var(--line);
-padding:13px 14px;transition:transform .15s,border-color .15s,background .15s;
-clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px))}
-a.tile:hover{transform:translateY(-2px);border-color:var(--orange);color:inherit;background:var(--card)}
-a.tile .ic{font-size:1.5rem;line-height:1;flex:none}a.tile>span:last-child{min-width:0}a.tile b{display:block;font-family:var(--head);font-weight:400;
-text-transform:uppercase;letter-spacing:.06em;color:#fff;font-size:1.05rem}a.tile small{color:var(--muted);font-size:.82rem;
-line-height:1.3;display:block}
-.av{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;font-weight:800;font-size:.85rem;
-color:#fff;flex:none;vertical-align:middle;margin-right:10px;text-shadow:0 1px 2px rgba(0,0,0,.5);
-box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}.av.xl{width:72px;height:72px;font-size:1.9rem;margin-right:18px}
-.who{display:flex;align-items:center;min-width:0}.who a,.who span.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.podium{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:12px;align-items:end;margin-bottom:14px}
-.podium .card{margin:0;text-align:center;padding:18px 12px 16px}.podium .av{width:54px;height:54px;font-size:1.4rem;margin:0 0 8px}
-.podium .p1{padding-top:26px;padding-bottom:22px;border-color:var(--gold)}.podium .p1 .av{width:68px;height:68px;font-size:1.8rem}
-.podium .medal{font-size:1.5rem;display:block;line-height:1}.podium .nm{display:block;font-weight:700;overflow:hidden;
-text-overflow:ellipsis;white-space:nowrap}.podium .nm a{text-decoration:none}.podium .big{font-size:1.7rem}
-.podium .p1 .big{font-size:2.2rem}.podium small{color:var(--muted)}
-td .barline{height:4px;background:rgba(255,255,255,.07);margin-top:5px;max-width:220px}td .barline i{display:block;height:100%;
-background:var(--grad)}
-ol.steps{list-style:none;counter-reset:st;padding:0;margin:0}ol.steps li{counter-increment:st;display:flex;gap:12px;
-align-items:flex-start;padding:8px 0}ol.steps li+li{border-top:1px solid rgba(255,255,255,.06)}
-ol.steps li::before{content:counter(st);flex:none;width:30px;height:30px;display:grid;place-items:center;
-background:var(--grad);color:#fff;font-family:var(--head);clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%)}
-.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:14px}.two .card{margin:0}
-.appcard{display:flex;gap:20px;align-items:center;flex-wrap:wrap}.appcard .txt{flex:1;min-width:240px}
-.appcard .btn{margin:6px 8px 0 0}.appcard .ph{font-size:3.2rem;line-height:1;filter:drop-shadow(0 0 14px rgba(247,110,30,.4))}
-.profile{display:flex;align-items:center;flex-wrap:wrap;gap:6px 0}.profile h2{font-size:1.7rem!important;margin:0!important}
-footer nav{justify-content:center;margin:0 0 10px;gap:4px 14px}footer nav a{padding:2px 4px;font-size:.92rem}
-@media (max-width:760px){.hero{grid-template-columns:1fr;text-align:center;justify-items:center;padding-top:8px}
-.hero .logo{grid-row:auto;width:min(240px,62vw)}.hero h1::after{margin-left:auto;margin-right:auto}
-.hero .kicker{justify-content:center;font-size:.9rem;letter-spacing:.16em}.hero .acts{justify-content:center}
-.podium{grid-template-columns:1fr}.podium .p1{order:-1}.av{margin-right:8px}
-.tiles{grid-template-columns:1fr 1fr;gap:10px}a.tile{padding:11px 10px;gap:9px}a.tile b{font-size:.8rem;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}a.tile .ic{font-size:1.25rem}a.tile small{font-size:.76rem}
-footer nav{display:flex;width:auto;margin:0 0 10px;flex-wrap:wrap;overflow:visible}}
-@media (prefers-reduced-motion:reduce){.live .dot.on{animation:none}a.tile,.card{transition:none}}
+# Line icons (24×24, drawn here – no icon font, no outside files)
+ICONS = {
+    "home": '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/>',
+    "trophy": '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H4a4 4 0 0 0 4 4M16 6h4a4 4 0 0 1-4 4M12 13v4M8 20h8"/>',
+    "search": '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+    "cart": '<path d="M3 4h2l2.4 11h10.2l2-8H6.2"/><circle cx="9" cy="19" r="1.5"/><circle cx="17" cy="19" r="1.5"/>',
+    "book": '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11M9 8h6"/>',
+    "shield": '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+    "ban": '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+    "calendar": '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>',
+    "coins": '<circle cx="12" cy="12" r="9"/><path d="M14.5 9.2a2.5 2 0 0 0-5 0c0 2.8 5 2 5 5a2.5 2 0 0 1-5 0M12 6v1.2M12 16.8V18"/>',
+    "star": '<path d="M12 3l2.7 5.9 6.3.7-4.7 4.3 1.3 6.3L12 17l-5.6 3.2 1.3-6.3L3 9.6l6.3-.7z"/>',
+    "dice": '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h.01M15 9h.01M12 12h.01M9 15h.01M15 15h.01"/>',
+    "play": '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/>',
+    "user": '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    "users": '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.3a6.5 6.5 0 0 1 3.5 5.7"/>',
+    "info": '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+    "menu": '<path d="M4 6h16M4 12h16M4 18h16"/>',
+    "phone": '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
+    "chart": '<path d="M4 20V4M4 20h16"/><path d="M8 16l4-5 3 3 5-7"/>',
+    "megaphone": '<path d="M3 10v4l11 4V6z"/><path d="M14 8a4 4 0 0 1 0 8M7 15v4"/>',
+    "chat": '<path d="M4 5h16v11H9l-5 4z"/>',
+    "swords": '<path d="M5 3l9 9M3 5l9 9M14 18l4 4M17 15l4 4M19 3l-9 9M21 5l-9 9M10 18l-4 4M7 15l-4 4"/>',
+    "target": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+    "copy": '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>',
+    "image": '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/>',
+    "gift": '<rect x="4" y="9" width="16" height="11" rx="1"/><path d="M4 13h16M12 9v11M12 9c-2-4-6-3-5 0M12 9c2-4 6-3 5 0"/>',
+}
+# page -> (icon, the line under its name on the home page)
+PAGES = {"": ("home", ""), "leaderboard": ("trophy", "Who rules the island"), "player": ("search", "Look up any player's stats"),
+         "store": ("cart", "Kits and more for your base"), "battlepass": ("star", "Play, level up, earn rewards"),
+         "casino": ("dice", "Bet your points"), "streams": ("play", "Who is live right now"),
+         "account": ("user", "Your kits, orders and coins"), "shop": ("coins", "Spend your points"),
+         "rules": ("book", "Read them before you play"), "staff": ("shield", "The team behind the server"),
+         "bans": ("ban", "Who got banned and why"), "wipes": ("calendar", "Past and next wipes"),
+         "info": ("info", "More about this server")}
+MAIN_PAGES = ("", "leaderboard", "player", "store", "rules")     # in the menu bar; the rest sits under "More"
 
-/* ---- 2.1 polish: glowing hero, section titles, medals, rule and staff cards, richer footer */
-::selection{background:var(--red);color:#fff}html{scrollbar-color:var(--red) #0b0b0b;scroll-behavior:smooth}
-.bar,main,footer{max-width:1160px}nav a{transition:color .15s,background .15s;border-radius:3px}
-nav a:hover{background:rgba(255,255,255,.06)}
-main>*{animation:rise .45s ease-out both}main>*:nth-child(2){animation-delay:.05s}main>*:nth-child(3){animation-delay:.1s}
-main>*:nth-child(4){animation-delay:.15s}main>*:nth-child(n+5){animation-delay:.2s}
-@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-.hero{position:relative;padding:44px 0 40px;isolation:isolate}
-.hero::before{content:"";position:absolute;z-index:-1;left:-6%;top:50%;width:min(520px,60vw);aspect-ratio:1;
-transform:translateY(-50%);background:radial-gradient(circle,color-mix(in srgb,var(--red) 55%,transparent) 0%,
-color-mix(in srgb,var(--orange) 22%,transparent) 38%,transparent 68%);filter:blur(26px);opacity:.7;
-animation:glow 7s ease-in-out infinite alternate;pointer-events:none}
-@keyframes glow{from{opacity:.45;transform:translateY(-50%) scale(.94)}to{opacity:.8;transform:translateY(-50%) scale(1.05)}}
-.hero .logo{transition:transform .4s cubic-bezier(.2,.8,.2,1)}.hero .logo:hover{transform:scale(1.03) rotate(-1.5deg)}
-.hero h1{color:#fff}
-.btn{position:relative;overflow:hidden;transition:filter .15s,transform .15s}.btn:hover{transform:translateY(-1px)}
-.btn::after{content:"";position:absolute;top:0;bottom:0;left:-60%;width:40%;background:linear-gradient(100deg,transparent,
-rgba(255,255,255,.28),transparent);transform:skewX(-18deg);transition:left .5s}.btn:hover::after{left:130%}
-.sec{display:flex;align-items:center;gap:14px;margin:26px 0 12px;font-family:var(--head);text-transform:uppercase;
-letter-spacing:.14em;font-size:1.05rem;color:#fff}.sec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,
-var(--line),transparent)}.sec small{color:var(--muted);letter-spacing:.04em;font-family:system-ui,sans-serif;
-text-transform:none;font-size:.85rem}
-.card{background:linear-gradient(180deg,color-mix(in srgb,var(--card2) 55%,transparent),transparent 120px),var(--card)}
-.stats .card:hover,.podium .card:hover,.people .card:hover{border-color:color-mix(in srgb,var(--orange) 60%,transparent);
-transform:translateY(-2px)}
-.stats .card h2 .ic{font-size:1.15rem;margin-right:2px}
-.stats .card h2{justify-content:flex-start;gap:8px}.stats .card h2 .pill{margin-left:auto}
-td.n{font-size:1.15rem}td.n.m{font-size:1.25rem;width:2.9rem}
-tbody tr,table tr{transition:background .12s}
-.phead{margin:6px 0 18px}.phead h1{margin:0}.phead p{margin:10px 0 0;color:var(--muted);max-width:62ch}
-.rulelist{display:grid;gap:10px;counter-reset:rl}.rule{counter-increment:rl;display:flex;gap:16px;align-items:flex-start;
-background:var(--card);border:1px solid var(--line);padding:14px 18px;
-clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px));transition:border-color .15s}
-.rule:hover{border-color:color-mix(in srgb,var(--orange) 60%,transparent)}
-.rule::before{content:counter(rl,decimal-leading-zero);font-family:var(--head);font-size:1.7rem;line-height:1.1;
-background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;flex:none;min-width:2.4rem}
-.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
-.people .card{margin:0;display:flex;align-items:center;gap:4px;padding:16px}.people .av{width:48px;height:48px;font-size:1.25rem;
-margin-right:14px}.people b{display:block;color:#fff;font-size:1.05rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.people .role{display:inline-block;margin-top:3px;font-size:.74rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
-color:var(--orange)}.people .card>div{min-width:0}
-footer{padding-top:26px;border-top:0;position:relative}footer::before{content:"";position:absolute;left:16px;right:16px;top:0;
-height:1px;background:linear-gradient(90deg,transparent,var(--line),transparent)}
-footer .fbrand{display:flex;align-items:center;justify-content:center;gap:10px;font-family:var(--head);text-transform:uppercase;
-letter-spacing:.08em;color:#fff;font-size:1.1rem;margin-bottom:10px}footer .fbrand img{width:34px;height:34px;border-radius:50%}
-@media (max-width:760px){.hero{padding:16px 0 26px}.hero::before{left:50%;top:22%;transform:translate(-50%,-50%);
-width:min(420px,96vw);animation:none}.sec{margin-top:20px}.rule{padding:12px 14px;gap:12px}.rule::before{font-size:1.35rem;min-width:2rem}}
-@media (prefers-reduced-motion:reduce){main>*,.hero::before{animation:none}.btn::after{display:none}html{scroll-behavior:auto}}
 
-/* ---- the owner's own choices: shape, font, hero layout, background picture, announcement */
-body.shape-rounded .card,body.shape-rounded a.tile,body.shape-rounded .rule,body.shape-rounded .btn,
-body.shape-rounded .tabs a,body.shape-rounded .meter,body.shape-rounded ol.steps li::before,body.shape-rounded .ann,
-body.shape-rounded form.search input,body.shape-rounded form.search button{clip-path:none;border-radius:12px}
-body.shape-rounded .pill{clip-path:none;border-radius:99px}body.shape-rounded .card::before{left:14px;border-radius:0 0 3px 3px}
-body.shape-rounded h1::after,body.shape-rounded nav a.active::after{clip-path:none;border-radius:2px}
-body.shape-square .card,body.shape-square a.tile,body.shape-square .rule,body.shape-square .btn,body.shape-square .tabs a,
-body.shape-square .meter,body.shape-square ol.steps li::before,body.shape-square .pill,body.shape-square .ann,
-body.shape-square h1::after,body.shape-square nav a.active::after{clip-path:none;border-radius:0}
-body.font-modern{--head:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-body.font-modern h1,body.font-modern h2,body.font-modern h3,body.font-modern .brand,body.font-modern nav a,
-body.font-modern .tabs a,body.font-modern .btn,body.font-modern th,body.font-modern .big,body.font-modern .kicker,
-body.font-modern .sec,body.font-modern a.tile b{font-weight:800;letter-spacing:.03em}
-body.font-mono{--head:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
-body.font-mono h1,body.font-mono h2,body.font-mono .brand,body.font-mono nav a,body.font-mono .btn,body.font-mono .big,
-body.font-mono .sec,body.font-mono a.tile b{font-weight:700;letter-spacing:.02em}
-body.font-mono nav a{font-size:.92rem}
-body.hero-centered .hero{grid-template-columns:1fr;text-align:center;justify-items:center}
-body.hero-centered .hero .logo{grid-row:auto}body.hero-centered .hero h1::after{margin-left:auto;margin-right:auto}
-body.hero-centered .hero .kicker,body.hero-centered .hero .acts{justify-content:center}
-body.hero-centered .hero .kicker::before{display:block}
-body.hero-centered .hero::before{left:50%;top:26%;transform:translate(-50%,-50%);animation:none}
-body.has-bg::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.2;
-background:var(--bgimg) center/cover no-repeat}
-.ann{display:flex;gap:12px;align-items:center;background:linear-gradient(90deg,color-mix(in srgb,var(--red) 26%,transparent),
-color-mix(in srgb,var(--orange) 12%,transparent));border:1px solid color-mix(in srgb,var(--orange) 55%,transparent);
-padding:11px 16px;margin-bottom:6px;font-weight:600;color:#fff;
-clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px))}.ann .ic{font-size:1.25rem;flex:none}
-.prose h2{margin:22px 0 8px;font-size:1.25rem;color:#fff}.prose h2:first-child{margin-top:0}.prose p{margin:0 0 12px;
-white-space:pre-wrap;overflow-wrap:anywhere}.prose p:last-child{margin-bottom:0}
-footer .foot-note{margin-top:8px;opacity:.85}footer .ext{margin:0 0 10px;display:flex;gap:6px 16px;justify-content:center;
-flex-wrap:wrap}footer .ext a{color:var(--orange);text-decoration:none}footer .ext a:hover{text-decoration:underline}
-
-/* ---- live bits: wipe countdown, players chart, who is online, timeline */
-.count{display:flex;gap:8px;margin-top:6px}.count span{flex:1;min-width:0;background:rgba(0,0,0,.35);border:1px solid var(--line);
-padding:7px 4px 5px;text-align:center}.count b{display:block;font-family:var(--head);font-weight:400;font-size:1.7rem;line-height:1;
-background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
-.count small{display:block;font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:3px}
-body.shape-rounded .count span{border-radius:10px}
-.chart{padding-bottom:12px}.chart svg{display:block;width:100%;height:auto;overflow:visible}
-.chart .ax{display:flex;justify-content:space-between;color:var(--muted);font-size:.78rem;margin-top:4px}
-.chart h2{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}.chart h2 small{font-family:system-ui,sans-serif;
-text-transform:none;letter-spacing:0;color:var(--muted);font-size:.85rem;margin-left:auto}
-.online{display:flex;flex-wrap:wrap;gap:8px}.online a,.online span.p{display:inline-flex;align-items:center;text-decoration:none;
-background:var(--card2);border:1px solid var(--line);border-radius:999px;padding:3px 12px 3px 3px;font-size:.9rem;
-transition:border-color .15s}.online a:hover{border-color:var(--orange);color:inherit}.online .av{width:24px;height:24px;
-font-size:.72rem;margin-right:7px}
-.timeline{list-style:none;margin:0;padding:0 0 0 18px;border-left:2px solid var(--line)}
-.timeline li{position:relative;padding:7px 0 7px 14px}.timeline li::before{content:"";position:absolute;left:-24px;top:14px;
-width:10px;height:10px;border-radius:50%;background:var(--grad)}.timeline b{color:#fff}.timeline small{color:var(--muted);
-margin-left:8px}
-.lost{text-align:center;padding:30px 0 10px}.lost .code{font-family:var(--head);font-size:clamp(4rem,16vw,8rem);line-height:1;
-background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}.lost p{color:var(--muted)}
-.rankline{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}.rankline .badge{border-radius:999px}
-""".replace("NOISE", NOISE)
+def icon(name: str) -> str:
+    return f'<svg class="i" viewBox="0 0 24 24" aria-hidden="true">{ICONS.get(name, ICONS["info"])}</svg>'
 
 
 def esc(text) -> str:
@@ -555,10 +350,10 @@ class PlayerWebsite(Plugin):
         Setting("accent2", "Second colour", "text", "",
                 help="Hex colour, e.g. #f7931e – the colour the main colour blends into (buttons, lines, numbers). "
                      "Empty = the look's own."),
-        Setting("shape", "Shape of cards and buttons", "choice", "angled", choices=("angled", "rounded", "square"),
-                help="angled: cut corners (the Rust look) · rounded: soft corners · square: plain boxes."),
-        Setting("font", "Heading font", "choice", "bold", choices=("bold", "modern", "mono"),
-                help="bold: heavy condensed capitals · modern: clean sans-serif · mono: typewriter / terminal."),
+        Setting("shape", "Shape of cards and buttons", "choice", "rounded", choices=("rounded", "angled", "square"),
+                help="rounded: soft corners · angled: cut corners (the old Rust look) · square: plain boxes."),
+        Setting("font", "Heading font", "choice", "modern", choices=("modern", "bold", "mono"),
+                help="modern: clean sans-serif · bold: heavy condensed capitals · mono: typewriter / terminal."),
         Setting("hero_layout", "Top of the home page", "choice", "side", choices=("side", "centered"),
                 help="side: logo on the left, name and buttons next to it · centered: everything in the middle."),
         Setting("background", "Background picture", "image",
@@ -746,9 +541,31 @@ class PlayerWebsite(Plugin):
 
     def page(self, base: str, active: str, title: str, body: str) -> str:
         links = self.nav_links()
-        nav = "".join(f'<a href="{base}/{path}"{' class="active"' if path == active else ""}>{esc(label)}</a>'
-                      for path, label in links)
+        def link(path, label, *, with_icon=False):
+            return (f'<a href="{base}/{path}"{' class="active" aria-current="page"' if path == active else ""}>'
+                    f'{icon(PAGES.get(path, PAGES["info"])[0]) if with_icon else ""}<span>{esc(label)}</span></a>')
+        # the bar shows the pages everyone needs; with more than six pages the rest folds into "More"
+        main_links = [x for x in links if x[0] in MAIN_PAGES] if len(links) > 6 else links
+        more_links = [x for x in links if x not in main_links]
+        nav = "".join(link(path, label) for path, label in main_links)
+        if more_links:
+            nav += (f'<details><summary{' class="active"' if any(p == active for p, _ in more_links) else ""}>More</summary>'
+                    f'<div class="menu">{"".join(link(p, lab, with_icon=True) for p, lab in more_links)}</div></details>')
         foot = "".join(f'<a href="{base}/{path}">{esc(label)}</a>' for path, label in links)
+        search = (f'<form class="hsearch" method="get" action="{base}/player" role="search">{icon("search")}'
+                  f'<input name="name" placeholder="Find a player" aria-label="Find a player" maxlength="64" required>'
+                  f'</form>' if self.setting("leaderboards") else "")
+        invite = self.setting("invite").strip()
+        cta = (f'<a class="hcta" href="{esc(invite)}" rel="noopener">{icon("chat")}Join Discord</a>'
+               if INVITE.match(invite) else "")
+        # phones: four pages on a tab bar at the thumb, everything in the "More" sheet
+        tabs = [x for x in links if x[0] in ("", "leaderboard", "store", "player", "rules")][:4]
+        short = {"": "Home", "leaderboard": "Ranks", "player": "Players"}
+        tabbar = ("".join(f'<a href="{base}/{path}"{' class="active"' if path == active else ""}>'
+                          f'{icon(PAGES[path][0])}<span>{esc(short.get(path, label))}</span></a>' for path, label in tabs)
+                  + f'<label for="mnav" class="burger" aria-label="Menu">{icon("menu")}<span>More</span></label>')
+        sheet = (f'<div class="sheet">{search}<h3>All pages</h3><div class="links">'
+                 f'{"".join(link(p, lab, with_icon=True) for p, lab in links)}</div>{cta}</div>')
         accent = self.setting("accent").strip()
         accent = accent if re.fullmatch(r"#[0-9a-fA-F]{6}", accent) else "#e5341c"
         if self._style is None or self._style[0] != accent:
@@ -767,8 +584,8 @@ class PlayerWebsite(Plugin):
         accent2 = str(self.setting("accent2") or "").strip()
         if re.fullmatch(r"#[0-9a-fA-F]{6}", accent2):
             theme_css += f"body.theme-{theme}{{--orange:{accent2}}}"
-        shape = self.setting("shape") if self.setting("shape") in ("angled", "rounded", "square") else "angled"
-        font = self.setting("font") if self.setting("font") in ("bold", "modern", "mono") else "bold"
+        shape = self.setting("shape") if self.setting("shape") in ("angled", "rounded", "square") else "rounded"
+        font = self.setting("font") if self.setting("font") in ("bold", "modern", "mono") else "modern"
         looks = f"shape-{shape} font-{font} hero-{'centered' if self.setting('hero_layout') == 'centered' else 'side'}"
         if self.file("background") is not None:
             looks += " has-bg"
@@ -784,7 +601,7 @@ class PlayerWebsite(Plugin):
         ext = "".join(f'<a href="{esc(url)}" rel="noopener nofollow" target="_blank">{esc(label)}</a>'
                       for label, url in self.extra_links())
         foot_note = str(self.setting("footer_text") or "").strip()[:200]
-        extra_css = (MENU_CSS + theme_css + "body{--grad:linear-gradient(90deg,var(--red),var(--orange))}"
+        extra_css = (theme_css + "body{--grad:linear-gradient(90deg,var(--red),var(--orange))}"
                      + (HALLOWEEN_CSS if season == "halloween" else ""))
         decor = spider = pumpkins = ""
         if season == "halloween":
@@ -799,15 +616,18 @@ class PlayerWebsite(Plugin):
                 f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon?v={version}">{social}'
                 f'<script src="{base}/site.js?v={self.asset_version("site.js")}" defer></script>'
                 f'<style>{self._style[1]}{extra_css}</style></head><body class="{season} theme-{theme} {looks}" data-base="{base}">{decor}'
+                f'<a class="skip" href="#main">Skip to the content</a><input type="checkbox" id="mnav" hidden>'
                 f'<header><div class="bar"><a class="brand" href="{base}/"><img src="{base}/logo?s={HEADER_LOGO}'
                 f'&amp;v={version}" alt="" width="42" height="42" decoding="async">'
                 f'<span class="name">{esc(site)}</span><span class="dot{" on" if live["online"] else ""}" '
                 f'title="{"Online" if live["online"] else "Offline"}"></span></a>'
-                f'<input type="checkbox" id="mnav" hidden><label for="mnav" class="burger" aria-label="Menu">☰'
-                f'</label><nav>{nav}</nav></div>{spider}</header>'
-                f'<main>{body}</main><footer>{pumpkins}<div class="fbrand"><img src="{base}/logo?s={HEADER_LOGO}&amp;v={version}" alt="" width="34" height="34" loading="lazy">{esc(site)}</div><nav>{foot}</nav>{f'<div class="ext">{ext}</div>' if ext else ""}{motto}Updated {esc(updated)} · '
+                f'<nav aria-label="Pages">{nav}</nav>{search}{cta}</div>{spider}</header>'
+                f'<main id="main">{body}</main><footer>{pumpkins}<div class="fbrand"><img src="{base}/logo?s={HEADER_LOGO}'
+                f'&amp;v={version}" alt="" width="34" height="34" loading="lazy">{esc(site)}</div><nav aria-label="All pages">'
+                f'{foot}</nav>{f'<div class="ext">{ext}</div>' if ext else ""}{motto}Updated {esc(updated)} · '
                 f'{esc(self.bot.config.rust_server_platform)}'
-                + (f'<div class="foot-note">{esc(foot_note)}</div>' if foot_note else "") + '</footer></body></html>')
+                + (f'<div class="foot-note">{esc(foot_note)}</div>' if foot_note else "")
+                + f'</footer>{sheet}<nav class="tabbar" aria-label="Main pages">{tabbar}</nav></body></html>')
 
     def item_tiles(self, items) -> str:
         tiles = []
@@ -826,7 +646,7 @@ class PlayerWebsite(Plugin):
         count = (f"{players} / {max_players}" if max_players else str(players)) if online else "–"
         meter = (f'<div class="meter"><i{live_meter} style="width:{min(100, round(100 * players / max_players))}%"></i></div>'
                  if online and max_players else "")
-        return (f'<div class="card"><h2><span class="ic">👥</span>{esc(title)} <span class="pill{" on" if online else ""}">'
+        return (f'<div class="card"><h2><span class="ic">{icon("users")}</span>{esc(title)} <span class="pill{" on" if online else ""}">'
                 f'{"Online" if online else "Offline"}</span></h2><div class="big"{live}>{esc(count)}</div>'
                 f'<div class="muted">{str(queued) + " in queue" if queued else "players online"}</div>{meter}</div>')
 
@@ -839,31 +659,31 @@ class PlayerWebsite(Plugin):
         return "".join(self._server_card(s["name"], bool(s.get("online")), int(s.get("players") or 0),
                                          int(s.get("max_players") or 0), int(s.get("queued") or 0)) for s in every)
 
-    TILES = {"leaderboard": ("🏆", "Who rules the island"), "player": ("🔎", "Look up any player's stats"),
-             "store": ("🛒", "Kits and more for your base"), "battlepass": ("🎖️", "Play, level up, earn rewards"),
-             "casino": ("🎰", "Bet your points"), "streams": ("📺", "Who is live right now"),
-             "account": ("👤", "Your kits, orders and coins"), "shop": ("💰", "Spend your points"),
-             "rules": ("📜", "Read them before you play"), "staff": ("🛡️", "The team behind the server"),
-             "bans": ("🔨", "Who got banned and why"), "wipes": ("🧹", "Past and next wipes"),
-             "info": ("📌", "More about this server")}
+    def tiles(self, base: str) -> str:
+        """A big link to every page that is on (the home page's "Explore", the 404 page)."""
+        return "".join(f'<a class="tile" href="{base}/{path}"><span class="ic">{icon(PAGES[path][0])}</span><span>'
+                       f'<b>{esc(label)}</b><small>{PAGES[path][1]}</small></span></a>'
+                       for path, label in self.nav_links() if path and path in PAGES)
 
     def home(self, base: str) -> str:
-        live, tz = self.live(), self.tz
+        live, tz, now = self.live(), self.tz, self.now()
         invite, store = self.setting("invite").strip(), self.setting("store").strip()
         buttons = ""
         if INVITE.match(invite):
-            buttons += f'<a class="btn" href="{esc(invite)}" rel="noopener">Join our Discord</a>'
+            buttons += f'<a class="btn" href="{esc(invite)}" rel="noopener">{icon("chat")}Join our Discord</a>'
+        buttons += f'<a class="btn alt" href="#join">{icon("play")}How to join</a>'
         if store.startswith("https://") and len(store) < 300:
-            buttons += f'<a class="btn alt" href="{esc(store)}" rel="noopener">Store</a>'
+            buttons += f'<a class="btn alt" href="{esc(store)}" rel="noopener">{icon("cart")}Store</a>'
         for label, url in self.extra_links():
             buttons += f'<a class="btn alt" href="{esc(url)}" rel="noopener nofollow" target="_blank">{esc(label)}</a>'
         if self.plugin("companion") is not None and self.setting("show_app"):          # the players' app
-            buttons += '<a class="btn alt" href="#app">📱 Get the app</a>'
+            buttons += f'<a class="btn alt" href="#app">{icon("phone")}Get the app</a>'
         players = (f'{live["players"]} / {live["max_players"]}' if live["max_players"] else str(live["players"])) \
             if live["online"] else "–"
+        wipe_soon = bool(live["next_wipe"] and live["next_wipe"] > now)
         if live["next_wipe"]:
             wipe = datetime.fromtimestamp(live["next_wipe"], tz).strftime("%a %d %b, %H:%M")
-            wipe_sub = f'in {format_duration(max(live["next_wipe"] - self.now(), 0))} ({getattr(tz, "key", "UTC")})'
+            wipe_sub = f'in {format_duration(max(live["next_wipe"] - now, 0))} ({getattr(tz, "key", "UTC")})'
         else:
             wipe, wipe_sub = self.bot.config.rust_server_wipe or "Announced on Discord", ""
         tagline, motto = self.setting("tagline").strip(), self.setting("motto").strip()
@@ -872,71 +692,79 @@ class PlayerWebsite(Plugin):
         if self.seasonal() == "halloween" and message:
             banner = (f'<div class="card hw-banner"><span class="pk">🎃</span> {esc(message)} '
                       '<span class="pk">🦇</span></div>')
-        hero_bg = ""
-        if self.file("banner") is not None:
-            hero_bg = (f' style="background:linear-gradient(180deg,rgba(0,0,0,.35),rgba(0,0,0,.75)),'
-                       f'url(\'{base}/banner?v={self._file_version("banner")}\') center/cover;border-radius:var(--cut);'
-                       f'padding:28px 12px"')
-        status = (f'<div class="live"><span class="dot{" on" if live["online"] else ""}"></span>'
-                  + (f'<span><b data-live="players">{esc(players)}</b> players online</span>' if live["online"] else "<span>Server offline</span>")
-                  + "</div>")
         news = str(self.setting("announcement") or "").strip()[:240]
         if news:
-            banner += f'<div class="ann"><span class="ic">📣</span><span>{esc(news)}</span></div>'
-        body = (banner + f'<section class="hero"{hero_bg}><img class="logo" src="{base}/logo?v={self.picture_version()}" '
-                f'alt="" width="300" height="300" fetchpriority="high">'
-                f'<h1>{esc(self.site_title())}</h1>'
+            banner += f'<div class="ann"><span class="ic">{icon("megaphone")}</span><span>{esc(news)}</span></div>'
+        hero_pic = ""
+        if self.file("banner") is not None:
+            hero_pic = (f' style="background:linear-gradient(100deg,rgba(0,0,0,.82) 20%,rgba(0,0,0,.45)),'
+                        f'url(\'{base}/banner?v={self._file_version("banner")}\') center/cover"')
+        chips = (f'<div class="live"><span class="dot{" on" if live["online"] else ""}"></span>'
+                 + (f'<span><b data-live="players">{esc(players)}</b> players online</span>' if live["online"]
+                    else "<span>Server offline</span>") + "</div>")
+        if wipe_soon:
+            chips += f'<div class="live">{icon("calendar")}<span>Next wipe <b>{esc(wipe)}</b></span></div>'
+        body = (banner + f'<section class="hero{" pic" if hero_pic else ""}"{hero_pic}><img class="logo" '
+                f'src="{base}/logo?v={self.picture_version()}" alt="" width="300" height="300" fetchpriority="high">'
                 + (f'<div class="kicker">{esc(tagline)}</div>' if tagline else "")
-                + (f'<div class="motto">{esc(motto)}</div>' if motto else "")
-                + status + (f'<div class="acts">{buttons}</div>' if buttons else "")
-                + '</section><div class="stats">'
-                + self._server_cards(players, live) +
-                f'<div class="card"><h2><span class="ic">🧹</span>Next wipe</h2>'
-                + (self.countdown(live["next_wipe"]) + f'<div class="muted" style="margin-top:8px">{esc(wipe)} '
-                   f'({esc(getattr(tz, "key", "UTC"))})</div>' if live["next_wipe"] and live["next_wipe"] > self.now() else
-                   f'<div class="big" style="font-size:1.45rem;line-height:1.3">{esc(wipe)}</div>'
-                   f'<div class="muted">{esc(wipe_sub)}</div>') + '</div>')
+                + f'<h1>{esc(self.site_title())}</h1>'
+                + (f'<p class="motto">{esc(motto)}</p>' if motto else "")
+                + f'<div class="chips">{chips}</div><div class="acts">{buttons}</div></section>')
+
+        # ---- right now: players, next wipe, today's peak
+        body += ('<div class="stats">' + self._server_cards(players, live)
+                 + f'<div class="card"><h2><span class="ic">{icon("calendar")}</span>Next wipe</h2>'
+                 + (self.countdown(live["next_wipe"]) + f'<div class="muted" style="margin-top:8px">{esc(wipe)} '
+                    f'({esc(getattr(tz, "key", "UTC"))})</div>' if wipe_soon else
+                    f'<div class="big" style="font-size:1.4rem;line-height:1.3">{esc(wipe)}</div>'
+                    f'<div class="muted">{esc(wipe_sub)}</div>') + '</div>')
         if live["peak_24h"]:
-            body += (f'<div class="card"><h2><span class="ic">📈</span>Busiest today</h2><div class="big">{live["peak_24h"]}</div>'
-                     f'<div class="muted">players at the peak (24 h)</div></div>')
+            body += (f'<div class="card"><h2><span class="ic">{icon("chart")}</span>Busiest today</h2>'
+                     f'<div class="big">{live["peak_24h"]}</div><div class="muted">players at the peak (24 h)</div></div>')
         body += "</div>"
-        if self.setting("show_chart"):
-            body += self.population_chart()
+
+        # ---- how to get in: the first thing a new player needs
+        join = self.setting("how_to_join").strip()
+        lines = [ln.strip() for ln in join.splitlines() if ln.strip()]
+        numbered = [re.match(r"^\d{1,2}[.)]\s+(.*)$", ln) for ln in lines]
+        if len(lines) > 1 and all(numbered):
+            how = f'<ol class="steps">{"".join(f"<li><span>{esc(m.group(1))}</span></li>" for m in numbered)}</ol>'
+        elif len(lines) == 1 and 2 <= join.count("→") <= 6:        # "Open … → Play → …": one step per arrow
+            how = f'<ol class="steps">{"".join(f"<li><span>{esc(part.strip())}</span></li>" for part in join.split("→"))}</ol>'
+        elif join:
+            how = f'<div class="pre">{esc(join)}</div>'
+        else:
+            how = ('<ol class="steps"><li><span>Open Rust Console Edition and go to <b>Play</b></span></li>'
+                   '<li><span>Open <b>Community servers</b> and search for our name</span></li>'
+                   '<li><span>Join – and link your player on our Discord with <b>/link</b></span></li></ol>')
+        name = self.server_name if self.server_name != "the server" else self.site_title()
+        body += (f'<div class="card join" id="join"><div><h2>How to join</h2>{how}</div><div>'
+                 f'<div class="muted">Search for this name in the server list:</div><div class="name"><code>{esc(name)}</code>'
+                 f'<button class="copy" type="button" data-copy="{esc(name)}">{icon("copy")}<span>Copy</span></button></div>'
+                 + (f'<a class="btn" style="margin-top:14px" href="{esc(invite)}" rel="noopener">{icon("chat")}Join our Discord</a>'
+                    if INVITE.match(invite) else "") + '</div></div>')
+
+        # ---- everything the site has
+        tiles = self.tiles(base)
+        if tiles and self.setting("show_tiles"):
+            body += f'<div class="sec">Explore <small>everything this server has</small></div><div class="tiles">{tiles}</div>'
+
+        # ---- who is on, how the day went
         online_now = sorted(self.bot.online_players, key=str.lower)
         if self.setting("show_online") and online_now:
-            chips = "".join(
+            people = "".join(
                 (f'<a href="{base}/player?{urlencode({"name": n})}">{self.avatar(n)}{esc(n)}</a>'
                  if self.setting("leaderboards") else f'<span class="p">{self.avatar(n)}{esc(n)}</span>')
                 for n in online_now[:30])
-            more = f'<span class="muted" style="align-self:center">+{len(online_now) - 30} more</span>' if len(online_now) > 30 else ""
-            body += (f'<div class="sec">Online now <small>{len(online_now)} playing</small></div>'
-                     f'<div class="online">{chips}{more}</div>')
-        tiles = "".join(f'<a class="tile" href="{base}/{path}"><span class="ic">{self.TILES[path][0]}</span><span>'
-                        f'<b>{esc(label)}</b><small>{self.TILES[path][1]}</small></span></a>'
-                        for path, label in self.nav_links() if path in self.TILES)
-        if tiles and self.setting("show_tiles"):
-            body += f'<div class="sec">Explore <small>everything this server has</small></div><div class="tiles">{tiles}</div>'
-        about, join = self.setting("about").strip(), self.setting("how_to_join").strip()
-        intro = []
-        if about:
-            intro.append(f'<div class="card"><h2>About</h2><div class="pre">{esc(about)}</div></div>')
-        if join:
-            lines = [ln.strip() for ln in join.splitlines() if ln.strip()]
-            numbered = [re.match(r"^\d{1,2}[.)]\s+(.*)$", ln) for ln in lines]
-            steps = (f'<ol class="steps">{"".join(f"<li><span>{esc(m.group(1))}</span></li>" for m in numbered)}</ol>'
-                     if len(lines) > 1 and all(numbered) else f'<div class="pre">{esc(join)}</div>')
-            intro.append(f'<div class="card"><h2>How to join</h2>{steps}</div>')
-        if intro:
-            body += f'<div class="sec">The server</div><div class="two">{"".join(intro)}</div>'
-        shots = [i for i in range(1, GALLERY + 1) if self.file(f"gallery_{i}") is not None]
-        if shots:
-            pics = "".join(f'<a href="{base}/gallery/{i}?v={self._file_version(f"gallery_{i}")}" target="_blank">'
-                           f'<img src="{base}/gallery/{i}?v={self._file_version(f"gallery_{i}")}" alt="" loading="lazy" '
-                           f'style="width:100%;aspect-ratio:16/10;object-fit:cover;display:block;border-radius:8px">'
-                           f'</a>' for i in shots)
-            body += (f'<div class="card"><h2>📸 {esc(self.setting("gallery_title") or "Our server")}</h2>'
-                     f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">'
-                     f'{pics}</div></div>')
+            more = (f'<span class="muted" style="align-self:center">+{len(online_now) - 30} more</span>'
+                    if len(online_now) > 30 else "")
+            body += (f'<div class="sec">{icon("users")}Online now <small>{len(online_now)} playing</small></div>'
+                     f'<div class="online">{people}{more}</div>')
+        if self.setting("show_chart"):
+            chart = self.population_chart()
+            body += (f'<div class="sec">{icon("chart")}Activity</div>{chart}') if chart else ""
+
+        # ---- the best
         cols = []
         if self.setting("leaderboards"):
             top = [r for r in self.bot.db.leaderboard("kills", 5) if r["kills"]]
@@ -944,27 +772,41 @@ class PlayerWebsite(Plugin):
                 rows = "".join(f'<tr>{self.rank(i)}<td>{self.who(base, r["name"])}<div class="barline">'
                                f'<i style="width:{round(100 * r["kills"] / top[0]["kills"])}%"></i></div></td>'
                                f'<td class="r">{r["kills"]}</td></tr>' for i, r in enumerate(top, 1))
-                cols.append(f'<div class="card"><h2>⚔️ Top killers</h2><table>{rows}</table>'
-                            f'<p><a href="{base}/leaderboard">Full leaderboard →</a></p></div>')
+                cols.append(f'<div class="card"><h2>{icon("swords")} Top killers</h2><table>{rows}</table>'
+                            f'<a class="btn alt" style="margin-top:12px" href="{base}/leaderboard">Full leaderboard →</a></div>')
         bounties = self.bounties()[:5]
         if bounties:
             rows = "".join(f'<tr><td>{self.who(base, n)}</td><td class="r price">{esc(self.fmt_points(a))}</td></tr>'
                            for n, a in bounties)
-            cols.append(f'<div class="card"><h2>🎯 Bounties</h2><table>{rows}</table>'
+            cols.append(f'<div class="card"><h2>{icon("target")} Bounties</h2><table>{rows}</table>'
                         f'<p class="muted">Kill them to collect – /bounty on Discord.</p></div>')
         if cols and self.setting("show_hall"):
-            body += f'<div class="sec">Hall of fame</div><div class="grid">{"".join(cols)}</div>'
+            body += f'<div class="sec">{icon("trophy")}Hall of fame</div><div class="grid">{"".join(cols)}</div>'
+
+        # ---- about the server, pictures
+        about = self.setting("about").strip()
+        shots = [i for i in range(1, GALLERY + 1) if self.file(f"gallery_{i}") is not None]
+        if about or shots:
+            body += f'<div class="sec">{icon("info")}The server</div>'
+        if about:
+            body += f'<div class="card"><h2>About</h2><div class="pre">{esc(about)}</div></div>'
+        if shots:
+            pics = "".join(f'<a href="{base}/gallery/{i}?v={self._file_version(f"gallery_{i}")}" target="_blank">'
+                           f'<img src="{base}/gallery/{i}?v={self._file_version(f"gallery_{i}")}" alt="" loading="lazy">'
+                           f'</a>' for i in shots)
+            body += (f'<div class="card"><h2>📸 {esc(self.setting("gallery_title") or "Our server")}</h2>'
+                     f'<div class="gallery">{pics}</div></div>')
         if self.plugin("companion") is not None and self.setting("show_app"):          # the players' app
-            body += ('<div class="card appcard" id="app"><span class="ph" aria-hidden="true">📱</span><div class="txt">'
-                     '<h2>Companion app</h2>Your team, the game chat, a team map, your kits with their timers and '
-                     'raid alarms as notifications on your phone. Pair it with <b>/companion</b> on our Discord. '
-                     '<span class="muted">iPhone: open it in Safari and choose Share → Add to Home Screen.</span></div>'
-                     '<div><a class="btn" href="/app/rce-companion.apk" download>Android app</a>'
+            body += (f'<div class="card appcard" id="app"><span class="ph" aria-hidden="true">{icon("phone")}</span>'
+                     '<div class="txt"><h2>Companion app</h2>Your team, the game chat, a team map, your kits with their '
+                     'timers and raid alarms as notifications on your phone. Pair it with <b>/companion</b> on our '
+                     'Discord. <span class="muted">iPhone: open it in Safari and choose Share → Add to Home Screen.'
+                     '</span></div><div><a class="btn" href="/app/rce-companion.apk" download>Android app</a>'
                      '<a class="btn alt" href="/p/companion/app">iPhone app</a></div></div>')
         early = self.plugin("early_bird")
         if early is not None and live["next_wipe"]:
-            body += (f'<div class="card"><h2>🐦 Wipe day bonus</h2>The first {early.setting("players")} linked players '
-                     f'online after the wipe get a reward. Link your player on Discord with /link.</div>')
+            body += (f'<div class="card"><h2>{icon("gift")} Wipe day bonus</h2>The first {early.setting("players")} linked '
+                     f'players online after the wipe get a reward. Link your player on Discord with /link.</div>')
         return self.page(base, "", "", body)
 
     @staticmethod
@@ -997,7 +839,7 @@ class PlayerWebsite(Plugin):
         peak_i = max(range(len(rows)), key=lambda i: rows[i][1])
         px, py = pts[peak_i]
         peak_at = datetime.fromtimestamp(rows[peak_i][0], self.tz).strftime("%H:%M")
-        return (f'<div class="card chart"><h2>📈 Players today <small>peak {round(rows[peak_i][1])} at {peak_at}</small></h2>'
+        return (f'<div class="card chart"><h2>{icon("chart")} Players today <small>peak {round(rows[peak_i][1])} at {peak_at}</small></h2>'
                 f'<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" role="img" '
                 f'aria-label="Players online over the last 24 hours"><defs><linearGradient id="pg" x1="0" y1="0" x2="0" '
                 f'y2="1"><stop offset="0" style="stop-color:var(--orange);stop-opacity:.45"/><stop offset="1" '
@@ -1036,10 +878,10 @@ class PlayerWebsite(Plugin):
             rows = [r for r in self.bot.db.leaderboard(by, 50) if r["kills"] or r["playtime_seconds"]]
             body = "".join(
                 f'<tr>{self.rank(i)}<td>{self.who(base, r["name"])}</td><td class="r">{r["kills"]}</td>'
-                f'<td class="r">{r["deaths"]}</td><td class="r">{r["kills"] / max(r["deaths"], 1):.2f}</td>'
-                f'<td class="r">{esc(format_duration(r["playtime_seconds"]))}</td></tr>' for i, r in enumerate(rows, 1))
-            table = (f'<table><tr><th></th><th>Player</th><th class="r">Kills</th><th class="r">Deaths</th>'
-                     f'<th class="r">K/D</th><th class="r">Playtime</th></tr>{body}</table>') if rows \
+                f'<td class="r wide-only">{r["deaths"]}</td><td class="r">{r["kills"] / max(r["deaths"], 1):.2f}</td>'
+                f'<td class="r wide-only">{esc(format_duration(r["playtime_seconds"]))}</td></tr>' for i, r in enumerate(rows, 1))
+            table = (f'<table><tr><th></th><th>Player</th><th class="r">Kills</th><th class="r wide-only">Deaths</th>'
+                     f'<th class="r">K/D</th><th class="r wide-only">Playtime</th></tr>{body}</table>') if rows \
                 else '<p class="muted">No stats yet.</p>'
         podium = ""
         if by != "teams" and len(rows) >= 3:                 # the top three get a stage (1st in the middle)
@@ -1237,7 +1079,7 @@ class PlayerWebsite(Plugin):
                         f"{datetime.fromtimestamp(w, self.tz).strftime('%H:%M')}<small>{ago(w)}</small></li>"
                         for w in wipes[:50])
         body = ('<div class="phead"><h1>Wipes</h1><p>When the map was wiped – and when the next fresh start is.</p></div>'
-                + (f'<div class="card"><h2>🧹 Next wipe</h2>'
+                + (f'<div class="card"><h2>{icon("calendar")} Next wipe</h2>'
                    + (self.countdown(nxt) if nxt > now else "")
                    + f'<div class="muted" style="margin-top:8px">{datetime.fromtimestamp(nxt, self.tz).strftime("%A, %d %B %Y · %H:%M")}'
                      f' ({esc(getattr(self.tz, "key", "UTC"))})</div></div>' if nxt else "")
@@ -1246,9 +1088,7 @@ class PlayerWebsite(Plugin):
         return self.page(base, "wipes", "Wipes", body)
 
     def not_found(self, base: str) -> str:
-        tiles = "".join(f'<a class="tile" href="{base}/{path}"><span class="ic">{self.TILES[path][0]}</span><span>'
-                        f'<b>{esc(label)}</b><small>{self.TILES[path][1]}</small></span></a>'
-                        for path, label in self.nav_links() if path in self.TILES)
+        tiles = self.tiles(base)
         return self.page(base, "", "Not found",
                          f'<div class="lost"><div class="code">404</div><h1 style="display:inline-block">Not found</h1>'
                          f'<p>This page got raided – nothing left here.</p><a class="btn" href="{base}/">Back to the '
