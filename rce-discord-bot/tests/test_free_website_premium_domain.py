@@ -134,7 +134,7 @@ def test_website_owner_choices(pb):  # noqa: F811
         await pb.m.set_enabled("website", True)
         site = pb.m.running("website")
         page = site.home("")
-        assert "shape-angled font-bold hero-side" in page and 'class="ann"' not in page and ' has-bg">' not in page
+        assert "shape-angled font-bold hero-side" in page and 'class="ann"' not in page and ' has-bg"' not in page
         assert site.render("", "info", {})[0] == 404
         await pb.m.save_settings("website", {
             "shape": "rounded", "font": "mono", "hero_layout": "centered", "accent2": "#00e5ff",
@@ -145,7 +145,7 @@ def test_website_owner_choices(pb):  # noqa: F811
             "show_tiles": False, "show_hall": False, "show_app": False})
         await pb.m.save_file("website", "background", _png((5, 5, 5)))
         page = site.home("")
-        assert 'shape-rounded font-mono hero-centered has-bg">' in page and "--orange:#00e5ff" in page
+        assert 'shape-rounded font-mono hero-centered has-bg"' in page and "--orange:#00e5ff" in page
         assert "/background?v=" in page and "Wipe on &lt;b&gt;Thursday&lt;/b&gt;" in page
         assert 'href="https://www.tiktok.com/@kryvon"' in page and "https://vote.example/kryvon?x=1" in page
         assert "javascript:" not in page and "http://x.io" not in page          # only https links
@@ -155,4 +155,32 @@ def test_website_owner_choices(pb):  # noqa: F811
         assert code == 200 and "<h2>Perks</h2>" in info and "Ask &lt;admins&gt; on Discord." in info
         await pb.m.save_settings("website", {"accent2": "red; background:url(x)", "shape": "angled"})
         assert "background:url(x)" not in site.home("")                           # not a hex colour: ignored
+    asyncio.run(main())
+
+
+def test_website_live_bits(pb):  # noqa: F811
+    import time
+
+    async def main():
+        await pb.m.load_all()
+        await pb.m.set_enabled("website", True)
+        site = pb.m.running("website")
+        page = site.home("")
+        assert "/site.js?v=" in page and 'data-base=""' in page and 'property="og:title"' in page
+        assert "Players today" not in page and "Online now" not in page          # no data yet: no empty boxes
+        now = int(time.time())
+        for i in range(30):
+            pb.db.add_population_sample(now - 86000 + i * 2800, 10 + (i * 7) % 40, 100, 0)
+        pb.bot.online_players = {"Bob<script>": {}, "Ann": {}}
+        site._status = None
+        page = site.home("")
+        assert "Players today" in page and "<polyline" in page and "peak 4" in page
+        assert "Online now" in page and "Bob&lt;script&gt;" in page and "<script>" not in page.split("</head>")[1]
+        cells = site.countdown(now + 90061)
+        assert f'data-until="{now + 90061}"' in cells and '<b data-u="d">1</b>' in cells and '<b data-u="h">01</b>' in cells
+        await pb.m.save_settings("website", {"show_chart": False, "show_online": False})
+        page = site.home("")
+        assert "Players today" not in page and "Online now" not in page
+        code, lost = site.render("", "nope", {})
+        assert code == 404 and 'class="code">404' in lost
     asyncio.run(main())
