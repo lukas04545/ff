@@ -616,7 +616,8 @@ class PlayerWebsite(Plugin):
                 f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon?v={version}">{social}'
                 f'<script src="{base}/site.js?v={self.asset_version("site.js")}" defer></script>'
                 f'<style>{self._style[1]}{extra_css}</style></head><body class="{season} theme-{theme} {looks}" data-base="{base}">{decor}'
-                f'<a class="skip" href="#main">Skip to the content</a><input type="checkbox" id="mnav" hidden>'
+                f'<a class="skip" href="#main">Skip to the content</a><div class="prog" aria-hidden="true"></div>'
+                f'<input type="checkbox" id="mnav" hidden>'
                 f'<header><div class="bar"><a class="brand" href="{base}/"><img src="{base}/logo?s={HEADER_LOGO}'
                 f'&amp;v={version}" alt="" width="42" height="42" decoding="async">'
                 f'<span class="name">{esc(site)}</span><span class="dot{" on" if live["online"] else ""}" '
@@ -704,7 +705,7 @@ class PlayerWebsite(Plugin):
                     else "<span>Server offline</span>") + "</div>")
         if wipe_soon:
             chips += f'<div class="live">{icon("calendar")}<span>Next wipe <b>{esc(wipe)}</b></span></div>'
-        body = (banner + f'<section class="hero{" pic" if hero_pic else ""}"{hero_pic}><img class="logo" '
+        body = (banner + f'<section class="hero{" pic" if hero_pic else ""}"{hero_pic}><img class="logo tilt" data-tilt="10" '
                 f'src="{base}/logo?v={self.picture_version()}" alt="" width="300" height="300" fetchpriority="high">'
                 + (f'<div class="kicker">{esc(tagline)}</div>' if tagline else "")
                 + f'<h1>{esc(self.site_title())}</h1>'
@@ -720,7 +721,7 @@ class PlayerWebsite(Plugin):
                     f'<div class="muted">{esc(wipe_sub)}</div>') + '</div>')
         if live["peak_24h"]:
             body += (f'<div class="card"><h2><span class="ic">{icon("chart")}</span>Busiest today</h2>'
-                     f'<div class="big">{live["peak_24h"]}</div><div class="muted">players at the peak (24 h)</div></div>')
+                     f'<div class="big" data-count>{live["peak_24h"]}</div><div class="muted">players at the peak (24 h)</div></div>')
         body += "</div>"
 
         # ---- how to get in: the first thing a new player needs
@@ -844,9 +845,9 @@ class PlayerWebsite(Plugin):
                 f'aria-label="Players online over the last 24 hours"><defs><linearGradient id="pg" x1="0" y1="0" x2="0" '
                 f'y2="1"><stop offset="0" style="stop-color:var(--orange);stop-opacity:.45"/><stop offset="1" '
                 f'style="stop-color:var(--red);stop-opacity:0"/></linearGradient></defs>'
-                f'<polygon points="{area}" fill="url(#pg)"/><polyline points="{line}" fill="none" '
+                f'<polygon class="ar" points="{area}" fill="url(#pg)"/><polyline class="ln" pathLength="1" points="{line}" fill="none" '
                 f'style="stroke:var(--orange)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>'
-                f'<circle cx="{px:.1f}" cy="{py:.1f}" r="3.5" style="fill:var(--gold)"/></svg>'
+                f'<circle class="pk" cx="{px:.1f}" cy="{py:.1f}" r="3.5" style="fill:var(--gold)"/></svg>'
                 f'<div class="ax"><span>24 h ago</span><span>12 h ago</span><span>now</span></div></div>')
 
     @staticmethod
@@ -890,7 +891,7 @@ class PlayerWebsite(Plugin):
                         format_duration(r["playtime_seconds"]) if by == "playtime" else str(r["kills"]))
             spots = "".join(
                 f'<div class="card p{place}"><span class="medal">{medal}</span>{self.avatar(r["name"])}'
-                f'<span class="nm">{self.player_link(base, r["name"])}</span><div class="big">{esc(value(r))}</div>'
+                f'<span class="nm">{self.player_link(base, r["name"])}</span><div class="big"{" data-count" if value(r).isdigit() else ""}>{esc(value(r))}</div>'
                 f'<small>{esc(BOARDS[by])}</small></div>'
                 for place, medal, r in ((2, "🥈", rows[1]), (1, "🥇", rows[0]), (3, "🥉", rows[2])))
             podium = f'<div class="podium">{spots}</div>'
@@ -924,7 +925,8 @@ class PlayerWebsite(Plugin):
         kd = row["kills"] / max(row["deaths"], 1)
         stats = [("Kills", row["kills"]), ("Deaths", row["deaths"]), ("K/D", f"{kd:.2f}"),
                  ("Playtime", format_duration(row["playtime_seconds"]))]
-        cards = "".join(f'<div class="card"><h2>{k}</h2><div class="big">{esc(v)}</div></div>' for k, v in stats)
+        cards = "".join(f'<div class="card"><h2>{k}</h2><div class="big"{" data-count" if str(v).isdigit() else ""}>{esc(v)}</div></div>'
+                        for k, v in stats)
         extra = []
         if row["platform"]:
             extra.append(f"Platform: {esc(row['platform'])}")
