@@ -259,11 +259,11 @@ def build_portal(db: DB, box: SecretBox, settings: Settings, changed: Callable[[
     def shop(request, title: str, body: str) -> web.Response:
         c = me(request)
         if c:
-            nav = (f"<a href=/dashboard>Dashboard</a><form method=post action=/logout class=inline>"
+            nav = (f"<a href=/servers>Servers</a><a href=/dashboard>Dashboard</a><form method=post action=/logout class=inline>"
                    f"<input type=hidden name=csrf value={sess.csrf(request)}><button class='ghost small'>Sign out"
                    f"</button></form>")
         else:
-            nav = "<a href=/#plans>Packages</a><a href=/login>Sign in</a><a class='btn small' href=/signup>Get started</a>"
+            nav = "<a href=/servers>Servers</a><a href=/#plans>Packages</a><a href=/login>Sign in</a><a class='btn small' href=/signup>Get started</a>"
         return shop_ui.shop_page(settings.shop_name, title, body, nav=nav)
 
     def flash(request) -> str:
@@ -287,6 +287,7 @@ def build_portal(db: DB, box: SecretBox, settings: Settings, changed: Callable[[
 <section class=hero><h1>Your Rust Console server,<br><em>run by one smart bot</em></h1>
 <p>Kits, shop, points, tickets, stats, events and an AI that does the admin work – set up in minutes, hosted for
 you. No PC that has to stay on.</p><a class=btn href=#plans>See the packages</a>
+ <a class="btn ghost" href=/servers>Browse the servers</a>
 {'' if signed_in else ' <a class="btn ghost" href=/login>Sign in</a>'}</section>
 <div class=feats><div class=feat><b>🎁 Kits &amp; shop</b><span>Kit claims with emotes, a points shop and a web store
 for your players.</span></div><div class=feat><b>🎫 Tickets &amp; moderation</b><span>Support tickets, reports,
@@ -295,6 +296,66 @@ bounties, battle royale, weekly recaps and more.</span></div><div class=feat><b>
 <span>Your own admin website, encrypted database, DDoS protection, daily backups.</span></div></div>
 <h2 class=section id=plans>Packages</h2><p class=section>Monthly, cancel any time. Sign up to create an account.</p>
 {cards}""")
+
+    hub_cache: dict = {"at": 0.0, "rows": []}
+
+    def hub_servers() -> list[dict]:
+        """The servers on the public list: running, paid for, and not switched off by their customer – busiest
+        first. Kept for 20 seconds (the page is public)."""
+        if time.time() - hub_cache["at"] < 20:
+            return hub_cache["rows"]
+        out = []
+        for s in db.q("SELECT s.id, s.slug, s.name, s.customer_id, h.discord_ready, h.guild_name, h.rcon_connected, "
+                      "h.players_online FROM servers s JOIN customers c ON c.id = s.customer_id LEFT JOIN health h ON "
+                      "h.server_id = s.id WHERE s.status = 'active' AND s.listed = 1 AND c.status = 'active'"):
+            if not billing.subscription_ok(db, s["customer_id"]):
+                continue
+            out.append({"name": s["name"], "url": provisioning.public_url(db, settings, s["id"], s["slug"]),
+                        "online": bool(s["rcon_connected"]), "players": int(s["players_online"] or 0),
+                        "discord": s["guild_name"] if s["discord_ready"] else None})
+        out.sort(key=lambda r: (-r["online"], -r["players"], r["name"].lower()))
+        hub_cache.update(at=time.time(), rows=out)
+        return out
+
+    async def hub(request):
+        """The hub: every server on the platform with a button to its own website."""
+        rows = hub_servers()
+
+        def card(r):
+            hue = sum(ord(ch) * (i + 7) for i, ch in enumerate(r["name"].lower())) % 360
+            letter = next((ch for ch in r["name"] if ch.isalnum()), "?").upper()
+            return (f"<div class=srv><div class=top><span class=av style='background:linear-gradient(135deg,"
+                    f"hsl({hue} 62% 46%),hsl({(hue + 40) % 360} 58% 30%))'>{esc(letter)}</span><div class=names>"
+                    f"<h3>{esc(r['name'])}</h3><div class=sub>{esc(r['discord'] or 'Rust Console Edition')}</div></div></div>"
+                    f"<div class=facts><span class='pill {'ok' if r['online'] else 'bad'}'><span class='dotl"
+                    f"{' on' if r['online'] else ''}'></span>{'Online' if r['online'] else 'Offline'}</span>"
+                    + (f"<span class=pill>👥 {r['players']} playing</span>" if r["online"] else "")
+                    + f"</div><a class=btn href='{esc(r['url'])}/' rel=noopener>Visit website →</a></div>")
+        online = sum(1 for r in rows if r["online"])
+        body = (f"<section class=hero style='padding-bottom:10px'><h1>All <em>servers</em></h1><p>Every Rust Console "
+                f"server running on {esc(settings.shop_name or 'this platform')} – pick one and open its website: "
+                f"leaderboards, store, rules and how to join.</p></section>"
+                f"<div class=hubstats><div><b>{len(rows)}</b><span>servers</span></div><div><b>{online}</b>"
+                f"<span>online now</span></div><div><b>{sum(r['players'] for r in rows)}</b><span>players in game"
+                f"</span></div></div>"
+                + (f"<div class=hub>{''.join(card(r) for r in rows)}</div>" if rows else
+                   "<div class=card><p class=muted>No servers are listed yet – be the first: "
+                   "<a href=/#plans>see the packages</a>.</p></div>"))
+        resp = shop(request, "Servers", body)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+    async def set_listed(request):
+        c = need(request)
+        s = own_server(c, int(request.match_info["sid"]))
+        data = await sess.form(request)
+        on = 1 if str(data.get("on", "")) == "1" else 0
+        db.run("UPDATE servers SET listed = ? WHERE id = ?", (on, s["id"]))
+        db.audit(f"customer:{c['id']}", "server.listed" if on else "server.unlisted", customer_id=c["id"],
+                 server_id=s["id"])
+        hub_cache["at"] = 0.0
+        raise web.HTTPSeeOther("/dashboard?m=" + quote_plus(
+            f"{s['name']} is {'shown on' if on else 'hidden from'} the public server list."))
 
     async def signup_page(request):
         if me(request):
@@ -442,6 +503,10 @@ placeholder="10+ characters"></label><button style="width:100%">{'Continue to pa
             f"<form method=post action=/servers/{s['id']}/password-link class=inline target=_blank>{hidden}<button "
             f"class='ghost small' title='First login or forgot it? Choose your panel password'>🔑 Panel password"
             f"</button></form> "
+            f"<form method=post action=/servers/{s['id']}/listed class=inline>{hidden}<input type=hidden name=on "
+            f"value={'0' if s['listed'] else '1'}><button class='ghost small' title='The public list of all servers "
+            f"(/servers) links to your website'>{'🌐 Listed – hide' if s['listed'] else '🌐 Hidden – list it'}</button>"
+            f"</form> "
             f"<form method=post action=/servers/{s['id']}/remove class=inline onsubmit=\"return confirm('Remove "
             f"this server? Its data is kept for a while.')\">{hidden}<button class='danger small'>Remove</button>"
             f"</form></td></tr>"
@@ -987,6 +1052,7 @@ in.</span></p></div>""")
                     web.post("/signup", signup), web.post("/login", login),
                     web.post("/logout", logout), web.get("/dashboard", dashboard), web.post("/servers", add_server),
                     web.post(r"/servers/{sid:\d+}/token", set_token), web.post(r"/servers/{sid:\d+}/remove", remove),
+                    web.get("/servers", hub), web.post(r"/servers/{sid:\d+}/listed", set_listed),
                     web.post("/billing/checkout", checkout), web.post("/billing/portal", billing_portal),
                     web.post("/stripe/webhook", stripe_webhook), web.get("/paused/{slug}", paused),
                     web.get(r"/servers/{sid:\d+}/discord", discord_install), web.get("/discord/callback", discord_callback),

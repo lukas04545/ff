@@ -226,6 +226,8 @@ PRAGMA foreign_keys = ON;""")
             self.conn.execute("ALTER TABLE plans ADD COLUMN custom_domain INTEGER NOT NULL DEFAULT 0")
         if "plan_id" not in subs:      # the customer's package (plans)
             self.conn.execute("ALTER TABLE subscriptions ADD COLUMN plan_id INTEGER")
+        if "listed" not in cols:       # shown on the public list of servers (the hub) – the customer can switch it off
+            self.conn.execute("ALTER TABLE servers ADD COLUMN listed INTEGER NOT NULL DEFAULT 1")
         if "manager_ai" not in cols:   # the management AI in this server's Discord – only on servers the owner chose
             self.conn.execute("ALTER TABLE servers ADD COLUMN manager_ai INTEGER NOT NULL DEFAULT 0")
         if self.conn.execute("SELECT 1 FROM settings_kv WHERE key = 'manager_ai_for_all'").fetchone() is None:
