@@ -4,7 +4,10 @@
 --line:rgba(229,84,40,.22);--red:ACCENT;--orange:#f7931e;--ok:#3ddc6a;--bad:#e5341c;--gold:#ffb627;
 --grad:linear-gradient(90deg,var(--red),var(--orange));--cut:14px;--r:14px;--r2:10px;--pad:20px;--wide:1180px;
 --head:Impact,"Haettenschweiler","Arial Narrow Bold","Franklin Gothic Heavy","Oswald",sans-serif;
---soft:rgba(255,255,255,.06);--softer:rgba(255,255,255,.035)}
+--soft:rgba(255,255,255,.06);--softer:rgba(255,255,255,.035);
+--fs-sm:clamp(.84rem,.8rem + .15vw,.92rem);--fs-lg:clamp(1.15rem,1.05rem + .5vw,1.4rem);
+--e1:0 1px 2px rgba(0,0,0,.4);--e2:0 8px 24px -10px rgba(0,0,0,.7);--e3:0 22px 50px -18px rgba(0,0,0,.85);
+--ease:cubic-bezier(.2,.8,.2,1)}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;background:var(--bg);scrollbar-color:var(--red) #0b0b0b;scroll-behavior:smooth;
 scroll-padding-top:84px}
@@ -91,9 +94,13 @@ border-radius:var(--r);padding:14px;font-weight:650}.sheet .links a.active{borde
 
 /* ---- page frame */
 main{max-width:var(--wide);margin:0 auto;padding:26px var(--pad) 44px}
-main>*{animation:rise .4s ease-out both}main>*:nth-child(2){animation-delay:.04s}main>*:nth-child(3){animation-delay:.08s}
-main>*:nth-child(n+4){animation-delay:.12s}
-@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+/* things come in as you reach them (site.js marks them; without it nothing is hidden) */
+.js .rv{opacity:0;transform:translateY(18px)}
+.js .rv.in{opacity:1;transform:none;transition:opacity .55s var(--ease),transform .55s var(--ease);
+transition-delay:calc(var(--i,0) * 55ms)}
+/* how far down the page you are */
+.prog{position:fixed;left:0;top:0;height:3px;width:100%;z-index:15;background:var(--grad);transform-origin:0 50%;
+transform:scaleX(var(--p,0));pointer-events:none;opacity:.95}
 .phead{margin:6px 0 20px}.phead h1{margin:0}.phead p{margin:12px 0 0;color:var(--muted);max-width:62ch}
 .sec{display:flex;align-items:center;gap:12px;margin:34px 0 14px;font-size:1.05rem;letter-spacing:.12em;color:#fff}
 .sec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
@@ -101,12 +108,14 @@ main>*:nth-child(n+4){animation-delay:.12s}
 .sec svg.i{color:var(--orange)}
 
 /* ---- surfaces */
-.card{background:linear-gradient(180deg,var(--softer),transparent 140px),var(--card);border:1px solid var(--line);
-border-radius:var(--r);padding:20px 22px;margin-bottom:16px;position:relative;transition:border-color .15s,transform .15s}
+.card{background:radial-gradient(460px circle at var(--mx,-999px) var(--my,-999px),color-mix(in srgb,var(--orange) 10%,transparent),
+transparent 62%),linear-gradient(180deg,var(--softer),transparent 140px),var(--card);border:1px solid var(--line);
+border-radius:var(--r);padding:20px 22px;margin-bottom:16px;position:relative;box-shadow:var(--e1);
+transition:border-color .2s,transform .25s var(--ease),box-shadow .25s}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:16px}
 .grid .card,.two .card,.stats .card,.people .card,.podium .card{margin:0}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px}
-.big{font-size:2.3rem;line-height:1.1;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.big{font-variant-numeric:tabular-nums;font-size:2.3rem;line-height:1.1;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;font-size:.74rem;font-weight:800;color:#fff;
 background:var(--bad);letter-spacing:.07em;text-transform:uppercase;border-radius:999px;vertical-align:middle}
 .pill.on{background:#1f9d4a}
@@ -114,11 +123,14 @@ background:var(--bad);letter-spacing:.07em;text-transform:uppercase;border-radiu
 text-decoration:none;font-weight:750;font-size:1rem;border-radius:var(--r2);border:0;cursor:pointer;position:relative;
 overflow:hidden;transition:filter .15s,transform .15s;box-shadow:0 10px 26px -12px var(--red);margin:6px 8px 0 0}
 .btn:hover{color:#fff;filter:brightness(1.1);transform:translateY(-1px)}
+.btn:active,.hcta:active,.copy:active,a.tile:active{transform:scale(.97)}
 .btn.alt{background:var(--soft);box-shadow:inset 0 0 0 1px var(--soft);color:var(--text)}
 .btn.alt:hover{background:rgba(255,255,255,.1);color:#fff}
 .btn svg.i{width:1.15em;height:1.15em}
 .meter{height:7px;background:var(--soft);border-radius:99px;margin-top:12px;overflow:hidden}
-.meter i{display:block;height:100%;background:var(--grad);border-radius:99px;transition:width .6s}
+.meter i{display:block;height:100%;background:var(--grad);border-radius:99px;transition:width .6s;transform-origin:0 50%}
+.js .rv:not(.in) .meter i,.js .rv:not(.in) td .barline i{transform:scaleX(0)}
+.js .rv.in .meter i,.js .rv.in td .barline i{transform:none;transition:transform .9s var(--ease) .25s,width .6s}
 
 /* ---- home: hero */
 .hero{position:relative;isolation:isolate;display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 44px;
@@ -128,11 +140,20 @@ transform:translateY(-50%);background:radial-gradient(circle,color-mix(in srgb,v
 color-mix(in srgb,var(--orange) 20%,transparent) 38%,transparent 68%);filter:blur(28px);opacity:.65;pointer-events:none;
 animation:glow 7s ease-in-out infinite alternate}
 @keyframes glow{from{opacity:.4}to{opacity:.75}}
+.hero::after{content:"";position:absolute;z-index:-1;right:-6%;top:8%;width:min(440px,50vw);aspect-ratio:1;
+background:radial-gradient(circle,color-mix(in srgb,var(--orange) 34%,transparent) 0%,transparent 66%);filter:blur(34px);
+opacity:.4;pointer-events:none;animation:drift 16s ease-in-out infinite alternate}
+@keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(-9%,14%) scale(1.15)}}
+.hero.pic::after{display:none}
+.tilt{transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));transition:transform .18s ease-out;
+will-change:transform}
+.js .rv.in.tilt{transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));
+transition:opacity .55s var(--ease),transform .18s ease-out}
 .hero.pic{padding:38px 34px;border-radius:calc(var(--r) + 6px);overflow:hidden;border:1px solid var(--soft)}
 .hero.pic::before{display:none}
 .hero .logo{width:min(250px,30vw);height:auto;aspect-ratio:1;grid-row:1/span 6;
 filter:drop-shadow(0 10px 30px rgba(0,0,0,.7));transition:transform .4s cubic-bezier(.2,.8,.2,1)}
-.hero .logo:hover{transform:scale(1.03) rotate(-1.5deg)}
+
 .hero h1{font-size:clamp(2.2rem,5vw,3.8rem);margin:0;overflow-wrap:anywhere;text-shadow:0 2px 0 rgba(0,0,0,.9)}
 .hero h1::after{display:none}
 .kicker{display:flex;align-items:center;gap:12px;color:var(--orange);font-size:.95rem;letter-spacing:.24em;margin:0}
@@ -151,7 +172,8 @@ border:1px solid var(--soft);border-radius:999px;font-size:.92rem;max-width:100%
 align-items:center;gap:8px;text-transform:uppercase}
 .stats .card h2 .ic{color:var(--orange);display:inline-flex}.stats .card h2 .pill{margin-left:auto}
 .stats .big{font-size:2.3rem}
-.stats .card:hover,.podium .card:hover,.people .card:hover{border-color:color-mix(in srgb,var(--orange) 60%,transparent)}
+.stats .card:hover,.podium .card:hover,.people .card:hover{border-color:color-mix(in srgb,var(--orange) 60%,transparent);
+box-shadow:var(--e2)}
 .count{display:flex;gap:8px;margin-top:4px}
 .count span{flex:1;min-width:0;background:rgba(0,0,0,.35);border:1px solid var(--soft);border-radius:var(--r2);padding:8px 4px 6px;
 text-align:center}
@@ -175,7 +197,9 @@ background:var(--grad);color:#fff;font-weight:800;font-size:.95rem}
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-bottom:16px}
 a.tile{display:flex;gap:14px;align-items:center;text-decoration:none;background:var(--card);border:1px solid var(--line);
 border-radius:var(--r);padding:15px 16px;transition:transform .15s,border-color .15s,background .15s}
-a.tile:hover{transform:translateY(-2px);border-color:var(--orange);color:inherit;background:var(--card2)}
+a.tile:hover{transform:translateY(-3px);border-color:var(--orange);color:inherit;box-shadow:var(--e2);
+background:radial-gradient(260px circle at var(--mx,50%) var(--my,50%),color-mix(in srgb,var(--orange) 16%,transparent),transparent 65%),var(--card2)}
+a.tile:hover .ic{transform:scale(1.08) rotate(-4deg)}a.tile .ic{transition:transform .25s var(--ease)}
 a.tile .ic{flex:none;width:44px;height:44px;border-radius:12px;display:grid;place-items:center;color:var(--orange);
 background:color-mix(in srgb,var(--red) 16%,transparent)}a.tile .ic svg.i{width:22px;height:22px}
 a.tile>span:last-of-type{min-width:0;flex:1}
@@ -189,6 +213,10 @@ a.tile:hover::after{transform:translateX(3px) rotate(45deg);opacity:1}
 border:1px solid var(--line);border-radius:999px;padding:4px 13px 4px 4px;font-size:.92rem;transition:border-color .15s}
 .online a:hover{border-color:var(--orange);color:inherit}.online .av{width:26px;height:26px;font-size:.74rem;margin-right:8px}
 .chart{padding-bottom:14px}.chart>svg{display:block;width:100%;height:auto;overflow:visible}
+.js .rv:not(.in) .chart .ln{stroke-dashoffset:1}.js .rv:not(.in) .chart .ar,.js .rv:not(.in) .chart .pk{opacity:0}
+.chart .ln{stroke-dasharray:1;stroke-dashoffset:0}
+.js .rv.in .chart .ln{transition:stroke-dashoffset 1.6s var(--ease) .15s}
+.js .rv.in .chart .ar{transition:opacity .9s ease .7s}.js .rv.in .chart .pk{transition:opacity .3s ease 1.5s}
 .chart .ax{display:flex;justify-content:space-between;color:var(--muted);font-size:.78rem;margin-top:6px}
 .chart h2{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.chart h2 svg.i{color:var(--orange)}
 .chart h2 small{font:400 .85rem system-ui,sans-serif;text-transform:none;letter-spacing:0;color:var(--muted);margin-left:auto}
@@ -305,7 +333,7 @@ td,th{padding:10px 5px}.av{margin-right:8px}
 .wide-only{display:none}
 }
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}
-html{scroll-behavior:auto}}
+html{scroll-behavior:auto}.js .rv{opacity:1;transform:none}.prog{display:none}}
 
 /* ---- the owner's choices: shape, heading font, hero layout, background picture */
 body.shape-angled{--r:0px;--r2:0px}
