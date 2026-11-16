@@ -328,6 +328,63 @@ nav{margin:0 -16px;padding:0 10px;width:calc(100% + 32px);flex-wrap:nowrap;overf
 nav a{padding:6px 9px;font-size:.95rem;white-space:nowrap}.kicker{font-size:.9rem;letter-spacing:.16em;gap:10px;
 white-space:nowrap}.kicker::before,.kicker::after{width:22px}.motto{font-size:.8rem;letter-spacing:.15em}
 .btn{padding:10px 20px;font-size:1.05rem}}
+
+/* ---- 2.0 look: hero with the name, stat tiles, explore tiles, avatars, podium, steps */
+.card{transition:border-color .15s,transform .15s}
+.hero{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 40px;align-items:center;text-align:left;
+padding:26px 0 30px}
+.hero .logo{width:min(300px,34vw);grid-row:1/span 6}
+.hero h1{position:static;width:auto;height:auto;overflow:visible;clip:auto;font-size:clamp(2.2rem,4.6vw,3.6rem);
+line-height:1.02;margin:0;overflow-wrap:anywhere}
+.hero h1::after{width:120px;margin-top:10px}
+.hero .kicker{justify-content:flex-start;margin:4px 0 0;font-size:1.05rem;letter-spacing:.26em}
+.hero .kicker::before{display:none}.hero .motto{margin:0}
+.hero .acts{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}.hero .acts .btn{margin:0}
+.live{display:inline-flex;align-items:center;gap:8px;padding:5px 14px 5px 10px;background:rgba(0,0,0,.45);
+border:1px solid var(--line);border-radius:999px;font-size:.92rem;width:max-content;max-width:100%;margin-top:6px}
+.live b{color:#fff}.live .dot.on{animation:pulse 2s ease-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(61,220,106,.6)}100%{box-shadow:0 0 0 9px rgba(61,220,106,0)}}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:14px}
+.stats .card{margin:0;padding:16px 18px 14px}.stats .card h2{font-size:.95rem;color:var(--muted);margin-bottom:4px;
+display:flex;align-items:center;gap:8px;justify-content:space-between}
+.stats .big{font-size:2.1rem}.meter{height:6px;background:rgba(255,255,255,.08);margin-top:10px;overflow:hidden;
+clip-path:polygon(4px 0,100% 0,calc(100% - 4px) 100%,0 100%)}.meter i{display:block;height:100%;background:var(--grad)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:14px}
+a.tile{display:flex;gap:12px;align-items:center;text-decoration:none;background:var(--card2);border:1px solid var(--line);
+padding:13px 14px;transition:transform .15s,border-color .15s,background .15s;
+clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px))}
+a.tile:hover{transform:translateY(-2px);border-color:var(--orange);color:inherit;background:var(--card)}
+a.tile .ic{font-size:1.5rem;line-height:1;flex:none}a.tile>span:last-child{min-width:0}a.tile b{display:block;font-family:var(--head);font-weight:400;
+text-transform:uppercase;letter-spacing:.06em;color:#fff;font-size:1.05rem}a.tile small{color:var(--muted);font-size:.82rem;
+line-height:1.3;display:block}
+.av{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;font-weight:800;font-size:.85rem;
+color:#fff;flex:none;vertical-align:middle;margin-right:10px;text-shadow:0 1px 2px rgba(0,0,0,.5);
+box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}.av.xl{width:72px;height:72px;font-size:1.9rem;margin-right:18px}
+.who{display:flex;align-items:center;min-width:0}.who a,.who span.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.podium{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:12px;align-items:end;margin-bottom:14px}
+.podium .card{margin:0;text-align:center;padding:18px 12px 16px}.podium .av{width:54px;height:54px;font-size:1.4rem;margin:0 0 8px}
+.podium .p1{padding-top:26px;padding-bottom:22px;border-color:var(--gold)}.podium .p1 .av{width:68px;height:68px;font-size:1.8rem}
+.podium .medal{font-size:1.5rem;display:block;line-height:1}.podium .nm{display:block;font-weight:700;overflow:hidden;
+text-overflow:ellipsis;white-space:nowrap}.podium .nm a{text-decoration:none}.podium .big{font-size:1.7rem}
+.podium .p1 .big{font-size:2.2rem}.podium small{color:var(--muted)}
+td .barline{height:4px;background:rgba(255,255,255,.07);margin-top:5px;max-width:220px}td .barline i{display:block;height:100%;
+background:var(--grad)}
+ol.steps{list-style:none;counter-reset:st;padding:0;margin:0}ol.steps li{counter-increment:st;display:flex;gap:12px;
+align-items:flex-start;padding:8px 0}ol.steps li+li{border-top:1px solid rgba(255,255,255,.06)}
+ol.steps li::before{content:counter(st);flex:none;width:30px;height:30px;display:grid;place-items:center;
+background:var(--grad);color:#fff;font-family:var(--head);clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:14px}.two .card{margin:0}
+.appcard{display:flex;gap:20px;align-items:center;flex-wrap:wrap}.appcard .txt{flex:1;min-width:240px}
+.appcard .btn{margin:6px 8px 0 0}.appcard .ph{font-size:3.2rem;line-height:1;filter:drop-shadow(0 0 14px rgba(247,110,30,.4))}
+.profile{display:flex;align-items:center;flex-wrap:wrap;gap:6px 0}.profile h2{font-size:1.7rem!important;margin:0!important}
+footer nav{justify-content:center;margin:0 0 10px;gap:4px 14px}footer nav a{padding:2px 4px;font-size:.92rem}
+@media (max-width:760px){.hero{grid-template-columns:1fr;text-align:center;justify-items:center;padding-top:8px}
+.hero .logo{grid-row:auto;width:min(240px,62vw)}.hero h1::after{margin-left:auto;margin-right:auto}
+.hero .kicker{justify-content:center;font-size:.9rem;letter-spacing:.16em}.hero .acts{justify-content:center}
+.podium{grid-template-columns:1fr}.podium .p1{order:-1}.av{margin-right:8px}
+.tiles{grid-template-columns:1fr 1fr;gap:10px}a.tile{padding:11px 10px;gap:9px}a.tile b{font-size:.92rem;letter-spacing:.03em;overflow-wrap:anywhere}a.tile small{font-size:.76rem}
+footer nav{display:flex;width:auto;margin:0 0 10px;flex-wrap:wrap;overflow:visible}}
+@media (prefers-reduced-motion:reduce){.live .dot.on{animation:none}a.tile,.card{transition:none}}
 """.replace("NOISE", NOISE)
 
 
@@ -499,7 +556,8 @@ class PlayerWebsite(Plugin):
 
     # ------------------------------------------------------------ Layout
 
-    def page(self, base: str, active: str, title: str, body: str) -> str:
+    def nav_links(self) -> list[tuple[str, str]]:
+        """(path, label) of every page that is switched on – the menu, the footer and the home page's tiles."""
         links = [("", "Home")]
         if self.setting("leaderboards"):
             links += [("leaderboard", "Leaderboard"), ("player", "Players")]
@@ -523,8 +581,13 @@ class PlayerWebsite(Plugin):
             links.append(("bans", "Bans"))
         if self.setting("show_wipes"):
             links.append(("wipes", "Wipes"))
-        nav = "".join(f'<a href="{base}/{path}" class="{"active" if path == active else ""}">{esc(label)}</a>'
+        return links
+
+    def page(self, base: str, active: str, title: str, body: str) -> str:
+        links = self.nav_links()
+        nav = "".join(f'<a href="{base}/{path}"{' class="active"' if path == active else ""}>{esc(label)}</a>'
                       for path, label in links)
+        foot = "".join(f'<a href="{base}/{path}">{esc(label)}</a>' for path, label in links)
         accent = self.setting("accent").strip()
         accent = accent if re.fullmatch(r"#[0-9a-fA-F]{6}", accent) else "#e5341c"
         if self._style is None or self._style[0] != accent:
@@ -560,7 +623,7 @@ class PlayerWebsite(Plugin):
                 f'title="{"Online" if live["online"] else "Offline"}"></span></a>'
                 f'<input type="checkbox" id="mnav" hidden><label for="mnav" class="burger" aria-label="Menu">☰'
                 f'</label><nav>{nav}</nav></div>{spider}</header>'
-                f'<main>{body}</main><footer>{pumpkins}{motto}Updated {esc(updated)} · '
+                f'<main>{body}</main><footer>{pumpkins}<nav>{foot}</nav>{motto}Updated {esc(updated)} · '
                 f'{esc(self.bot.config.rust_server_platform)}</footer></body></html>')
 
     def item_tiles(self, items) -> str:
@@ -574,23 +637,30 @@ class PlayerWebsite(Plugin):
 
     # ------------------------------------------------------------ Pages
 
+    @staticmethod
+    def _server_card(title: str, online: bool, players: int, max_players: int, queued: int) -> str:
+        count = (f"{players} / {max_players}" if max_players else str(players)) if online else "–"
+        meter = (f'<div class="meter"><i style="width:{min(100, round(100 * players / max_players))}%"></i></div>'
+                 if online and max_players else "")
+        return (f'<div class="card"><h2>{esc(title)} <span class="pill{" on" if online else ""}">'
+                f'{"Online" if online else "Offline"}</span></h2><div class="big">{esc(count)}</div>'
+                f'<div class="muted">{str(queued) + " in queue" if queued else "players online"}</div>{meter}</div>')
+
     def _server_cards(self, players: str, live: dict) -> str:
-        """The "Server" card – one per server when this bot runs several (name, online, players)."""
+        """The "Server" tile – one per server when this bot runs several (name, online, players, how full)."""
         every = self.all_servers_live()
         if not every:
-            return (f'<div class="card"><h2>Server</h2><span class="pill{" on" if live["online"] else ""}">'
-                    f'{"Online" if live["online"] else "Offline"}</span><div class="big">{esc(players)}</div>'
-                    f'<div class="muted">{str(live["queued"]) + " in queue" if live["queued"] else "players online"}'
-                    f'</div></div>')
-        cards = ""
-        for s in every:
-            count = (f'{s["players"]} / {s["max_players"]}' if s.get("max_players") else str(s.get("players", 0))) \
-                if s.get("online") else "–"
-            cards += (f'<div class="card"><h2>{esc(s["name"])}</h2><span class="pill{" on" if s.get("online") else ""}">'
-                      f'{"Online" if s.get("online") else "Offline"}</span><div class="big">{esc(count)}</div>'
-                      f'<div class="muted">{str(s["queued"]) + " in queue" if s.get("queued") else "players online"}'
-                      f'</div></div>')
-        return cards
+            return self._server_card("Server", bool(live["online"]), int(live["players"] or 0),
+                                     int(live["max_players"] or 0), int(live["queued"] or 0))
+        return "".join(self._server_card(s["name"], bool(s.get("online")), int(s.get("players") or 0),
+                                         int(s.get("max_players") or 0), int(s.get("queued") or 0)) for s in every)
+
+    TILES = {"leaderboard": ("🏆", "Who rules the island"), "player": ("🔎", "Look up any player's stats"),
+             "store": ("🛒", "Kits and more for your base"), "battlepass": ("🎖️", "Play, level up, earn rewards"),
+             "casino": ("🎰", "Bet your points"), "streams": ("📺", "Who is live right now"),
+             "account": ("👤", "Your kits, orders and coins"), "shop": ("💰", "Spend your points"),
+             "rules": ("📜", "Read them before you play"), "staff": ("🛡️", "The team behind the server"),
+             "bans": ("🔨", "Who got banned and why"), "wipes": ("🧹", "Past and next wipes")}
 
     def home(self, base: str) -> str:
         live, tz = self.live(), self.tz
@@ -601,8 +671,7 @@ class PlayerWebsite(Plugin):
         if store.startswith("https://") and len(store) < 300:
             buttons += f'<a class="btn alt" href="{esc(store)}" rel="noopener">Store</a>'
         if self.plugin("companion") is not None:          # the players' Android app
-            buttons += ('<a class="btn alt" href="/app/rce-companion.apk" download>📱 Android app</a>'
-                        '<a class="btn alt" href="/p/companion/app">📱 iPhone app</a>')
+            buttons += '<a class="btn alt" href="#app">📱 Get the app</a>'
         players = (f'{live["players"]} / {live["max_players"]}' if live["max_players"] else str(live["players"])) \
             if live["online"] else "–"
         if live["next_wipe"]:
@@ -621,22 +690,40 @@ class PlayerWebsite(Plugin):
             hero_bg = (f' style="background:linear-gradient(180deg,rgba(0,0,0,.35),rgba(0,0,0,.75)),'
                        f'url(\'{base}/banner?v={self._file_version("banner")}\') center/cover;border-radius:var(--cut);'
                        f'padding:28px 12px"')
+        status = (f'<div class="live"><span class="dot{" on" if live["online"] else ""}"></span>'
+                  + (f'<span><b>{esc(players)}</b> players online</span>' if live["online"] else "<span>Server offline</span>")
+                  + "</div>")
         body = (banner + f'<section class="hero"{hero_bg}><img class="logo" src="{base}/logo?v={self.picture_version()}" '
-                f'alt="{esc(self.site_title())}" width="360" height="360" fetchpriority="high">'
+                f'alt="" width="300" height="300" fetchpriority="high">'
                 f'<h1>{esc(self.site_title())}</h1>'
                 + (f'<div class="kicker">{esc(tagline)}</div>' if tagline else "")
                 + (f'<div class="motto">{esc(motto)}</div>' if motto else "")
-                + f'{buttons}</section><div class="grid">'
+                + status + (f'<div class="acts">{buttons}</div>' if buttons else "")
+                + '</section><div class="stats">'
                 + self._server_cards(players, live) +
-                f'<div class="card"><h2>Next wipe</h2><div class="big" style="font-size:1.3rem">{esc(wipe)}</div>'
-                f'<div class="muted">{esc(wipe_sub)}</div></div>')
+                f'<div class="card"><h2>Next wipe</h2><div class="big" style="font-size:1.45rem;line-height:1.3">'
+                f'{esc(wipe)}</div><div class="muted">{esc(wipe_sub)}</div></div>')
         if live["peak_24h"]:
             body += (f'<div class="card"><h2>Busiest today</h2><div class="big">{live["peak_24h"]}</div>'
                      f'<div class="muted">players at the peak (24 h)</div></div>')
         body += "</div>"
-        about = self.setting("about").strip()
+        tiles = "".join(f'<a class="tile" href="{base}/{path}"><span class="ic">{self.TILES[path][0]}</span><span>'
+                        f'<b>{esc(label)}</b><small>{self.TILES[path][1]}</small></span></a>'
+                        for path, label in self.nav_links() if path in self.TILES)
+        if tiles:
+            body += f'<div class="tiles">{tiles}</div>'
+        about, join = self.setting("about").strip(), self.setting("how_to_join").strip()
+        intro = []
         if about:
-            body += f'<div class="card"><h2>About</h2><div class="pre">{esc(about)}</div></div>'
+            intro.append(f'<div class="card"><h2>About</h2><div class="pre">{esc(about)}</div></div>')
+        if join:
+            lines = [ln.strip() for ln in join.splitlines() if ln.strip()]
+            numbered = [re.match(r"^\d{1,2}[.)]\s+(.*)$", ln) for ln in lines]
+            steps = (f'<ol class="steps">{"".join(f"<li><span>{esc(m.group(1))}</span></li>" for m in numbered)}</ol>'
+                     if len(lines) > 1 and all(numbered) else f'<div class="pre">{esc(join)}</div>')
+            intro.append(f'<div class="card"><h2>How to join</h2>{steps}</div>')
+        if intro:
+            body += f'<div class="two">{"".join(intro)}</div>'
         shots = [i for i in range(1, GALLERY + 1) if self.file(f"gallery_{i}") is not None]
         if shots:
             pics = "".join(f'<a href="{base}/gallery/{i}?v={self._file_version(f"gallery_{i}")}" target="_blank">'
@@ -650,33 +737,43 @@ class PlayerWebsite(Plugin):
         if self.setting("leaderboards"):
             top = [r for r in self.bot.db.leaderboard("kills", 5) if r["kills"]]
             if top:
-                rows = "".join(f'<tr><td class="n">{i}</td><td>{self.player_link(base, r["name"])}</td>'
+                rows = "".join(f'<tr><td class="n">{i}</td><td>{self.who(base, r["name"])}<div class="barline">'
+                               f'<i style="width:{round(100 * r["kills"] / top[0]["kills"])}%"></i></div></td>'
                                f'<td class="r">{r["kills"]}</td></tr>' for i, r in enumerate(top, 1))
                 cols.append(f'<div class="card"><h2>⚔️ Top killers</h2><table>{rows}</table>'
                             f'<p><a href="{base}/leaderboard">Full leaderboard →</a></p></div>')
         bounties = self.bounties()[:5]
         if bounties:
-            rows = "".join(f'<tr><td>{self.player_link(base, n)}</td><td class="r price">{esc(self.fmt_points(a))}</td></tr>'
+            rows = "".join(f'<tr><td>{self.who(base, n)}</td><td class="r price">{esc(self.fmt_points(a))}</td></tr>'
                            for n, a in bounties)
             cols.append(f'<div class="card"><h2>🎯 Bounties</h2><table>{rows}</table>'
                         f'<p class="muted">Kill them to collect – /bounty on Discord.</p></div>')
         if cols:
             body += f'<div class="grid">{"".join(cols)}</div>'
-        join = self.setting("how_to_join").strip()
-        if join:
-            body += f'<div class="card"><h2>How to join</h2><div class="pre">{esc(join)}</div></div>'
         if self.plugin("companion") is not None:          # the players' app: raid alerts on the phone
-            body += (f'<div class="card"><h2>📱 Companion app</h2>Your kits, timers and raid alerts as notifications on your phone.'
-                     f'<p><a class="btn" href="/app/rce-companion.apk" download>📱 Android app</a> '
-                     f'<a class="btn" href="/p/companion/app">📱 iPhone app</a></p>'
-                     f'iPhone: open it in Safari and choose Share → Add to Home Screen. '
-                     f'Then use <b>/companion</b> on our Discord to pair it. With an explosion sensor + RF broadcaster in your base and '
-                     f'<b>/raidalerts rf claim</b> you get an alert the moment someone blows a hole in it.</div>')
+            body += ('<div class="card appcard" id="app"><span class="ph" aria-hidden="true">📱</span><div class="txt">'
+                     '<h2>Companion app</h2>Your team, the game chat, a team map, your kits with their timers and '
+                     'raid alarms as notifications on your phone. Pair it with <b>/companion</b> on our Discord. '
+                     '<span class="muted">iPhone: open it in Safari and choose Share → Add to Home Screen.</span></div>'
+                     '<div><a class="btn" href="/app/rce-companion.apk" download>Android app</a>'
+                     '<a class="btn alt" href="/p/companion/app">iPhone app</a></div></div>')
         early = self.plugin("early_bird")
         if early is not None and live["next_wipe"]:
             body += (f'<div class="card"><h2>🐦 Wipe day bonus</h2>The first {early.setting("players")} linked players '
                      f'online after the wipe get a reward. Link your player on Discord with /link.</div>')
         return self.page(base, "", "", body)
+
+    @staticmethod
+    def avatar(name: str, cls: str = "") -> str:
+        """A round badge with the player's first letter – its colour comes from the name, so it's always the same."""
+        hue = sum(ord(ch) * (i + 7) for i, ch in enumerate(str(name).lower())) % 360
+        letter = next((ch for ch in str(name) if ch.isalnum()), "?").upper()
+        return (f'<span class="av {cls}" style="background:linear-gradient(135deg,hsl({hue} 62% 46%),'
+                f'hsl({(hue + 40) % 360} 58% 30%))" aria-hidden="true">{esc(letter)}</span>')
+
+    def who(self, base: str, name: str) -> str:
+        """Avatar + linked name, for tables."""
+        return f'<span class="who">{self.avatar(name)}{self.player_link(base, name)}</span>'
 
     def player_link(self, base: str, name: str) -> str:
         if not self.setting("leaderboards"):
@@ -697,15 +794,26 @@ class PlayerWebsite(Plugin):
         else:
             rows = [r for r in self.bot.db.leaderboard(by, 50) if r["kills"] or r["playtime_seconds"]]
             body = "".join(
-                f'<tr><td class="n">{i}</td><td>{self.player_link(base, r["name"])}</td><td class="r">{r["kills"]}</td>'
+                f'<tr><td class="n">{i}</td><td>{self.who(base, r["name"])}</td><td class="r">{r["kills"]}</td>'
                 f'<td class="r">{r["deaths"]}</td><td class="r">{r["kills"] / max(r["deaths"], 1):.2f}</td>'
                 f'<td class="r">{esc(format_duration(r["playtime_seconds"]))}</td></tr>' for i, r in enumerate(rows, 1))
             table = (f'<table><tr><th></th><th>Player</th><th class="r">Kills</th><th class="r">Deaths</th>'
                      f'<th class="r">K/D</th><th class="r">Playtime</th></tr>{body}</table>') if rows \
                 else '<p class="muted">No stats yet.</p>'
+        podium = ""
+        if by != "teams" and len(rows) >= 3:                 # the top three get a stage (1st in the middle)
+            def value(r):
+                return (f'{r["kills"] / max(r["deaths"], 1):.2f}' if by == "kd" else
+                        format_duration(r["playtime_seconds"]) if by == "playtime" else str(r["kills"]))
+            spots = "".join(
+                f'<div class="card p{place}"><span class="medal">{medal}</span>{self.avatar(r["name"])}'
+                f'<span class="nm">{self.player_link(base, r["name"])}</span><div class="big">{esc(value(r))}</div>'
+                f'<small>{esc(BOARDS[by])}</small></div>'
+                for place, medal, r in ((2, "🥈", rows[1]), (1, "🥇", rows[0]), (3, "🥉", rows[2])))
+            podium = f'<div class="podium">{spots}</div>'
         return self.page(base, "leaderboard", "Leaderboard",
-                         f'<h1>Leaderboard</h1><div class="tabs">{tabs}</div><div class="card" style="overflow-x:auto">'
-                         f'{table}</div>')
+                         f'<h1>Leaderboard</h1><div class="tabs">{tabs}</div>{podium}'
+                         f'<div class="card" style="overflow-x:auto">{table}</div>')
 
     def player(self, base: str, name: str) -> str:
         form = (f'<form class="search" method="get" action="{base}/player"><input name="name" '
@@ -743,10 +851,10 @@ class PlayerWebsite(Plugin):
         bounty = dict(self.bounties()).get(name)
         if bounty:
             extra.append(f'🎯 Bounty: <span class="price">{esc(self.fmt_points(bounty))}</span>')
-        html_out = (f'<div class="card"><h2 style="font-size:1.5rem;margin:0">{esc(name)} '
+        html_out = (f'<div class="card profile">{self.avatar(name, "xl")}<div><h2>{esc(name)} '
                     f'<span class="pill{" on" if online else ""}">{"online" if online else "offline"}</span></h2>'
-                    + ("<p>" + " · ".join(extra) + "</p>" if extra else "") + "</div>"
-                    f'<div class="grid">{cards}</div>')
+                    + ('<div class="muted">' + " · ".join(extra) + "</div>" if extra else "") + "</div></div>"
+                    f'<div class="stats">{cards}</div>')
         achievements, user_id = self.plugin("achievements"), self.linked_user(name)
         if achievements is not None and user_id is not None:
             from plugins.achievements import BADGES
