@@ -244,6 +244,8 @@ def discord_theme_css(palette: tuple[str, str] | None) -> str:
 # The look lives in website_assets/style.css – it is put into every page (the site's CSP allows no outside files).
 STYLE = (ASSETS / "style.css").read_text(encoding="utf-8").replace("NOISE", NOISE)
 
+DEFAULT_ACCENT, OLD_ACCENT = "#ff5533", "#e5341c"          # the main colour when the owner picked none
+
 # Line icons (24×24, drawn here – no icon font, no outside files)
 ICONS = {
     "home": '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/>',
@@ -338,8 +340,8 @@ class PlayerWebsite(Plugin):
                      "radtown green · synthwave = pink & purple · steel = gunmetal grey · desert = sand · sakura = "
                      "soft pink · discord = the colours of your Discord server's icon (picked by the bot). Changes "
                      "colours, background and headings for the website and the store; the layout stays."),
-        Setting("accent", "Main colour", "text", "#e5341c", help="Hex colour, e.g. #e5341c (blends into orange). "
-                "Leave #e5341c to use the theme's own colour."),
+        Setting("accent", "Main colour", "text", DEFAULT_ACCENT, help=f"Hex colour, e.g. #e5341c (blends into the second "
+                f"colour). Leave {DEFAULT_ACCENT} to use the look's own colour."),
         Setting("season_theme", "Seasonal theme", "choice", "auto", choices=("auto", "halloween", "off"),
                 help="auto = Halloween look (bats, moon, cobwebs, pumpkins) during October; halloween = always; "
                      "off = never."),
@@ -567,7 +569,9 @@ class PlayerWebsite(Plugin):
         sheet = (f'<div class="sheet">{search}<h3>All pages</h3><div class="links">'
                  f'{"".join(link(p, lab, with_icon=True) for p, lab in links)}</div>{cta}</div>')
         accent = self.setting("accent").strip()
-        accent = accent if re.fullmatch(r"#[0-9a-fA-F]{6}", accent) else "#e5341c"
+        accent = accent if re.fullmatch(r"#[0-9a-fA-F]{6}", accent) else DEFAULT_ACCENT
+        if accent.lower() == OLD_ACCENT:                      # the old default: follow the new one
+            accent = DEFAULT_ACCENT
         if self._style is None or self._style[0] != accent:
             self._style = (accent, STYLE.replace("ACCENT", accent))
         version = self.picture_version()
@@ -579,7 +583,7 @@ class PlayerWebsite(Plugin):
         theme = self.setting("theme") if self.setting("theme") in THEMES else "rust"
         theme_css = (self.discord_css() if theme == "discord" else THEMES[theme][1]) + (
             f"body.theme-{theme}{{--red:{accent}}}"
-                                        if theme != "rust" and accent.lower() != "#e5341c" else "")
+                                        if theme != "rust" and accent.lower() != DEFAULT_ACCENT else "")
         # --grad is set on :root with :root's colours – on body it follows the theme's --red/--orange too
         accent2 = str(self.setting("accent2") or "").strip()
         if re.fullmatch(r"#[0-9a-fA-F]{6}", accent2):
@@ -705,8 +709,8 @@ class PlayerWebsite(Plugin):
                     else "<span>Server offline</span>") + "</div>")
         if wipe_soon:
             chips += f'<div class="live">{icon("calendar")}<span>Next wipe <b>{esc(wipe)}</b></span></div>'
-        body = (banner + f'<section class="hero{" pic" if hero_pic else ""}"{hero_pic}><img class="logo tilt" data-tilt="10" '
-                f'src="{base}/logo?v={self.picture_version()}" alt="" width="300" height="300" fetchpriority="high">'
+        body = (banner + f'<section class="hero{" pic" if hero_pic else ""}"{hero_pic}><span class="logo-wrap tilt" data-tilt="9"><img class="logo" '
+                f'src="{base}/logo?v={self.picture_version()}" alt="" width="300" height="300" fetchpriority="high"></span>'
                 + (f'<div class="kicker">{esc(tagline)}</div>' if tagline else "")
                 + f'<h1>{esc(self.site_title())}</h1>'
                 + (f'<p class="motto">{esc(motto)}</p>' if motto else "")
@@ -731,7 +735,7 @@ class PlayerWebsite(Plugin):
         if len(lines) > 1 and all(numbered):
             how = f'<ol class="steps">{"".join(f"<li><span>{esc(m.group(1))}</span></li>" for m in numbered)}</ol>'
         elif len(lines) == 1 and 2 <= join.count("→") <= 6:        # "Open … → Play → …": one step per arrow
-            how = f'<ol class="steps">{"".join(f"<li><span>{esc(part.strip())}</span></li>" for part in join.split("→"))}</ol>'
+            how = f'<ol class="steps">{"".join(f"<li><span>{esc(part.strip()[:1].upper() + part.strip()[1:])}</span></li>" for part in join.split("→"))}</ol>'
         elif join:
             how = f'<div class="pre">{esc(join)}</div>'
         else:

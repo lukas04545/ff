@@ -1,7 +1,7 @@
 /* Player website – the look. Inlined into every page (the site's CSP allows no outside files).
    Colours come from the variables below; a "look" (theme) only changes them. ACCENT and NOISE are filled in. */
-:root{--bg:#07080a;--card:rgba(20,17,16,.86);--card2:rgba(36,28,24,.9);--text:#f3eee9;--muted:#a79b92;
---line:rgba(229,84,40,.22);--red:ACCENT;--orange:#f7931e;--ok:#3ddc6a;--bad:#e5341c;--gold:#ffb627;
+:root{--bg:#090a0e;--card:#12141b;--card2:#1a1d27;--text:#f5f6f8;--muted:#949ba8;
+--line:rgba(255,255,255,.09);--red:ACCENT;--orange:#ffae3b;--ok:#34d399;--bad:#f0452e;--gold:#ffd166;
 --grad:linear-gradient(90deg,var(--red),var(--orange));--cut:14px;--r:14px;--r2:10px;--pad:20px;--wide:1180px;
 --head:Impact,"Haettenschweiler","Arial Narrow Bold","Franklin Gothic Heavy","Oswald",sans-serif;
 --soft:rgba(255,255,255,.06);--softer:rgba(255,255,255,.035);
@@ -9,14 +9,17 @@
 --e1:0 1px 2px rgba(0,0,0,.4);--e2:0 8px 24px -10px rgba(0,0,0,.7);--e3:0 22px 50px -18px rgba(0,0,0,.85);
 --ease:cubic-bezier(.2,.8,.2,1)}
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;background:var(--bg);scrollbar-color:var(--red) #0b0b0b;scroll-behavior:smooth;
+html{-webkit-text-size-adjust:100%;overflow-x:clip;background:var(--bg);scrollbar-color:var(--red) #0b0b0b;scroll-behavior:smooth;
 scroll-padding-top:84px}
 body{margin:0;color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
-min-height:100vh;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+min-height:100vh;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow-x:clip}
+/* the backdrop: two soft lights in the site's colours over a faint grid, fading out down the page */
 body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-background:url("NOISE"),radial-gradient(ellipse 90% 55% at 50% -8%,rgba(247,110,30,.3),transparent 70%),
-radial-gradient(ellipse 60% 40% at 85% 10%,rgba(229,52,28,.16),transparent 70%),
-linear-gradient(180deg,#120a07 0%,var(--bg) 55%)}
+background:url("NOISE"),radial-gradient(ellipse 70% 50% at 12% -12%,color-mix(in srgb,var(--red) 34%,transparent),transparent 70%),
+radial-gradient(ellipse 55% 42% at 96% -6%,color-mix(in srgb,var(--orange) 20%,transparent),transparent 70%),
+linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px) 0 0/100% 56px,
+linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px) 0 0/56px 100%,var(--bg);
+-webkit-mask-image:linear-gradient(180deg,#000 0,#000 30%,transparent 92%);mask-image:linear-gradient(180deg,#000 0,#000 30%,transparent 92%)}
 ::selection{background:var(--red);color:#fff}
 a{color:inherit}a:hover{color:var(--orange)}
 :focus-visible{outline:2px solid var(--orange);outline-offset:3px;border-radius:4px}
@@ -335,6 +338,58 @@ td,th{padding:10px 5px}.av{margin-right:8px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}
 html{scroll-behavior:auto}.js .rv{opacity:1;transform:none}.prog{display:none}}
 
+/* ---- art direction: edges that catch the light, a ring round the logo, badge-style labels */
+.card,a.tile,.rule{border:1px solid transparent;
+background:radial-gradient(460px circle at var(--mx,-999px) var(--my,-999px),color-mix(in srgb,var(--orange) 11%,transparent),
+transparent 62%) padding-box,linear-gradient(180deg,rgba(255,255,255,.035),transparent 150px) padding-box,
+linear-gradient(var(--card),var(--card)) padding-box,linear-gradient(var(--bg),var(--bg)) padding-box,
+linear-gradient(140deg,rgba(255,255,255,.2),var(--line) 28%,var(--line) 62%,color-mix(in srgb,var(--red) 55%,transparent)) border-box}
+a.tile:hover,.rule:hover,.stats .card:hover,.podium .card:hover,.people .card:hover{
+background:radial-gradient(360px circle at var(--mx,50%) var(--my,0%),color-mix(in srgb,var(--orange) 16%,transparent),
+transparent 65%) padding-box,linear-gradient(var(--card2),var(--card2)) padding-box,linear-gradient(var(--bg),var(--bg)) padding-box,
+linear-gradient(140deg,color-mix(in srgb,var(--orange) 85%,#fff),color-mix(in srgb,var(--red) 70%,transparent)) border-box}
+.podium .p1{background:linear-gradient(180deg,color-mix(in srgb,var(--gold) 16%,transparent),transparent 70%) padding-box,
+linear-gradient(var(--card),var(--card)) padding-box,linear-gradient(var(--bg),var(--bg)) padding-box,
+linear-gradient(140deg,var(--gold),color-mix(in srgb,var(--gold) 25%,transparent)) border-box}
+.btn{box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 12px 28px -12px var(--red);text-shadow:0 1px 0 rgba(0,0,0,.25)}
+.btn.alt{box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);text-shadow:none}
+.hcta{box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 8px 22px -10px var(--red)}
+header{background:color-mix(in srgb,var(--bg) 92%,transparent)}
+.logo-wrap{position:relative;display:grid;place-items:center;grid-row:1/span 6;padding:10px}
+.logo-wrap::before{content:"";position:absolute;inset:0;border-radius:50%;padding:2px;
+background:conic-gradient(from 0deg,var(--red),var(--orange),transparent 38%,transparent 62%,var(--red));
+-webkit-mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);mask:linear-gradient(#000 0 0) content-box exclude,
+linear-gradient(#000 0 0);animation:spin 14s linear infinite;opacity:.9}
+@keyframes spin{to{transform:rotate(1turn)}}
+.hero .logo-wrap .logo{grid-row:auto;border-radius:50%}
+body .hero h1{background:linear-gradient(180deg,#fff 38%,color-mix(in srgb,var(--orange) 45%,#fff));-webkit-background-clip:text;
+background-clip:text;color:transparent;text-shadow:none!important;letter-spacing:-.02em;
+filter:drop-shadow(0 3px 14px rgba(0,0,0,.55))}
+.kicker{display:inline-flex;width:max-content;max-width:100%;padding:5px 13px;border-radius:999px;font-size:.76rem;letter-spacing:.16em;
+color:color-mix(in srgb,var(--orange) 80%,#fff);background:color-mix(in srgb,var(--red) 14%,transparent);
+border:1px solid color-mix(in srgb,var(--orange) 34%,transparent)}
+.kicker::before{width:7px;height:7px;border-radius:50%;background:var(--orange);box-shadow:0 0 10px var(--orange)}
+.motto{font-size:1.1rem;line-height:1.55}
+.live{background:rgba(255,255,255,.045);border-color:rgba(255,255,255,.1)}
+.sec{font-size:1rem}.sec>svg.i{width:30px;height:30px;padding:6px;border-radius:9px;
+background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--orange)}
+a.tile .ic{background:linear-gradient(140deg,color-mix(in srgb,var(--red) 30%,transparent),color-mix(in srgb,var(--orange) 12%,transparent));
+box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--orange) 22%,transparent)}
+.stats .card h2 .ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;
+background:color-mix(in srgb,var(--red) 16%,transparent)}.stats .card h2 .ic svg.i{width:16px;height:16px}
+.count span{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)}
+.tabs{background:rgba(255,255,255,.04)}.tabs a.active{box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 6px 16px -8px var(--red)}
+.online a,.online span.p,.badge{background:rgba(255,255,255,.045);border-color:rgba(255,255,255,.09)}
+.join code{border-color:color-mix(in srgb,var(--orange) 40%,transparent)}
+.av{box-shadow:inset 0 0 0 1px rgba(255,255,255,.18),0 4px 10px -4px rgba(0,0,0,.6)}
+tbody tr:hover td:first-child,table tr:hover td:first-child{border-radius:10px 0 0 10px}
+tbody tr:hover td:last-child,table tr:hover td:last-child{border-radius:0 10px 10px 0}
+footer::before{background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--orange) 40%,transparent),transparent)}
+@media (max-width:760px){.logo-wrap{grid-row:auto;padding:8px}.kicker{margin:0 auto}}
+body.hero-centered .logo-wrap{grid-row:auto}body.hero-centered .kicker{margin:0 auto}
+body.shape-angled .kicker,body.shape-square .kicker,body.shape-angled .sec>svg.i,body.shape-square .sec>svg.i,
+body.shape-angled .stats .card h2 .ic,body.shape-square .stats .card h2 .ic{border-radius:0}
+
 /* ---- the owner's choices: shape, heading font, hero layout, background picture */
 body.shape-angled{--r:0px;--r2:0px}
 body.shape-angled .card,body.shape-angled a.tile,body.shape-angled .rule,body.shape-angled .ann{
@@ -350,7 +405,7 @@ body.shape-square .meter,body.shape-square .meter i,body.shape-square .badge,bod
 body.font-modern{--head:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif}
 body.font-modern h1,body.font-modern h2,body.font-modern h3,body.font-modern .brand,body.font-modern .big,
 body.font-modern .kicker,body.font-modern .sec,body.font-modern .price,body.font-modern .count b,body.font-modern td.n,
-body.font-modern .rule::before,body.font-modern .lost .code,body.font-modern footer .fbrand{font-weight:800;letter-spacing:.01em}
+body.font-modern .rule::before,body.font-modern .lost .code,body.font-modern footer .fbrand{font-weight:800;letter-spacing:-.01em}
 body.font-modern h1,body.font-modern h2,body.font-modern .brand,body.font-modern .big,body.font-modern footer .fbrand{
 text-transform:none}
 body.font-modern .kicker,body.font-modern .sec{letter-spacing:.14em}
