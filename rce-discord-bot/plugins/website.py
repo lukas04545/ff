@@ -30,7 +30,7 @@ CSP = ("default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'un
        "form-action 'self' https://www.paypal.com https://www.sandbox.paypal.com; frame-ancestors 'none'")
 BOARDS = {"kills": "Kills", "kd": "K/D", "playtime": "Playtime", "teams": "Teams"}
 CACHE_SECONDS = 20
-SCRIPTS = ("casino.js", "poker.js", "plinko.js")             # scripts served from website_assets/
+SCRIPTS = ("casino.js", "poker.js", "plinko.js", "site.js")             # scripts served from website_assets/
 HEADER_LOGO = 96
 GALLERY = 6                                                   # server pictures on the home page
 
@@ -467,6 +467,28 @@ clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(1
 white-space:pre-wrap;overflow-wrap:anywhere}.prose p:last-child{margin-bottom:0}
 footer .foot-note{margin-top:8px;opacity:.85}footer .ext{margin:0 0 10px;display:flex;gap:6px 16px;justify-content:center;
 flex-wrap:wrap}footer .ext a{color:var(--orange);text-decoration:none}footer .ext a:hover{text-decoration:underline}
+
+/* ---- live bits: wipe countdown, players chart, who is online, timeline */
+.count{display:flex;gap:8px;margin-top:6px}.count span{flex:1;min-width:0;background:rgba(0,0,0,.35);border:1px solid var(--line);
+padding:7px 4px 5px;text-align:center}.count b{display:block;font-family:var(--head);font-weight:400;font-size:1.7rem;line-height:1;
+background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.count small{display:block;font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:3px}
+body.shape-rounded .count span{border-radius:10px}
+.chart{padding-bottom:12px}.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart .ax{display:flex;justify-content:space-between;color:var(--muted);font-size:.78rem;margin-top:4px}
+.chart h2{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}.chart h2 small{font-family:system-ui,sans-serif;
+text-transform:none;letter-spacing:0;color:var(--muted);font-size:.85rem;margin-left:auto}
+.online{display:flex;flex-wrap:wrap;gap:8px}.online a,.online span.p{display:inline-flex;align-items:center;text-decoration:none;
+background:var(--card2);border:1px solid var(--line);border-radius:999px;padding:3px 12px 3px 3px;font-size:.9rem;
+transition:border-color .15s}.online a:hover{border-color:var(--orange);color:inherit}.online .av{width:24px;height:24px;
+font-size:.72rem;margin-right:7px}
+.timeline{list-style:none;margin:0;padding:0 0 0 18px;border-left:2px solid var(--line)}
+.timeline li{position:relative;padding:7px 0 7px 14px}.timeline li::before{content:"";position:absolute;left:-24px;top:14px;
+width:10px;height:10px;border-radius:50%;background:var(--grad)}.timeline b{color:#fff}.timeline small{color:var(--muted);
+margin-left:8px}
+.lost{text-align:center;padding:30px 0 10px}.lost .code{font-family:var(--head);font-size:clamp(4rem,16vw,8rem);line-height:1;
+background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}.lost p{color:var(--muted)}
+.rankline{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}.rankline .badge{border-radius:999px}
 """.replace("NOISE", NOISE)
 
 
@@ -550,6 +572,8 @@ class PlayerWebsite(Plugin):
         Setting("show_tiles", "Home page: quick-link tiles (Explore)", "bool", True),
         Setting("show_hall", "Home page: top killers and bounties", "bool", True),
         Setting("show_app", "Home page: the Companion app", "bool", True),
+        Setting("show_chart", "Home page: players over the last 24 hours (chart)", "bool", True),
+        Setting("show_online", "Home page: who is online right now", "bool", True),
         Setting("page_title", "Your own page: title", "text", "",
                 help="Adds a page to the menu with your own text – e.g. \"VIP\", \"Events\" or \"FAQ\"."),
         Setting("page_text", "Your own page: text", "textarea", "",
@@ -749,6 +773,14 @@ class PlayerWebsite(Plugin):
         if self.file("background") is not None:
             looks += " has-bg"
             theme_css += f"body{{--bgimg:url('{base}/background?v={self._file_version('background')}')}}"
+        # the preview Discord, WhatsApp … show when someone shares the link
+        origin = (self.bot.config.web_public_url or "").rstrip("/")
+        social = (f'<meta property="og:type" content="website"><meta property="og:site_name" content="{esc(site)}">'
+                  f'<meta property="og:title" content="{esc(title + " – " if title else "")}{esc(site)}">'
+                  f'<meta property="og:description" content="{esc(self.setting("tagline"))}">'
+                  f'<meta name="twitter:card" content="summary">'
+                  + (f'<meta property="og:image" content="{esc(origin)}{base}/logo?s=512&amp;v={version}">'
+                     if origin.startswith("https://") else ""))
         ext = "".join(f'<a href="{esc(url)}" rel="noopener nofollow" target="_blank">{esc(label)}</a>'
                       for label, url in self.extra_links())
         foot_note = str(self.setting("footer_text") or "").strip()[:200]
@@ -764,8 +796,9 @@ class PlayerWebsite(Plugin):
                 f'<meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<title>{esc(title + " – " if title else "")}{esc(site)}</title>'
                 f'<meta name="description" content="{esc(self.setting("tagline"))}">'
-                f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon?v={version}">'
-                f'<style>{self._style[1]}{extra_css}</style></head><body class="{season} theme-{theme} {looks}">{decor}'
+                f'<meta name="theme-color" content="#060606"><link rel="icon" href="{base}/icon?v={version}">{social}'
+                f'<script src="{base}/site.js?v={self.asset_version("site.js")}" defer></script>'
+                f'<style>{self._style[1]}{extra_css}</style></head><body class="{season} theme-{theme} {looks}" data-base="{base}">{decor}'
                 f'<header><div class="bar"><a class="brand" href="{base}/"><img src="{base}/logo?s={HEADER_LOGO}'
                 f'&amp;v={version}" alt="" width="42" height="42" decoding="async">'
                 f'<span class="name">{esc(site)}</span><span class="dot{" on" if live["online"] else ""}" '
@@ -788,12 +821,13 @@ class PlayerWebsite(Plugin):
     # ------------------------------------------------------------ Pages
 
     @staticmethod
-    def _server_card(title: str, online: bool, players: int, max_players: int, queued: int) -> str:
+    def _server_card(title: str, online: bool, players: int, max_players: int, queued: int, *, main: bool = False) -> str:
+        live, live_meter = (' data-live="players"', ' data-live="meter"') if main else ("", "")     # site.js refreshes
         count = (f"{players} / {max_players}" if max_players else str(players)) if online else "–"
-        meter = (f'<div class="meter"><i style="width:{min(100, round(100 * players / max_players))}%"></i></div>'
+        meter = (f'<div class="meter"><i{live_meter} style="width:{min(100, round(100 * players / max_players))}%"></i></div>'
                  if online and max_players else "")
         return (f'<div class="card"><h2><span class="ic">👥</span>{esc(title)} <span class="pill{" on" if online else ""}">'
-                f'{"Online" if online else "Offline"}</span></h2><div class="big">{esc(count)}</div>'
+                f'{"Online" if online else "Offline"}</span></h2><div class="big"{live}>{esc(count)}</div>'
                 f'<div class="muted">{str(queued) + " in queue" if queued else "players online"}</div>{meter}</div>')
 
     def _server_cards(self, players: str, live: dict) -> str:
@@ -801,7 +835,7 @@ class PlayerWebsite(Plugin):
         every = self.all_servers_live()
         if not every:
             return self._server_card("Server", bool(live["online"]), int(live["players"] or 0),
-                                     int(live["max_players"] or 0), int(live["queued"] or 0))
+                                     int(live["max_players"] or 0), int(live["queued"] or 0), main=True)
         return "".join(self._server_card(s["name"], bool(s.get("online")), int(s.get("players") or 0),
                                          int(s.get("max_players") or 0), int(s.get("queued") or 0)) for s in every)
 
@@ -844,7 +878,7 @@ class PlayerWebsite(Plugin):
                        f'url(\'{base}/banner?v={self._file_version("banner")}\') center/cover;border-radius:var(--cut);'
                        f'padding:28px 12px"')
         status = (f'<div class="live"><span class="dot{" on" if live["online"] else ""}"></span>'
-                  + (f'<span><b>{esc(players)}</b> players online</span>' if live["online"] else "<span>Server offline</span>")
+                  + (f'<span><b data-live="players">{esc(players)}</b> players online</span>' if live["online"] else "<span>Server offline</span>")
                   + "</div>")
         news = str(self.setting("announcement") or "").strip()[:240]
         if news:
@@ -857,12 +891,26 @@ class PlayerWebsite(Plugin):
                 + status + (f'<div class="acts">{buttons}</div>' if buttons else "")
                 + '</section><div class="stats">'
                 + self._server_cards(players, live) +
-                f'<div class="card"><h2><span class="ic">🧹</span>Next wipe</h2><div class="big" style="font-size:1.45rem;line-height:1.3">'
-                f'{esc(wipe)}</div><div class="muted">{esc(wipe_sub)}</div></div>')
+                f'<div class="card"><h2><span class="ic">🧹</span>Next wipe</h2>'
+                + (self.countdown(live["next_wipe"]) + f'<div class="muted" style="margin-top:8px">{esc(wipe)} '
+                   f'({esc(getattr(tz, "key", "UTC"))})</div>' if live["next_wipe"] and live["next_wipe"] > self.now() else
+                   f'<div class="big" style="font-size:1.45rem;line-height:1.3">{esc(wipe)}</div>'
+                   f'<div class="muted">{esc(wipe_sub)}</div>') + '</div>')
         if live["peak_24h"]:
             body += (f'<div class="card"><h2><span class="ic">📈</span>Busiest today</h2><div class="big">{live["peak_24h"]}</div>'
                      f'<div class="muted">players at the peak (24 h)</div></div>')
         body += "</div>"
+        if self.setting("show_chart"):
+            body += self.population_chart()
+        online_now = sorted(self.bot.online_players, key=str.lower)
+        if self.setting("show_online") and online_now:
+            chips = "".join(
+                (f'<a href="{base}/player?{urlencode({"name": n})}">{self.avatar(n)}{esc(n)}</a>'
+                 if self.setting("leaderboards") else f'<span class="p">{self.avatar(n)}{esc(n)}</span>')
+                for n in online_now[:30])
+            more = f'<span class="muted" style="align-self:center">+{len(online_now) - 30} more</span>' if len(online_now) > 30 else ""
+            body += (f'<div class="sec">Online now <small>{len(online_now)} playing</small></div>'
+                     f'<div class="online">{chips}{more}</div>')
         tiles = "".join(f'<a class="tile" href="{base}/{path}"><span class="ic">{self.TILES[path][0]}</span><span>'
                         f'<b>{esc(label)}</b><small>{self.TILES[path][1]}</small></span></a>'
                         for path, label in self.nav_links() if path in self.TILES)
@@ -926,6 +974,38 @@ class PlayerWebsite(Plugin):
         letter = next((ch for ch in str(name) if ch.isalnum()), "?").upper()
         return (f'<span class="av {cls}" style="background:linear-gradient(135deg,hsl({hue} 62% 46%),'
                 f'hsl({(hue + 40) % 360} 58% 30%))" aria-hidden="true">{esc(letter)}</span>')
+
+    def countdown(self, until: int) -> str:
+        """Days / hours / minutes / seconds until a time – site.js makes it tick; without it the numbers stand."""
+        left = max(0, int(until) - self.now())
+        cells = (("d", left // 86400, "days"), ("h", f"{left % 86400 // 3600:02d}", "hours"),
+                 ("m", f"{left % 3600 // 60:02d}", "min"), ("s", f"{left % 60:02d}", "sec"))
+        return (f'<div class="count" data-until="{int(until)}">'
+                + "".join(f'<span><b data-u="{k}">{v}</b><small>{name}</small></span>' for k, v, name in cells) + "</div>")
+
+    def population_chart(self) -> str:
+        """Players over the last 24 hours as a small area chart (drawn here – no script, no outside files)."""
+        now = self.now()
+        rows = self.bot.db.population(now - 86400, 1800)
+        if len(rows) < 4:
+            return ""
+        top = max(max(p for _, p, _ in rows), 1)
+        width, height = 600, 110
+        pts = [((t - (now - 86400)) / 86400 * width, height - 6 - (p / top) * (height - 16)) for t, p, _ in rows]
+        line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+        area = f"{pts[0][0]:.1f},{height} {line} {pts[-1][0]:.1f},{height}"
+        peak_i = max(range(len(rows)), key=lambda i: rows[i][1])
+        px, py = pts[peak_i]
+        peak_at = datetime.fromtimestamp(rows[peak_i][0], self.tz).strftime("%H:%M")
+        return (f'<div class="card chart"><h2>📈 Players today <small>peak {round(rows[peak_i][1])} at {peak_at}</small></h2>'
+                f'<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" role="img" '
+                f'aria-label="Players online over the last 24 hours"><defs><linearGradient id="pg" x1="0" y1="0" x2="0" '
+                f'y2="1"><stop offset="0" style="stop-color:var(--orange);stop-opacity:.45"/><stop offset="1" '
+                f'style="stop-color:var(--red);stop-opacity:0"/></linearGradient></defs>'
+                f'<polygon points="{area}" fill="url(#pg)"/><polyline points="{line}" fill="none" '
+                f'style="stroke:var(--orange)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>'
+                f'<circle cx="{px:.1f}" cy="{py:.1f}" r="3.5" style="fill:var(--gold)"/></svg>'
+                f'<div class="ax"><span>24 h ago</span><span>12 h ago</span><span>now</span></div></div>')
 
     @staticmethod
     def rank(i: int) -> str:
@@ -1012,9 +1092,17 @@ class PlayerWebsite(Plugin):
         bounty = dict(self.bounties()).get(name)
         if bounty:
             extra.append(f'🎯 Bounty: <span class="price">{esc(self.fmt_points(bounty))}</span>')
+        ranks = []
+        for by, label in (("kills", "kills"), ("kd", "K/D"), ("playtime", "playtime")):
+            board = [r["name"].lower() for r in self.bot.db.leaderboard(by, 200)]
+            if name.lower() in board:
+                place = board.index(name.lower()) + 1
+                medal = {1: "🥇 ", 2: "🥈 ", 3: "🥉 "}.get(place, "")
+                ranks.append(f'<span class="badge">{medal}#{place} in {label}</span>')
+        rankline = f'<div class="rankline">{"".join(ranks)}</div>' if ranks else ""
         html_out = (f'<div class="card profile">{self.avatar(name, "xl")}<div><h2>{esc(name)} '
                     f'<span class="pill{" on" if online else ""}">{"online" if online else "offline"}</span></h2>'
-                    + ('<div class="muted">' + " · ".join(extra) + "</div>" if extra else "") + "</div></div>"
+                    + ('<div class="muted">' + " · ".join(extra) + "</div>" if extra else "") + rankline + "</div></div>"
                     f'<div class="stats">{cards}</div>')
         achievements, user_id = self.plugin("achievements"), self.linked_user(name)
         if achievements is not None and user_id is not None:
@@ -1125,7 +1213,8 @@ class PlayerWebsite(Plugin):
 
     def bans_page(self, base: str) -> str:
         rows = sorted(self.data.get("bans", {}).values(), key=lambda r: -r["at"])
-        body = "".join(f'<tr><td>{esc(r["player"])}</td><td>{datetime.fromtimestamp(r["at"]).strftime("%Y-%m-%d")}</td>'
+        body = "".join(f'<tr><td><span class="who">{self.avatar(r["player"])}<span class="nm">{esc(r["player"])}</span></span>'
+                       f'</td><td>{datetime.fromtimestamp(r["at"]).strftime("%Y-%m-%d")}</td>'
                        f'<td>{esc(r.get("reason") or "–")}</td></tr>' for r in rows)
         html = ('<h1>Bans</h1><div class="card"><table><tr><th>Player</th><th>Since</th><th>Reason</th></tr>'
                 f'{body}</table></div>' if body else '<h1>Bans</h1><p class="muted">Nobody is banned. 🎉</p>')
@@ -1139,17 +1228,31 @@ class PlayerWebsite(Plugin):
 
     def wipes_page(self, base: str) -> str:
         wipes = sorted(self.data.get("wipes", []), reverse=True)
-        nxt = self.next_wipe()
-        items = "".join(f"<li>{datetime.fromtimestamp(w).strftime('%Y-%m-%d %H:%M')}</li>" for w in wipes[:50])
-        body = ('<h1>Wipes</h1>'
-                + (f'<div class="card"><h2>Next wipe</h2><div class="big">{datetime.fromtimestamp(nxt).strftime("%Y-%m-%d %H:%M")}'
-                   f'</div></div>' if nxt else "")
-                + (f'<div class="card"><h2>Past wipes ({len(wipes)})</h2><ul>{items}</ul></div>' if items else
+        nxt, now = self.next_wipe(), self.now()
+
+        def ago(ts):
+            days = (now - ts) // 86400
+            return "today" if days <= 0 else "yesterday" if days == 1 else f"{days} days ago"
+        items = "".join(f"<li><b>{datetime.fromtimestamp(w, self.tz).strftime('%A, %d %B %Y')}</b> "
+                        f"{datetime.fromtimestamp(w, self.tz).strftime('%H:%M')}<small>{ago(w)}</small></li>"
+                        for w in wipes[:50])
+        body = ('<div class="phead"><h1>Wipes</h1><p>When the map was wiped – and when the next fresh start is.</p></div>'
+                + (f'<div class="card"><h2>🧹 Next wipe</h2>'
+                   + (self.countdown(nxt) if nxt > now else "")
+                   + f'<div class="muted" style="margin-top:8px">{datetime.fromtimestamp(nxt, self.tz).strftime("%A, %d %B %Y · %H:%M")}'
+                     f' ({esc(getattr(self.tz, "key", "UTC"))})</div></div>' if nxt else "")
+                + (f'<div class="card"><h2>Past wipes ({len(wipes)})</h2><ul class="timeline">{items}</ul></div>' if items else
                    '<p class="muted">No wipes recorded yet – they are added here from the next wipe on.</p>'))
         return self.page(base, "wipes", "Wipes", body)
 
     def not_found(self, base: str) -> str:
-        return self.page(base, "", "Not found", f'<h1>Not found</h1><p><a href="{base}/">Back to the home page</a></p>')
+        tiles = "".join(f'<a class="tile" href="{base}/{path}"><span class="ic">{self.TILES[path][0]}</span><span>'
+                        f'<b>{esc(label)}</b><small>{self.TILES[path][1]}</small></span></a>'
+                        for path, label in self.nav_links() if path in self.TILES)
+        return self.page(base, "", "Not found",
+                         f'<div class="lost"><div class="code">404</div><h1 style="display:inline-block">Not found</h1>'
+                         f'<p>This page got raided – nothing left here.</p><a class="btn" href="{base}/">Back to the '
+                         f'home page</a></div>' + (f'<div class="tiles">{tiles}</div>' if tiles else ""))
 
     # ------------------------------------------------------------ Web
 
