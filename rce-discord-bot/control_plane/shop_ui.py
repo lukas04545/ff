@@ -65,6 +65,19 @@ vertical-align:top;font-size:.95rem}
 code{background:#0e1117;border:1px solid var(--line);padding:.15rem .4rem;border-radius:6px}
 footer{color:var(--muted);text-align:center;padding:40px 0 30px;font-size:.85rem}
 form.inline{display:inline}
+.hubstats{display:flex;gap:26px;justify-content:center;flex-wrap:wrap;margin:0 0 26px}
+.hubstats b{display:block;font-size:2rem;line-height:1.1}.hubstats span{color:var(--muted);font-size:.9rem}
+.hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin:0 0 30px}
+.srv{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;display:flex;
+flex-direction:column;gap:12px;transition:transform .15s,border-color .15s}
+.srv:hover{transform:translateY(-3px);border-color:var(--acc)}
+.srv .top{display:flex;gap:14px;align-items:center;min-width:0}.srv .av{flex:none;width:52px;height:52px;border-radius:14px;
+display:grid;place-items:center;font-weight:800;font-size:1.4rem;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.srv h3{margin:0;font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srv .names{min-width:0;flex:1}.srv .sub{color:var(--muted);font-size:.86rem;overflow:hidden;text-overflow:ellipsis;
+white-space:nowrap}.srv .facts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.srv .btn{text-align:center;margin-top:auto}.dotl{display:inline-block;width:8px;height:8px;border-radius:50%;
+background:var(--bad);margin-right:6px}.dotl.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
 """
 
 

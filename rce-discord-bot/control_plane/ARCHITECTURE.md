@@ -118,6 +118,10 @@ Every server runs on one of two bots:
   * A buyer who closes the page after paying is completed on their next dashboard visit and by a 5-minute check.
     Unpaid orders expire after 3 hours.
   * Customers with a running Stripe subscription can't also pay with PayPal.
+* **Server hub** (`/servers` on the portal, linked in the menu and on the landing page): a public page with every
+  server that is running, paid for and listed – name, online state, players in game, its Discord's name and a
+  *Visit website* button to the server's own website (its main address). Busiest first. A customer hides a server
+  with *🌐 Listed – hide* on their dashboard (`servers.listed`).
   * **One summary everywhere** (`billing.summary`): package, state, how it's paid, until when and how long that
     still is – on the dashboard, in the owner panel, in the apps and in the customer's channel of the HQ Discord
     (the end counts down there by itself). `#hq-alerts` says when a trial / paid time ends within 3 days and when it
