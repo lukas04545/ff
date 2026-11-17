@@ -396,6 +396,8 @@ body.shape-angled .card,body.shape-angled a.tile,body.shape-angled .rule,body.sh
 clip-path:polygon(0 0,calc(100% - var(--cut)) 0,100% var(--cut),100% 100%,var(--cut) 100%,0 calc(100% - var(--cut)))}
 body.shape-angled .btn,body.shape-angled .tabs a,body.shape-angled .hcta{border-radius:0;
 clip-path:polygon(10px 0,100% 0,calc(100% - 10px) 100%,0 100%)}
+body.shape-angled button.pay,body.shape-angled .rw button{border-radius:0;clip-path:polygon(10px 0,100% 0,calc(100% - 10px) 100%,0 100%)}
+body.shape-square button.pay,body.shape-square button.ghost,body.shape-square .field input,body.shape-square .notice{border-radius:0}
 body.shape-angled .tabs,body.shape-angled .pill,body.shape-angled .meter,body.shape-angled .meter i{border-radius:0}
 body.shape-angled .card::before{content:"";position:absolute;left:0;top:0;width:60px;height:3px;background:var(--grad)}
 body.shape-angled ol.steps li::before{border-radius:0;clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%)}

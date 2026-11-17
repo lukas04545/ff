@@ -883,7 +883,6 @@ in.</span></p></div>""")
         rows = db.q("SELECT s.*, h.discord_ready, h.guild_name, h.rcon_connected, h.players_online, h.error "
                     "FROM servers s LEFT JOIN health h ON h.server_id = s.id WHERE s.customer_id = ? AND "
                     "s.status != 'deleted' ORDER BY s.id", (c["id"],))
-        sub = db.one("SELECT status, current_period_end FROM subscriptions WHERE customer_id = ?", (c["id"],))
         plan = plans.current(db, c["id"])
         running = billing.subscription_ok(db, c["id"])
         cards = ""
@@ -2357,8 +2356,9 @@ def host_stats(supervisor, db: DB) -> dict:
     except (OSError, AttributeError):
         pass
     try:
-        info = {k.strip(): int(v.split()[0]) * 1024 for k, v in
-                (line.split(":", 1) for line in open("/proc/meminfo", encoding="utf-8") if ":" in line)}
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            info = {k.strip(): int(v.split()[0]) * 1024 for k, v in
+                    (line.split(":", 1) for line in f if ":" in line)}
         used = info["MemTotal"] - info.get("MemAvailable", info.get("MemFree", 0))
         out["mem"] = f"{100 * used / info['MemTotal']:.0f}%"
         out["mem_sub"] = f"{fmt(used)} of {fmt(info['MemTotal'])}"
@@ -2370,7 +2370,8 @@ def host_stats(supervisor, db: DB) -> dict:
     except OSError:
         pass
     try:
-        secs = float(open("/proc/uptime", encoding="utf-8").read().split()[0])
+        with open("/proc/uptime", encoding="utf-8") as f:
+            secs = float(f.read().split()[0])
         out["uptime"] = f"{int(secs // 86400)}d {int(secs % 86400 // 3600)}h"
     except (OSError, ValueError, IndexError):
         pass
@@ -2379,9 +2380,10 @@ def host_stats(supervisor, db: DB) -> dict:
         pid = getattr(getattr(p, "process", None), "pid", None) or getattr(p, "pid", None)
         mem = "–"
         try:
-            for line in open(f"/proc/{pid}/status", encoding="utf-8"):
-                if line.startswith("VmRSS:"):
-                    mem = fmt(int(line.split()[1]) * 1024)
+            with open(f"/proc/{pid}/status", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        mem = fmt(int(line.split()[1]) * 1024)
         except (OSError, TypeError, ValueError):
             pass
         out["procs"].append({"id": sid, "name": names.get(sid, "?"), "pid": pid, "mem": mem,

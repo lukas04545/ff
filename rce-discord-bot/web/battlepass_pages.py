@@ -28,8 +28,7 @@ overflow:hidden}.xpbar i{position:absolute;inset:0 auto 0 0;background:var(--gra
 animation:grow 1s cubic-bezier(.2,.8,.3,1) both}@keyframes grow{from{transform:scaleX(0)}}
 .wallet{font-family:var(--head);font-size:1.6rem;color:var(--gold);letter-spacing:.04em}
 .premium-badge{display:inline-block;padding:3px 12px;background:linear-gradient(90deg,#ffb627,#ff7a1a);color:#1a0d00;
-font-weight:800;letter-spacing:.08em;text-transform:uppercase;font-size:.8rem;clip-path:polygon(8px 0,100% 0,
-calc(100% - 8px) 100%,0 100%)}
+font-weight:800;letter-spacing:.08em;text-transform:uppercase;font-size:.8rem;border-radius:999px}
 .track{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 14px;scroll-snap-type:x proximity}
 .tier{flex:none;width:136px;scroll-snap-align:start;display:flex;flex-direction:column;gap:8px}
 .tier .num{text-align:center;font-family:var(--head);color:var(--muted);letter-spacing:.08em}
@@ -40,8 +39,8 @@ align-items:center;justify-content:center;gap:4px;padding:8px 6px;text-align:cen
 .rw.none{opacity:.35}.rw .ico{font-size:2rem;line-height:1}.rw img{width:56px;height:56px;object-fit:contain}
 .rw .lbl{font-size:.8rem;line-height:1.2}.rw.done{opacity:.55}.rw.done::after{content:"✓";position:absolute;top:4px;
 right:8px;color:var(--ok);font-weight:800}.rw .lock{position:absolute;top:4px;right:8px;font-size:.9rem}
-.rw form{margin:0}.rw button{padding:4px 10px;border:0;background:var(--grad);color:#fff;font-family:var(--head);
-letter-spacing:.06em;text-transform:uppercase;cursor:pointer;font-size:.85rem}
+.rw form{margin:0}.rw button{padding:5px 12px;border:0;background:var(--grad);color:#fff;font:inherit;font-weight:750;
+cursor:pointer;font-size:.82rem;border-radius:999px}
 .rowlabel{font-family:var(--head);letter-spacing:.1em;color:var(--muted);margin:2px 0}
 .packs{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
 .pack{text-align:center;padding:16px 10px}.pack .amt{font-family:var(--head);font-size:1.5rem;color:var(--gold)}

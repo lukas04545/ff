@@ -75,7 +75,7 @@ public final class Http {
                 int eq = pair.indexOf('=');
                 if (eq <= 0) continue;
                 String name = pair.substring(0, eq).trim(), value = pair.substring(eq + 1).trim();
-                if (value.isEmpty() || line.toLowerCase().contains("max-age=0")) cookies.remove(name);
+                if (value.isEmpty() || line.toLowerCase(java.util.Locale.ROOT).contains("max-age=0")) cookies.remove(name);
                 else cookies.put(name, value);
             }
         }
