@@ -52,7 +52,7 @@ public final class Ui {
     }
 
     private static CharSequence caps(CharSequence t) {
-        return CAPS && t != null ? t.toString().toUpperCase() : t;
+        return CAPS && t != null ? t.toString().toUpperCase(java.util.Locale.ROOT) : t;
     }
     public static final int PRIMARY = 0, GHOST = 1, DANGER = 2;
 
@@ -87,7 +87,7 @@ public final class Ui {
 
     /** A small section heading inside a card ("KITS"). */
     public static TextView label(Context c, CharSequence t) {
-        TextView v = text(c, t.toString().toUpperCase(), 11, MUTED, true);
+        TextView v = text(c, t.toString().toUpperCase(java.util.Locale.ROOT), 11, MUTED, true);
         v.setLetterSpacing(0.12f);
         v.setLayoutParams(lp(c, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 16, 0, 4));
         return v;
@@ -187,7 +187,7 @@ public final class Ui {
         big.setMinHeight(dp(c, 30));
         big.setGravity(Gravity.CENTER_VERTICAL);
         v.addView(big);
-        TextView n = text(c, name.toString().toUpperCase(), 10, MUTED, true);
+        TextView n = text(c, name.toString().toUpperCase(java.util.Locale.ROOT), 10, MUTED, true);
         n.setLetterSpacing(0.1f);
         v.addView(n);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
@@ -205,16 +205,16 @@ public final class Ui {
         String letter = "?";
         for (int i = 0; i < n.length(); i++) {
             if (Character.isLetterOrDigit(n.charAt(i))) {
-                letter = n.substring(i, i + 1).toUpperCase();
+                letter = n.substring(i, i + 1).toUpperCase(java.util.Locale.ROOT);
                 break;
             }
         }
-        int color = AVATARS[Math.abs(n.toLowerCase().hashCode()) % AVATARS.length];
+        int color = AVATARS[Math.abs(n.toLowerCase(java.util.Locale.ROOT).hashCode()) % AVATARS.length];
         if (CAPS) {                                    // blocky badge in muted, earthy colours
             int[] earth = {0xFF8C3B2A, 0xFF5E6B3A, 0xFF4F6470, 0xFF8A6A2F, 0xFF6B4A5E, 0xFF3F6B5E};
             TextView sq = text(c, letter, sizeDp * 0.42f, 0xFFE6DCD2, true);
             sq.setGravity(Gravity.CENTER);
-            sq.setBackground(round(c, earth[Math.abs(n.toLowerCase().hashCode()) % earth.length], 14));
+            sq.setBackground(round(c, earth[Math.abs(n.toLowerCase(java.util.Locale.ROOT).hashCode()) % earth.length], 14));
             LinearLayout.LayoutParams q = new LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp));
             q.setMargins(0, 0, dp(c, 12), 0);
             sq.setLayoutParams(q);

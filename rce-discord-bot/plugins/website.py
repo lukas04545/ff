@@ -183,7 +183,8 @@ def icon_palette(data: bytes) -> tuple[str, str] | None:
         img = Image.open(io.BytesIO(data)).convert("RGBA").resize((64, 64))
     except Exception:
         return None
-    pixels = [(r, g, b) for r, g, b, a in img.getdata() if a > 128]
+    data = img.get_flattened_data() if hasattr(img, "get_flattened_data") else img.getdata()   # Pillow 14 drops getdata
+    pixels = [(r, g, b) for r, g, b, a in data if a > 128]
     if not pixels:
         return None
     buckets: dict[tuple, list] = {}

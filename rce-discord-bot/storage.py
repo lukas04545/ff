@@ -1189,10 +1189,6 @@ class Storage:
         self._db.commit()
         return int(self.wallet(user_id)["points"])
 
-    def top_wallets(self, limit: int = 10) -> list[sqlite3.Row]:
-        return self._db.execute("SELECT user_id, points FROM wallets WHERE points > 0 ORDER BY points DESC LIMIT ?",
-                                (limit,)).fetchall()
-
     def spend_points(self, user_id: int, cost: int, reason: str) -> int | None:
         """Takes `cost` points if the balance is high enough (atomic). New balance, or None if too few points."""
         self.wallet(user_id)
