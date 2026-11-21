@@ -142,8 +142,29 @@ def test_spawn_tries_the_next_form_when_the_server_refuses(pb, monkeypatch):  # 
         assert ok and sent[0] == "entity.spawn minicopter.entity 1,2,3" and sent[-1] == "entity.spawn minicopter 1,2,3"
         sent.clear()
         await ride.spawn("minicopter", 1, 2, 3, "Lukas")
-        assert sent == ["entity.spawn minicopter 1,2,3"]                       # remembered
+        assert sent[0] == "entity.spawn minicopter.entity 1,2,3"              # the documented one first, every time
         assert "entity.spawn minicopter 1,2,3" in ride.last_spawn()
+
+        # the server takes the documented command: nothing else is sent, an old remembered form and a known-wrong
+        # saved entity name don't get in the way
+        async def accepts(cmd, **kw):
+            sent.append(cmd)
+            return ""
+        monkeypatch.setattr(pb.bot.rcon, "command", accepts)
+        ride.data.set("works:minicopter", ["entity.spawnatpos {prefab} {x},{y},{z}", "minicopter"])
+        await pb.m.save_settings("dial_a_ride", {"minicopter_prefab": "minicopter"})
+        sent.clear()
+        ok, _ = await ride.spawn("minicopter", 1, 2, 3, "Lukas")
+        assert ok and sent == ["entity.spawn minicopter.entity 1,2,3"] and ride.data.get("works:minicopter") is None
+        for key, name in (("scrapheli", "scraptransporthelicopter"), ("attackheli", "attackhelicopter.entity"),
+                          ("horse", "testridablehorse")):
+            sent.clear()
+            assert (await ride.spawn(key, 1, 2, 3, "Lukas"))[0] and sent == [f"entity.spawn {name} 1,2,3"]
+        await pb.m.save_settings("dial_a_ride", {"minicopter_prefab": "minicopter.custom"})     # the owner's own
+        sent.clear()
+        await ride.spawn("minicopter", 1, 2, 3, "Lukas")
+        assert sent == ["entity.spawn minicopter.entity 1,2,3"]
+        monkeypatch.setattr(pb.bot.rcon, "command", command)                   # refuses again
         await pb.m.save_settings("dial_a_ride", {"spawn_command": "spawn {prefab} {x} {y} {z}"})
         sent.clear()
         ok, why = await ride.spawn("horse", 1, 2, 3, "Lukas")
