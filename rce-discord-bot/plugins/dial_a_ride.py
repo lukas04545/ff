@@ -5,9 +5,10 @@ emote calls the ride. Each ride has its own emote (empty = off), an optional poi
 one cooldown per player for all rides plus an optional cooldown per ride. Helicopters come with low grade fuel (default 100). The combo emotes are kept for
 Dial-a-ride while it's on: they can't be bound to kits (support/emote_binds.reserve).
 
-The spawn command is a setting (RCON-only Rust command, default `entity.spawnat {prefab} ({x},{y},{z})`), the same
-way as the teleport command, so it can be adjusted for the server without a code change. Test it once with
-/ride spawn before switching the emotes on.
+Spawning uses Console Edition's documented command `entity.spawn <name> x,y,z` with the documented names
+(minicopter.entity, scraptransporthelicopter, attackhelicopter.entity, testridablehorse) – always first, because the
+server takes an unknown name without an error. Only if the server answers with an error are other names / forms tried.
+An own command ("Spawn command (experts)") replaces all of that. Test it once with /ride spawn.
 Discord: /ride list · /ride spawn <vehicle> <player> (admins: test or gift a ride).
 """
 from __future__ import annotations
@@ -37,6 +38,11 @@ OLD_DEFAULT = "entity.spawnat {prefab} ({x},{y},{z})"       # what older version
 SPAWN_FORMS = ("entity.spawn {prefab} {x},{y},{z}", "entity.spawnatpos {prefab} {x},{y},{z}", OLD_DEFAULT)
 PREFAB_ALSO = {"minicopter": ("minicopter",), "scrapheli": ("scraptransporthelicopter.entity",),
                "attackheli": ("attackhelicopter",), "horse": ("ridablehorse",)}
+# The documented command and names (Console Edition community-server guide, "Entity Spawning"): always tried first.
+DOC_FORM = SPAWN_FORMS[0]
+# entity names older versions or a wrong guess may have saved in the settings – the server ignores them silently
+WRONG_NAMES = {"minicopter", "minicopter.prefab", "mini", "scraptransporthelicopter.entity", "attackhelicopter",
+               "ridablehorse", "horse"}
 SPAWN_ERROR = re.compile(r"not found|unknown|invalid|couldn.?t|could not|fail|no such|usage|error|doesn.?t exist|"
                          r"does not exist|no entity|can.?t", re.I)
 OFFSET = 4.0                      # metres beside the player, so it doesn't spawn inside them
@@ -232,15 +238,19 @@ class DialARide(Plugin):
     def spawn_attempts(self, key: str) -> list[tuple[str, str]]:
         """(command form, entity name) to try, best first."""
         own = str(self.setting("spawn_command") or "").strip()
-        prefab = str(self.setting(f"{key}_prefab") or RIDES[key][3]).strip()
+        doc = RIDES[key][3]
+        prefab = str(self.setting(f"{key}_prefab") or doc).strip()
+        if prefab.lower() in WRONG_NAMES:
+            prefab = doc                                     # a known-wrong name: the documented one instead
         if own and own != OLD_DEFAULT:
             return [(own, prefab)]                           # the owner's own command: exactly that
-        prefabs = list(dict.fromkeys((prefab, RIDES[key][3], *PREFAB_ALSO.get(key, ()))))
-        out = [(form, p) for p in prefabs for form in SPAWN_FORMS]
-        works = self.data.get(f"works:{key}")
-        if isinstance(works, list) and tuple(works) in out:
-            out.remove(tuple(works))
-            out.insert(0, tuple(works))
+        # the documented command with the documented name always goes first – the server takes unknown names
+        # without an error, so "it was accepted once" is no proof and isn't remembered any more
+        out = [(DOC_FORM, doc)]
+        if prefab != doc:
+            out.append((DOC_FORM, prefab))                   # the owner's own entity name
+        for p in dict.fromkeys((prefab, doc, *PREFAB_ALSO.get(key, ()))):
+            out += [(form, p) for form in SPAWN_FORMS if (form, p) not in out]
         return out
 
     async def spawn(self, key: str, x: float, y: float, z: float, name: str) -> tuple[bool, str]:
@@ -259,7 +269,7 @@ class DialARide(Plugin):
                 continue
             tried.append((command, reply))
             if not SPAWN_ERROR.search(reply):
-                self.data.set(f"works:{key}", [form, prefab])
+                self.data.delete(f"works:{key}")             # older versions remembered a form here
                 self.data.set("last", {"at": int(time.time()), "ride": key, "ok": True, "command": command,
                                        "reply": reply[:200]})
                 return True, reply
