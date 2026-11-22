@@ -2196,8 +2196,9 @@ class WebInterface:
     async def plugin_public(self, request: web.Request, pid: str | None = None) -> web.StreamResponse:
         # the players' app polls its own API often – it has its own per-phone limits (plugins/companion.py) and
         # must not use up the website's shared visitor limit
-        if not ((pid or request.match_info.get("pid")) == "companion"
-                and request.match_info.get("tail", "").strip("/") in COMPANION_API):
+        which, tail = pid or request.match_info.get("pid"), request.match_info.get("tail", "").strip("/")
+        # the stream overlay asks every 15 s all stream long – a cheap, public answer, not a page view
+        if not ((which == "companion" and tail in COMPANION_API) or (which == "overlay" and tail == "data.json")):
             self._public_limit(request)
         await self._knock(request, request.path.strip("/"))
         return await self._serve_plugin(request, pid or request.match_info["pid"])
