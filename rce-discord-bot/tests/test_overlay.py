@@ -33,6 +33,26 @@ def test_overlay_page_and_live_data(bot):  # noqa: F811
         codes = [(await c.get("/p/overlay/data.json")).status for _ in range(80)]
         assert set(codes) == {200}
         assert (await c.get("/p/overlay/art")).status == 404                    # only the bar, no picture
+        # the look: every setting reaches the page with each refresh; bad values fall back, never into the CSS
+        await bot.plugins.save_settings("overlay", {
+            "name_colour": "#00ff00", "tags_colour": "url(x)", "font": "mono", "shape": "pill", "icon": "logo",
+            "edge_width": 12, "bar_opacity": 40, "label": "SURVIVORS", "messages": "discord.gg/abc\n\n  Search 420  \n",
+            "rotate_seconds": 5, "show_progress": True, "show_dot": False, "uppercase": False})
+        look = (await (await c.get("/p/overlay/data.json")).json())["look"]
+        assert look["colours"]["--name"] == "#00ff00" and look["colours"]["--tags"] == "#c9cbbd"
+        assert look["font"] == "mono" and look["shape"] == "pill" and look["edge"] == 12 and look["opacity"] == 40
+        assert look["label"] == "SURVIVORS" and look["messages"] == ["discord.gg/abc", "Search 420"] and look["rotate"] == 5
+        assert look["show"]["progress"] and not look["show"]["dot"] and look["upper"] is False
+        assert look["icon"] == "star" and look["logo"] == ""          # no logo anywhere: the star instead
+        assert (await c.get("/p/overlay/logo")).status == 404
+        await bot.plugins.save_settings("overlay", {"font": "comic", "shape": "x", "icon": "nope"})
+        look = (await (await c.get("/p/overlay/data.json")).json())["look"]
+        assert (look["font"], look["shape"]) == ("mono", "pill")             # refused: the last good value stays
+        await bot.plugins.set_enabled("website", True)                   # its logo can be used
+        await bot.plugins.save_settings("overlay", {"icon": "logo"})
+        look = (await (await c.get("/p/overlay/data.json")).json())["look"]
+        r = await c.get("/p/overlay/" + look["logo"])
+        assert look["icon"] == "logo" and r.status == 200 and r.headers["Content-Type"].startswith("image/")
         assert "/p/overlay/" in ov.status()["Overlay address"] or "WEB_PUBLIC_URL" in ov.status()["Overlay address"]
 
     async def setup():

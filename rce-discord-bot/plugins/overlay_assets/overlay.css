@@ -1,24 +1,40 @@
-/* The banner fills the source's width; transparent around it so it sits on the stream. */
+/* The banner fills the source's width (sizes scale with it); transparent around it so it sits on the stream.
+   Colours come in as CSS variables (--bar, --accent, --name …) from the plugin's settings. */
 html,body{margin:0;background:transparent;overflow:hidden}
-body{font:800 16px/1.2 "Arial Black","Segoe UI",Roboto,Arial,sans-serif;color:#fff;
--webkit-font-smoothing:antialiased;padding:6px}
-.ov{width:100%;filter:drop-shadow(0 4px 10px rgba(0,0,0,.45))}
-.bar{position:relative;display:flex;align-items:center;gap:3.2vw;background:var(--bar);
-border-left:.7vw solid var(--accent);padding:2.2vw 3.4vw 2.2vw 3vw;min-height:9vw}
-.star{width:5vw;height:5vw;max-width:44px;max-height:44px;flex:none;fill:none;stroke:#e8e8e8;stroke-width:1.8;
+body{--edge:.7vw;--radius:0px;--alpha:100%;color:var(--name);padding:6px;
+font:800 16px/1.2 "Arial Black","Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+body.f-modern{font-family:"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+body.f-condensed{font-family:"Arial Narrow","Roboto Condensed","Helvetica Neue",Arial,sans-serif;font-stretch:condensed}
+body.f-mono{font-family:ui-monospace,"Cascadia Mono",Consolas,"Liberation Mono",monospace;font-weight:700}
+body.upper .name,body.upper .tags,body.upper .lbl{text-transform:uppercase}
+.ov{width:100%}
+body.shadow .ov{filter:drop-shadow(0 4px 10px rgba(0,0,0,.45))}
+.bar{position:relative;display:flex;align-items:center;gap:3.2vw;overflow:hidden;
+background:color-mix(in srgb,var(--bar) var(--alpha),transparent);border-left:var(--edge) solid var(--accent);
+border-radius:var(--radius);padding:2.2vw 3.4vw 2.2vw 3vw;min-height:9vw}
+body.outline .bar{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--accent) 70%,transparent)}
+body.s-rounded{--radius:1.6vw}body.s-pill{--radius:999px}
+body.s-pill .bar{padding-left:4.4vw;padding-right:5vw}
+.star{width:5vw;height:5vw;max-width:44px;max-height:44px;flex:none;fill:none;stroke:var(--icon);stroke-width:1.8;
 stroke-linejoin:round}
-.names{flex:1;min-width:0}
+.logo{width:7vw;height:7vw;max-width:64px;max-height:64px;flex:none;object-fit:contain;border-radius:20%}
+.names{flex:1 1 auto;min-width:45%}
 .name{font-size:clamp(18px,5.4vw,52px);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-text-transform:uppercase}
-.tags{margin-top:.6vw;font-size:clamp(10px,2.4vw,22px);color:#c9cbbd;white-space:nowrap;overflow:hidden;
-text-overflow:ellipsis;text-transform:uppercase;letter-spacing:.02em;font-weight:700}
-.count{text-align:right;flex:none}
+color:var(--name)}
+.tags{margin-top:.6vw;font-size:clamp(10px,2.4vw,22px);color:var(--tags);white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis;letter-spacing:.02em;font-weight:700;transition:opacity .35s}
+.tags.swap{opacity:0}
+.count{text-align:right;flex:0 1 auto;min-width:0;max-width:40%}
 .num{font-size:clamp(18px,5.4vw,52px);display:flex;align-items:center;justify-content:flex-end;gap:1.2vw;
-font-variant-numeric:tabular-nums}
+font-variant-numeric:tabular-nums;color:var(--count)}
+.num.off{font-size:clamp(14px,3.4vw,32px);color:var(--off)}
 .num.bump{animation:bump .5s ease-out}
-.num.off{font-size:clamp(14px,3.4vw,32px)}
 @keyframes bump{40%{transform:scale(1.12)}}
-.dot{width:1.6vw;height:1.6vw;max-width:14px;max-height:14px;border-radius:50%;background:#e5341c}
-.dot.on{background:#3ddc6a;box-shadow:0 0 0 0 rgba(61,220,106,.6);animation:pulse 2s ease-out infinite}
-@keyframes pulse{to{box-shadow:0 0 0 1.4vw rgba(61,220,106,0)}}
-.lbl{margin-top:.5vw;font-size:clamp(9px,1.9vw,18px);color:#c9cbbd;letter-spacing:.14em;font-weight:700}
+.dot{width:1.6vw;height:1.6vw;max-width:14px;max-height:14px;border-radius:50%;background:var(--off);flex:none}
+.dot.on{background:var(--on);animation:pulse 2s ease-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--on) 60%,transparent)}100%{box-shadow:0 0 0 1.4vw transparent}}
+.lbl{margin-top:.5vw;font-size:clamp(9px,1.9vw,18px);color:var(--label);letter-spacing:.12em;font-weight:700;
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fill{position:absolute;left:0;right:0;bottom:0;height:.7vw;min-height:3px;background:rgba(0,0,0,.35)}
+.fill i{display:block;height:100%;width:0;background:var(--progress);transition:width .8s ease}
+.hide{display:none!important}
